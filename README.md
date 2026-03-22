@@ -1,13 +1,13 @@
 # 📄 Thai OCR Spell Check System
 
-ระบบ OCR สำหรับสแกนเอกสาร PDF และตรวจสอบคำถูกคำผิดภาษาไทย โดยใช้ชุดคำศัพท์จากพจนานุกรมราชบัณฑิตยสภา (ผ่าน PyThaiNLP)
+ระบบ OCR สำหรับสแกนเอกสาร PDF และตรวจสอบคำถูกคำผิดภาษาไทย โดยใช้ PaddleOCR และชุดคำศัพท์จากพจนานุกรมราชบัณฑิตยสภา (ผ่าน PyThaiNLP)
 
 ## ✨ คุณสมบัติ
 
 - 📤 **อัปโหลด PDF** แบบ Drag & Drop
-- 🔍 **OCR ภาษาไทย + อังกฤษ** ด้วย Tesseract + preprocessing
+- 🔍 **OCR ภาษาไทย + อังกฤษ** ด้วย **PaddleOCR** (แม่นยำสูงกว่า Tesseract)
 - ✅ **ตรวจคำผิด** โดยเทียบกับพจนานุกรมราชบัณฑิตยสภา
-- 🔴 **ไฮไลท์คำผิด** พร้อมคำแนะนำ
+- 🔴 **ไฮไลท์คำผิด** พร้อมคำแนะนำ 
 - 📚 **เพิ่มคำ Custom** ได้เองผ่าน UI หรือแก้ไขไฟล์
 - 📥 **Export** เป็น .txt หรือรายงาน
 
@@ -15,23 +15,17 @@
 
 | Software | Version | Download |
 |----------|---------|----------|
-| Python | 3.9+ | [python.org](https://python.org) |
-| Tesseract OCR | 5.x | [UB-Mannheim](https://github.com/UB-Mannheim/tesseract/wiki) |
+| Python | 3.9 - 3.12 | [python.org](https://python.org) |
 | Poppler | latest | [poppler-windows](https://github.com/oschwartz10612/poppler-windows/releases) |
-
-> **สำคัญ**: ตอนติดตั้ง Tesseract ให้เลือก "Additional language data → Thai" ด้วย
 
 ## 🚀 การติดตั้ง
 
-### 1. ติดตั้ง Tesseract OCR
-- ดาวน์โหลดและติดตั้งจาก [UB-Mannheim Tesseract](https://github.com/UB-Mannheim/tesseract/wiki)
-- ระหว่างติดตั้ง เลือก **Thai** ในหัวข้อ "Additional language data"
-
-### 2. ติดตั้ง Poppler
+### 1. ติดตั้ง Poppler (สำหรับอ่าน PDF)
 - ดาวน์โหลดจาก [poppler-windows](https://github.com/oschwartz10612/poppler-windows/releases)
-- Extract ไปที่ `C:\poppler\`
+- Extract ไปที่ `C:\poppler\` (หรือพาธที่ตั้งไว้ใน `.env`)
 
-### 3. ติดตั้ง Python dependencies
+### 2. ติดตั้ง Python dependencies
+PaddleOCR จะติดตั้งโมเดลภาษาไทยให้โดยอัตโนมัติเมื่อรันครั้งแรก
 ```bat
 setup.bat
 ```
@@ -54,13 +48,10 @@ run.bat
 OCRDocument/
 ├── backend/
 │   ├── app.py               # Flask API
-│   ├── ocr_engine.py        # OCR processing
+│   ├── ocr_engine.py        # PaddleOCR processing
 │   ├── spell_checker.py     # ตรวจคำผิด
 │   └── dictionary_manager.py # จัดการ dictionary
-├── frontend/
-│   ├── index.html           # Web UI
-│   ├── style.css            # Styles
-│   └── script.js            # JavaScript
+├── svelte-app/               # Main Frontend (Svelte)
 ├── data/
 │   └── thai_custom_words.txt # คำศัพท์เพิ่มเติม (แก้ไขได้)
 ├── tests/
