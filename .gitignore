@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Environment variables
+.env
+.env.test
+
+# Logs
+*.log
+backend_startup.log
+
+# Uploads and temporary files
+uploads/*
+!uploads/.gitkeep
+out.txt
+
+# Tesseract data (optional to ignore, but usually kept separate)
+# tessdata/
+
+# JavaScript / Node
+node_modules/
+dist/
+.svelte-kit/
+build/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,232 @@
+AI
+API
+Algorithm
+App
+Application
+Application Programming Interface
+Artificial Intelligence
+Authentication
+BIOS
+Backup
+Bandwidth
+Basic Input/Output System
+Bit
+Blockchain
+Bluetooth
+Bot
+Browser
+Bug
+Byte
+CMS
+CPU
+Cache
+Central Processing Unit
+Chrome
+Cloud Computing
+Code
+Compiler
+Content Management System
+Cookie
+Cybersecurity
+DNS
+Data
+Database
+Debugging
+Default
+Domain Name System
+Download
+Driver
+Email
+Encryption
+Ethernet
+Extension
+FTP
+File Transfer Protocol
+Firewall
+Firmware
+GB
+GUI
+Gateway
+Gigabyte
+Graphical User Interface
+HTML
+HTTP/HTTPS
+Hacker
+Hard Disk
+Hardware
+Hosting
+HyperText Markup Language
+IP
+IP Address
+Internet of Things
+IoT
+JavaScript
+Kernel
+LAN
+Local Area Network
+Login
+Logout
+MP3/MP4
+Machine Learning
+Malware
+Memory)
+Modem
+Motherboard
+Network
+Node
+OS
+Only
+Open Source
+Operating System
+PDF
+Patch
+Phishing
+Pixel
+Plugin
+Port
+Portable Document Format
+Privacy Policy
+Program
+Proxy Server
+QR Code
+RAM
+ROM (Read
+Random Access Memory
+Resolution
+Router
+Runtime
+SEO
+SQL
+SSL
+SaaS
+Script
+Search Engine Optimization
+Secure Socket Layer
+Server
+Social Media
+Software
+Software as a Service
+Spam
+Spyware
+Storage
+Streaming
+Structured Query Language
+Syntax
+Tag
+Terminal
+Trojan Horse
+UI
+URL
+USB
+UX
+Uniform Resource Locator
+Universal Serial Bus
+User Experience
+User Interface
+Username
+Virtual Machine
+Virus
+การดูหรือฟังแบบออนไลน์
+การตรวจสอบตัวตน
+การประมวลผลผ่านระบบคลาวด์
+การปรับเว็บไซต์ให้ติดอันดับ
+การรักษาความปลอดภัยไซเบอร์
+การสำรองข้อมูล
+การหลอกลวงข้อมูล
+การเก็บข้อมูล
+การเข้ารหัส
+การเชื่อมต่อเครือข่ายผ่านสาย
+การเชื่อมต่อแบบไร้สายระยะใกล้
+การเรียนรู้ของเครื่อง
+การแก้ไขข้อผิดพลาดในโปรแกรม
+การโหลดข้อมูลเข้าสู่เครื่อง
+ข้อผิดพลาดของโปรแกรม
+ข้อมูล
+ข้อมูลเล็ก
+ความกว้างของช่องสัญญาณ
+ความละเอียดของภาพ
+ค่าพื้นฐาน
+จดหมายอิเล็กทรอนิกส์
+จุดเชื่อมต่อระหว่างเครือข่าย
+จุดเชื่อมต่อในเครือข่าย
+ชื่อผู้ใช้
+ชุดคำสั่งกลางสำหรับเชื่อมระบบ
+ชุดคำสั่งโปรแกรม
+ช่วงเวลาการทำงานของโปรแกรม
+ช่องเชื่อมต่ออุปกรณ์
+ซอฟต์แวร์
+ซอฟต์แวร์อันตราย
+ซอฟต์แวร์เปิดเผยโค้ด
+ซอฟต์แวร์แบบบริการ
+ฐานข้อมูล
+ตลอดจนระหว่างอุปกรณ์ด้วยกันเอง
+ที่อยู่ของอุปกรณ์ในเครือข่าย
+ที่อยู่เว็บไซต์
+ที่เว็บไซต์บันทึกไว้ในเครื่องผู้ใช้
+นโยบายความเป็นส่วนตัว
+บริการพื้นที่เว็บไซต์
+บิต
+ประสบการณ์ของผู้ใช้
+ปัญญาประดิษฐ์
+ผู้เจาะระบบ
+ภาษาจัดการฐานข้อมูล
+ภาษาสำหรับพัฒนาเว็บไซต์
+ภาษาหลักของเว็บไซต์
+มัลแวร์แบบแอบแฝง
+รหัสแบบสองมิติ
+รหัสโปรแกรม
+ระบบจัดการเนื้อหาเว็บไซต์
+ระบบปฏิบัติการ
+ระบบป้องกันการเข้าถึงเครือข่าย
+ระบบพื้นฐานก่อนเข้าระบบปฏิบัติการ
+ระบบแปลงชื่อเว็บไซต์เป็น
+รูปแบบไฟล์ที่ใช้ในการแสดงผลเอกสารและข้อมูลต่าง
+สื่อสังคมออนไลน์
+ส่วนขยายหรือไฟล์นามสกุล
+ส่วนที่ผู้ใช้มองเห็น
+ส่วนเสริมของโปรแกรม
+หน่วยข้อมูล
+หน่วยข้อมูลเล็กที่สุด
+หน่วยความจำชั่วคราว
+หน่วยความจำถาวร
+หน่วยความจำหลัก
+หน่วยประมวลผลกลาง
+หน่วยย่อยของภาพ
+หน่วยวัดข้อมูล
+หน้าต่างคำสั่ง
+หรือบนโซเชียล
+ออกจากระบบ
+อัลกอริทึม
+อีเมลขยะ
+อุปกรณ์กระจายอินเทอร์เน็ต
+อุปกรณ์คอมพิวเตอร์
+อุปกรณ์แปลงสัญญาณอินเทอร์เน็ต
+ฮาร์ดดิสก์
+เข้าสู่ระบบ
+เครือข่าย
+เครือข่ายรวมของอุปกรณ์ที่เชื่อมต่อถึงกันและเทคโนโลยีที่อำนวยความสะดวกในการสื่อสารระหว่างอุปกรณ์กับระบบคลาวด์
+เครือข่ายในพื้นที่จำกัด
+เครื่องจำลองระบบ
+เครื่องมือพื้นฐานสำหรับการโอนย้ายไฟล์ผ่านเครือข่าย
+เช่น
+เซิร์ฟเวอร์
+เซิร์ฟเวอร์ตัวกลาง
+เทคโนโลยีบล็อกเชน
+เป็นอินเทอร์เฟซระหว่างผู้ใช้และโปรแกรมคอมพิวเตอร์หรือเว็บไซต์
+แกนหลักของระบบปฏิบัติการ
+แท็กในภาษา
+แผงวงจรหลัก
+แพตช์อัปเดตโปรแกรม
+แอปพลิเคชัน
+โปรแกรมควบคุมอุปกรณ์
+โปรแกรมคอมพิวเตอร์
+โปรแกรมฝังในฮาร์ดแวร์
+โปรแกรมสอดแนม
+โปรแกรมอัตโนมัติ
+โปรแกรมเปิดเว็บไซต์
+โปรแกรมแปลโค้ดให้เครื่องเข้าใจ
+โปรโตคอลการเชื่อมต่อเว็บไซต์
+โปรโตคอลความปลอดภัย
+ไฟล์มัลติมีเดีย
+ไวยากรณ์ของภาษาโปรแกรม
+ไวรัสคอมพิวเตอร์

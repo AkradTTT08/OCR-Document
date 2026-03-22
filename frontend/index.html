@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OCR ตรวจสอบเอกสาร – พจนานุกรมราชบัณฑิตยสภา</title>
+  <meta name="description" content="ระบบ OCR แสกนเอกสาร PDF และตรวจสอบคำถูกคำผิดภาษาไทย โดยใช้พจนานุกรมราชบัณฑิตยสภา" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&family=IBM+Plex+Sans+Thai:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- Background particles -->
+  <div class="bg-particles" id="bgParticles"></div>
+
+  <!-- Header -->
+  <header class="header">
+    <div class="header-inner">
+      <div class="logo">
+        <div class="logo-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <line x1="16" y1="13" x2="8" y2="13"/>
+            <line x1="16" y1="17" x2="8" y2="17"/>
+            <polyline points="10 9 9 9 8 9"/>
+          </svg>
+        </div>
+        <span>OCR ตรวจสอบเอกสาร</span>
+      </div>
+      <div class="header-badge">พจนานุกรมราชบัณฑิตยสภา</div>
+    </div>
+  </header>
+
+  <main class="main">
+
+    <!-- ===== Upload Zone ===== -->
+    <section class="upload-section" id="uploadSection">
+      <div class="section-label">
+        <span class="step-num">1</span>
+        <span>อัปโหลดเอกสาร PDF</span>
+      </div>
+
+      <div class="drop-zone" id="dropZone">
+        <div class="drop-icon">
+          <svg viewBox="0 0 64 64" fill="none">
+            <circle cx="32" cy="32" r="30" stroke="currentColor" stroke-width="1.5" stroke-dasharray="4 3"/>
+            <path d="M32 20v16M24 28l8-8 8 8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M22 44h20" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <p class="drop-title">ลากไฟล์ PDF มาวางที่นี่</p>
+        <p class="drop-sub">หรือ</p>
+        <label class="btn-upload" for="fileInput">
+          <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
+            <path d="M7.707 10.293a1 1 0 10-1.414 1.414l3 3a1 1 0 001.414 0l3-3a1 1 0 00-1.414-1.414L11 11.586V6h5a2 2 0 012 2v7a2 2 0 01-2 2H4a2 2 0 01-2-2V8a2 2 0 012-2h5v5.586l-1.293-1.293z"/>
+          </svg>
+          เลือกไฟล์
+        </label>
+        <input type="file" id="fileInput" accept=".pdf" hidden />
+        <p class="drop-hint">รองรับไฟล์ PDF ขนาดสูงสุด 50 MB</p>
+      </div>
+
+      <!-- File preview -->
+      <div class="file-preview" id="filePreview" style="display:none">
+        <div class="file-info">
+          <div class="file-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <polyline points="14 2 14 8 20 8"/>
+            </svg>
+          </div>
+          <div class="file-details">
+            <span class="file-name" id="fileName"></span>
+            <span class="file-size" id="fileSize"></span>
+          </div>
+          <button class="btn-remove" id="removeFile" title="ลบไฟล์">✕</button>
+        </div>
+      </div>
+
+      <!-- Settings -->
+      <div class="settings-row">
+        <div class="setting-item">
+          <label for="langSelect">ภาษา OCR</label>
+          <select id="langSelect">
+            <option value="tha+eng">ไทย + อังกฤษ</option>
+            <option value="tha">ไทยเท่านั้น</option>
+            <option value="eng">อังกฤษเท่านั้น</option>
+          </select>
+        </div>
+        <div class="setting-item">
+          <label for="dpiSelect">ความละเอียด (DPI)</label>
+          <select id="dpiSelect">
+            <option value="200">200 DPI (เร็ว)</option>
+            <option value="300" selected>300 DPI (แนะนำ)</option>
+            <option value="400">400 DPI (ละเอียด)</option>
+          </select>
+        </div>
+        <div class="setting-item">
+          <label for="suggestToggle">คำแนะนำ</label>
+          <label class="toggle">
+            <input type="checkbox" id="suggestToggle" checked />
+            <span class="toggle-track">
+              <span class="toggle-thumb"></span>
+            </span>
+          </label>
+        </div>
+      </div>
+
+      <button class="btn-process" id="processBtn" disabled>
+        <svg viewBox="0 0 20 20" fill="currentColor" width="18" height="18">
+          <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"/>
+        </svg>
+        ประมวลผล OCR + ตรวจคำ
+      </button>
+    </section>
+
+    <!-- ===== Progress ===== -->
+    <div class="progress-wrap" id="progressWrap" style="display:none">
+      <div class="progress-label" id="progressLabel">กำลังประมวลผล...</div>
+      <div class="progress-bar-track">
+        <div class="progress-bar-fill" id="progressFill"></div>
+      </div>
+      <div class="progress-steps">
+        <div class="ps-item active" id="ps1">
+          <div class="ps-dot"></div>
+          <span>แปลง PDF เป็นรูปภาพ</span>
+        </div>
+        <div class="ps-item" id="ps2">
+          <div class="ps-dot"></div>
+          <span>OCR สกัดข้อความ</span>
+        </div>
+        <div class="ps-item" id="ps3">
+          <div class="ps-dot"></div>
+          <span>ตรวจสอบคำถูกคำผิด</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== Results ===== -->
+    <section class="results-section" id="resultsSection" style="display:none">
+      <div class="section-label">
+        <span class="step-num">2</span>
+        <span>ผลลัพธ์การตรวจสอบ</span>
+      </div>
+
+      <!-- Summary Cards -->
+      <div class="summary-cards" id="summaryCards"></div>
+
+      <!-- Controls -->
+      <div class="results-controls">
+        <div class="view-tabs">
+          <button class="tab-btn active" data-view="highlight" id="tabHighlight">
+            <svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14"><path d="M17.414 2.586a2 2 0 00-2.828 0L7 10.172V13h2.828l7.586-7.586a2 2 0 000-2.828z"/><path fill-rule="evenodd" d="M2 6a2 2 0 012-2h4a1 1 0 010 2H4v10h10v-4a1 1 0 112 0v4a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" clip-rule="evenodd"/></svg>
+            ดูไฮไลท์คำผิด
+          </button>
+          <button class="tab-btn" data-view="plain" id="tabPlain">
+            <svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14"><path fill-rule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clip-rule="evenodd"/></svg>
+            ข้อความดิบ
+          </button>
+          <button class="tab-btn" data-view="errors" id="tabErrors">
+            <svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
+            รายการคำผิด
+          </button>
+        </div>
+        <div class="export-btns">
+          <button class="btn-export" id="exportTxt">
+            <svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14"><path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+            Export .txt
+          </button>
+          <button class="btn-export" id="exportReport">
+            <svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14"><path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+            Export รายงาน
+          </button>
+        </div>
+      </div>
+
+      <!-- Page tabs -->
+      <div class="page-tabs" id="pageTabs"></div>
+
+      <!-- Content views -->
+      <div class="content-area" id="contentArea"></div>
+    </section>
+
+    <!-- ===== Dictionary Panel ===== -->
+    <section class="dict-panel">
+      <div class="dict-header" id="dictToggle">
+        <div class="dict-title">
+          <svg viewBox="0 0 20 20" fill="currentColor" width="18" height="18">
+            <path d="M9 4.804A7.968 7.968 0 005.5 4c-1.255 0-2.443.29-3.5.804v10A7.969 7.969 0 015.5 14c1.396 0 2.698.37 3.8 1.018A7.968 7.968 0 0114.5 14c1.255 0 2.443.29 3.5.804v-10A7.969 7.969 0 0014.5 4c-1.396 0-2.698.37-3.8 1.018A7.979 7.979 0 009 4.804z"/>
+          </svg>
+          จัดการพจนานุกรม
+        </div>
+        <svg class="dict-chevron" id="dictChevron" viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
+          <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"/>
+        </svg>
+      </div>
+      <div class="dict-body" id="dictBody">
+        <div class="dict-stats" id="dictStats">
+          <div class="loading-dots"><span></span><span></span><span></span></div>
+        </div>
+        <div class="dict-add-row">
+          <input type="text" id="customWordInput" placeholder="เพิ่มคำใหม่ใน dictionary..." />
+          <button class="btn-add-word" id="addWordBtn">เพิ่มคำ</button>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Tooltip -->
+  <div class="tooltip" id="tooltip" style="display:none">
+    <div class="tooltip-title">คำแนะนำ</div>
+    <div class="tooltip-words" id="tooltipWords"></div>
+    <div class="tooltip-actions">
+      <button class="tt-btn-add" id="tooltipAddWord">+ เพิ่มใน dictionary</button>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
+
+  <script src="script.js"></script>
+</body>
+</html>
