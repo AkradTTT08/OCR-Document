@@ -1,6 +1,6 @@
 flask==3.0.3
 flask-cors==4.0.1
-pytesseract==0.3.13
+# pytesseract removed to use PaddleOCR exclusively
 pdf2image==1.17.0
 Pillow==10.4.0
 opencv-python==4.10.0.84
