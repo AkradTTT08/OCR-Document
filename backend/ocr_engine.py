@@ -21,6 +21,9 @@ os.environ['FLAGS_enable_onednn'] = '0'
 os.environ['FLAGS_use_mkldnn'] = '0'
 os.environ['PADDLE_DISABLE_PIR_API'] = '1'
 os.environ['FLAGS_use_legacy_executor'] = '1'
+os.environ['PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK'] = 'True'
+
+logger = logging.getLogger(__name__)
 
 # Global engine instance (lazy loaded)
 VERSION = "1.0.1-PaddleOCR-Verified"
@@ -51,22 +54,26 @@ def get_paddle_ocr():
                 # Use local model paths if provided and exist
                 rec_model_dir = local_rec_dir if local_rec_dir and os.path.exists(local_rec_dir) else None
                 det_model_dir = local_det_dir if local_det_dir and os.path.exists(local_det_dir) else None
+                # Force local Thai dictionary if available
                 rec_char_dict_path = local_dict_path if local_dict_path and os.path.exists(local_dict_path) else None
                 
                 if rec_model_dir:
                     logger.info(f"Using local Recognition model: {rec_model_dir}")
                 if det_model_dir:
                     logger.info(f"Using local Detection model: {det_model_dir}")
+                if rec_char_dict_path:
+                    logger.info(f"Using local Thai dictionary: {rec_char_dict_path}")
                 
-                # 1. Initialize Engine (PaddleOCR API)
-                logger.info(f"Initializing PaddleOCR (CPU, lang='th')...")
+                # 1. Initialize Engine (PaddleOCR 3.x API with PP-OCRv5)
+                logger.info(f"Initializing PaddleOCR 3.x (CPU, lang='th', version='PP-OCRv5')...")
                 
-                # Use default initialization as it verified to work in diagnostic script
+                # In PaddleOCR 3.x, we use lang='th' and ocr_version='PP-OCRv5'
+                # Do NOT pass model dirs unless we want to force local ones,
+                # as it may cause it to ignore ocr_version.
                 _paddle_ocr_engine = PaddleOCR(
                     lang='th',
-                    use_angle_cls=True,
-                    drop_score=0.3,  # Adjusted for better sensitivity (was 0.7)
-                    show_log=False
+                    ocr_version='PP-OCRv5',
+                    use_textline_orientation=True
                 )
                 logger.info("PaddleOCR engine initialized successfully.")
                 
@@ -82,8 +89,6 @@ def get_paddle_ocr():
 
 # Load .env locally to ensure variables are available
 load_dotenv()
-
-logger = logging.getLogger(__name__)
 
 # Normalized path using os.path.normpath
 POPPLER_PATH = os.path.normpath(os.environ.get(
@@ -386,7 +391,8 @@ def _clean_table_ocr_output(text: str) -> str:
         if len(real_chars) >= 4 or (len(words) >= 2 and len(real_chars) >= 2):
             # ตัวอักษรจริงต้องมีความสำคัญ (เข้มงวดขึ้น)
             if len(noise_chars) < len(real_chars) * 1.5: 
-                good_lines.append(stripped)
+                # Preserve leading spaces for formatting but strip trailing
+                good_lines.append(line.rstrip())
 
     return '\n'.join(good_lines)
 
@@ -537,33 +543,49 @@ def _reconstruct_paddle_text(result):
 
     all_words = []
     
-    # 0. ตรวจสอบ Format (Paddle 3.x อาจคืนค่าเป็น dict)
-    if isinstance(result, dict) or (isinstance(result, list) and len(result) > 0 and isinstance(result[0], dict)):
-        res_dict = result if isinstance(result, dict) else result[0]
-        texts = res_dict.get('rec_texts', [])
-        scores = res_dict.get('rec_scores', [])
-        polys = res_dict.get('rec_polys', res_dict.get('dt_polys', []))
-        
-        for i in range(len(texts)):
-            poly = polys[i]
-            if not isinstance(poly, list):
-                poly = poly.tolist()
-            # ยุบ [x1,y1,x2,y2,x3,y3,x4,y4] -> [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
-            if len(poly) == 8:
-                box = [[poly[0], poly[1]], [poly[2], poly[3]], [poly[4], poly[5]], [poly[6], poly[7]]]
-            else:
-                box = poly
+    # 0. Check for PaddleOCR 3.x result objects (OCRResult)
+    # The result may be a list of results or a single result list from ocr() legacy call
+    all_words = []
+    
+    # Handle PaddleOCR 3.x OCRResult objects
+    if hasattr(result, '__iter__'):
+        for page_res in result:
+            # Check if it's a 3.x OCRResult object
+            # It has a .json property or it can be accessed like a dict
+            res_dict = None
+            if hasattr(page_res, 'json'):
+                res_dict = page_res.json.get('res', {})
+            elif isinstance(page_res, dict):
+                res_dict = page_res.get('res', page_res)
             
-            all_words.append({
-                'text': texts[i],
-                'box': box,
-                'confidence': float(scores[i]) if i < len(scores) else 1.0
-            })
-    else:
+            if res_dict:
+                texts = res_dict.get('rec_texts', [])
+                scores = res_dict.get('rec_scores', [])
+                polys = res_dict.get('rec_polys', res_dict.get('dt_polys', []))
+                
+                for i in range(len(texts)):
+                    poly = polys[i]
+                    if hasattr(poly, 'tolist'):
+                        poly = poly.tolist()
+                    
+                    # Convert to [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
+                    if len(poly) == 8:
+                        box = [[poly[0], poly[1]], [poly[2], poly[3]], [poly[4], poly[5]], [poly[6], poly[7]]]
+                    else:
+                        box = poly
+                    
+                    all_words.append({
+                        'text': texts[i],
+                        'box': box,
+                        'confidence': float(scores[i]) if i < len(scores) else 1.0
+                    })
+    
+    # If no words found through 3.x detection, try 2.x legacy format
+    if not all_words and result and isinstance(result, list):
         # Legacy 2.x format: [[[box], (text, score)], ...]
-        lines_raw = result[0] if result and isinstance(result[0], list) else []
+        lines_raw = result[0] if isinstance(result[0], list) else result
         for item in lines_raw:
-            if len(item) == 2:
+            if isinstance(item, list) and len(item) == 2 and isinstance(item[1], (tuple, list)):
                 all_words.append({
                     'text': item[1][0],
                     'box': item[0],
@@ -580,6 +602,15 @@ def _reconstruct_paddle_text(result):
         if not s: return True
         
         # 1. Basic garbage regex (mostly special chars/marks)
+        # RELAXED: Allow single bullets like '-', '.', '*', '•'
+        if len(s) == 1 and s in "-.*•":
+            return False
+            
+        # Specific patterns reported as junk by user (Misread bullets/lines)
+        junk_patterns = ["๑ บลุ", "ข..สี่", "เ.สี", "เ.สี่", "เส อล ม", "| | |"]
+        for p in junk_patterns:
+            if p in s: return True
+
         if len(s) < 20 and garbage_re.match(s): return True
         if len(s) < 15 and set(s).issubset(garbage_chars): return True
         
@@ -633,42 +664,99 @@ def _reconstruct_paddle_text(result):
     if not all_words:
         return "", []
 
-    # 1. เรียงตาม Y (บนลงล่าง) เพื่อแยกบรรทัด
-    all_words.sort(key=lambda x: x['box'][0][1])
-    
+    # 2. Detect Common Column Starts (Tab Stops)
+    tab_stops = []
+    if all_words:
+        all_starts = [w['box'][0][0] for w in all_words]
+        all_starts.sort()
+        # Simple Clustering for Tab Stops (30px threshold)
+        if all_starts:
+            current_clusters = [[all_starts[0]]]
+            for x in all_starts[1:]:
+                if x - current_clusters[-1][-1] < 30:
+                    current_clusters[-1].append(x)
+                else:
+                    current_clusters.append([x])
+            # Only keep clusters with multiple occurrences (indicating a column)
+            tab_stops = [int(sum(c)/len(c)) for c in current_clusters if len(c) >= 3]
+            tab_stops.sort()
+
+    # 3. Reconstruct lines
     reconstructed_lines = []
     if all_words:
+        # Determine the "Main Left Margin" 
+        all_xs = sorted([w['box'][0][0] for w in all_words])
+        min_page_x = all_xs[int(len(all_xs) * 0.01)] if all_xs else 0
+            
+        # 1. Sort all words primarily by Y (top-to-bottom)
+        all_words.sort(key=lambda x: x['box'][0][1])
+        
         current_line = [all_words[0]]
-        def join_line_with_gaps(line_words):
+        
+        def join_line_with_gaps(line_words, page_xmin, page_tab_stops):
             if not line_words: return ""
             line_words.sort(key=lambda x: x['box'][0][0])
             
-            res_parts = [line_words[0]['text']]
+            # Calculate char_w for this line
+            total_w = sum((w['box'][1][0] - w['box'][0][0]) for w in line_words)
+            total_l = sum(max(len(w['text']), 1) for w in line_words)
+            char_w = max(total_w / total_l if total_l > 0 else 15, 10)
+            
+            res_parts = []
+            
+            # 2. Handle Leading Indentation (Relative to min_page_x)
+            first_x = line_words[0]['box'][0][0]
+            
+            # FIND TAB STOP: Is this word starting at a detected column?
+            # Find the nearest tab stop and use it for alignment
+            best_tab = page_xmin
+            for ts in page_tab_stops:
+                if abs(first_x - ts) < char_w * 1.5: # Word is near a tab stop
+                    best_tab = ts
+                    break
+            
+            rel_x = max(best_tab - page_xmin, 0)
+            
+            if rel_x > char_w * 0.2:
+                num_spaces = int(rel_x / (char_w * 0.35 + 1))
+                res_parts.append(" " * min(num_spaces, 100))
+            
+            res_parts.append(line_words[0]['text'])
+            
+            # 3. Handle Gaps between words
             for i in range(1, len(line_words)):
                 prev = line_words[i-1]
                 curr = line_words[i]
+                curr_x = curr['box'][0][0]
                 
-                # คำนวณช่องว่างระหว่างคำ (Gap)
-                # x2 ของคำก่อนหน้า เทียบกับ x1 ของคำปัจจุบัน
-                gap = curr['box'][0][0] - prev['box'][1][0]
+                # Check if current word starts a new column
+                best_sub_tab = None
+                for ts in page_tab_stops:
+                    if ts > prev['box'][1][0] + char_w * 0.5 and abs(curr_x - ts) < char_w * 1.5:
+                        best_sub_tab = ts
+                        break
                 
-                # กะความกว้างตัวอักษรเฉลี่ย
-                prev_text_len = max(len(prev['text']), 1)
-                char_w = (prev['box'][1][0] - prev['box'][0][0]) / prev_text_len
-                
-                if gap > char_w * 3:
-                     # ถ้าช่องว่างกว้างกว่า 3 ตัวอักษร ให้ใส่จุดไข่ปลา
-                     num_dots = min(int(gap / (char_w * 1.5 + 1)), 30)
-                     if num_dots > 2:
-                         res_parts.append(" " + "." * num_dots + " ")
-                     else:
-                         res_parts.append("   ")
+                if best_sub_tab:
+                    # Align to Sub-Tab
+                    sub_gap = best_sub_tab - prev['box'][1][0]
+                    num_spaces = int(sub_gap / (char_w * 0.35 + 1))
+                    res_parts.append(" " * max(num_spaces, 1))
                 else:
-                    res_parts.append(" ")
+                    # Regular Gap
+                    gap = curr_x - prev['box'][1][0]
+                    if gap > char_w * 1.2:
+                         num_dots = min(int(gap / (char_w * 0.9 + 1)), 80)
+                         if num_dots > 2:
+                             res_parts.append(" " + "." * num_dots + " ")
+                         else:
+                             res_parts.append("   ")
+                    elif gap > char_w * 0.15:
+                        res_parts.append(" ")
                 
                 res_parts.append(curr['text'])
             return "".join(res_parts)
 
+        # 2. Group words into lines
         for i in range(1, len(all_words)):
             prev = all_words[i-1]
             curr = all_words[i]
@@ -679,10 +767,11 @@ def _reconstruct_paddle_text(result):
             if abs(curr['box'][0][1] - prev['box'][0][1]) < h * 0.6:
                 current_line.append(curr)
             else:
-                reconstructed_lines.append(join_line_with_gaps(current_line))
+                reconstructed_lines.append(join_line_with_gaps(current_line, min_page_x, tab_stops))
                 current_line = [curr]
         
-        reconstructed_lines.append(join_line_with_gaps(current_line))
+        # Add the last line
+        reconstructed_lines.append(join_line_with_gaps(current_line, min_page_x, tab_stops))
 
     full_text = "\n".join(reconstructed_lines)
     return full_text, all_words
@@ -690,14 +779,31 @@ def _reconstruct_paddle_text(result):
 
 def _clean_common_misreads(text: str) -> str:
     """
-    ล้างคำที่มักแสกนผิด เช่น 9 ที่ท้ายประโยค (มาจาก - หรือจุด)
+    ลบเศษขยะเล็กๆ น้อยๆ ที่ Paddle มักอ่านผิด
     """
     if not text: return ""
-    # 1. ลบ 9 หรือ - หรือ . ที่อยู่ลอยๆ ท้ายบรรทัด (มักมาจาก bullet)
-    text = re.sub(r'\s+[9\-\.]$', '', text)
-    # 2. ลบตัวอักษรขยะตัวเดียวที่ต้นบรรทัด
-    text = re.sub(r'^[9\-\.]\s+', '', text)
-    return text
+    
+    # 1. ลบตัวเลข 9, -, . ที่โผล่มาโดดเดี่ยวท้ายบรรทัด (มักเป็น noise จากขอบกระดาษ)
+    # ใช้ negative lookbehind เพื่อไม่ให้ลบท้ายคำที่มีความหมาย เช่น .css หรือ v1
+    # ลบเฉพาะเมื่อมีช่องว่างนำหน้า และเป็นตัวอักษรเดียวแยกๆ
+    text = re.sub(r'(?<![a-zA-Z0-9])\s+[9\-\.]$', '', text, flags=re.MULTILINE)
+    
+    # 2. ลบ 9 ที่แปะท้ายคำภาษาอังกฤษแบบไม่มีจุด (เช่น signIn.css9 -> signIn.css)
+    # ถ้าคำลงท้ายด้วย .css หรือ .js หรือนามสกุลไฟล์ แล้วมี 9 ตามมา ให้ลบ 9
+    text = re.sub(r'(\.(?:css|js|py|html|png|jpg|pdf))9\b', r'\1', text)
+    
+    # RELAXED: STOP stripping leading bullets like '-' or '.' at the start of lines
+    # Only strip if it's CLEARLY noise (like isolated characters on a line with nothing else)
+    lines = text.splitlines()
+    cleaned_lines = []
+    for line in lines:
+        stripped = line.strip()
+        # If line has only one character and it's noise, skip it
+        if len(stripped) == 1 and stripped in "9|":
+            continue
+        cleaned_lines.append(line)
+        
+    return '\n'.join(cleaned_lines)
 
 def ocr_image(pil_image: Image.Image, lang: str = 'tha+eng') -> dict:
     """

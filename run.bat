@@ -10,13 +10,13 @@ set FLAGS_use_legacy_executor=1
 
 :: ── Start Flask backend ──
 echo [1/2] Starting Flask backend on port 5000...
-start "Flask Backend" cmd /k "cd /d d:\OCR && python backend\app.py"
+start "Flask Backend" cmd /k "cd /d %~dp0 && python backend\app.py"
 
 timeout /t 2 /nobreak > nul
 
 :: ── Start Svelte dev server ──
 echo [2/2] Starting Svelte frontend on port 5173...
-start "Svelte Frontend" cmd /k "cd /d d:\OCR\svelte-app && npm run dev"
+start "Svelte Frontend" cmd /k "cd /d %~dp0svelte-app && npm run dev"
 
 timeout /t 3 /nobreak > nul
 
