@@ -1,40 +1,52 @@
+import sys
 import os
-import cv2
+import io
 import numpy as np
-import logging
-from paddleocr import PaddleOCR
+from PIL import Image
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+sys.path.append(os.path.join(os.getcwd(), 'backend'))
+from ocr_engine import get_paddle_ocr, preprocess_image
 
-def test_ocr():
-    logger.info("Starting PaddleOCR Debug Test...")
+def debug_ocr():
+    ocr = get_paddle_ocr()
+    img_path = r"d:\OCR-Github\OCR-Document\uploads\cache\6236aa0c-97bc-406c-b86b-23f4566c6661\page_5.jpg"
+    print(f"Running raw OCR on {img_path}...")
+    pil_image = Image.open(img_path)
+    processed_pil = preprocess_image(pil_image)
+    img_np = np.array(processed_pil.convert('RGB'))
     
-    # Force disable model source check
-    os.environ['PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK'] = 'True'
+    result = ocr.ocr(img_np)
     
-    try:
-        # Initialize engine
-        logger.info("Initializing PaddleOCR...")
-        # Try disable mkldnn for stability
-        ocr = PaddleOCR(lang='th', enable_mkldnn=False, use_angle_cls=True)
-        logger.info("Engine initialized.")
-        
-        # Create a dummy image (white with black text placeholder)
-        img = np.ones((500, 500, 3), dtype=np.uint8) * 255
-        cv2.putText(img, "Test OCR", (50, 250), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 0), 3)
-        
-        logger.info("Running OCR on dummy image...")
-        result = ocr.ocr(img)
-        
-        logger.info("OCR Result received!")
-        logger.info(f"Result: {result}")
-        
-        logger.info("Test Completed Successfully!")
-        
-    except Exception as e:
-        logger.error(f"Test Failed with error: {e}", exc_info=True)
+    all_words = []
+    if hasattr(result, '__iter__'):
+        for page_res in result:
+            res_dict = None
+            if hasattr(page_res, 'json'):
+                res_dict = page_res.json.get('res', {})
+            elif isinstance(page_res, dict):
+                res_dict = page_res.get('res', page_res)
+            
+            if res_dict:
+                texts = res_dict.get('rec_texts', [])
+                scores = res_dict.get('rec_scores', [])
+                for i in range(len(texts)):
+                    all_words.append({
+                        'text': texts[i],
+                        'score': scores[i]
+                    })
+    
+    if not all_words and result and isinstance(result, list):
+        lines_raw = result[0] if isinstance(result[0], list) else result
+        for item in lines_raw:
+            if isinstance(item, list) and len(item) == 2 and isinstance(item[1], (tuple, list)):
+                all_words.append({
+                    'text': item[1][0],
+                    'score': item[1][1]
+                })
 
-if __name__ == "__main__":
-    test_ocr()
+    with open("debug_ocr_out.txt", "w", encoding="utf-8") as f:
+        for w in all_words:
+            f.write(f"[{w['score']:.3f}] {w['text']}\n")
+        
+if __name__ == '__main__':
+    debug_ocr()

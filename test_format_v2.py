@@ -28,6 +28,7 @@ def test_formatting():
             f.write(f"\n--- {p} ---\n")
             f.write(res['text'])
             f.write("\n\n")
+            f.flush()
 
     print(f"Formatting results saved to {output_file}")
 

@@ -1,0 +1,38 @@
+----- RECONSTRUCTED TEXT -----
+                          CODING STANDARD
+VERSION 1
+                                TTT Brother CO., LTD.
+TTT Brother Co..Ltd. ................................................................................ Date : 01/11/2568
+2.2.3.SQL
+                               ใช้รูปแบบตามตัวแปรใน Database
+         2.3. ฟังก์ชัน
+2.3.1.ทั่วไป
+ใช้รูปแบบ camelCase เช่น validateData
+ะสุ.ๆ.ร่
+3. การจัดรูปแบบโค้ด
+         3.1. เครื่องมือ
+Prettier
+        3.2. Indentation
+ใช้ 2 Spaces
+Page5 |
+
+----- WORDS -----
+[0.958] CODING STANDARD
+[0.999] VERSION 1
+[0.930] TTT Brother CO., LTD.
+[0.968] Date : 01/11/2568
+[0.864] TTT Brother Co..Ltd.
+[0.999] 2.2.3.
+[0.994] SQL
+[0.975] ใช้รูปแบบตามตัวแปรใน Database
+[0.970] 2.3. ฟังก์ชัน
+[0.987] 2.3.1.ทั่วไป
+[0.959] ใช้รูปแบบ camelCase เช่น validateData
+[0.614] ะสุ.ๆ.ร่
+[0.949] 3. การจัดรูปแบบโค้ด
+[0.952] 3.1. เครื่องมือ
+[1.000] Prettier
+[1.000] Indentation
+[0.999] 3.2.
+[0.921] ใช้ 2 Spaces
+[0.877] Page5 |

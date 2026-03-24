@@ -149,7 +149,7 @@ def preprocess_image(pil_image: Image.Image) -> Image.Image:
     # ให้ fallback กลับเป็น Grayscale เรียบๆ เพื่อไม่ให้หน้าว่างเปล่า
     white_pct = np.sum(thick_text == 255) / thick_text.size
     if white_pct > 0.97:
-        logger.warning(f"Preprocessing caused {white_pct:.1%} white pixels – falling back to grayscale")
+        logger.warning(f"Preprocessing caused {white_pct:.1%} white pixels - falling back to grayscale")
         return Image.fromarray(gray)
 
     return Image.fromarray(thick_text)
@@ -607,7 +607,11 @@ def _reconstruct_paddle_text(result):
             return False
             
         # Specific patterns reported as junk by user (Misread bullets/lines)
-        junk_patterns = ["๑ บลุ", "ข..สี่", "เ.สี", "เ.สี่", "เส อล ม", "| | |"]
+        junk_patterns = [
+            "๑ บลุ", "ข..สี่", "เ.สี", "เ.สี่", "เส อล ม", "| | |",
+            "๑บุลุ", "สิ่งใะสี", "สื่งใขสี", "ชื่อะ.สื่", "ส่2.ขสู", "BUMMML", "RLMMNL",
+            "ะ.สื่", "ะ.สี่", "ดบ", "ข.สื่กใขสี่"
+        ]
         for p in junk_patterns:
             if p in s: return True
 
@@ -619,11 +623,12 @@ def _reconstruct_paddle_text(result):
             vowels = set("AEIOUY")
             vowel_count = sum(1 for c in s if c in vowels)
             vowel_ratio = vowel_count / len(s)
-            common_abbrs = {"SQL", "PR", "ID", "CM", "KG", "MM", "TV", "PC", "WS", "DPI", "OCR"}
-            if vowel_ratio < 0.2 and s not in common_abbrs:
+            common_abbrs = {"SQL", "PR", "ID", "CM", "KG", "MM", "TV", "PC", "WS", "DPI", "OCR", "UUID", "JSON", "HTTP"}
+            if vowel_ratio <= 0.25 and s not in common_abbrs:
                 return True
                 
-        # 3. Repeated characters (lines/dots)
+        # 3. Repeated characters (lines/dots) or single unhelpful punctuation
+        if len(s) == 1 and s in ".:;|\\/": return True
         if len(s) > 3:
             from collections import Counter
             counts = Counter(s)
@@ -631,13 +636,24 @@ def _reconstruct_paddle_text(result):
             if count / len(s) > 0.7: return True
 
         # 4. Physical Size Filter (Suppress small artifacts)
-        if 'box_norm' in w_obj:
-            bn = w_obj['box_norm']
-            w_box = bn[1][0] - bn[0][0]
-            h_box = bn[2][1] - bn[0][1]
-            # Lowered from 0.005 to 0.002 for better sensitivity
-            if w_box < 0.002 and h_box < 0.002:
-                return True
+        # Handle 'box' which contains absolute coordinates
+        if 'box' in w_obj:
+            b = w_obj['box']
+            try:
+                import math
+                w_box = math.dist(b[0], b[1])
+                h_box = math.dist(b[0], b[3])
+                
+                if h_box > 0 and w_box > 0:
+                    aspect_ratio = w_box / h_box
+                    # Very thin and wide -> likely a line read as text
+                    if aspect_ratio > 15 and h_box < 14:
+                        return True
+                    # Small artifacts (dots/noise)
+                    if w_box < 10 and h_box < 10:
+                        return True
+            except:
+                pass
 
         # 5. Thai Mark-Only Filter (Standalone symbols like ะ, ่, ิ)
         # If it's a very short Thai string with no base consonant AND low confidence, it's garbage
@@ -652,7 +668,7 @@ def _reconstruct_paddle_text(result):
         real_chars = re.sub(r'[^\u0E00-\u0E7Fa-zA-Z0-9]', '', s)
         if len(s) > 3:
             ratio = len(real_chars) / len(s)
-            if ratio < 0.3: return True
+            if ratio < 0.4: return True
             
         # 7. Too few real characters in a long-ish string
         if len(real_chars) < 2 and len(s) > 5: return True
@@ -817,7 +833,16 @@ def ocr_image(pil_image: Image.Image, lang: str = 'tha+eng') -> dict:
     try:
         # 1. เตรียมภาพ
         w, h = pil_image.size
-        img_np = np.array(pil_image.convert('RGB'))
+        # Apply intelligent preprocessing based on page type
+        pil_image = preprocess_image(pil_image)
+        img_np = np.ascontiguousarray(pil_image.convert('RGB'), dtype=np.uint8)
+        
+        # Micro-noise injection: PaddleX PP-OCRv5 backend crashes with "Unknown exception"
+        # when inferencing pure binary/grayscale tensors due to zero-variance divide-by-zero in batch norm/conv.
+        # Adding a tiny undetectable (+-1) RGB noise breaks the perfect zero variance and stops the crash.
+        noise = np.random.randint(-1, 2, img_np.shape, dtype=np.int16)
+        img_np = np.clip(img_np.astype(np.int16) + noise, 0, 255).astype(np.uint8)
+        img_np = np.ascontiguousarray(img_np)
         
         # 2. Run OCR
         with _paddle_ocr_lock:
