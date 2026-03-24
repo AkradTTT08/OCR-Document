@@ -845,10 +845,10 @@ def ocr_image(pil_image: Image.Image, lang: str = 'tha+eng') -> dict:
         img_np = np.ascontiguousarray(img_np)
         
         # 2. Run OCR
-        with _paddle_ocr_lock:
-            logger.info("Starting PaddleOCR.ocr() call...")
-            result = ocr.ocr(img_np)
-            logger.info("PaddleOCR.ocr() call successful.")
+        # with _paddle_ocr_lock:
+        logger.info("Starting PaddleOCR.ocr() call...")
+        result = ocr.ocr(img_np)
+        logger.info("Finished PaddleOCR.ocr() call.")
 
         # 3. จัดระเบียบผลลัพธ์
         text, words = _reconstruct_paddle_text(result)
