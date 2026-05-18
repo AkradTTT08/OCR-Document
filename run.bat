@@ -1,12 +1,7 @@
 @echo off
 title Thai OCR Spell Check
 
-:: ── Set PaddlePaddle Stability Flags ──
-set FLAGS_enable_pir_api=0
-set FLAGS_enable_onednn=0
-set FLAGS_use_mkldnn=0
-set PADDLE_DISABLE_PIR_API=1
-set FLAGS_use_legacy_executor=1
+
 
 :: ── Start Flask backend ──
 echo [1/2] Starting Flask backend on port 5000...

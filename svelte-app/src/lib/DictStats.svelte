@@ -57,9 +57,7 @@
         <div class="dots"><span></span><span></span><span></span></div>
       {:else if stats}
         <div class="stat-row">
-          <div class="ds"><div class="dv" style="color:var(--primary2)">{stats.thai_words.toLocaleString()}</div><div class="dl">คำไทย (ราชบัณฑิตยสภา)</div></div>
-          <div class="ds"><div class="dv" style="color:var(--warning)">{(stats.english_words||0).toLocaleString()}</div><div class="dl">คำอังกฤษ</div></div>
-          <div class="ds"><div class="dv" style="color:var(--success)">{stats.custom_words}</div><div class="dl">Custom</div></div>
+          <div class="ds"><div class="dv" style="color:var(--success)">{stats.custom_words.toLocaleString()}</div><div class="dl">คำศัพท์ที่สอน AI เพิ่มเติม (Custom)</div></div>
         </div>
       {/if}
       <div class="add-row">

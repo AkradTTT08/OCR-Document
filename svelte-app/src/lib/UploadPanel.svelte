@@ -11,7 +11,7 @@
   let isDragging = false;
   let lang = 'tha+eng';
   let dpi = '300';
-  let includeSuggestions = true;
+  let autoSpellCheck = false;
 
   // ── File ──
   function onDrop(e) {
@@ -57,7 +57,7 @@
     try {
       emitProgress(5, 'เริ่มต้น...', 1);
       
-      const res = await fetch(`${API}/process_stream?lang=${lang}&dpi=${dpi}&include_suggestions=${includeSuggestions}`, {
+      const res = await fetch(`${API}/process_stream?lang=${lang}&dpi=${dpi}&auto_spellcheck=${autoSpellCheck}`, {
         method: 'POST',
         body: formData,
       });
@@ -197,9 +197,9 @@
     </select>
   </div>
   <div class="setting-row">
-    <span class="setting-label">คำแนะนำ</span>
+    <span class="setting-label">โหมด Auto ตรวจคำผิด</span>
     <label class="toggle-wrap">
-      <input type="checkbox" bind:checked={includeSuggestions}/>
+      <input type="checkbox" bind:checked={autoSpellCheck}/>
       <span class="toggle-track"><span class="toggle-thumb"></span></span>
     </label>
   </div>

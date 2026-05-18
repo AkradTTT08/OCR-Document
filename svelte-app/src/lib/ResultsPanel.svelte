@@ -1,4 +1,5 @@
 <script>
+  import { toast } from './toastStore.js';
   export let result = null;
   export let isProcessing = false;
   export let progress = { pct: 0, label: "", step: 0 };
@@ -43,6 +44,54 @@
     );
   }
 
+  $: highlightedHtml = generateHighlightedHtml(activePage?.text, activePage?.spell_check?.errors);
+
+  function generateHighlightedHtml(text, errors) {
+    if (!text) return "";
+    if (!errors || errors.length === 0) return text;
+
+    // 1. Extract all HTML tags and replace them with a unique placeholder
+    const tags = [];
+    let safeText = text.replace(/<[^>]+>/g, (match) => {
+      tags.push(match);
+      return `__TAG_${tags.length - 1}__`;
+    });
+
+    // 2. Replace errors in the safeText
+    errors.forEach(err => {
+      if (!err.token || err.token.trim() === "") return;
+      const safeToken = err.token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      
+      let cssClass = 'tok-err-th';
+      let title = `สะกดผิด | แนะนำ: ${(err.suggestions || []).join(', ')}`;
+      
+      if (err.error_type === "semantic") {
+        cssClass = 'tok-err-sm';
+        title = `บริบท | แนะนำ: ${(err.suggestions || []).join(', ')}`;
+      } else if (err.lang === "english") {
+        cssClass = 'tok-err-en';
+        title = `Misspelled | Suggestions: ${(err.suggestions || []).join(', ')}`;
+      }
+      
+      let regexStr = safeToken;
+      if (err.lang === "english") {
+        regexStr = `\\b${safeToken}\\b`;
+      }
+      
+      const regex = new RegExp(regexStr, 'g');
+      const replacement = `<span class="${cssClass}" title="${title}">${err.token}</span>`;
+      
+      safeText = safeText.replace(regex, replacement);
+    });
+
+    // 3. Restore HTML tags
+    let finalHtml = safeText.replace(/__TAG_(\d+)__/g, (match, p1) => {
+      return tags[parseInt(p1, 10)];
+    });
+
+    return finalHtml;
+  }
+
   // ── Export ──
   function exportTxt() {
     if (!result) return;
@@ -77,6 +126,41 @@
       download: name,
     });
     a.click();
+    a.click();
+  }
+
+  let checkingSpell = false;
+  async function runManualSpellCheck() {
+    if (!activePage || checkingSpell) return;
+    
+    checkingSpell = true;
+    try {
+      toast(`เริ่มตรวจสอบคำผิดหน้า ${activePage.page_number}...`, 'info', 2000);
+      const API = 'http://localhost:5000/api';
+      const res = await fetch(`${API}/spellcheck`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          text: activePage.text, 
+          words: activePage.words,
+          include_suggestions: true 
+        })
+      });
+      
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'เกิดข้อผิดพลาด');
+      
+      // Update page data
+      result.pages[activePageIdx].spell_check = data.result;
+      
+      // Trigger reactivity
+      result = result; 
+      toast(`ตรวจสอบคำผิดหน้า ${activePage.page_number} เสร็จสิ้น`, 'success');
+    } catch (err) {
+      toast(`ข้อผิดพลาด: ${err.message}`, 'error');
+    } finally {
+      checkingSpell = false;
+    }
   }
 </script>
 
@@ -295,7 +379,21 @@
 
         <!-- ERRORS VIEW -->
       {:else if viewMode === "errors"}
-        {#if filteredErrors.length === 0}
+        {#if !activePage?.spell_check}
+          <div class="manual-check-box">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="40" height="40" stroke-width="1.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
+            </svg>
+            <p>ยังไม่ได้ตรวจสอบคำผิดในหน้านี้</p>
+            <button class="btn-check" on:click={runManualSpellCheck} disabled={checkingSpell}>
+              {#if checkingSpell}
+                <div class="spinner"></div> กำลังตรวจสอบ...
+              {:else}
+                🔍 เริ่มตรวจสอบคำผิด
+              {/if}
+            </button>
+          </div>
+        {:else if filteredErrors.length === 0}
           <div class="no-errors">
             <svg
               viewBox="0 0 20 20"
@@ -357,40 +455,15 @@
 
         <!-- HIGHLIGHT VIEW -->
       {:else if viewMode === "highlight"}
-        <div class="highlight-view">
-          {#if activePage}
-            {#each activePage.spell_check?.tokens ?? [] as t}
-              {#if !t.is_correct && t.error_type === "semantic"}
-                <span
-                  class="tok-err-sm"
-                  title="บริบท (Semantic) | บรรทัด {t.line_number} | แนะนำให้ใช้: {(
-                    t.suggestions || []
-                  ).join(', ') || '—'}">{t.token}</span
-                >
-              {:else if !t.is_correct && t.lang === "thai"}
-                <span
-                  class="tok-err-th"
-                  title="สะกดสผิด (Misspelled) | บรรทัด {t.line_number} | คำแนะนำ: {(
-                    t.suggestions || []
-                  ).join(', ') || '—'}">{t.token}</span
-                >
-              {:else if !t.is_correct && t.lang === "english"}
-                <span
-                  class="tok-err-en"
-                  title="Misspelled | Line {t.line_number} | Suggestions: {(
-                    t.suggestions || []
-                  ).join(', ') || '—'}">{t.token}</span
-                >
-              {:else}
-                {t.token}
-              {/if}
-            {/each}
-          {/if}
+        <div class="highlight-view rendered-html">
+          {@html highlightedHtml}
         </div>
 
-        <!-- PLAIN TEXT VIEW -->
+        <!-- PLAIN TEXT VIEW (HTML/Markdown Rendered) -->
       {:else}
-        <pre class="plain-view">{activePage?.text ?? ""}</pre>
+        <div class="plain-view rendered-html">
+          {@html activePage?.text ?? ""}
+        </div>
       {/if}
     </div>
     <!-- end results -->
@@ -830,6 +903,29 @@
     line-height: 1.9;
   }
 
+  /* ── HTML Rendered ── */
+  .rendered-html :global(table) {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    color: var(--text);
+    background: var(--surface);
+  }
+  .rendered-html :global(th), .rendered-html :global(td) {
+    border: 1px solid var(--border2);
+    padding: 8px 12px;
+    text-align: left;
+  }
+  .rendered-html :global(th) {
+    background: var(--surface2);
+    font-weight: bold;
+  }
+  .rendered-html :global(div[align="center"]) {
+    text-align: center;
+    font-weight: bold;
+    margin: 12px 0;
+  }
+
   /* ── Preview View ── */
   .content-scroll.is-preview {
     padding: 0;
@@ -888,5 +984,62 @@
     z-index: 10;
     transform: scale(1.05);
     box-shadow: 0 0 12px rgba(0, 0, 0, 0.2);
+  }
+
+  /* ── Manual Spellcheck ── */
+  .manual-check-box {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 60px 20px;
+    gap: 16px;
+    color: var(--text2);
+    text-align: center;
+  }
+  .manual-check-box svg {
+    color: var(--primary);
+    opacity: 0.8;
+    margin-bottom: 8px;
+  }
+  .manual-check-box p {
+    font-size: 15px;
+    margin: 0;
+  }
+  .btn-check {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 10px 24px;
+    background: linear-gradient(135deg, var(--primary), var(--accent));
+    color: white;
+    border: none;
+    border-radius: var(--radius);
+    font-size: 14px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    box-shadow: 0 4px 12px var(--glow);
+    transition: all 0.2s;
+  }
+  .btn-check:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px var(--glow);
+  }
+  .btn-check:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+  }
+  .spinner {
+    width: 16px;
+    height: 16px;
+    border: 2px solid rgba(255,255,255,0.3);
+    border-top-color: white;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+  }
+  @keyframes spin {
+    to { transform: rotate(360deg); }
   }
 </style>

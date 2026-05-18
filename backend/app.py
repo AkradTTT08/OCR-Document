@@ -1,9 +1,3 @@
-import os
-os.environ['FLAGS_enable_pir_api'] = '0'
-os.environ['FLAGS_enable_onednn'] = '0'
-os.environ['FLAGS_use_mkldnn'] = '0'
-os.environ['PADDLE_DISABLE_PIR_API'] = '1'
-os.environ['FLAGS_use_legacy_executor'] = '1'
 import logging
 from dotenv import load_dotenv
 
@@ -136,12 +130,59 @@ def spellcheck():
 
     text = data['text']
     include_suggestions = data.get('include_suggestions', True)
+    words_map = data.get('words', [])
 
     try:
-        result = spellcheck_text(text, include_suggestions=include_suggestions)
+        spell_result = spellcheck_text(text, include_suggestions=include_suggestions)
+        
+        # จับคู่กล่อง (Box) กับคำผิด
+        if words_map:
+            for err in spell_result.get('errors', []):
+                found_box = None
+                found_box_norm = None
+                for w in words_map:
+                    if w['text'] == err['token']:
+                        found_box = w['box']
+                        found_box_norm = w.get('box_norm')
+                        break
+                
+                if not found_box:
+                    for w in words_map:
+                        if err['token'] in w['text']:
+                            found_box = w['box']
+                            found_box_norm = w.get('box_norm')
+                            if found_box_norm and len(w['text']) > len(err['token']):
+                                try:
+                                    text_full = w['text']
+                                    token = err['token']
+                                    start_idx = text_full.find(token)
+                                    if start_idx >= 0:
+                                        total_chars = len(text_full)
+                                        ratio_start = start_idx / total_chars
+                                        ratio_end = (start_idx + len(token)) / total_chars
+                                        line_x0 = found_box_norm[0][0]
+                                        line_x1 = found_box_norm[1][0]
+                                        new_x0 = line_x0 + (line_x1 - line_x0) * ratio_start
+                                        new_x1 = line_x0 + (line_x1 - line_x0) * ratio_end
+                                        word_box_norm = [
+                                            [new_x0, found_box_norm[0][1]],
+                                            [new_x1, found_box_norm[1][1]],
+                                            [new_x1, found_box_norm[2][1]],
+                                            [new_x0, found_box_norm[3][1]]
+                                        ]
+                                        found_box_norm = word_box_norm
+                                except Exception as e:
+                                    logger.warning(f"Word box estimation failed: {e}")
+                            break
+                            
+                if found_box:
+                    err['box'] = found_box
+                    if found_box_norm:
+                        err['box_norm'] = found_box_norm
+                        
         return jsonify({
             'success': True,
-            'result': result
+            'result': spell_result
         })
     except Exception as e:
         logger.error(f"Spell check error: {e}")
@@ -246,6 +287,7 @@ def process_stream():
     file = request.files['file']
     lang = request.args.get('lang', 'tha+eng')
     dpi = int(request.args.get('dpi', 300))
+    auto_spellcheck = request.args.get('auto_spellcheck', 'false').lower() == 'true'
     include_suggestions = request.args.get('include_suggestions', 'true').lower() == 'true'
     pdf_bytes = file.read()
     filename = secure_filename(file.filename)
@@ -307,83 +349,87 @@ def process_stream():
                 except Exception as save_err:
                     logger.error(f"Failed to save preview image: {save_err}")
 
-                # 2. ตรวจคำผิดด้วย
-                try:
-                    spell_result = spellcheck_text(
-                        page.get('text', ''),
-                        include_suggestions=include_suggestions
-                    )
+                # 2. ตรวจคำผิดด้วย (ถ้าเปิดโหมด Auto)
+                if auto_spellcheck:
+                    try:
+                        spell_result = spellcheck_text(
+                            page.get('text', ''),
+                            include_suggestions=include_suggestions
+                        )
                     
-                    # จับคู่กล่อง (Box) กับคำผิดเพื่อให้ Frontend แสดง Highlight ได้แม่นยำ
-                    words_map = page.get('words', [])
-                    for err in spell_result.get('errors', []):
-                        found_box = None
-                        found_box_norm = None
-                        
-                        for w in words_map:
-                            if w['text'] == err['token']:
-                                found_box = w['box']
-                                found_box_norm = w.get('box_norm')
-                                break
-                        
-                        if not found_box:
-                            # If no direct match, try to find a word containing the token
+                        # จับคู่กล่อง (Box) กับคำผิดเพื่อให้ Frontend แสดง Highlight ได้แม่นยำ
+                        words_map = page.get('words', [])
+                        for err in spell_result.get('errors', []):
+                            found_box = None
+                            found_box_norm = None
+                            
                             for w in words_map:
-                                if err['token'] in w['text']:
+                                if w['text'] == err['token']:
                                     found_box = w['box']
                                     found_box_norm = w.get('box_norm')
-                                    
-                                    # Estimate word-level box within the line
-                                    if found_box_norm and len(w['text']) > len(err['token']):
-                                        try:
-                                            text_full = w['text']
-                                            token = err['token']
-                                            start_idx = text_full.find(token)
-                                            if start_idx >= 0:
-                                                # Calculate horizontal relative ratios
-                                                # Note: This is an approximation (assumes monospaced-ish)
-                                                # but much better than highlighting the whole line.
-                                                total_chars = len(text_full)
-                                                ratio_start = start_idx / total_chars
-                                                ratio_end = (start_idx + len(token)) / total_chars
-                                                
-                                                line_x0 = found_box_norm[0][0]
-                                                line_x1 = found_box_norm[1][0]
-                                                new_x0 = line_x0 + (line_x1 - line_x0) * ratio_start
-                                                new_x1 = line_x0 + (line_x1 - line_x0) * ratio_end
-                                                
-                                                # Create new box_norm for the specific word
-                                                word_box_norm = [
-                                                    [new_x0, found_box_norm[0][1]], # TL
-                                                    [new_x1, found_box_norm[1][1]], # TR
-                                                    [new_x1, found_box_norm[2][1]], # BR
-                                                    [new_x0, found_box_norm[3][1]]  # BL
-                                                ]
-                                                found_box_norm = word_box_norm
-                                        except Exception as e:
-                                            logger.warning(f"Word box estimation failed: {e}")
                                     break
+                            
+                            if not found_box:
+                                # If no direct match, try to find a word containing the token
+                                for w in words_map:
+                                    if err['token'] in w['text']:
+                                        found_box = w['box']
+                                        found_box_norm = w.get('box_norm')
+                                        
+                                        # Estimate word-level box within the line
+                                        if found_box_norm and len(w['text']) > len(err['token']):
+                                            try:
+                                                text_full = w['text']
+                                                token = err['token']
+                                                start_idx = text_full.find(token)
+                                                if start_idx >= 0:
+                                                    # Calculate horizontal relative ratios
+                                                    # Note: This is an approximation (assumes monospaced-ish)
+                                                    # but much better than highlighting the whole line.
+                                                    total_chars = len(text_full)
+                                                    ratio_start = start_idx / total_chars
+                                                    ratio_end = (start_idx + len(token)) / total_chars
+                                                    
+                                                    line_x0 = found_box_norm[0][0]
+                                                    line_x1 = found_box_norm[1][0]
+                                                    new_x0 = line_x0 + (line_x1 - line_x0) * ratio_start
+                                                    new_x1 = line_x0 + (line_x1 - line_x0) * ratio_end
+                                                    
+                                                    # Create new box_norm for the specific word
+                                                    word_box_norm = [
+                                                        [new_x0, found_box_norm[0][1]], # TL
+                                                        [new_x1, found_box_norm[1][1]], # TR
+                                                        [new_x1, found_box_norm[2][1]], # BR
+                                                        [new_x0, found_box_norm[3][1]]  # BL
+                                                    ]
+                                                    found_box_norm = word_box_norm
+                                            except Exception as e:
+                                                logger.warning(f"Word box estimation failed: {e}")
+                                        break
+                                        
+                            if found_box:
+                                err['box'] = found_box
+                                if found_box_norm:
+                                    err['box_norm'] = found_box_norm
                                     
-                        if found_box:
-                            err['box'] = found_box
-                            if found_box_norm:
-                                err['box_norm'] = found_box_norm
-                                
-                    page['spell_check'] = spell_result
-                except Exception as spell_err:
-                    logger.error(f"Spell check error on page {page_num}: {spell_err}", exc_info=True)
-                    page['spell_check'] = {
-                        'tokens': [], 'errors': [],
-                        'summary': {
-                            'thai_tokens': 0, 'english_tokens': 0,
-                            'total_tokens': 0, 'error_count': 0,
-                            'thai_errors': 0, 'english_errors': 0,
-                            'semantic_errors': 0, 'error_rate': 0
+                        page['spell_check'] = spell_result
+                    except Exception as spell_err:
+                        logger.error(f"Spell check error on page {page_num}: {spell_err}", exc_info=True)
+                        page['spell_check'] = {
+                            'tokens': [], 'errors': [],
+                            'summary': {
+                                'thai_tokens': 0, 'english_tokens': 0,
+                                'total_tokens': 0, 'error_count': 0,
+                                'thai_errors': 0, 'english_errors': 0,
+                                'semantic_errors': 0, 'error_rate': 0
+                            }
                         }
-                    }
+                else:
+                    # ข้ามการตรวจคำผิด
+                    page['spell_check'] = None
                 
-                pages.append(page)
-                yield f"data: {json.dumps({'type': 'page_result', 'page': page})}\n\n"
+            pages.append(page)
+            yield f"data: {json.dumps({'type': 'page_result', 'page': page})}\n\n"
 
             # เรียงหน้าให้ถูกต้องเนื่องจาก ThreadPool อาจส่งผลลัพธ์กลับมาสลับลำดับ
             pages.sort(key=lambda p: p['page_number'])
