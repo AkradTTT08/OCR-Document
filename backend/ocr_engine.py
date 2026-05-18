@@ -96,29 +96,51 @@ def _generate_fallback_words(text: str, width: int, height: int) -> list:
     return words
 
 
+# Maximum dimension to send to the vision model. Smaller = faster on CPU.
+MAX_OCR_DIM = int(os.environ.get('OLLAMA_MAX_DIM', 2048))
+
+
+def _resize_for_ocr(image: Image.Image) -> Image.Image:
+    """
+    ย่อรูปให้ด้านที่ยาวที่สุดไม่เกิน MAX_OCR_DIM เพื่อลดเวลา inference บน CPU
+    """
+    w, h = image.size
+    max_dim = max(w, h)
+    if max_dim <= MAX_OCR_DIM:
+        return image
+    scale = MAX_OCR_DIM / max_dim
+    new_w = max(28, int(w * scale))
+    new_h = max(28, int(h * scale))
+    logger.info(f"Resizing image from {w}x{h} to {new_w}x{new_h} for Ollama inference")
+    return image.resize((new_w, new_h), Image.LANCZOS)
+
+
 def ocr_image(pil_image: Image.Image, lang: str = 'tha+eng') -> dict:
     """
     สกัดข้อความจากรูปภาพโดยใช้ Qwen2-VL ผ่าน Ollama
     คืนค่าเป็น Dict: { 'text': str, 'words': list }
     """
-    ollama_url = os.environ.get('OLLAMA_API_URL', 'http://localhost:11434/api/chat')
-    model_name = os.environ.get('OLLAMA_MODEL', 'qwen2.5vl:3b-4k')
+    ollama_url = os.environ.get('OLLAMA_API_URL', 'http://127.0.0.1:11434/api/chat')
+    model_name = os.environ.get('OLLAMA_MODEL', 'qwen2.5vl:3b')
 
     w, h = pil_image.size
-    
-    # 1. Convert image to base64
+
+    # 1. Resize image to reduce inference time (especially on CPU)
+    resized = _resize_for_ocr(pil_image)
+
+    # 2. Convert image to base64
     buffered = io.BytesIO()
-    pil_image.save(buffered, format="PNG")
+    resized.save(buffered, format="PNG")
     img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
 
     prompt = (
-        "You are an expert OCR engine for Thai and English documents. "
-        "Extract ALL text and tables from this image perfectly. "
-        "Keep the exact layout, structure, and spacing. "
-        "For tabular data, you MUST use standard Markdown tables. "
-        "Do not include any <think> reasoning blocks in your final output, just output the raw markdown text."
+        "You are a strict Thai-English OCR software. Your only task is to extract text character-by-character.\n"
+        "Rules:\n"
+        "1. Transcribe the Thai text EXACTLY as it is written in the image. DO NOT predict the next word, DO NOT fix grammar, and DO NOT autocomplete or change any Thai sentences.\n"
+        "2. If you see 'วัตถุประสงค์', write 'วัตถุประสงค์'. Never guess or substitute other words.\n"
+        "3. For grids and rows, just output each cell's text separated by a space on a new line.\n"
+        "4. Output only raw parsed text content directly without any explanations."
     )
-
     payload = {
         "model": model_name,
         "messages": [
@@ -131,13 +153,15 @@ def ocr_image(pil_image: Image.Image, lang: str = 'tha+eng') -> dict:
         "stream": False,
         "options": {
             "temperature": 0.0,
-            "num_ctx": 4096
+            "num_ctx": 8192,
+            "num_batch": 8,
+            "num_predict": 4096
         }
     }
 
     try:
         logger.info(f"Calling Ollama API ({model_name})...")
-        response = requests.post(ollama_url, json=payload, timeout=300)
+        response = requests.post(ollama_url, json=payload, timeout=600)
         try:
             response.raise_for_status()
         except requests.exceptions.HTTPError as e:
@@ -177,7 +201,7 @@ def ocr_image(pil_image: Image.Image, lang: str = 'tha+eng') -> dict:
         return { 'text': f"Error: {e}", 'words': [], 'error': str(e) }
 
 
-def ocr_pdf_file(pdf_path: str, dpi: int = 300, lang: str = 'tha+eng', progress_callback=None) -> list[dict]:
+def ocr_pdf_file(pdf_path: str, dpi: int = 150, lang: str = 'tha+eng', progress_callback=None) -> list[dict]:
     """
     สกัดข้อความจาก PDF file
     """
@@ -223,7 +247,7 @@ def ocr_pdf_file(pdf_path: str, dpi: int = 300, lang: str = 'tha+eng', progress_
     return results
 
 
-def ocr_pdf_bytes(pdf_bytes: bytes, dpi: int = 300, lang: str = 'tha+eng', progress_callback=None) -> list[dict]:
+def ocr_pdf_bytes(pdf_bytes: bytes, dpi: int = 150, lang: str = 'tha+eng', progress_callback=None) -> list[dict]:
     """
     สกัดข้อความจาก PDF bytes
     """
@@ -269,7 +293,7 @@ def ocr_pdf_bytes(pdf_bytes: bytes, dpi: int = 300, lang: str = 'tha+eng', progr
     return results
 
 
-def ocr_pdf_bytes_generator(pdf_bytes: bytes, dpi: int = 300, lang: str = 'tha+eng'):
+def ocr_pdf_bytes_generator(pdf_bytes: bytes, dpi: int = 150, lang: str = 'tha+eng'):
     """
     สกัดข้อความจาก PDF bytes แบบ Generator ทำงานแบบ Multi-thread (จำกัด 2 Threads สำหรับ API Request)
     คืนค่าเป็น Generator yielding (page_data_dict, pil_image)

@@ -1,5 +1,6 @@
 <script>
-  import { toast } from './toastStore.js';
+  import { toast } from "./toastStore.js";
+  /** @type {any} */
   export let result = null;
   export let isProcessing = false;
   export let progress = { pct: 0, label: "", step: 0 };
@@ -17,7 +18,7 @@
   $: filteredErrors =
     filterLang === "all"
       ? pageErrors
-      : pageErrors.filter((e) => e.lang === filterLang);
+      : pageErrors.filter((/** @type {any} */ e) => e.lang === filterLang);
 
   // Total stats across all pages
   $: totalThai = sumSummaryField(pages, "thai_tokens");
@@ -31,6 +32,10 @@
       ? ((totalErr / (totalThai + totalEng)) * 100).toFixed(1)
       : "0";
 
+  /**
+   * @param {any[]} pages
+   * @param {string} field
+   */
   function sumSummaryField(pages, field) {
     return pages.reduce(
       (acc, p) => acc + (p.spell_check?.summary?.[field] ?? 0),
@@ -38,19 +43,32 @@
     );
   }
 
+  /**
+   * @param {any[]} pages
+   */
   function collectAllErrors(pages) {
     return pages.flatMap((p) =>
-      (p.spell_check?.errors ?? []).map((e) => ({ ...e, page: p.page_number })),
+      (p.spell_check?.errors ?? []).map((/** @type {any} */ e) => ({
+        ...e,
+        page: p.page_number,
+      })),
     );
   }
 
-  $: highlightedHtml = generateHighlightedHtml(activePage?.text, activePage?.spell_check?.errors);
+  $: highlightedHtml = parseMarkdownToHtml(
+    generateHighlightedHtml(activePage?.text, activePage?.spell_check?.errors),
+  );
 
+  /**
+   * @param {string} text
+   * @param {any[]} errors
+   */
   function generateHighlightedHtml(text, errors) {
     if (!text) return "";
     if (!errors || errors.length === 0) return text;
 
     // 1. Extract all HTML tags and replace them with a unique placeholder
+    /** @type {string[]} */
     const tags = [];
     let safeText = text.replace(/<[^>]+>/g, (match) => {
       tags.push(match);
@@ -58,29 +76,32 @@
     });
 
     // 2. Replace errors in the safeText
-    errors.forEach(err => {
+    errors.forEach((err) => {
       if (!err.token || err.token.trim() === "") return;
-      const safeToken = err.token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      
-      let cssClass = 'tok-err-th';
-      let title = `สะกดผิด | แนะนำ: ${(err.suggestions || []).join(', ')}`;
-      
-      if (err.error_type === "semantic") {
-        cssClass = 'tok-err-sm';
-        title = `บริบท | แนะนำ: ${(err.suggestions || []).join(', ')}`;
+      const safeToken = err.token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+      let cssClass = "tok-err-th";
+      let title = `สะกดผิด | แนะนำ: ${(err.suggestions || []).join(", ")}`;
+
+      if (err.error_type === "format") {
+        cssClass = "tok-err-fmt";
+        title = `รูปแบบ | ${err.message || "รูปแบบไม่ถูกต้อง"} | แนะนำ: ${(err.suggestions || []).join(", ")}`;
+      } else if (err.error_type === "semantic") {
+        cssClass = "tok-err-sm";
+        title = `บริบท | แนะนำ: ${(err.suggestions || []).join(", ")}`;
       } else if (err.lang === "english") {
-        cssClass = 'tok-err-en';
-        title = `Misspelled | Suggestions: ${(err.suggestions || []).join(', ')}`;
+        cssClass = "tok-err-en";
+        title = `Misspelled | Suggestions: ${(err.suggestions || []).join(", ")}`;
       }
-      
+
       let regexStr = safeToken;
       if (err.lang === "english") {
         regexStr = `\\b${safeToken}\\b`;
       }
-      
-      const regex = new RegExp(regexStr, 'g');
+
+      const regex = new RegExp(regexStr, "g");
       const replacement = `<span class="${cssClass}" title="${title}">${err.token}</span>`;
-      
+
       safeText = safeText.replace(regex, replacement);
     });
 
@@ -92,11 +113,123 @@
     return finalHtml;
   }
 
+  /**
+   * @param {string} text
+   * @returns {string}
+   */
+  function parseMarkdownToHtml(text) {
+    if (!text) return "";
+
+    const lines = text.split("\n");
+    /** @type {string[]} */
+    const html = [];
+    let inTable = false;
+    /** @type {string[]} */
+    let tableHeaders = [];
+    /** @type {string[][]} */
+    let tableRows = [];
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+
+      // ตรวจสอบว่าเป็นบรรทัดของตารางหรือไม่
+      if (line.startsWith("|") && line.endsWith("|")) {
+        const cells = line
+          .split("|")
+          .map((c) => c.trim())
+          .slice(1, -1);
+
+        if (!inTable) {
+          const nextLine = (lines[i + 1] || "").trim();
+          // ปรับปรุง Regex ให้ตรวจจับขีดแบ่งหัวตาราง ยืดหยุ่นขึ้น (รองรับช่องว่าง และเครื่องหมาย :)
+          if (
+            nextLine.startsWith("|") &&
+            /^[|:\s-]+$/.test(nextLine) &&
+            nextLine.includes("-")
+          ) {
+            inTable = true;
+            tableHeaders = cells;
+            i++; // ข้ามแถวขีดแบ่งไป
+            continue;
+          }
+        }
+
+        if (inTable) {
+          const isRowEmpty = cells.every((c) => c === "");
+          if (!isRowEmpty) {
+            tableRows.push(cells);
+          }
+          continue;
+        }
+      }
+
+      // ถ้าเจอบรรทัดที่ไม่ใช่ตาราง แต่ก่อนหน้านี้ค้างตารางไว้ ให้เรนเดอร์ตารางออกมาก่อน
+      if (inTable) {
+        html.push(renderHtmlTable(tableHeaders, tableRows));
+        inTable = false;
+        tableHeaders = [];
+        tableRows = [];
+      }
+
+      // ประมวลผลบรรทัดข้อความปกติ
+      if (line === "") {
+        html.push("<br/>");
+      } else if (line.startsWith("- ") || line.startsWith("* ")) {
+        html.push(`<ul><li>${line.substring(2)}</li></ul>`);
+      } else if (/^\d+\.\s/.test(line)) {
+        const match = line.match(/^(\d+)\.\s(.*)/);
+        if (match) {
+          html.push(`<ol start="${match[1]}"><li>${match[2]}</li></ol>`);
+        } else {
+          html.push(`<div>${line}</div>`);
+        }
+      } else {
+        html.push(`<div>${line}</div>`);
+      }
+    }
+
+    // 🌟 [จุดสำคัญที่แก้บั๊ก] หากลูปจบแล้ว แต่ข้อมูลตารางยังค้างอยู่ (ตารางอยู่ท้ายหน้าพอดี) ให้พ่นออกไปด้วย
+    if (inTable) {
+      html.push(renderHtmlTable(tableHeaders, tableRows));
+    }
+
+    return html.join("\n");
+  }
+
+  /**
+   * @param {string[]} headers
+   * @param {string[][]} rows
+   * @returns {string}
+   */
+  function renderHtmlTable(headers, rows) {
+    const html = ['<div class="table-container"><table class="ocr-table">'];
+    if (headers.length > 0) {
+      html.push("<thead><tr>");
+      headers.forEach((h) => {
+        html.push(`<th>${h}</th>`);
+      });
+      html.push("</tr></thead>");
+    }
+    if (rows.length > 0) {
+      html.push("<tbody>");
+      rows.forEach((row) => {
+        html.push("<tr>");
+        row.forEach((cell) => {
+          html.push(`<td>${cell}</td>`);
+        });
+        html.push("</tr>");
+      });
+      html.push("</tbody>");
+    }
+    html.push("</table></div>");
+    return html.join("");
+  }
+
   // ── Export ──
   function exportTxt() {
     if (!result) return;
     const text = result.pages
-      .map((p) => `=== หน้า ${p.page_number} ===\n${p.text}`)
+      .map((/** @type {any} */ p) => `=== หน้า ${p.page_number} ===\n${p.text}`)
       .join("\n\n");
     downloadFile(text, "ocr_result.txt");
   }
@@ -106,10 +239,10 @@
     r += `คำไทย: ${totalThai.toLocaleString()} | คำอังกฤษ: ${totalEng.toLocaleString()}\n`;
     r += `คำผิด(ไทย): ${totalThaiErr} | คำผิด(Eng): ${totalEngErr} | อัตรา: ${errRate}%\n`;
     r += `\n${"─".repeat(44)}\n\n`;
-    result.pages.forEach((p) => {
+    result.pages.forEach((/** @type {any} */ p) => {
       r += `=== หน้า ${p.page_number} ===\n`;
       const errors = p.spell_check?.errors ?? [];
-      errors.forEach((e) => {
+      errors.forEach((/** @type {any} */ e) => {
         const tag = e.lang === "english" ? "[EN]" : "[TH]";
         const sugg = e.suggestions?.length
           ? ` → ${e.suggestions.join(", ")}`
@@ -120,6 +253,10 @@
     });
     downloadFile(r, "ocr_report.txt");
   }
+  /**
+   * @param {string} content
+   * @param {string} name
+   */
   function downloadFile(content, name) {
     const a = Object.assign(document.createElement("a"), {
       href: URL.createObjectURL(new Blob([content], { type: "text/plain" })),
@@ -132,32 +269,33 @@
   let checkingSpell = false;
   async function runManualSpellCheck() {
     if (!activePage || checkingSpell) return;
-    
+
     checkingSpell = true;
     try {
-      toast(`เริ่มตรวจสอบคำผิดหน้า ${activePage.page_number}...`, 'info', 2000);
-      const API = 'http://localhost:5000/api';
+      toast(`เริ่มตรวจสอบคำผิดหน้า ${activePage.page_number}...`, "info", 2000);
+      const API = "http://localhost:5000/api";
       const res = await fetch(`${API}/spellcheck`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          text: activePage.text, 
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: activePage.text,
           words: activePage.words,
-          include_suggestions: true 
-        })
+          include_suggestions: true,
+        }),
       });
-      
+
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'เกิดข้อผิดพลาด');
-      
+      if (!res.ok) throw new Error(data.error || "เกิดข้อผิดพลาด");
+
       // Update page data
       result.pages[activePageIdx].spell_check = data.result;
-      
+
       // Trigger reactivity
-      result = result; 
-      toast(`ตรวจสอบคำผิดหน้า ${activePage.page_number} เสร็จสิ้น`, 'success');
+      result = result;
+      toast(`ตรวจสอบคำผิดหน้า ${activePage.page_number} เสร็จสิ้น`, "success");
     } catch (err) {
-      toast(`ข้อผิดพลาด: ${err.message}`, 'error');
+      const msg = err instanceof Error ? err.message : String(err);
+      toast(`ข้อผิดพลาด: ${msg}`, "error");
     } finally {
       checkingSpell = false;
     }
@@ -345,30 +483,33 @@
                   {#if err.box}
                     <div
                       class="error-box"
-                      class:th={err.lang === "thai"}
+                      class:th={err.lang === "thai" &&
+                        err.error_type !== "format" &&
+                        err.error_type !== "semantic"}
                       class:en={err.lang === "english"}
                       class:sm={err.error_type === "semantic"}
+                      class:fmt={err.error_type === "format"}
                       style="
                         left: {err.box_norm
-                          ? err.box_norm[0][0] * 100
-                          : (err.box[0][0] / activePage.width) * 100}%;
+                        ? err.box_norm[0][0] * 100
+                        : (err.box[0][0] / activePage.width) * 100}%;
                         top: {err.box_norm
-                          ? err.box_norm[0][1] * 100
-                          : (err.box[0][1] / activePage.height) * 100}%;
+                        ? err.box_norm[0][1] * 100
+                        : (err.box[0][1] / activePage.height) * 100}%;
                         width: {err.box_norm
-                          ? (err.box_norm[1][0] - err.box_norm[0][0]) * 100
-                          : ((err.box[1][0] - err.box[0][0]) /
-                              activePage.width) *
-                            100}%;
+                        ? (err.box_norm[1][0] - err.box_norm[0][0]) * 100
+                        : ((err.box[1][0] - err.box[0][0]) / activePage.width) *
+                          100}%;
                         height: {err.box_norm
-                          ? (err.box_norm[2][1] - err.box_norm[0][1]) * 100
-                          : ((err.box[2][1] - err.box[0][1]) /
-                              activePage.height) *
-                            100}%;
+                        ? (err.box_norm[2][1] - err.box_norm[0][1]) * 100
+                        : ((err.box[2][1] - err.box[0][1]) /
+                            activePage.height) *
+                          100}%;
                       "
-                      title="{err.token} → {(err.suggestions || []).join(
-                        ', ',
-                      ) || '—'}"
+                      title="{err.error_type === 'format'
+                        ? 'ฟอร์แมตผิด: ' + (err.message || '')
+                        : err.token} → {(err.suggestions || []).join(', ') ||
+                        '—'}"
                     ></div>
                   {/if}
                 {/each}
@@ -381,13 +522,29 @@
       {:else if viewMode === "errors"}
         {#if !activePage?.spell_check}
           <div class="manual-check-box">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="40" height="40" stroke-width="1.5">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              width="40"
+              height="40"
+              stroke-width="1.5"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25"
+              />
             </svg>
             <p>ยังไม่ได้ตรวจสอบคำผิดในหน้านี้</p>
-            <button class="btn-check" on:click={runManualSpellCheck} disabled={checkingSpell}>
+            <button
+              class="btn-check"
+              on:click={runManualSpellCheck}
+              disabled={checkingSpell}
+            >
               {#if checkingSpell}
-                <div class="spinner"></div> กำลังตรวจสอบ...
+                <div class="spinner"></div>
+                 กำลังตรวจสอบ...
               {:else}
                 🔍 เริ่มตรวจสอบคำผิด
               {/if}
@@ -424,14 +581,18 @@
                 <span
                   class="et-word"
                   class:word-th={err.lang === "thai" &&
-                    err.error_type !== "semantic"}
+                    err.error_type !== "semantic" &&
+                    err.error_type !== "format"}
                   class:word-en={err.lang === "english"}
                   class:word-sm={err.error_type === "semantic"}
+                  class:word-fmt={err.error_type === "format"}
                 >
                   {err.token}
                 </span>
                 <span>
-                  {#if err.error_type === "semantic"}
+                  {#if err.error_type === "format"}
+                    <span class="badge-fmt">FMT</span>
+                  {:else if err.error_type === "semantic"}
                     <span class="badge-sm">SEM</span>
                   {:else if err.lang === "thai"}
                     <span class="badge-th">TH</span>
@@ -462,7 +623,7 @@
         <!-- PLAIN TEXT VIEW (HTML/Markdown Rendered) -->
       {:else}
         <div class="plain-view rendered-html">
-          {@html activePage?.text ?? ""}
+          {@html parseMarkdownToHtml(activePage?.text ?? "")}
         </div>
       {/if}
     </div>
@@ -812,8 +973,12 @@
   .word-en {
     color: var(--warning);
   }
+  .word-fmt {
+    color: var(--warning);
+  }
   .badge-th,
-  .badge-en {
+  .badge-en,
+  .badge-fmt {
     font-size: 10px;
     font-weight: 700;
     padding: 2px 6px;
@@ -834,6 +999,11 @@
     background: rgba(168, 85, 247, 0.14);
     color: var(--semantic);
     border: 1px solid rgba(168, 85, 247, 0.3);
+  }
+  .badge-fmt {
+    background: rgba(245, 158, 11, 0.14);
+    color: var(--warning);
+    border: 1px solid rgba(245, 158, 11, 0.3);
   }
   .et-suggs {
     display: flex;
@@ -865,7 +1035,15 @@
     white-space: pre-wrap;
     word-break: break-word;
   }
-  .tok-err-th {
+  :global(.tok-err-fmt) {
+    color: var(--warning);
+    background: rgba(245, 158, 11, 0.08);
+    border-bottom: 2px dashed var(--warning);
+    border-radius: 3px;
+    padding: 0 2px;
+    cursor: help;
+  }
+  :global(.tok-err-th) {
     color: var(--danger);
     background: rgba(248, 113, 113, 0.1);
     border-bottom: 2px solid var(--danger);
@@ -873,7 +1051,7 @@
     padding: 0 2px;
     cursor: help;
   }
-  .tok-err-en {
+  :global(.tok-err-en) {
     color: var(--warning);
     background: rgba(251, 191, 36, 0.1);
     border-bottom: 2px solid var(--warning);
@@ -881,7 +1059,7 @@
     padding: 0 2px;
     cursor: help;
   }
-  .tok-err-sm {
+  :global(.tok-err-sm) {
     color: var(--semantic);
     background: rgba(168, 85, 247, 0.1);
     border-bottom: 2px solid var(--semantic);
@@ -904,6 +1082,13 @@
   }
 
   /* ── HTML Rendered ── */
+  .rendered-html :global(.table-container) {
+    width: 100%;
+    overflow-x: auto;
+    margin: 16px 0;
+    border-radius: 8px;
+    border: 1px solid var(--border2);
+  }
   .rendered-html :global(table) {
     width: 100%;
     border-collapse: collapse;
@@ -911,7 +1096,8 @@
     color: var(--text);
     background: var(--surface);
   }
-  .rendered-html :global(th), .rendered-html :global(td) {
+  .rendered-html :global(th),
+  .rendered-html :global(td) {
     border: 1px solid var(--border2);
     padding: 8px 12px;
     text-align: left;
@@ -978,6 +1164,10 @@
     background: #a855f7;
     border-color: #8b5cf6;
   }
+  .error-box.fmt {
+    background: #fbbf24;
+    border: 1px dashed #d97706;
+  }
 
   .error-box:hover {
     opacity: 0.8;
@@ -1034,12 +1224,14 @@
   .spinner {
     width: 16px;
     height: 16px;
-    border: 2px solid rgba(255,255,255,0.3);
+    border: 2px solid rgba(255, 255, 255, 0.3);
     border-top-color: white;
     border-radius: 50%;
     animation: spin 1s linear infinite;
   }
   @keyframes spin {
-    to { transform: rotate(360deg); }
+    to {
+      transform: rotate(360deg);
+    }
   }
 </style>

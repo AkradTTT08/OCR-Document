@@ -1,0 +1,6 @@
+FROM qwen2.5vl:3b
+
+# Set highly optimized parameters for 8GB GPU
+PARAMETER num_ctx 3072
+PARAMETER num_batch 8
+PARAMETER num_predict 64

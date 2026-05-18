@@ -11,6 +11,7 @@ logging.basicConfig(
 import os
 import sys
 import tempfile
+from typing import List, Dict, Any
 from ocr_engine import VERSION
 from pathlib import Path
 from flask import Flask, request, jsonify, send_from_directory
@@ -27,6 +28,11 @@ from dictionary_manager import (
     reload_dictionary,
     add_custom_word,
     get_dictionary_stats
+)
+from format_checker import (
+    load_format_rules,
+    save_format_rules,
+    check_format_rules
 )
 logger = logging.getLogger(__name__)
 
@@ -47,6 +53,63 @@ app.config['MAX_CONTENT_LENGTH'] = MAX_CONTENT_LENGTH
 UPLOAD_FOLDER.mkdir(exist_ok=True)
 CACHE_FOLDER = BASE_DIR / 'uploads' / 'cache'
 CACHE_FOLDER.mkdir(exist_ok=True)
+
+
+def enrich_errors_with_boxes(errors: List[Dict], words_map: List[Dict]) -> List[Dict]:
+    """จับคู่กล่อง (Box) กับข้อผิดพลาดเพื่อให้ Frontend แสดง Highlight ได้แม่นยำ"""
+    if not words_map or not errors:
+        return errors
+
+    for err in errors:
+        token = err.get("token", "")
+        if not token:
+            continue
+            
+        found_box = None
+        found_box_norm = None
+        
+        # Match exact token
+        for w in words_map:
+            if w.get('text', '') == token:
+                found_box = w.get('box')
+                found_box_norm = w.get('box_norm')
+                break
+                
+        if not found_box:
+            # Try matching substring
+            for w in words_map:
+                w_text = w.get('text', '')
+                if token in w_text:
+                    found_box = w.get('box')
+                    found_box_norm = w.get('box_norm')
+                    if found_box_norm and len(w_text) > len(token):
+                        try:
+                            start_idx = w_text.find(token)
+                            if start_idx >= 0:
+                                total_chars = len(w_text)
+                                ratio_start = start_idx / total_chars
+                                ratio_end = (start_idx + len(token)) / total_chars
+                                line_x0 = found_box_norm[0][0]
+                                line_x1 = found_box_norm[1][0]
+                                new_x0 = line_x0 + (line_x1 - line_x0) * ratio_start
+                                new_x1 = line_x0 + (line_x1 - line_x0) * ratio_end
+                                word_box_norm = [
+                                    [new_x0, found_box_norm[0][1]],
+                                    [new_x1, found_box_norm[1][1]],
+                                    [new_x1, found_box_norm[2][1]],
+                                    [new_x0, found_box_norm[3][1]]
+                                ]
+                                found_box_norm = word_box_norm
+                        except Exception as e:
+                            logger.warning(f"Word box estimation failed: {e}")
+                    break
+                    
+        if found_box:
+            err['box'] = found_box
+            if found_box_norm:
+                err['box_norm'] = found_box_norm
+                
+    return errors
 
 
 def allowed_file(filename: str) -> bool:
@@ -134,52 +197,26 @@ def spellcheck():
 
     try:
         spell_result = spellcheck_text(text, include_suggestions=include_suggestions)
+        errors = spell_result.get('errors', [])
         
-        # จับคู่กล่อง (Box) กับคำผิด
+        # ตรวจสอบรูปแบบ (Format Rules) และเพิ่มเข้าลิสต์ข้อผิดพลาด
+        try:
+            format_errors = check_format_rules(text)
+            errors.extend(format_errors)
+        except Exception as fmt_err:
+            logger.error(f"Format check error in api/spellcheck: {fmt_err}")
+            
+        # จับคู่กล่องข้อความ
         if words_map:
-            for err in spell_result.get('errors', []):
-                found_box = None
-                found_box_norm = None
-                for w in words_map:
-                    if w['text'] == err['token']:
-                        found_box = w['box']
-                        found_box_norm = w.get('box_norm')
-                        break
-                
-                if not found_box:
-                    for w in words_map:
-                        if err['token'] in w['text']:
-                            found_box = w['box']
-                            found_box_norm = w.get('box_norm')
-                            if found_box_norm and len(w['text']) > len(err['token']):
-                                try:
-                                    text_full = w['text']
-                                    token = err['token']
-                                    start_idx = text_full.find(token)
-                                    if start_idx >= 0:
-                                        total_chars = len(text_full)
-                                        ratio_start = start_idx / total_chars
-                                        ratio_end = (start_idx + len(token)) / total_chars
-                                        line_x0 = found_box_norm[0][0]
-                                        line_x1 = found_box_norm[1][0]
-                                        new_x0 = line_x0 + (line_x1 - line_x0) * ratio_start
-                                        new_x1 = line_x0 + (line_x1 - line_x0) * ratio_end
-                                        word_box_norm = [
-                                            [new_x0, found_box_norm[0][1]],
-                                            [new_x1, found_box_norm[1][1]],
-                                            [new_x1, found_box_norm[2][1]],
-                                            [new_x0, found_box_norm[3][1]]
-                                        ]
-                                        found_box_norm = word_box_norm
-                                except Exception as e:
-                                    logger.warning(f"Word box estimation failed: {e}")
-                            break
-                            
-                if found_box:
-                    err['box'] = found_box
-                    if found_box_norm:
-                        err['box_norm'] = found_box_norm
-                        
+            enrich_errors_with_boxes(errors, words_map)
+            
+        # อัปเดตข้อมูลสรุป
+        spell_result['errors'] = errors
+        summary = spell_result.get('summary', {})
+        if summary:
+            format_count = sum(1 for e in errors if e.get('error_type') == 'format')
+            summary['error_count'] = summary.get('error_count', 0) + format_count
+            
         return jsonify({
             'success': True,
             'result': spell_result
@@ -238,6 +275,22 @@ def process():
                     page.get('text', ''),
                     include_suggestions=include_suggestions
                 )
+                
+                # ตรวจสอบรูปแบบ (Format Rules)
+                try:
+                    format_errors = check_format_rules(page.get('text', ''))
+                    errors = page['spell_check'].get('errors', [])
+                    errors.extend(format_errors)
+                    
+                    # จับคู่กล่องข้อความ
+                    enrich_errors_with_boxes(errors, page.get('words', []))
+                    
+                    summary = page['spell_check'].get('summary', {})
+                    if summary:
+                        summary['error_count'] = summary.get('error_count', 0) + len(format_errors)
+                except Exception as fmt_err:
+                    logger.error(f"Format check error in api/process on page {page.get('page_number')}: {fmt_err}")
+                    
             except Exception as spell_err:
                 logger.error(f"Spell check error on page {page.get('page_number')}: {spell_err}")
                 page['spell_check'] = {
@@ -251,9 +304,9 @@ def process():
                 }
 
         # สรุปผลรวมทุกหน้า
-        total_thai = sum(p.get('spell_check', {}).get('summary', {}).get('thai_tokens', 0) for p in pages)
-        total_eng  = sum(p.get('spell_check', {}).get('summary', {}).get('english_tokens', 0) for p in pages)
-        total_err  = sum(p.get('spell_check', {}).get('summary', {}).get('error_count', 0) for p in pages)
+        total_thai = sum((p.get('spell_check') or {}).get('summary', {}).get('thai_tokens', 0) for p in pages)
+        total_eng  = sum((p.get('spell_check') or {}).get('summary', {}).get('english_tokens', 0) for p in pages)
+        total_err  = sum((p.get('spell_check') or {}).get('summary', {}).get('error_count', 0) for p in pages)
         total_tok  = total_thai + total_eng
 
         return jsonify({
@@ -324,19 +377,37 @@ def process_stream():
             
             # เนื่องจาก Flask generator ต้อง yield ค่าออกไป
             # เราจะแก้โครงสร้างให้ ocr_pdf_bytes รับ yield หรือใช้ wrapper
-            
+            # Get total pages instantly using pdfinfo_from_bytes
+            total_pages = 1
+            try:
+                from pdf2image.pdf2image import pdfinfo_from_bytes
+                from ocr_engine import POPPLER_PATH
+                poppler_path = POPPLER_PATH if os.path.exists(POPPLER_PATH) else None
+                info = pdfinfo_from_bytes(pdf_bytes, poppler_path=poppler_path)
+                total_pages = int(info.get("Pages", 1))
+                logger.info(f"Instantly detected PDF page count: {total_pages}")
+            except Exception as info_err:
+                logger.error(f"Failed to get PDF info: {info_err}")
+
             # ส่ง event เริ่มต้น
             yield f"data: {json.dumps({'type': 'start', 'filename': filename})}\n\n"
             
-            # แจ้งความคืบหน้าเรื่องการโหลด Engine (กรณีรันครั้งแรกจะนาน)
-            yield f"data: {json.dumps({'type': 'progress', 'page': 0, 'total': 0, 'status': 'loading_engine', 'elapsed': 0})}\n\n"
+            # แจ้งความคืบหน้าเรื่องการโหลด Engine
+            yield f"data: {json.dumps({'type': 'progress', 'page': 0, 'total': total_pages, 'status': 'loading_engine', 'elapsed': 0})}\n\n"
 
             pages = []
-            # PaddleOCR is heavy on CPU, limited to 2 concurrent pages for stability
+            page_count = 0
             # OCR และ Spell Check ทีละหน้า (Streaming)
             for page, img in ocr_pdf_bytes_generator(pdf_bytes, dpi=dpi, lang=lang):
-                # 1. บันทึกรูปใน Session Dir (เพื่อทำ Preview)
                 page_num = page['page_number']
+                total_pages = page.get('total_pages', total_pages)
+                page_count += 1
+                
+                # Emit progress right after a page is OCR-ed and we start processing/spellchecking
+                elapsed = time.time() - start_time
+                yield f"data: {json.dumps({'type': 'progress', 'page': page_count, 'total': total_pages, 'status': f'processing_page_{page_num}', 'elapsed': elapsed})}\n\n"
+
+                # 1. บันทึกรูปใน Session Dir (เพื่อทำ Preview)
                 img_name = f"page_{page_num}.jpg"
                 img_path = session_dir / img_name
                 
@@ -349,69 +420,32 @@ def process_stream():
                 except Exception as save_err:
                     logger.error(f"Failed to save preview image: {save_err}")
 
-                # 2. ตรวจคำผิดด้วย (ถ้าเปิดโหมด Auto)
+                # 2. ตรวจคำผิดและจัดรูปแบบ (ถ้าเปิดโหมด Auto)
                 if auto_spellcheck:
                     try:
                         spell_result = spellcheck_text(
                             page.get('text', ''),
                             include_suggestions=include_suggestions
                         )
-                    
-                        # จับคู่กล่อง (Box) กับคำผิดเพื่อให้ Frontend แสดง Highlight ได้แม่นยำ
+                        errors = spell_result.get('errors', [])
+                        
+                        # ตรวจสอบรูปแบบ (Format Rules)
+                        try:
+                            format_errors = check_format_rules(page.get('text', ''))
+                            errors.extend(format_errors)
+                        except Exception as fmt_err:
+                            logger.error(f"Format check error in stream on page {page_num}: {fmt_err}")
+                            
+                        # จับคู่กล่องข้อความ
                         words_map = page.get('words', [])
-                        for err in spell_result.get('errors', []):
-                            found_box = None
-                            found_box_norm = None
+                        enrich_errors_with_boxes(errors, words_map)
+                        
+                        spell_result['errors'] = errors
+                        summary = spell_result.get('summary', {})
+                        if summary:
+                            format_count = sum(1 for e in errors if e.get('error_type') == 'format')
+                            summary['error_count'] = summary.get('error_count', 0) + format_count
                             
-                            for w in words_map:
-                                if w['text'] == err['token']:
-                                    found_box = w['box']
-                                    found_box_norm = w.get('box_norm')
-                                    break
-                            
-                            if not found_box:
-                                # If no direct match, try to find a word containing the token
-                                for w in words_map:
-                                    if err['token'] in w['text']:
-                                        found_box = w['box']
-                                        found_box_norm = w.get('box_norm')
-                                        
-                                        # Estimate word-level box within the line
-                                        if found_box_norm and len(w['text']) > len(err['token']):
-                                            try:
-                                                text_full = w['text']
-                                                token = err['token']
-                                                start_idx = text_full.find(token)
-                                                if start_idx >= 0:
-                                                    # Calculate horizontal relative ratios
-                                                    # Note: This is an approximation (assumes monospaced-ish)
-                                                    # but much better than highlighting the whole line.
-                                                    total_chars = len(text_full)
-                                                    ratio_start = start_idx / total_chars
-                                                    ratio_end = (start_idx + len(token)) / total_chars
-                                                    
-                                                    line_x0 = found_box_norm[0][0]
-                                                    line_x1 = found_box_norm[1][0]
-                                                    new_x0 = line_x0 + (line_x1 - line_x0) * ratio_start
-                                                    new_x1 = line_x0 + (line_x1 - line_x0) * ratio_end
-                                                    
-                                                    # Create new box_norm for the specific word
-                                                    word_box_norm = [
-                                                        [new_x0, found_box_norm[0][1]], # TL
-                                                        [new_x1, found_box_norm[1][1]], # TR
-                                                        [new_x1, found_box_norm[2][1]], # BR
-                                                        [new_x0, found_box_norm[3][1]]  # BL
-                                                    ]
-                                                    found_box_norm = word_box_norm
-                                            except Exception as e:
-                                                logger.warning(f"Word box estimation failed: {e}")
-                                        break
-                                        
-                            if found_box:
-                                err['box'] = found_box
-                                if found_box_norm:
-                                    err['box_norm'] = found_box_norm
-                                    
                         page['spell_check'] = spell_result
                     except Exception as spell_err:
                         logger.error(f"Spell check error on page {page_num}: {spell_err}", exc_info=True)
@@ -428,15 +462,15 @@ def process_stream():
                     # ข้ามการตรวจคำผิด
                     page['spell_check'] = None
                 
-            pages.append(page)
-            yield f"data: {json.dumps({'type': 'page_result', 'page': page})}\n\n"
+                pages.append(page)
+                yield f"data: {json.dumps({'type': 'page_result', 'page': page})}\n\n"
 
             # เรียงหน้าให้ถูกต้องเนื่องจาก ThreadPool อาจส่งผลลัพธ์กลับมาสลับลำดับ
             pages.sort(key=lambda p: p['page_number'])
 
             # สรุปผลตอนท้าย
-            total_errors = sum(p.get('spell_check', {}).get('summary', {}).get('error_count', 0) for p in pages)
-            total_tokens = sum(p.get('spell_check', {}).get('summary', {}).get('thai_tokens', 0) for p in pages)
+            total_errors = sum((p.get('spell_check') or {}).get('summary', {}).get('error_count', 0) for p in pages)
+            total_tokens = sum((p.get('spell_check') or {}).get('summary', {}).get('thai_tokens', 0) for p in pages)
             
             final_data = {
                 'type': 'complete',
@@ -495,6 +529,33 @@ def reload_dict():
             'success': True,
             'message': f'โหลด dictionary ใหม่สำเร็จ ({len(dictionary):,} คำ)'
         })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/format_rules', methods=['GET'])
+def get_format_rules_route():
+    """ดึงกฎการจัดรูปแบบทั้งหมด"""
+    try:
+        rules = load_format_rules()
+        return jsonify({'success': True, 'rules': rules})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/format_rules', methods=['POST'])
+def save_format_rules_route():
+    """บันทึกกฎการจัดรูปแบบทั้งหมด"""
+    try:
+        data = request.get_json()
+        if not data or 'rules' not in data:
+            return jsonify({'error': 'กรุณาส่ง JSON { "rules": [...] }'}), 400
+        
+        success = save_format_rules(data['rules'])
+        if success:
+            return jsonify({'success': True, 'message': 'บันทึกกฎการจัดรูปแบบสำเร็จ'})
+        else:
+            return jsonify({'error': 'ไม่สามารถบันทึกกฎได้'}), 500
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 

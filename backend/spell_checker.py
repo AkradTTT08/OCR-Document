@@ -1,5 +1,5 @@
 """
-Spell Checker - ตรวจสอบคำถูกคำผิดภาษาไทยและภาษาอังกฤษด้วย ZhipuAI (GLM-4-Flash)
+Spell Checker - ตรวจสอบคำถูกคำผิดภาษาไทยและภาษาอังกฤษด้วย local Ollama Qwen
 """
 import re
 import json
@@ -46,13 +46,8 @@ def _get_custom_words() -> str:
 
 def spellcheck_text(text: str, include_suggestions: bool = True) -> Dict[str, Any]:
     """
-    ตรวจสอบคำผิดในข้อความด้วย GLM-4-Flash
+    ตรวจสอบคำผิดในข้อความด้วย Ollama Qwen
     """
-    api_key = os.environ.get('ZHIPUAI_API_KEY')
-    if not api_key:
-        logger.error("ZHIPUAI_API_KEY is not set.")
-        return _empty_spell_check(text)
-
     if not text.strip():
         return _empty_spell_check(text)
 
@@ -76,29 +71,39 @@ Return your result STRICTLY in JSON format as a list of errors:
   ]
 }}
 If there are no errors, return {{"errors": []}}.
-DO NOT include any markdown blocks around the JSON."""
+Do not include any <think> reasoning blocks in your final output, just output the raw JSON."""
 
-    url = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
+    model_name = os.environ.get('OLLAMA_MODEL', 'qwen2.5vl:3b')
+    ollama_url = os.environ.get('OLLAMA_URL', 'http://127.0.0.1:11434/api/chat')
+
     payload = {
-        "model": "glm-4-flash",
+        "model": model_name,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"Check this text for errors:\n\n{text}"}
         ],
-        "response_format": {"type": "json_object"}
+        "stream": False,
+        "options": {
+            "temperature": 0.0,
+            "num_ctx": 2048,
+            "num_predict": 1024
+        }
     }
 
     ai_errors = []
     try:
-        logger.info("Calling GLM-4-Flash for spellcheck...")
-        response = requests.post(url, headers=headers, json=payload, timeout=60)
+        logger.info(f"Calling Ollama ({model_name}) for spellcheck...")
+        response = requests.post(ollama_url, json=payload, timeout=120)
         response.raise_for_status()
         result = response.json()
-        content = result['choices'][0]['message']['content']
+        content = ""
+        if 'message' in result and 'content' in result['message']:
+            content = result['message']['content']
+        else:
+            content = str(result)
+            
+        # Clean up any <think> blocks if present
+        content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
         
         # Clean potential markdown wrapping just in case
         if content.startswith("```json"):
@@ -108,9 +113,9 @@ DO NOT include any markdown blocks around the JSON."""
             
         data = json.loads(content.strip())
         ai_errors = data.get("errors", [])
-        logger.info(f"GLM-4 found {len(ai_errors)} errors.")
+        logger.info(f"Ollama spellcheck found {len(ai_errors)} errors.")
     except Exception as e:
-        logger.error(f"GLM-4 Spellcheck API Error: {e}")
+        logger.error(f"Ollama Spellcheck Error: {e}")
         return _empty_spell_check(text)
 
     # Reconstruct tokens array & errors array for frontend compatibility

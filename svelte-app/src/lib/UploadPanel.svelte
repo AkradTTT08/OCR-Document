@@ -1,12 +1,14 @@
 <script>
   import { createEventDispatcher } from 'svelte';
   import DictStats from './DictStats.svelte';
+  import FormatRules from './FormatRules.svelte';
   import { toast } from './toastStore.js';
   const dispatch = createEventDispatcher();
 
   const API = 'http://localhost:5000/api';
 
   // ── State ──
+  /** @type {any} */
   let file = null;
   let isDragging = false;
   let lang = 'tha+eng';
@@ -14,16 +16,19 @@
   let autoSpellCheck = false;
 
   // ── File ──
+  /** @param {any} e */
   function onDrop(e) {
     e.preventDefault();
     isDragging = false;
     const f = e.dataTransfer.files[0];
     if (f) setFile(f);
   }
+  /** @param {any} e */
   function onFileChange(e) {
     const f = e.target.files[0];
     if (f) setFile(f);
   }
+  /** @param {any} f */
   function setFile(f) {
     if (!f.name.toLowerCase().endsWith('.pdf')) {
       toast('รองรับเฉพาะไฟล์ PDF เท่านั้น', 'warning');
@@ -38,6 +43,7 @@
   }
   function removeFile() { file = null; }
 
+  /** @param {number} b */
   function formatBytes(b) {
     if (b < 1024) return `${b} B`;
     if (b < 1048576) return `${(b/1024).toFixed(1)} KB`;
@@ -48,6 +54,11 @@
   async function process() {
     if (!file) return;
 
+    /**
+     * @param {number} pct
+     * @param {string} label
+     * @param {number} step
+     */
     const emitProgress = (pct, label, step) =>
       dispatch('processing', { active: true, progress: { pct, label, step } });
 
@@ -67,6 +78,9 @@
         throw new Error(err.error || 'เกิดข้อผิดพลาด');
       }
 
+      if (!res.body) {
+        throw new Error('ไม่สามารถเชื่อมต่อข้อมูลสตรีมแบบเรียลไทม์ได้ (Response body is null)');
+      }
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
@@ -79,7 +93,7 @@
 
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n\n');
-        buffer = lines.pop(); // keep last chunk
+        buffer = lines.pop() ?? ''; // keep last chunk
 
         for (const line of lines) {
           if (line.startsWith('data: ')) {
@@ -89,8 +103,43 @@
               emitProgress(10, 'แปลง PDF เป็นรูปภาพ...', 1);
             }
             else if (data.type === 'progress') {
-              const pct = 10 + Math.floor((data.page / data.total) * 70);
-              emitProgress(pct, `กำลังสกัดหน้า ${data.page}/${data.total} (${data.elapsed}s)...`, 2);
+              const completed = data.page || 0;
+              const total = data.total || 0;
+              const elapsed = data.elapsed || 0;
+              
+              let pct = 10;
+              let label = 'กำลังสกัดหน้า...';
+              
+              if (total > 0) {
+                pct = 10 + Math.floor((completed / total) * 70);
+                
+                if (completed > 0) {
+                  const timePerPage = elapsed / completed;
+                  const remaining = total - completed;
+                  const etaSeconds = Math.round(timePerPage * remaining);
+                  
+                  let etaText = '';
+                  if (etaSeconds < 60) {
+                    etaText = `${etaSeconds} วินาที`;
+                  } else if (etaSeconds < 3600) {
+                    const mins = Math.floor(etaSeconds / 60);
+                    const secs = etaSeconds % 60;
+                    etaText = `${mins} นาที ${secs} วินาที`;
+                  } else {
+                    const hrs = Math.floor(etaSeconds / 3600);
+                    const mins = Math.floor((etaSeconds % 3600) / 60);
+                    etaText = `${hrs} ชั่วโมง ${mins} นาที`;
+                  }
+                  
+                  label = `กำลังสกัดหน้า ${completed}/${total} (ใช้เวลาไปแล้ว ${Math.round(elapsed)}s, คาดว่าจะเสร็จในอีกประมาณ ${etaText})...`;
+                } else {
+                  label = `กำลังสกัดหน้า ${completed}/${total} (กำลังโหลดหน้าแรก)...`;
+                }
+              } else {
+                label = `กำลังโหลดโมเดลสแกนหน้า... (${Math.round(elapsed)}s)`;
+              }
+              
+              emitProgress(pct, label, 2);
             }
             else if (data.type === 'page_result') {
               pages.push(data.page);
@@ -130,11 +179,12 @@
 
     } catch (err) {
       dispatch('processing', { active: false, progress: { pct: 0, label: '', step: 0 } });
-      const msg = err.message || 'เกิดข้อผิดพลาด';
+      const msg = err instanceof Error ? err.message : String(err);
       toast(`ข้อผิดพลาด: ${msg}`, 'error', 6000);
     }
   }
 
+  /** @param {number} ms */
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 </script>
 
@@ -145,8 +195,8 @@
      on:dragover|preventDefault={() => isDragging = true}
      on:dragleave={() => isDragging = false}
      on:drop={onDrop}
-     on:click={() => !file && document.getElementById('fileInput').click()}
-     on:keydown={e => e.key === 'Enter' && !file && document.getElementById('fileInput').click()}
+     on:click={() => !file && document.getElementById('fileInput')?.click()}
+     on:keydown={e => e.key === 'Enter' && !file && document.getElementById('fileInput')?.click()}
      class:dragging={isDragging}
      class:has-file={!!file}
 >
@@ -217,6 +267,7 @@
 
 <!-- Dict stats mini -->
 <DictStats />
+<FormatRules />
 
 <style>
 /* ── Upload area ── */

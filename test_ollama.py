@@ -1,13 +1,18 @@
 import requests
 import base64
 import os
+import io
 import json
+from PIL import Image
 
-ollama_url = 'http://localhost:11434/api/chat'
-model_name = 'qwen2.5vl:3b-4k'
+ollama_url = 'http://127.0.0.1:11434/api/chat'
+model_name = 'qwen2.5vl-opt'
 
-# Create a dummy 1x1 white pixel image in base64
-dummy_img_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII="
+# Create a 64x64 white image (qwen2.5vl requires images larger than 28x28)
+dummy_img = Image.new('RGB', (64, 64), color='white')
+buffered = io.BytesIO()
+dummy_img.save(buffered, format='PNG')
+dummy_img_b64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
 
 payload = {
     "model": model_name,
@@ -20,7 +25,9 @@ payload = {
     ],
     "stream": False,
     "options": {
-        "num_ctx": 4096
+        "num_ctx": 3072,
+        "num_predict": 64,
+        "num_batch": 8
     }
 }
 
