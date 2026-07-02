@@ -1,5 +1,5 @@
 """
-Spell Checker - ตรวจสอบคำถูกคำผิดภาษาไทยและภาษาอังกฤษด้วย local Ollama Qwen
+Spell Checker - ตรวจสอบคำถูกคำผิดภาษาไทยและภาษาอังกฤษด้วย Google Gemini API
 """
 import re
 import json
@@ -73,37 +73,32 @@ Return your result STRICTLY in JSON format as a list of errors:
 If there are no errors, return {{"errors": []}}.
 Do not include any <think> reasoning blocks in your final output, just output the raw JSON."""
 
-    model_name = os.environ.get('OLLAMA_MODEL', 'qwen2.5vl:3b')
-    ollama_url = os.environ.get('OLLAMA_URL', 'http://127.0.0.1:11434/api/chat')
-
-    payload = {
-        "model": model_name,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Check this text for errors:\n\n{text}"}
-        ],
-        "stream": False,
-        "options": {
-            "temperature": 0.0,
-            "num_ctx": 2048,
-            "num_predict": 1024
-        }
-    }
+    model_name = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash-lite')
+    api_key = os.environ.get('GOOGLE_API_KEY', '')
 
     ai_errors = []
+    if not api_key:
+        logger.error("GOOGLE_API_KEY is missing! Cannot run spellcheck.")
+        return _empty_spell_check(text)
+
     try:
-        logger.info(f"Calling Ollama ({model_name}) for spellcheck...")
-        response = requests.post(ollama_url, json=payload, timeout=120)
-        response.raise_for_status()
-        result = response.json()
-        content = ""
-        if 'message' in result and 'content' in result['message']:
-            content = result['message']['content']
-        else:
-            content = str(result)
-            
-        # Clean up any <think> blocks if present
-        content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
+        from google import genai
+        from google.genai import types
+        
+        client = genai.Client(api_key=api_key)
+        logger.info(f"Calling Gemini ({model_name}) for spellcheck...")
+        
+        response = client.models.generate_content(
+            model=model_name,
+            contents=f"Check this text for errors:\n\n{text}",
+            config=types.GenerateContentConfig(
+                system_instruction=system_prompt,
+                temperature=0.0,
+                response_mime_type="application/json",
+            )
+        )
+        
+        content = response.text or ""
         
         # Clean potential markdown wrapping just in case
         if content.startswith("```json"):
@@ -113,9 +108,9 @@ Do not include any <think> reasoning blocks in your final output, just output th
             
         data = json.loads(content.strip())
         ai_errors = data.get("errors", [])
-        logger.info(f"Ollama spellcheck found {len(ai_errors)} errors.")
+        logger.info(f"Gemini spellcheck found {len(ai_errors)} errors.")
     except Exception as e:
-        logger.error(f"Ollama Spellcheck Error: {e}")
+        logger.error(f"Gemini Spellcheck Error: {e}")
         return _empty_spell_check(text)
 
     # Reconstruct tokens array & errors array for frontend compatibility

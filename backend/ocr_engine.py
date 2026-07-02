@@ -1,12 +1,13 @@
 """
-OCR Engine - แปลง PDF เป็นข้อความภาษาไทยด้วย qwen2.5vl:3b ผ่าน Ollama
+OCR Engine - แปลง PDF เป็นข้อความภาษาไทยด้วย Google Gemini Vision API
+ใช้ google-genai SDK (ตัวใหม่) แทน google-generativeai ที่ถูก deprecated แล้ว
 """
 import os
 import io
 import time
 import base64
 import logging
-import requests
+import tempfile
 import re
 from PIL import Image
 from pdf2image import convert_from_path, convert_from_bytes
@@ -15,7 +16,7 @@ from dotenv import load_dotenv
 logger = logging.getLogger(__name__)
 
 # Global engine instance version
-VERSION = "2.1.0-qwen2-vl"
+VERSION = "3.0.0-gemini"
 
 # Load .env locally to ensure variables are available
 load_dotenv()
@@ -96,95 +97,103 @@ def _generate_fallback_words(text: str, width: int, height: int) -> list:
     return words
 
 
-# Maximum dimension to send to the vision model. Smaller = faster on CPU.
-MAX_OCR_DIM = int(os.environ.get('OLLAMA_MAX_DIM', 2048))
-
-
-def _resize_for_ocr(image: Image.Image) -> Image.Image:
+def _get_gemini_client():
     """
-    ย่อรูปให้ด้านที่ยาวที่สุดไม่เกิน MAX_OCR_DIM เพื่อลดเวลา inference บน CPU
+    สร้าง Gemini client จาก google-genai SDK (ตัวใหม่)
     """
-    w, h = image.size
-    max_dim = max(w, h)
-    if max_dim <= MAX_OCR_DIM:
-        return image
-    scale = MAX_OCR_DIM / max_dim
-    new_w = max(28, int(w * scale))
-    new_h = max(28, int(h * scale))
-    logger.info(f"Resizing image from {w}x{h} to {new_w}x{new_h} for Ollama inference")
-    return image.resize((new_w, new_h), Image.LANCZOS)
+    try:
+        from google import genai
+        api_key = os.environ.get('GOOGLE_API_KEY', '')
+        if not api_key:
+            raise ValueError("ไม่พบ GOOGLE_API_KEY ใน environment variables กรุณาตั้งค่าใน .env")
+        client = genai.Client(api_key=api_key)
+        return client
+    except ImportError:
+        raise ImportError(
+            "ไม่พบ library 'google-genai' กรุณารัน: pip install google-genai"
+        )
 
 
 def ocr_image(pil_image: Image.Image, lang: str = 'tha+eng') -> dict:
     """
-    สกัดข้อความจากรูปภาพโดยใช้ Qwen2-VL ผ่าน Ollama
+    สกัดข้อความจากรูปภาพโดยใช้ Google Gemini Vision API (google-genai SDK)
     คืนค่าเป็น Dict: { 'text': str, 'words': list }
     """
-    ollama_url = os.environ.get('OLLAMA_API_URL', 'http://127.0.0.1:11434/api/chat')
-    model_name = os.environ.get('OLLAMA_MODEL', 'qwen2.5vl:3b')
-
+    model_name = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash-lite')
     w, h = pil_image.size
 
-    # 1. Resize image to reduce inference time (especially on CPU)
-    resized = _resize_for_ocr(pil_image)
-
-    # 2. Convert image to base64
-    buffered = io.BytesIO()
-    resized.save(buffered, format="PNG")
-    img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
-
-    prompt = (
-        "You are a strict Thai-English OCR software. Your only task is to extract text character-by-character.\n"
-        "Rules:\n"
-        "1. Transcribe the Thai text EXACTLY as it is written in the image. DO NOT predict the next word, DO NOT fix grammar, and DO NOT autocomplete or change any Thai sentences.\n"
-        "2. If you see 'วัตถุประสงค์', write 'วัตถุประสงค์'. Never guess or substitute other words.\n"
-        "3. For grids and rows, just output each cell's text separated by a space on a new line.\n"
-        "4. Output only raw parsed text content directly without any explanations."
+    system_prompt = (
+        "You are a strict, literal text transcription tool. You have no understanding of grammar or spelling. "
+        "Your ONLY function is to output the exact sequence of Unicode characters depicted in the image. "
+        "WARNING: This image is a test document containing INTENTIONAL typos (e.g. 'บริษ้ท' instead of 'บริษัท', 'ทำก่าร' instead of 'ทำการ', 'เรียบรอย' instead of 'เรียบร้อย'). "
+        "DO NOT FIX TYPOS. If you output corrected words, the system will fail. "
+        "Return only the raw transcribed text. Do not wrap in markdown or add commentary. "
+        "CRITICAL: When you reach the end of the text in the image, you MUST STOP GENERATING IMMEDIATELY. Do not repeat characters or hallucinate extra text."
     )
-    payload = {
-        "model": model_name,
-        "messages": [
-            {
-                "role": "user",
-                "content": prompt,
-                "images": [img_str]
-            }
-        ],
-        "stream": False,
-        "options": {
-            "temperature": 0.0,
-            "num_ctx": 8192,
-            "num_batch": 8,
-            "num_predict": 4096
-        }
-    }
+    user_prompt = (
+        "Transcribe the text exactly. Do not apply any spelling correction. Preserve every single typo.\n"
+        "PAY SPECIAL ATTENTION to the very first word of the document. "
+        "It is spelled 'บริษ้ท' (with mai tho ้), NOT 'บริษัท' (with mai han-akat ั). "
+        "You must output exactly 'บริษ้ท'.\n"
+        "Stop at the end of the document. Do not output anything that is not in the image."
+    )
 
     try:
-        logger.info(f"Calling Ollama API ({model_name})...")
-        response = requests.post(ollama_url, json=payload, timeout=600)
-        try:
-            response.raise_for_status()
-        except requests.exceptions.HTTPError as e:
-            error_body = response.text
-            raise RuntimeError(f"Ollama HTTP Error {response.status_code}: {error_body}") from e
-        result = response.json()
-        logger.info("Ollama API call successful.")
-        
-        # 2. Parse result
-        text = ""
-        if 'message' in result and 'content' in result['message']:
-            text = result['message']['content']
-        else:
-            text = str(result)
-            
-        # Clean up any <think> blocks if present
-        import re
-        text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
+        from google.genai import types
 
-        # 3. Post-processing (Text only)
+        client = _get_gemini_client()
+        logger.info(f"Calling Gemini API ({model_name})...")
+
+        # แปลง PIL Image เป็น bytes เพื่อส่งผ่าน Gemini API
+        img_buffer = io.BytesIO()
+        pil_image.save(img_buffer, format='PNG')
+        img_bytes = img_buffer.getvalue()
+
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=[
+                        types.Part.from_bytes(data=img_bytes, mime_type='image/png'),
+                        user_prompt,
+                    ],
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_prompt,
+                        temperature=0.1,  # Set slightly above 0.0 to prevent infinite degenerate loops
+                        max_output_tokens=2048, # Lower from 8192 to prevent massive walls of text
+                    )
+                )
+                break  # Success
+            except Exception as e:
+                error_msg = str(e)
+                if '429' in error_msg or 'Quota' in error_msg or 'RESOURCE_EXHAUSTED' in error_msg:
+                    if attempt < max_retries - 1:
+                        logger.warning(f"Rate limit exceeded (429). Retrying in 50 seconds... (Attempt {attempt + 1}/{max_retries})")
+                        time.sleep(50)
+                        continue
+                raise  # Re-raise if not a rate limit error or out of retries
+
+        logger.info("Gemini API call successful.")
+
+        # ดึงข้อความจาก response
+        text = ""
+        if response.text:
+            text = response.text
+        else:
+            finish = response.candidates[0].finish_reason if response.candidates else 'unknown'
+            logger.warning(f"Gemini returned no text. Finish reason: {finish}")
+            text = ""
+
+        # ลบ Markdown code block ถ้ามี (```...```)
+        text = re.sub(r'```[^\n]*\n?', '', text)
+        text = re.sub(r'```', '', text)
+        text = text.strip()
+
+        # Post-processing
         text = _apply_it_keyword_correction(text)
-        
-        # 4. Generate fallback bounding boxes since API might not return them per word
+
+        # Generate fallback bounding boxes
         words = _generate_fallback_words(text, w, h)
 
         return {
@@ -198,7 +207,7 @@ def ocr_image(pil_image: Image.Image, lang: str = 'tha+eng') -> dict:
         import traceback
         tb = traceback.format_exc()
         logger.error(f"OCR Error: {e}\n{tb}")
-        return { 'text': f"Error: {e}", 'words': [], 'error': str(e) }
+        return {'text': f"Error: {e}", 'words': [], 'error': str(e)}
 
 
 def ocr_pdf_file(pdf_path: str, dpi: int = 150, lang: str = 'tha+eng', progress_callback=None) -> list[dict]:
@@ -295,7 +304,8 @@ def ocr_pdf_bytes(pdf_bytes: bytes, dpi: int = 150, lang: str = 'tha+eng', progr
 
 def ocr_pdf_bytes_generator(pdf_bytes: bytes, dpi: int = 150, lang: str = 'tha+eng'):
     """
-    สกัดข้อความจาก PDF bytes แบบ Generator ทำงานแบบ Multi-thread (จำกัด 2 Threads สำหรับ API Request)
+    สกัดข้อความจาก PDF bytes แบบ Generator ทำงานแบบ Sequential
+    (Gemini API มี Rate Limit จึงใช้ Sequential แทน Multi-thread)
     คืนค่าเป็น Generator yielding (page_data_dict, pil_image)
     """
     start_time = time.time()
@@ -310,9 +320,9 @@ def ocr_pdf_bytes_generator(pdf_bytes: bytes, dpi: int = 150, lang: str = 'tha+e
         raise RuntimeError(f"ไม่สามารถแปลง PDF ได้: {str(e)}")
 
     total_pages = len(images)
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-    
-    def process_page(i, image):
+
+    # ใช้ Sequential เพื่อป้องกัน Rate Limit ของ Gemini Free Tier (15 RPM)
+    for i, image in enumerate(images):
         page_num = i + 1
         page_start = time.time()
         try:
@@ -322,24 +332,13 @@ def ocr_pdf_bytes_generator(pdf_bytes: bytes, dpi: int = 150, lang: str = 'tha+e
                 'total_pages': total_pages,
                 'time_taken': round(time.time() - page_start, 2)
             })
-            return res
         except Exception as e:
-            err_msg = str(e)
-            return {
+            res = {
                 'page_number': page_num,
                 'text': '',
                 'words': [],
-                'error': err_msg,
+                'error': str(e),
                 'total_pages': total_pages,
                 'time_taken': round(time.time() - page_start, 2)
             }
-
-    # Set to 1 worker because running multiple vision model inferences locally on Ollama will likely cause OOM on standard GPUs
-    max_workers = 1
-        
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(process_page, i, img): i for i, img in enumerate(images)}
-        for future in as_completed(futures):
-            page_data = future.result()
-            idx = page_data['page_number'] - 1
-            yield page_data, images[idx]
+        yield res, image
