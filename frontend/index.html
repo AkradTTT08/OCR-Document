@@ -80,7 +80,17 @@
       </div>
 
       <!-- Settings -->
-      <div class="settings-row">
+      <div class="settings-row" style="flex-wrap: wrap;">
+        <div class="setting-item" style="flex: 1 1 100%;">
+          <label for="projectSelect">เลือก Project <span style="color:var(--danger)">*จำเป็น</span></label>
+          <div style="display: flex; gap: 8px; width: 100%;">
+            <select id="projectSelect" style="flex: 1;">
+              <option value="">กำลังโหลดโปรเจกต์...</option>
+            </select>
+            <button id="addProjectBtn" type="button" class="btn-export" style="margin-top: 0;">+ เพิ่ม</button>
+          </div>
+        </div>
+
         <div class="setting-item">
           <label for="langSelect">ภาษา OCR</label>
           <select id="langSelect">

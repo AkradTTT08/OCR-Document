@@ -143,6 +143,34 @@ def health():
         'message': 'Thai OCR Spell Check API is running'
     })
 
+@app.route('/api/projects', methods=['GET'])
+def list_projects():
+    """List all projects for document ingestion"""
+    try:
+        from db_ingestion import get_projects
+        projects = get_projects()
+        return jsonify({'success': True, 'projects': projects})
+    except Exception as e:
+        logger.error(f"Error fetching projects: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/projects', methods=['POST'])
+def create_project():
+    """Create a new project"""
+    data = request.get_json()
+    if not data or 'name' not in data:
+        return jsonify({'error': 'กรุณาระบุชื่อโปรเจกต์ (name)'}), 400
+        
+    try:
+        from db_ingestion import add_project
+        project = add_project(data['name'])
+        if project:
+            return jsonify({'success': True, 'project': project})
+        return jsonify({'error': 'ไม่สามารถสร้างโปรเจกต์ได้'}), 500
+    except Exception as e:
+        logger.error(f"Error creating project: {e}")
+        return jsonify({'error': str(e)}), 500
+
 
 @app.route('/api/ocr', methods=['POST'])
 def ocr():
@@ -260,6 +288,13 @@ def process():
     lang = request.args.get('lang', 'tha+eng')
     dpi = int(request.args.get('dpi', 300))
     include_suggestions = request.args.get('include_suggestions', 'true').lower() == 'true'
+    project_id = request.form.get('project_id')
+    if project_id:
+        try:
+            project_id = int(project_id)
+        except ValueError:
+            project_id = None
+
 
     try:
         pdf_bytes = file.read()
@@ -308,6 +343,18 @@ def process():
         total_eng  = sum((p.get('spell_check') or {}).get('summary', {}).get('english_tokens', 0) for p in pages)
         total_err  = sum((p.get('spell_check') or {}).get('summary', {}).get('error_count', 0) for p in pages)
         total_tok  = total_thai + total_eng
+        
+        # --- Data Ingestion Pipeline ---
+        try:
+            full_markdown = "\n\n".join([page.get('text', '') for page in pages])
+            if full_markdown.strip():
+                from db_ingestion import ingest_markdown_document
+                logger.info(f"Triggering data ingestion pipeline for {filename} (Project: {project_id})...")
+                ingest_markdown_document(filename, full_markdown.strip(), project_id=project_id)
+        except Exception as ingest_error:
+            logger.error(f"Failed to ingest document to database: {ingest_error}")
+        # -------------------------------
+
 
         return jsonify({
             'success': True,

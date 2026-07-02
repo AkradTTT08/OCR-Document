@@ -33,6 +33,8 @@ const summaryCards   = document.getElementById('summaryCards');
 const pageTabs       = document.getElementById('pageTabs');
 const contentArea    = document.getElementById('contentArea');
 const uploadSection  = document.getElementById('uploadSection');
+const projectSelect  = document.getElementById('projectSelect');
+const addProjectBtn  = document.getElementById('addProjectBtn');
 const langSelect     = document.getElementById('langSelect');
 const dpiSelect      = document.getElementById('dpiSelect');
 const suggestToggle  = document.getElementById('suggestToggle');
@@ -102,6 +104,17 @@ processBtn.addEventListener('click', async () => {
 
   const formData = new FormData();
   formData.append('file', state.file);
+  
+  const projectId = projectSelect.value;
+  if (!projectId) {
+    showToast('กรุณาเลือก Project ก่อนทำการสแกน', 'error');
+    processBtn.classList.remove('loading');
+    processBtn.innerHTML = `<svg viewBox="0 0 20 20" fill="currentColor" width="18" height="18"><path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"/></svg> ประมวลผล OCR + ตรวจคำ`;
+    progressWrap.style.display = 'none';
+    resultsSection.style.display = 'none';
+    return;
+  }
+  formData.append('project_id', projectId);
 
   const lang = langSelect.value;
   const dpi  = dpiSelect.value;
@@ -497,3 +510,53 @@ function showToast(msg, type = '') {
 const spinStyle = document.createElement('style');
 spinStyle.textContent = `.spin { animation: spin 1s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } }`;
 document.head.appendChild(spinStyle);
+
+// ── Projects Management ───────────────────────────────────────────────────────
+async function fetchProjects() {
+  try {
+    const res = await fetch(`${API}/projects`);
+    const data = await res.json();
+    if (data.success) {
+      const projects = data.projects;
+      if (projects.length === 0) {
+        projectSelect.innerHTML = `<option value="">-- ไม่มีโปรเจกต์ (กรุณาเพิ่ม) --</option>`;
+      } else {
+        projectSelect.innerHTML = `<option value="">-- เลือกโปรเจกต์ --</option>` + 
+          projects.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
+      }
+    } else {
+      projectSelect.innerHTML = `<option value="">ดึงข้อมูลโปรเจกต์ล้มเหลว</option>`;
+    }
+  } catch (e) {
+    console.error("Error fetching projects:", e);
+    projectSelect.innerHTML = `<option value="">โหลดโปรเจกต์ไม่สำเร็จ</option>`;
+  }
+}
+
+addProjectBtn.addEventListener('click', async () => {
+  const projectName = prompt("กรุณากรอกชื่อโปรเจกต์ใหม่:");
+  if (!projectName || !projectName.trim()) return;
+  
+  try {
+    const res = await fetch(`${API}/projects`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: projectName.trim() })
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast(`สร้างโปรเจกต์ "${data.project.name}" สำเร็จ`, 'success');
+      await fetchProjects();
+      projectSelect.value = data.project.id;
+    } else {
+      showToast(data.error || 'สร้างโปรเจกต์ไม่สำเร็จ', 'error');
+    }
+  } catch (e) {
+    console.error(e);
+    showToast('ข้อผิดพลาดในการเชื่อมต่อ', 'error');
+  }
+});
+
+// Load projects on startup
+fetchProjects();
+

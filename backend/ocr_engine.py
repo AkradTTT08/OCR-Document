@@ -122,21 +122,13 @@ def ocr_image(pil_image: Image.Image, lang: str = 'tha+eng') -> dict:
     model_name = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash-lite')
     w, h = pil_image.size
 
+    # ลดขนาด Prompt ลงเพื่อประหยัด Token และให้กระชับที่สุด
     system_prompt = (
-        "You are a strict, literal text transcription tool. You have no understanding of grammar or spelling. "
-        "Your ONLY function is to output the exact sequence of Unicode characters depicted in the image. "
-        "WARNING: This image is a test document containing INTENTIONAL typos (e.g. 'บริษ้ท' instead of 'บริษัท', 'ทำก่าร' instead of 'ทำการ', 'เรียบรอย' instead of 'เรียบร้อย'). "
-        "DO NOT FIX TYPOS. If you output corrected words, the system will fail. "
-        "Return only the raw transcribed text. Do not wrap in markdown or add commentary. "
-        "CRITICAL: When you reach the end of the text in the image, you MUST STOP GENERATING IMMEDIATELY. Do not repeat characters or hallucinate extra text."
+        "Extract text from image exactly as is. DO NOT fix typos or grammar. "
+        "Return raw text only without markdown. Stop generating when text ends."
     )
-    user_prompt = (
-        "Transcribe the text exactly. Do not apply any spelling correction. Preserve every single typo.\n"
-        "PAY SPECIAL ATTENTION to the very first word of the document. "
-        "It is spelled 'บริษ้ท' (with mai tho ้), NOT 'บริษัท' (with mai han-akat ั). "
-        "You must output exactly 'บริษ้ท'.\n"
-        "Stop at the end of the document. Do not output anything that is not in the image."
-    )
+    user_prompt = "Transcribe exactly. Preserve all intentional typos."
+
 
     try:
         from google.genai import types
@@ -144,10 +136,22 @@ def ocr_image(pil_image: Image.Image, lang: str = 'tha+eng') -> dict:
         client = _get_gemini_client()
         logger.info(f"Calling Gemini API ({model_name})...")
 
-        # แปลง PIL Image เป็น bytes เพื่อส่งผ่าน Gemini API
+        # --- Image Optimization to Save Tokens ---
+        # Gemini คำนวณ Token ของภาพจากความละเอียด (Resolution) ยิ่งภาพใหญ่ยิ่งกิน Token เยอะ
+        # หากภาพมีขนาดเกิน 1600px จะทำการย่อส่วนลง (ยังเพียงพอสำหรับ OCR) และส่งเป็น JPEG
+        img_to_send = pil_image
+        max_dim = 1600
+        if max(w, h) > max_dim:
+            ratio = max_dim / max(w, h)
+            new_w, new_h = int(w * ratio), int(h * ratio)
+            img_to_send = pil_image.resize((new_w, new_h), Image.Resampling.LANCZOS)
+            logger.info(f"Resized image from {w}x{h} to {new_w}x{new_h} to save tokens.")
+
+        # แปลง PIL Image เป็น bytes
         img_buffer = io.BytesIO()
-        pil_image.save(img_buffer, format='PNG')
+        img_to_send.save(img_buffer, format='JPEG', quality=85)
         img_bytes = img_buffer.getvalue()
+        # -----------------------------------------
 
         max_retries = 3
         for attempt in range(max_retries):

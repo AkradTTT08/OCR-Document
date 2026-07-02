@@ -139,6 +139,21 @@ def ocr_document(source: str, lang: str = "tha+eng") -> str:
             extracted_text = result.get('text', '')
             
         logger.info("OCR Processing complete.")
+        
+        # --- Data Ingestion Pipeline Injection ---
+        try:
+            from db_ingestion import ingest_markdown_document
+            # Derive a simple filename based on source
+            filename = os.path.basename(source) if not _is_url(source) else source.split('/')[-1]
+            if not filename:
+                filename = "unknown_document"
+                
+            logger.info("Triggering data ingestion pipeline...")
+            ingest_markdown_document(filename, extracted_text.strip())
+        except Exception as ingest_error:
+            logger.error(f"Failed to ingest document to database: {ingest_error}")
+        # -----------------------------------------
+        
         return extracted_text.strip()
         
     except Exception as e:
