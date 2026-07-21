@@ -158,15 +158,26 @@ def list_projects():
 def create_project():
     """Create a new project"""
     data = request.get_json()
-    if not data or 'name' not in data:
-        return jsonify({'error': 'กรุณาระบุชื่อโปรเจกต์ (name)'}), 400
+    if not data or ('name' not in data and 'project_name' not in data):
+        return jsonify({'error': 'กรุณาระบุชื่อโครงการ (name หรือ project_name)'}), 400
         
     try:
         from db_ingestion import add_project
-        project = add_project(data['name'])
+        p_name = data.get('project_name') or data.get('name')
+        p_code = data.get('project_code')
+        desc = data.get('description', '')
+        status = data.get('status', 'Active')
+        
+        project = add_project(
+            name=p_name,
+            project_name=p_name,
+            project_code=p_code,
+            description=desc,
+            status=status
+        )
         if project:
             return jsonify({'success': True, 'project': project})
-        return jsonify({'error': 'ไม่สามารถสร้างโปรเจกต์ได้'}), 500
+        return jsonify({'error': 'ไม่สามารถสร้างโครงการได้ (อาจมี Project Code ซ้ำหรือเกิดข้อผิดพลาดอื่น)'}), 500
     except Exception as e:
         logger.error(f"Error creating project: {e}")
         return jsonify({'error': str(e)}), 500
@@ -577,6 +588,244 @@ def reload_dict():
             'message': f'โหลด dictionary ใหม่สำเร็จ ({len(dictionary):,} คำ)'
         })
     except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+
+# ========================
+# Knowledge Base API Routes
+# ========================
+
+@app.route('/api/kb/stats', methods=['GET'])
+def kb_stats():
+    """ดูสถิติรวมของ Knowledge Base"""
+    try:
+        from db_ingestion import get_db_connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Count projects
+        try:
+            cursor.execute("SELECT COUNT(*) FROM projects;")
+            project_count = cursor.fetchone()[0]
+        except Exception:
+            conn.rollback()
+            project_count = 0
+
+        # Count documents
+        try:
+            cursor.execute("SELECT COUNT(*) FROM documents;")
+            doc_count = cursor.fetchone()[0]
+        except Exception:
+            conn.rollback()
+            doc_count = 0
+
+        # Count chunks / embeddings
+        try:
+            cursor.execute("SELECT COUNT(*) FROM document_chunks;")
+            chunk_count = cursor.fetchone()[0]
+        except Exception:
+            conn.rollback()
+            chunk_count = 0
+
+        cursor.close()
+        conn.close()
+
+        return jsonify({
+            'success': True,
+            'stats': {
+                'projects': project_count,
+                'documents': doc_count,
+                'chunks': chunk_count
+            }
+        })
+    except Exception as e:
+        logger.error(f"KB stats error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/kb/documents', methods=['GET'])
+def kb_documents():
+    """
+    ดูเอกสารทั้งหมดใน DB (optionally filtered by project_id)
+    Query: ?project_id=<id>&limit=50&offset=0
+    """
+    project_id = request.args.get('project_id', type=int)
+    limit = request.args.get('limit', 50, type=int)
+    offset = request.args.get('offset', 0, type=int)
+
+    try:
+        from db_ingestion import get_db_connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Detect column names dynamically
+        cursor.execute("""
+            SELECT column_name FROM information_schema.columns
+            WHERE table_name = 'documents'
+            ORDER BY ordinal_position;
+        """)
+        cols = [r[0] for r in cursor.fetchall()]
+        name_col = 'filename' if 'filename' in cols else 'title'
+        has_project = 'project_id' in cols
+        has_created = 'created_at' in cols
+
+        select_cols = ['id', name_col + ' AS name']
+        if has_project:
+            select_cols.append('project_id')
+        if has_created:
+            select_cols.append('created_at')
+
+        if project_id and has_project:
+            cursor.execute(
+                f"SELECT {', '.join(select_cols)} FROM documents WHERE project_id = %s ORDER BY id DESC LIMIT %s OFFSET %s;",
+                (project_id, limit, offset)
+            )
+        else:
+            cursor.execute(
+                f"SELECT {', '.join(select_cols)} FROM documents ORDER BY id DESC LIMIT %s OFFSET %s;",
+                (limit, offset)
+            )
+
+        rows = cursor.fetchall()
+        col_names = [desc[0] for desc in cursor.description]
+
+        documents = []
+        for row in rows:
+            doc = dict(zip(col_names, row))
+            # Count chunks for this document
+            try:
+                cursor.execute("SELECT COUNT(*) FROM document_chunks WHERE document_id = %s;", (doc['id'],))
+                doc['chunk_count'] = cursor.fetchone()[0]
+            except Exception:
+                conn.rollback()
+                doc['chunk_count'] = 0
+            documents.append(doc)
+
+        # Total count
+        if project_id and has_project:
+            cursor.execute("SELECT COUNT(*) FROM documents WHERE project_id = %s;", (project_id,))
+        else:
+            cursor.execute("SELECT COUNT(*) FROM documents;")
+        total = cursor.fetchone()[0]
+
+        cursor.close()
+        conn.close()
+
+        return jsonify({'success': True, 'documents': documents, 'total': total})
+    except Exception as e:
+        logger.error(f"KB documents error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/kb/documents/<int:doc_id>', methods=['GET'])
+def kb_document_detail(doc_id):
+    """ดูรายละเอียดเอกสาร รวมถึง content และ chunks"""
+    try:
+        from db_ingestion import get_db_connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Get document
+        cursor.execute("""
+            SELECT column_name FROM information_schema.columns
+            WHERE table_name = 'documents' ORDER BY ordinal_position;
+        """)
+        cols = [r[0] for r in cursor.fetchall()]
+        cursor.execute(f"SELECT * FROM documents WHERE id = %s;", (doc_id,))
+        row = cursor.fetchone()
+        if not row:
+            cursor.close()
+            conn.close()
+            return jsonify({'error': 'ไม่พบเอกสาร'}), 404
+
+        doc = dict(zip(cols, row))
+
+        # Get chunks (text only, not embedding vector)
+        cursor.execute(
+            "SELECT id, chunk_text FROM document_chunks WHERE document_id = %s ORDER BY id ASC;",
+            (doc_id,)
+        )
+        chunks = [{'id': r[0], 'text': r[1]} for r in cursor.fetchall()]
+
+        cursor.close()
+        conn.close()
+
+        return jsonify({'success': True, 'document': doc, 'chunks': chunks})
+    except Exception as e:
+        logger.error(f"KB document detail error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/kb/search', methods=['GET'])
+def kb_search():
+    """
+    ค้นหาเอกสารด้วย Vector Similarity
+    Query: ?q=<text>&project_id=<id>&top_k=5
+    """
+    query_text = request.args.get('q', '').strip()
+    project_id = request.args.get('project_id', type=int)
+    top_k = request.args.get('top_k', 5, type=int)
+
+    if not query_text:
+        return jsonify({'error': 'กรุณาระบุคำค้นหา (q)'}), 400
+
+    try:
+        from db_ingestion import get_model, get_db_connection
+        embedder = get_model()
+        query_vec = embedder.encode([query_text])[0].tolist()
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT column_name FROM information_schema.columns
+            WHERE table_name = 'documents' ORDER BY ordinal_position;
+        """)
+        doc_cols = [r[0] for r in cursor.fetchall()]
+        name_col = 'filename' if 'filename' in doc_cols else 'title'
+        has_project = 'project_id' in doc_cols
+
+        if project_id and has_project:
+            cursor.execute(f"""
+                SELECT dc.id, dc.document_id, dc.chunk_text,
+                       dc.embedding <=> %s::vector AS distance,
+                       d.{name_col} AS doc_name
+                FROM document_chunks dc
+                JOIN documents d ON d.id = dc.document_id
+                WHERE d.project_id = %s
+                ORDER BY distance ASC
+                LIMIT %s;
+            """, (query_vec, project_id, top_k))
+        else:
+            cursor.execute(f"""
+                SELECT dc.id, dc.document_id, dc.chunk_text,
+                       dc.embedding <=> %s::vector AS distance,
+                       d.{name_col} AS doc_name
+                FROM document_chunks dc
+                JOIN documents d ON d.id = dc.document_id
+                ORDER BY distance ASC
+                LIMIT %s;
+            """, (query_vec, top_k))
+
+        rows = cursor.fetchall()
+        results = [
+            {
+                'chunk_id': r[0],
+                'document_id': r[1],
+                'chunk_text': r[2],
+                'similarity': round(1 - float(r[3]), 4),
+                'doc_name': r[4]
+            }
+            for r in rows
+        ]
+
+        cursor.close()
+        conn.close()
+
+        return jsonify({'success': True, 'results': results, 'query': query_text})
+    except Exception as e:
+        logger.error(f"KB search error: {e}")
         return jsonify({'error': str(e)}), 500
 
 

@@ -1,0 +1,53 @@
+# ─────────────────────────────────────────────
+# Stage: Backend (Flask + Python)
+# ─────────────────────────────────────────────
+FROM python:3.11-slim
+
+LABEL maintainer="Thai OCR Project"
+LABEL description="Thai OCR Spell Check - Flask Backend"
+
+# Install system dependencies
+# poppler-utils  → pdf2image ใช้แปลง PDF → Image
+# libgl1         → OpenCV (cv2) ต้องการ
+# libglib2.0-0   → OpenCV dependency
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    poppler-utils \
+    libgl1 \
+    libglib2.0-0 \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy requirements ก่อนเพื่อ cache layer
+COPY requirements.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Pre-download sentence-transformer model ตอน build เพื่อไม่ต้อง download ตอน run
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')"
+
+# Copy source code
+COPY backend/ ./backend/
+COPY data/ ./data/
+COPY fonts/ ./fonts/
+COPY frontend/ ./frontend/
+
+# สร้าง directories ที่ต้องการ
+RUN mkdir -p uploads/cache
+
+# ตั้งค่า POPPLER_PATH สำหรับ Linux (poppler-utils ติดตั้งใน /usr/bin)
+ENV POPPLER_PATH=/usr/bin
+ENV FLASK_ENV=production
+ENV FLASK_DEBUG=0
+ENV PYTHONUNBUFFERED=1
+
+WORKDIR /app/backend
+
+EXPOSE 5000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:5000/api/health || exit 1
+
+CMD ["python", "app.py"]

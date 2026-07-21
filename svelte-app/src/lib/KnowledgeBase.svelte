@@ -1,0 +1,986 @@
+<script>
+  import { onMount } from 'svelte';
+  import { toast } from './toastStore.js';
+
+  const API = 'http://localhost:5000/api';
+
+  // ── State ──
+  let stats = null;
+  let projects = [];
+  let documents = [];
+  let selectedProject = null;
+  let selectedDoc = null;
+  let docDetail = null;
+  let searchQuery = '';
+  let searchResults = [];
+  let isSearching = false;
+  let isLoadingDocs = false;
+  let isLoadingDetail = false;
+  let activeTab = 'browse'; // 'browse' | 'search'
+  let dbError = null;
+
+  // ── New Project Form State ──
+  let showAddProject = false;
+  let isAddingProject = false;
+  let newProject = {
+    project_code: '',
+    project_name: '',
+    description: '',
+    status: 'Active'
+  };
+
+  // ── View Project Info State ──
+  let showProjectInfo = false;
+  let viewingProject = null;
+
+  // ── Load on mount ──
+  onMount(async () => {
+    await Promise.all([loadStats(), loadProjects()]);
+  });
+
+  async function loadStats() {
+    try {
+      const r = await fetch(`${API}/kb/stats`);
+      const d = await r.json();
+      if (d.success) stats = d.stats;
+    } catch (e) {
+      dbError = 'ไม่สามารถเชื่อมต่อ Database ได้ กรุณาตรวจสอบว่า DB กำลังทำงาน';
+    }
+  }
+
+  async function loadProjects() {
+    try {
+      const r = await fetch(`${API}/projects`);
+      const d = await r.json();
+      if (d.success) projects = d.projects;
+    } catch (e) { /* handled by dbError */ }
+  }
+
+  async function loadDocuments(projectId) {
+    isLoadingDocs = true;
+    selectedDoc = null;
+    docDetail = null;
+    try {
+      const url = projectId
+        ? `${API}/kb/documents?project_id=${projectId}`
+        : `${API}/kb/documents`;
+      const r = await fetch(url);
+      const d = await r.json();
+      if (d.success) documents = d.documents;
+    } catch (e) {
+      toast('โหลดเอกสารไม่สำเร็จ', 'error');
+    }
+    isLoadingDocs = false;
+  }
+
+  async function loadDocDetail(docId) {
+    isLoadingDetail = true;
+    selectedDoc = docId;
+    docDetail = null;
+    try {
+      const r = await fetch(`${API}/kb/documents/${docId}`);
+      const d = await r.json();
+      if (d.success) docDetail = d;
+      else toast(d.error || 'โหลดรายละเอียดไม่สำเร็จ', 'error');
+    } catch (e) {
+      toast('เกิดข้อผิดพลาด', 'error');
+    }
+    isLoadingDetail = false;
+  }
+
+  async function doSearch() {
+    if (!searchQuery.trim()) return;
+    isSearching = true;
+    searchResults = [];
+    try {
+      const pid = selectedProject ? `&project_id=${selectedProject}` : '';
+      const r = await fetch(`${API}/kb/search?q=${encodeURIComponent(searchQuery)}${pid}&top_k=8`);
+      const d = await r.json();
+      if (d.success) searchResults = d.results;
+      else toast(d.error || 'ค้นหาไม่สำเร็จ', 'error');
+    } catch (e) {
+      toast('เกิดข้อผิดพลาดในการค้นหา', 'error');
+    }
+    isSearching = false;
+  }
+
+  function selectProject(p) {
+    selectedProject = p ? p.id : null;
+    loadDocuments(selectedProject);
+  }
+
+  async function createProject() {
+    if (!newProject.project_name.trim()) {
+      toast('กรุณาระบุชื่อโครงการ', 'error');
+      return;
+    }
+    isAddingProject = true;
+    try {
+      const r = await fetch(`${API}/projects`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newProject)
+      });
+      const d = await r.json();
+      if (d.success) {
+        toast('สร้างโครงการสำเร็จ', 'success');
+        showAddProject = false;
+        newProject = { project_code: '', project_name: '', description: '', status: 'Active' };
+        await Promise.all([loadStats(), loadProjects()]);
+        selectProject(d.project);
+      } else {
+        toast(d.error || 'สร้างโครงการไม่สำเร็จ', 'error');
+      }
+    } catch (e) {
+      toast('เกิดข้อผิดพลาดในการเชื่อมต่อ', 'error');
+    }
+    isAddingProject = false;
+  }
+
+  function openProjectInfo(p) {
+    viewingProject = p;
+    showProjectInfo = true;
+  }
+
+  function formatDate(val) {
+    if (!val) return '—';
+    return new Date(val).toLocaleString('th-TH', { dateStyle: 'medium', timeStyle: 'short' });
+  }
+
+  function similarityColor(s) {
+    if (s >= 0.75) return '#4ade80';
+    if (s >= 0.5)  return '#facc15';
+    return '#f87171';
+  }
+</script>
+
+<div class="kb-shell">
+  <!-- ── Left sidebar ── -->
+  <aside class="kb-sidebar">
+    <!-- Stats banner -->
+    {#if dbError}
+      <div class="db-error">
+        <span class="err-icon">⚠️</span>
+        <span>{dbError}</span>
+      </div>
+    {:else if stats}
+      <div class="stats-bar">
+        <div class="stat-chip">
+          <span class="stat-num">{stats.projects}</span>
+          <span class="stat-lbl">โครงการ</span>
+        </div>
+        <div class="stat-chip">
+          <span class="stat-num">{stats.documents}</span>
+          <span class="stat-lbl">เอกสาร</span>
+        </div>
+        <div class="stat-chip">
+          <span class="stat-num">{stats.chunks}</span>
+          <span class="stat-lbl">Chunks</span>
+        </div>
+      </div>
+    {:else}
+      <div class="stats-bar loading-pulse">กำลังโหลด...</div>
+    {/if}
+
+    <!-- Tab toggle -->
+    <div class="tab-bar">
+      <button class="tab-btn" class:active={activeTab==='browse'} on:click={() => activeTab='browse'}>
+        🗂 เรียกดู
+      </button>
+      <button class="tab-btn" class:active={activeTab==='search'} on:click={() => activeTab='search'}>
+        🔍 ค้นหา Vector
+      </button>
+    </div>
+
+    {#if activeTab === 'browse'}
+      <!-- Project list -->
+      <div class="section-label" style="display: flex; justify-content: space-between; align-items: center;">
+        <span>โครงการ</span>
+        <button class="btn-icon-add" on:click={() => showAddProject = true} title="เพิ่มโครงการใหม่">
+          + เพิ่ม
+        </button>
+      </div>
+      <div class="project-list">
+        <button
+          class="project-item"
+          class:active={selectedProject === null}
+          on:click={() => selectProject(null)}
+        >
+          <span class="proj-icon">📁</span>
+          <span>ทั้งหมด</span>
+        </button>
+        {#each projects as p}
+          <div class="project-item" class:active={selectedProject === p.id}>
+            <div class="project-item-content" on:click={() => selectProject(p)}>
+              <span class="proj-icon">📂</span>
+              <span class="truncate">{p.name}</span>
+            </div>
+            <button class="btn-view-proj" on:click={() => openProjectInfo(p)} title="ดูรายละเอียดโครงการ">ℹ️</button>
+          </div>
+        {/each}
+        {#if projects.length === 0 && !dbError}
+          <div class="empty-hint">ยังไม่มีโครงการ</div>
+        {/if}
+      </div>
+
+      <!-- Document list -->
+      {#if documents.length > 0 || isLoadingDocs}
+        <div class="section-label">เอกสาร ({documents.length})</div>
+        <div class="doc-list">
+          {#if isLoadingDocs}
+            <div class="loading-pulse">กำลังโหลด...</div>
+          {:else}
+            {#each documents as doc}
+              <button
+                class="doc-item"
+                class:active={selectedDoc === doc.id}
+                on:click={() => loadDocDetail(doc.id)}
+              >
+                <span class="doc-icon">📄</span>
+                <div class="doc-meta">
+                  <span class="doc-name truncate">{doc.name}</span>
+                  <span class="doc-info">{doc.chunk_count} chunks · {formatDate(doc.created_at)}</span>
+                </div>
+              </button>
+            {/each}
+          {/if}
+        </div>
+      {/if}
+
+    {:else}
+      <!-- Vector Search -->
+      <div class="search-area">
+        <div class="section-label">ค้นหาด้วย Semantic Search</div>
+        <textarea
+          class="search-input"
+          placeholder="พิมพ์คำถามหรือข้อความเพื่อค้นหา..."
+          bind:value={searchQuery}
+          rows="3"
+        ></textarea>
+        <button class="btn-search" on:click={doSearch} disabled={isSearching || !searchQuery.trim()}>
+          {isSearching ? '🔄 กำลังค้นหา...' : '🔍 ค้นหา'}
+        </button>
+      </div>
+    {/if}
+  </aside>
+
+  <!-- ── Main content ── -->
+  <main class="kb-main">
+    {#if activeTab === 'search'}
+      <!-- Search results -->
+      <div class="content-header">
+        <h2 class="content-title">ผลลัพธ์การค้นหา</h2>
+        {#if searchResults.length > 0}
+          <span class="result-badge">{searchResults.length} รายการ</span>
+        {/if}
+      </div>
+
+      {#if searchResults.length === 0 && !isSearching}
+        <div class="empty-state">
+          <div class="empty-icon">🔍</div>
+          <p>พิมพ์คำค้นหาแล้วกดปุ่ม "ค้นหา" เพื่อค้นหาด้วย Vector Similarity</p>
+        </div>
+      {:else}
+        <div class="search-results">
+          {#each searchResults as r, i}
+            <div class="result-card">
+              <div class="result-header">
+                <span class="result-rank">#{i+1}</span>
+                <span class="result-doc">{r.doc_name}</span>
+                <span class="result-score" style="color:{similarityColor(r.similarity)}">
+                  {(r.similarity * 100).toFixed(1)}% match
+                </span>
+              </div>
+              <div class="result-bar-wrap">
+                <div class="result-bar" style="width:{(r.similarity*100).toFixed(1)}%; background:{similarityColor(r.similarity)}"></div>
+              </div>
+              <p class="result-text">{r.chunk_text}</p>
+              <button class="btn-view-doc" on:click={() => { activeTab='browse'; loadDocDetail(r.document_id); }}>
+                ดูเอกสาร →
+              </button>
+            </div>
+          {/each}
+        </div>
+      {/if}
+
+    {:else if docDetail}
+      <!-- Document detail -->
+      <div class="content-header">
+        <button class="btn-back" on:click={() => { selectedDoc = null; docDetail = null; }}>← กลับ</button>
+        <h2 class="content-title truncate">{docDetail.document.filename || docDetail.document.title || 'เอกสาร'}</h2>
+      </div>
+
+      <div class="doc-detail-wrap">
+        <!-- Meta -->
+        <div class="detail-meta-grid">
+          <div class="meta-chip"><span class="meta-k">ID</span><span class="meta-v">#{docDetail.document.id}</span></div>
+          {#if docDetail.document.project_id}
+            <div class="meta-chip"><span class="meta-k">Project</span><span class="meta-v">#{docDetail.document.project_id}</span></div>
+          {/if}
+          <div class="meta-chip"><span class="meta-k">Chunks</span><span class="meta-v">{docDetail.chunks.length}</span></div>
+          {#if docDetail.document.created_at}
+            <div class="meta-chip"><span class="meta-k">วันที่</span><span class="meta-v">{formatDate(docDetail.document.created_at)}</span></div>
+          {/if}
+        </div>
+
+        <!-- Full content -->
+        {#if docDetail.document.content}
+          <div class="section-label" style="margin-top:20px">เนื้อหาเต็ม (Markdown)</div>
+          <div class="markdown-content">{docDetail.document.content}</div>
+        {/if}
+
+        <!-- Chunks -->
+        <div class="section-label" style="margin-top:20px">Chunks ({docDetail.chunks.length})</div>
+        <div class="chunks-list">
+          {#each docDetail.chunks as chunk, idx}
+            <div class="chunk-card">
+              <div class="chunk-head">Chunk #{idx+1} <span class="chunk-id">(id: {chunk.id})</span></div>
+              <p class="chunk-text">{chunk.text}</p>
+            </div>
+          {/each}
+        </div>
+      </div>
+
+    {:else if isLoadingDetail}
+      <div class="empty-state"><div class="loading-spin"></div><p>กำลังโหลด...</p></div>
+
+    {:else}
+      <!-- Welcome state -->
+      <div class="empty-state">
+        <div class="empty-icon">🗄️</div>
+        <h3>Knowledge Base Explorer</h3>
+        <p>เลือกโครงการ → คลิกเอกสาร เพื่อดูข้อมูล<br/>หรือใช้แท็บ "ค้นหา Vector" เพื่อ Semantic Search</p>
+        {#if stats}
+          <div class="welcome-stats">
+            <span>📁 {stats.projects} โครงการ</span>
+            <span>📄 {stats.documents} เอกสาร</span>
+            <span>🧩 {stats.chunks} chunks</span>
+          </div>
+        {/if}
+      </div>
+    {/if}
+  </main>
+
+  <!-- ── Add Project Modal ── -->
+  {#if showAddProject}
+    <div class="modal-backdrop" on:click={() => showAddProject = false}>
+      <div class="modal-content" on:click|stopPropagation>
+        <div class="modal-header">
+          <h3>เพิ่มโครงการใหม่</h3>
+          <button class="btn-close" on:click={() => showAddProject = false}>✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label for="p_code">รหัสโครงการ (Project Code)</label>
+            <input id="p_code" type="text" class="form-input" placeholder="เช่น PRJ-2024-001 (เว้นว่างไว้เพื่อสร้างอัตโนมัติ)" bind:value={newProject.project_code} />
+          </div>
+          <div class="form-group">
+            <label for="p_name">ชื่อโครงการ (Project Name) <span class="req">*</span></label>
+            <input id="p_name" type="text" class="form-input" placeholder="ระบุชื่อโครงการ..." bind:value={newProject.project_name} />
+          </div>
+          <div class="form-group">
+            <label for="p_desc">รายละเอียด (Description)</label>
+            <textarea id="p_desc" class="form-input" rows="3" placeholder="คำอธิบายโครงการ..." bind:value={newProject.description}></textarea>
+          </div>
+          <div class="form-group">
+            <label for="p_status">สถานะ (Status)</label>
+            <select id="p_status" class="form-input" bind:value={newProject.status}>
+              <option value="Active">Active</option>
+              <option value="Inactive">Inactive</option>
+            </select>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn-cancel" on:click={() => showAddProject = false}>ยกเลิก</button>
+          <button class="btn-submit" on:click={createProject} disabled={isAddingProject || !newProject.project_name.trim()}>
+            {isAddingProject ? 'กำลังสร้าง...' : 'สร้างโครงการ'}
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  <!-- ── View Project Modal ── -->
+  {#if showProjectInfo && viewingProject}
+    <div class="modal-backdrop" on:click={() => showProjectInfo = false}>
+      <div class="modal-content" on:click|stopPropagation>
+        <div class="modal-header">
+          <h3>รายละเอียดโครงการ</h3>
+          <button class="btn-close" on:click={() => showProjectInfo = false}>✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="info-group">
+            <span class="info-label">รหัสโครงการ (Project Code)</span>
+            <span class="info-value">{viewingProject.project_code || '-'}</span>
+          </div>
+          <div class="info-group">
+            <span class="info-label">ชื่อโครงการ (Project Name)</span>
+            <span class="info-value">{viewingProject.name || '-'}</span>
+          </div>
+          <div class="info-group">
+            <span class="info-label">สถานะ (Status)</span>
+            <span class="info-value" class:status-active={viewingProject.status === 'Active'} class:status-inactive={viewingProject.status !== 'Active'}>
+              {viewingProject.status || 'Active'}
+            </span>
+          </div>
+          <div class="info-group">
+            <span class="info-label">รายละเอียด (Description)</span>
+            <div class="info-desc">{viewingProject.description || 'ไม่มีรายละเอียด'}</div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn-cancel" on:click={() => showProjectInfo = false}>ปิดหน้าต่าง</button>
+        </div>
+      </div>
+    </div>
+  {/if}
+</div>
+
+<style>
+.kb-shell {
+  display: flex;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+/* ── Sidebar ── */
+.kb-sidebar {
+  width: 300px;
+  flex-shrink: 0;
+  background: var(--bg2);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.stats-bar {
+  display: flex;
+  gap: 8px;
+  padding: 14px 14px 10px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.stat-chip {
+  flex: 1;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 6px;
+  text-align: center;
+}
+.stat-num { display: block; font-size: 18px; font-weight: 700; color: var(--primary); }
+.stat-lbl { font-size: 10px; color: var(--text3); }
+
+.db-error {
+  margin: 12px;
+  padding: 10px 12px;
+  background: rgba(248,113,113,0.1);
+  border: 1px solid rgba(248,113,113,0.25);
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--danger, #f87171);
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+.err-icon { flex-shrink: 0; }
+
+.tab-bar {
+  display: flex;
+  gap: 4px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.tab-btn {
+  flex: 1;
+  padding: 7px 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text3);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-family: var(--font-th, inherit);
+}
+.tab-btn.active {
+  background: rgba(108,142,251,0.15);
+  border-color: var(--primary);
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.section-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text3);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 10px 14px 4px;
+}
+
+.project-list, .doc-list {
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+.project-list { max-height: 200px; }
+.doc-list { flex: 1; overflow-y: auto; }
+
+.project-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  background: transparent;
+  border-left: 3px solid transparent;
+  text-align: left;
+  font-family: var(--font-th, inherit);
+  font-size: 13px;
+  color: var(--text2);
+  transition: all 0.15s;
+  padding: 0 8px 0 0;
+}
+.project-item-content {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 14px;
+  cursor: pointer;
+  min-width: 0;
+}
+.doc-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 14px;
+  background: transparent;
+  border: none;
+  border-left: 3px solid transparent;
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--font-th, inherit);
+  font-size: 13px;
+  color: var(--text2);
+  transition: all 0.15s;
+}
+.project-item:hover, .doc-item:hover {
+  background: rgba(108,142,251,0.06);
+  color: var(--text);
+}
+.project-item.active, .doc-item.active {
+  background: rgba(108,142,251,0.12);
+  border-left-color: var(--primary);
+  color: var(--primary);
+  font-weight: 600;
+}
+.proj-icon, .doc-icon { flex-shrink: 0; font-size: 14px; }
+.btn-view-proj {
+  background: transparent;
+  border: none;
+  color: var(--text3);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  font-size: 12px;
+  opacity: 0.5;
+  transition: all 0.2s;
+}
+.btn-view-proj:hover {
+  background: var(--surface);
+  color: var(--primary);
+  opacity: 1;
+}
+.doc-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.doc-name { font-size: 12px; font-weight: 600; display: block; }
+.doc-info { font-size: 10px; color: var(--text3); }
+
+.empty-hint { padding: 10px 14px; font-size: 12px; color: var(--text3); }
+
+/* Search area */
+.search-area { padding: 12px; display: flex; flex-direction: column; gap: 8px; flex: 1; }
+.search-input {
+  width: 100%;
+  background: var(--bg3, #1a1a2e);
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  padding: 10px;
+  color: var(--text);
+  font-family: var(--font-th, inherit);
+  font-size: 13px;
+  resize: none;
+  outline: none;
+  transition: border-color 0.2s;
+  box-sizing: border-box;
+}
+.search-input:focus { border-color: var(--primary); }
+.btn-search {
+  width: 100%;
+  padding: 10px;
+  background: linear-gradient(135deg, var(--primary), var(--accent));
+  border: none;
+  border-radius: 8px;
+  color: #fff;
+  font-family: var(--font-th, inherit);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.btn-search:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ── Main ── */
+.kb-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.content-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  background: var(--bg2);
+}
+.content-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+}
+.result-badge {
+  background: rgba(108,142,251,0.18);
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 20px;
+}
+.btn-back {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text2);
+  padding: 6px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  font-family: var(--font-th, inherit);
+  transition: all 0.15s;
+}
+.btn-back:hover { border-color: var(--primary); color: var(--primary); }
+
+/* Empty / Loading */
+.empty-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--text3);
+  text-align: center;
+  padding: 40px;
+}
+.empty-icon { font-size: 56px; opacity: 0.5; }
+.empty-state h3 { font-size: 18px; color: var(--text2); margin: 0; }
+.empty-state p { font-size: 14px; line-height: 1.6; max-width: 360px; }
+.welcome-stats {
+  display: flex;
+  gap: 16px;
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--primary);
+  font-weight: 600;
+}
+.loading-pulse { animation: pulse 1.5s ease infinite; color: var(--text3); font-size: 13px; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+.loading-spin {
+  width: 36px; height: 36px;
+  border: 3px solid var(--border);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Search results */
+.search-results {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.result-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  transition: border-color 0.2s;
+}
+.result-card:hover { border-color: rgba(108,142,251,0.4); }
+.result-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.result-rank {
+  background: rgba(108,142,251,0.18);
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 6px;
+}
+.result-doc { flex: 1; font-size: 13px; font-weight: 600; color: var(--text2); }
+.result-score { font-size: 12px; font-weight: 700; }
+.result-bar-wrap { height: 4px; background: var(--bg3, #1a1a2e); border-radius: 2px; margin-bottom: 8px; }
+.result-bar { height: 100%; border-radius: 2px; transition: width 0.5s; }
+.result-text {
+  font-size: 13px;
+  color: var(--text2);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  margin: 0 0 10px;
+  max-height: 120px;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+}
+.btn-view-doc {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--primary);
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.btn-view-doc:hover { background: rgba(108,142,251,0.1); }
+
+/* Doc detail */
+.doc-detail-wrap {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 24px;
+}
+.detail-meta-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.meta-chip {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.meta-k { font-size: 10px; color: var(--text3); font-weight: 600; text-transform: uppercase; }
+.meta-v { font-size: 13px; color: var(--text); font-weight: 700; }
+
+.markdown-content {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  font-size: 13px;
+  color: var(--text2);
+  line-height: 1.7;
+  white-space: pre-wrap;
+  font-family: monospace;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.chunks-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 20px;
+}
+.chunk-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+.chunk-head {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--primary);
+  margin-bottom: 6px;
+}
+.chunk-id { color: var(--text3); font-weight: 400; }
+.chunk-text {
+  font-size: 12px;
+  color: var(--text2);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  margin: 0;
+}
+
+.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Add Project Modal & Button */
+.btn-icon-add {
+  background: rgba(108,142,251,0.1);
+  color: var(--primary);
+  border: 1px solid rgba(108,142,251,0.3);
+  border-radius: 4px;
+  font-size: 10px;
+  padding: 2px 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-weight: 600;
+  font-family: var(--font-th, inherit);
+}
+.btn-icon-add:hover {
+  background: var(--primary);
+  color: #fff;
+}
+
+.modal-backdrop {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.6);
+  backdrop-filter: blur(4px);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-content {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  width: 90%;
+  max-width: 450px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+  font-family: var(--font-th, inherit);
+}
+
+.modal-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.modal-header h3 { margin: 0; font-size: 16px; color: var(--text); }
+.btn-close { background: transparent; border: none; color: var(--text3); cursor: pointer; font-size: 16px; padding: 4px; border-radius: 4px; }
+.btn-close:hover { background: var(--surface); color: var(--text); }
+
+.modal-body {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.form-group { display: flex; flex-direction: column; gap: 6px; }
+.form-group label { font-size: 13px; font-weight: 600; color: var(--text2); }
+.form-group .req { color: var(--danger, #f87171); }
+
+.form-input {
+  background: var(--bg3, #1a1a2e);
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  padding: 10px;
+  color: var(--text);
+  font-family: var(--font-th, inherit);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+.form-input:focus { border-color: var(--primary); }
+textarea.form-input { resize: vertical; }
+
+.modal-footer {
+  padding: 16px 20px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  background: var(--bg2);
+  border-radius: 0 0 12px 12px;
+}
+
+.btn-cancel {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text2);
+  padding: 8px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  font-family: var(--font-th, inherit);
+  transition: all 0.2s;
+}
+.btn-cancel:hover { background: var(--surface); color: var(--text); }
+
+.btn-submit {
+  background: linear-gradient(135deg, var(--primary), var(--accent));
+  border: none;
+  color: #fff;
+  padding: 8px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: var(--font-th, inherit);
+  transition: all 0.2s;
+}
+.btn-submit:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Info Group styles for viewing project */
+.info-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+.info-label {
+  font-size: 11px;
+  color: var(--text3);
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.info-value {
+  font-size: 14px;
+  color: var(--text);
+  font-weight: 500;
+}
+.info-desc {
+  font-size: 13px;
+  color: var(--text2);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  background: var(--bg3, #1a1a2e);
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border2);
+  margin-top: 4px;
+}
+.status-active { color: #4ade80; font-weight: 600; }
+.status-inactive { color: #f87171; font-weight: 600; }
+</style>

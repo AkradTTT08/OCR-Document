@@ -61,14 +61,24 @@ def get_projects():
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        # Assume projects table has 'id' and 'name' (or title)
-        try:
-            cursor.execute("SELECT id, name FROM projects ORDER BY id DESC;")
-        except psycopg2.errors.UndefinedColumn:
-            conn.rollback()
-            cursor.execute("SELECT id, title as name FROM projects ORDER BY id DESC;")
+        
+        # Check column names first to handle new schema vs old schema gracefully
+        cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'projects';")
+        cols = [r[0] for r in cursor.fetchall()]
+        
+        if 'project_id' in cols and 'project_code' in cols:
+            # New schema
+            cursor.execute("SELECT project_id, project_name, project_code, description, status FROM projects ORDER BY project_id DESC;")
+            projects = [{"id": row[0], "name": row[1], "project_code": row[2], "description": row[3], "status": row[4]} for row in cursor.fetchall()]
+        else:
+            # Old schema
+            try:
+                cursor.execute("SELECT id, name FROM projects ORDER BY id DESC;")
+            except psycopg2.errors.UndefinedColumn:
+                conn.rollback()
+                cursor.execute("SELECT id, title as name FROM projects ORDER BY id DESC;")
+            projects = [{"id": row[0], "name": row[1]} for row in cursor.fetchall()]
             
-        projects = [{"id": row[0], "name": row[1]} for row in cursor.fetchall()]
         cursor.close()
         conn.close()
         return projects
@@ -76,22 +86,45 @@ def get_projects():
         logger.error(f"Error fetching projects: {e}")
         return []
 
-def add_project(name: str):
+def add_project(name: str = None, project_code: str = None, project_name: str = None, description: str = '', status: str = 'Active'):
     """Add a new project to the database."""
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        try:
-            cursor.execute("INSERT INTO projects (name) VALUES (%s) RETURNING id;", (name,))
-        except psycopg2.errors.UndefinedColumn:
-            conn.rollback()
-            cursor.execute("INSERT INTO projects (title) VALUES (%s) RETURNING id;", (name,))
+        
+        # Check columns
+        cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'projects';")
+        cols = [r[0] for r in cursor.fetchall()]
+        
+        if 'project_code' in cols and 'project_name' in cols:
+            # New schema
+            # If name is provided instead of project_name (old API call), map it
+            p_name = project_name if project_name else name
+            import uuid
+            p_code = project_code if project_code else f"PRJ-{uuid.uuid4().hex[:6].upper()}"
             
-        project_id = cursor.fetchone()[0]
-        conn.commit()
-        cursor.close()
-        conn.close()
-        return {"id": project_id, "name": name}
+            cursor.execute(
+                "INSERT INTO projects (project_code, project_name, description, status) VALUES (%s, %s, %s, %s) RETURNING project_id;",
+                (p_code, p_name, description, status)
+            )
+            project_id = cursor.fetchone()[0]
+            conn.commit()
+            cursor.close()
+            conn.close()
+            return {"id": project_id, "name": p_name, "project_code": p_code, "description": description, "status": status}
+        else:
+            # Old schema
+            try:
+                cursor.execute("INSERT INTO projects (name) VALUES (%s) RETURNING id;", (name or project_name,))
+            except psycopg2.errors.UndefinedColumn:
+                conn.rollback()
+                cursor.execute("INSERT INTO projects (title) VALUES (%s) RETURNING id;", (name or project_name,))
+                
+            project_id = cursor.fetchone()[0]
+            conn.commit()
+            cursor.close()
+            conn.close()
+            return {"id": project_id, "name": name or project_name}
     except Exception as e:
         logger.error(f"Error adding project: {e}")
         return None
