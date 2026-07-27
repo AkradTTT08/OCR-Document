@@ -2,12 +2,13 @@
   import UploadPanel from './lib/UploadPanel.svelte';
   import ResultsPanel from './lib/ResultsPanel.svelte';
   import KnowledgeBase from './lib/KnowledgeBase.svelte';
+  import SkillManager from './lib/SkillManager.svelte';
   import Toast from './lib/Toast.svelte';
 
   let scanResult = null;
   let isProcessing = false;
   let progress = { pct: 0, label: '', step: 0 };
-  let activeView = 'ocr'; // 'ocr' | 'kb'
+  let activeView = 'ocr'; // 'ocr' | 'kb' | 'skills'
 
   function handleResult(event) {
     scanResult = event.detail;
@@ -20,18 +21,19 @@
 
 <div class="shell">
   <!-- ── Left Panel ── -->
-  <aside class="left-panel">
+  <aside class="left-panel" class:collapsed-left={activeView === 'skills'}>
     <header class="panel-header">
       <div class="logo">
         <div class="logo-icon">
-          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" width="18" height="18">
-            <path d="M9 2H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8L13 2H9z"/>
-            <path d="M13 2v6h6M7 13h6M7 10h3"/>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="12 3 3 21 21 21"></polygon>
+            <line x1="3" y1="14" x2="21" y2="14"></line>
+            <line x1="8" y1="10" x2="16" y2="10"></line>
           </svg>
         </div>
         <div>
-          <div class="logo-title">OCR ตรวจเอกสาร</div>
-          <div class="logo-sub">พจนานุกรมราชบัณฑิตยสภา</div>
+          <div class="logo-title">Spectra QA</div>
+          <div class="logo-sub">Intelligent Document Analysis</div>
         </div>
       </div>
 
@@ -61,13 +63,23 @@
           </svg>
           Knowledge Base
         </button>
+        <button
+          id="nav-skills"
+          class="nav-tab"
+          class:active={activeView === 'skills'}
+          on:click={() => activeView = 'skills'}
+        >
+          <svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14">
+            <path d="M11 3a1 1 0 10-2 0v1a1 1 0 102 0V3zM15.657 5.757a1 1 0 00-1.414-1.414l-.707.707a1 1 0 001.414 1.414l.707-.707zM18 10a1 1 0 01-1 1h-1a1 1 0 110-2h1a1 1 0 011 1zM5.05 6.464A1 1 0 103.636 5.05l-.707.707a1 1 0 001.414 1.414l.707-.707zM5 10a1 1 0 01-1 1H3a1 1 0 110-2h1a1 1 0 011 1zM8 16v-1a1 1 0 112 0v1a1 1 0 11-2 0zM12 14a1 1 0 100-2 1 1 0 000 2z"/>
+          </svg>
+          AI Skills
+        </button>
       </nav>
     </header>
 
     {#if activeView === 'ocr'}
       <UploadPanel on:result={handleResult} on:processing={handleProcessing} />
-    {:else}
-      <!-- KB view doesn't need left panel content -->
+    {:else if activeView === 'kb'}
       <div class="kb-hint">
         <p>เลือกโครงการและเอกสารในพื้นที่หลัก เพื่อดูข้อมูล Knowledge Base</p>
       </div>
@@ -78,8 +90,10 @@
   <main class="right-panel">
     {#if activeView === 'ocr'}
       <ResultsPanel result={scanResult} {isProcessing} {progress} />
-    {:else}
+    {:else if activeView === 'kb'}
       <KnowledgeBase />
+    {:else if activeView === 'skills'}
+      <SkillManager />
     {/if}
   </main>
 </div>

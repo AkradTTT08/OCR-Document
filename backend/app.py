@@ -983,6 +983,306 @@ def kb_delete_document(doc_id):
         if conn: conn.close()
 
 
+# ===================================================================
+# AI Agent Skills Endpoints (agent_skills)
+# ===================================================================
+
+def ensure_skills_table():
+    """Ensure agent_skills table exists in PostgreSQL."""
+    conn = None
+    try:
+        from db_ingestion import get_db_connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS agent_skills (
+                skill_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                skill_name VARCHAR(100) NOT NULL,
+                skill_description TEXT,
+                markdown_instructions TEXT NOT NULL,
+                target_doc_type VARCHAR(50),
+                version INT DEFAULT 1,
+                is_active BOOLEAN DEFAULT TRUE,
+                created_by VARCHAR(50),
+                created_at TIMESTAMP DEFAULT NOW()
+            );
+        """)
+        conn.commit()
+        cursor.close()
+    except Exception as e:
+        if conn: conn.rollback()
+        logger.error(f"Error ensuring agent_skills table: {e}", exc_info=True)
+    finally:
+        if conn: conn.close()
+
+
+@app.route('/api/skills', methods=['GET'])
+def get_skills():
+    """ดึงรายการ AI Skills ทั้งหมด"""
+    ensure_skills_table()
+    conn = None
+    try:
+        from db_ingestion import get_db_connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        search = request.args.get('search', '').strip()
+        target_type = request.args.get('target_doc_type', '').strip()
+
+        query = """
+            SELECT skill_id, skill_name, skill_description, markdown_instructions,
+                   target_doc_type, version, is_active, created_by, created_at
+            FROM agent_skills
+            WHERE 1=1
+        """
+        params = []
+
+        if search:
+            query += " AND (skill_name ILIKE %s OR skill_description ILIKE %s OR markdown_instructions ILIKE %s)"
+            pattern = f"%{search}%"
+            params.extend([pattern, pattern, pattern])
+
+        if target_type:
+            query += " AND target_doc_type = %s"
+            params.append(target_type)
+
+        query += " ORDER BY created_at DESC;"
+
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+
+        skills = []
+        for r in rows:
+            skills.append({
+                'skill_id': str(r[0]),
+                'skill_name': r[1],
+                'skill_description': r[2],
+                'markdown_instructions': r[3],
+                'target_doc_type': r[4],
+                'version': r[5],
+                'is_active': r[6],
+                'created_by': r[7],
+                'created_at': r[8].isoformat() if r[8] else None
+            })
+
+        return jsonify({'success': True, 'skills': skills, 'total': len(skills)})
+    except Exception as e:
+        logger.error(f"Get skills error: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn: conn.close()
+
+
+@app.route('/api/skills/<string:skill_id>', methods=['GET'])
+def get_skill_detail(skill_id):
+    """ดูรายละเอียด AI Skill รายรายการ"""
+    ensure_skills_table()
+    conn = None
+    try:
+        from db_ingestion import get_db_connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT skill_id, skill_name, skill_description, markdown_instructions,
+                   target_doc_type, version, is_active, created_by, created_at
+            FROM agent_skills
+            WHERE skill_id = %s;
+        """, (skill_id,))
+        r = cursor.fetchone()
+        if not r:
+            return jsonify({'error': 'ไม่พบ Skill ที่ต้องการ'}), 404
+
+        skill = {
+            'skill_id': str(r[0]),
+            'skill_name': r[1],
+            'skill_description': r[2],
+            'markdown_instructions': r[3],
+            'target_doc_type': r[4],
+            'version': r[5],
+            'is_active': r[6],
+            'created_by': r[7],
+            'created_at': r[8].isoformat() if r[8] else None
+        }
+
+        return jsonify({'success': True, 'skill': skill})
+    except Exception as e:
+        logger.error(f"Get skill detail error: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn: conn.close()
+
+
+@app.route('/api/skills', methods=['POST'])
+def create_skill():
+    """สร้าง AI Skill ใหม่"""
+    ensure_skills_table()
+    data = request.get_json()
+    if not data:
+        return jsonify({'error': 'No payload provided'}), 400
+
+    skill_name = data.get('skill_name')
+    markdown_instructions = data.get('markdown_instructions')
+
+    if not skill_name or not markdown_instructions:
+        return jsonify({'error': 'กรุณาระบุ skill_name และ markdown_instructions'}), 400
+
+    skill_description = data.get('skill_description', '')
+    target_doc_type = data.get('target_doc_type', 'General')
+    version = data.get('version', 1)
+    is_active = data.get('is_active', True)
+    created_by = data.get('created_by', 'Admin')
+
+    conn = None
+    try:
+        from db_ingestion import get_db_connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            INSERT INTO agent_skills (skill_name, skill_description, markdown_instructions, target_doc_type, version, is_active, created_by)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            RETURNING skill_id;
+        """, (skill_name, skill_description, markdown_instructions, target_doc_type, version, is_active, created_by))
+
+        new_id = cursor.fetchone()[0]
+        conn.commit()
+
+        return jsonify({'success': True, 'message': 'สร้าง AI Skill สำเร็จ', 'skill_id': str(new_id)})
+    except Exception as e:
+        if conn: conn.rollback()
+        logger.error(f"Create skill error: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn: conn.close()
+
+
+@app.route('/api/skills/<string:skill_id>', methods=['PUT'])
+def update_skill(skill_id):
+    """แก้ไข AI Skill"""
+    ensure_skills_table()
+    data = request.get_json()
+    if not data:
+        return jsonify({'error': 'No payload provided'}), 400
+
+    conn = None
+    try:
+        from db_ingestion import get_db_connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Check existing
+        cursor.execute("SELECT skill_id FROM agent_skills WHERE skill_id = %s;", (skill_id,))
+        if not cursor.fetchone():
+            return jsonify({'error': 'ไม่พบ Skill ที่ต้องการแก้ไข'}), 404
+
+        skill_name = data.get('skill_name')
+        skill_description = data.get('skill_description')
+        markdown_instructions = data.get('markdown_instructions')
+        target_doc_type = data.get('target_doc_type')
+        version = data.get('version')
+        is_active = data.get('is_active')
+        created_by = data.get('created_by')
+
+        cursor.execute("""
+            UPDATE agent_skills
+            SET skill_name = COALESCE(%s, skill_name),
+                skill_description = COALESCE(%s, skill_description),
+                markdown_instructions = COALESCE(%s, markdown_instructions),
+                target_doc_type = COALESCE(%s, target_doc_type),
+                version = COALESCE(%s, version),
+                is_active = COALESCE(%s, is_active),
+                created_by = COALESCE(%s, created_by)
+            WHERE skill_id = %s;
+        """, (skill_name, skill_description, markdown_instructions, target_doc_type, version, is_active, created_by, skill_id))
+
+        conn.commit()
+        return jsonify({'success': True, 'message': 'อัปเดต AI Skill สำเร็จ'})
+    except Exception as e:
+        if conn: conn.rollback()
+        logger.error(f"Update skill error: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn: conn.close()
+
+
+@app.route('/api/skills/<string:skill_id>', methods=['DELETE'])
+def delete_skill(skill_id):
+    """ลบ AI Skill"""
+    ensure_skills_table()
+    conn = None
+    try:
+        from db_ingestion import get_db_connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT skill_id FROM agent_skills WHERE skill_id = %s;", (skill_id,))
+        if not cursor.fetchone():
+            return jsonify({'error': 'ไม่พบ Skill ที่ต้องการลบ'}), 404
+
+        cursor.execute("DELETE FROM agent_skills WHERE skill_id = %s;", (skill_id,))
+        conn.commit()
+
+        return jsonify({'success': True, 'message': 'ลบ AI Skill เรียบร้อยแล้ว'})
+    except Exception as e:
+        if conn: conn.rollback()
+        logger.error(f"Delete skill error: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn: conn.close()
+
+
+@app.route('/api/skills/<string:skill_id>/export', methods=['GET'])
+def export_skill_md(skill_id):
+    """Export AI Skill เป็นไฟล์ SKILL.md"""
+    ensure_skills_table()
+    conn = None
+    try:
+        from db_ingestion import get_db_connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT skill_name, skill_description, markdown_instructions, target_doc_type, version, created_by
+            FROM agent_skills
+            WHERE skill_id = %s;
+        """, (skill_id,))
+        r = cursor.fetchone()
+        if not r:
+            return jsonify({'error': 'ไม่พบ Skill'}), 404
+
+        name, desc, instructions, target_type, version, created_by = r
+
+        md_content = f"""---
+name: "{name}"
+description: "{desc or ''}"
+target_doc_type: "{target_type or 'General'}"
+version: {version or 1}
+created_by: "{created_by or 'Admin'}"
+---
+
+# {name}
+
+{desc or ''}
+
+## Skill Instructions (Skill.md)
+
+{instructions}
+"""
+        from flask import Response
+        filename = f"{name.lower().replace(' ', '_')}_SKILL.md"
+        return Response(
+            md_content,
+            mimetype="text/markdown",
+            headers={"Content-disposition": f"attachment; filename={filename}"}
+        )
+    except Exception as e:
+        logger.error(f"Export skill error: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn: conn.close()
+
+
 if __name__ == '__main__':
     logger.info("=" * 50)
     logger.info(f"Thai OCR Spell Check System (v{VERSION})")
