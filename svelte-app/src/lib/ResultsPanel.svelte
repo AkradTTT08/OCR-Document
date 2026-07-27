@@ -300,6 +300,75 @@
       checkingSpell = false;
     }
   }
+
+  // ── Save to DB State ──
+  let showSaveModal = false;
+  let isSaving = false;
+  let projects = [];
+  let saveForm = {
+    project_id: '',
+    filename: '',
+    doc_category: 'Reference',
+    doc_type: 'PDF',
+    is_golden_data: false
+  };
+
+  async function openSaveModal() {
+    if (!result) return;
+    saveForm.filename = result.filename;
+    const ext = result.filename.split('.').pop()?.toLowerCase();
+    if (ext === 'pdf') saveForm.doc_type = 'PDF';
+    else if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) saveForm.doc_type = 'Image';
+    else if (['doc', 'docx'].includes(ext)) saveForm.doc_type = 'Word';
+    else saveForm.doc_type = 'Other';
+    showSaveModal = true;
+    try {
+      const res = await fetch("http://localhost:5000/api/projects");
+      if (res.ok) {
+        const data = await res.json();
+        projects = data.projects || [];
+        if (projects.length > 0 && !saveForm.project_id) {
+          saveForm.project_id = projects[0].id;
+        }
+      }
+    } catch (e) {
+      console.error("Failed to load projects:", e);
+    }
+  }
+
+  async function saveToProject() {
+    if (!saveForm.project_id) {
+      toast("กรุณาเลือกโครงการ", "warning");
+      return;
+    }
+    isSaving = true;
+    try {
+      const markdownText = result.pages.map((p) => p.text).join("\n\n");
+      const res = await fetch("http://localhost:5000/api/kb/ingest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          filename: saveForm.filename,
+          markdown_text: markdownText,
+          project_id: saveForm.project_id,
+          doc_category: saveForm.doc_category,
+          doc_type: saveForm.doc_type,
+          is_golden_data: saveForm.is_golden_data,
+          session_id: result.session_id
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "เกิดข้อผิดพลาดในการบันทึก");
+      
+      toast(data.message || "บันทึกเอกสารเข้าโครงการสำเร็จ", "success");
+      showSaveModal = false;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      toast(`ข้อผิดพลาด: ${msg}`, "error");
+    } finally {
+      isSaving = false;
+    }
+  }
 </script>
 
 <!-- ── RIGHT PANEL ── -->
@@ -376,6 +445,12 @@
         <span class="truncate">{result.filename}</span>
       </div>
       <div class="header-actions">
+        <button class="btn-sm" style="color:var(--primary2); border-color:rgba(108,142,251,0.4);" on:click={openSaveModal} title="บันทึกเข้า Project">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="14" height="14">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+          </svg>
+          บันทึกเข้า Project
+        </button>
         <button class="btn-sm" on:click={exportTxt} title="Export ข้อความ">
           <svg viewBox="0 0 16 16" fill="currentColor" width="12" height="12"
             ><path
@@ -443,7 +518,7 @@
     <!-- ── View mode tabs + filter ── -->
     <div class="toolbar">
       <div class="view-tabs">
-        {#each [["errors", "คำผิด"], ["highlight", "ไฮไลท์"], ["text", "ข้อความดิบ"], ["preview", "พรีวิว"]] as [v, label]}
+        {#each [["errors", "คำผิด"], ["highlight", "ไฮไลท์"], ["markdown", "มาร์กดาวน์"], ["text", "ข้อความดิบ"], ["preview", "พรีวิว"]] as [v, label]}
           <button
             class="vtab"
             class:active={viewMode === v}
@@ -620,6 +695,12 @@
           {@html highlightedHtml}
         </div>
 
+        <!-- MARKDOWN VIEW -->
+      {:else if viewMode === "markdown"}
+        <div class="markdown-view" style="padding: 16px; font-family: monospace; white-space: pre-wrap; font-size: 14px; line-height: 1.5; color: var(--text); user-select: text;">
+          {activePage?.text ?? ""}
+        </div>
+
         <!-- PLAIN TEXT VIEW (HTML/Markdown Rendered) -->
       {:else}
         <div class="plain-view rendered-html">
@@ -633,6 +714,64 @@
 
 <!-- ── All-errors sidebar (right of right panel) ── -->
 <!-- removed: now in error-table grouped by page -->
+
+<!-- ── Save Modal ── -->
+{#if showSaveModal}
+  <div class="modal-backdrop" on:click={() => showSaveModal = false}>
+    <div class="modal-content" on:click|stopPropagation>
+      <h3>บันทึกเอกสารเข้า Project</h3>
+      
+      <div class="form-group">
+        <label for="save-filename">ชื่อไฟล์</label>
+        <input id="save-filename" type="text" bind:value={saveForm.filename} class="form-input" />
+      </div>
+
+      <div class="form-group">
+        <label for="save-project">โครงการ (Project)</label>
+        <select id="save-project" bind:value={saveForm.project_id} class="form-input">
+          <option value="" disabled>-- เลือกโครงการ --</option>
+          {#each projects as p}
+            <option value={p.id}>{p.project_code} - {p.name}</option>
+          {/each}
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="save-category">หมวดหมู่เอกสาร</label>
+        <select id="save-category" bind:value={saveForm.doc_category} class="form-input">
+          <option value="Reference">เอกสารอ้างอิง (Reference)</option>
+          <option value="TestCase">TestCase</option>
+          <option value="Requirements">Requirements</option>
+          <option value="Other">อื่นๆ (Other)</option>
+        </select>
+      </div>
+
+      <div class="form-group" style="display: none;">
+        <!-- label hidden -->
+        <select id="save-type" bind:value={saveForm.doc_type} class="form-input">
+          <option value="PDF">PDF</option>
+          <option value="Image">Image</option>
+          <option value="Word">Word</option>
+        </select>
+      </div>
+
+      <div class="form-group toggle-group">
+        <span class="label-text">กำหนดเป็น Golden Data</span>
+        <label class="toggle-wrap">
+          <input type="checkbox" bind:checked={saveForm.is_golden_data}/>
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        </label>
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn-cancel" on:click={() => showSaveModal = false} disabled={isSaving}>ยกเลิก</button>
+        <button class="btn-save" on:click={saveToProject} disabled={isSaving || !saveForm.project_id || !saveForm.filename}>
+          {#if isSaving} กำลังบันทึก... {:else} บันทึก {/if}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
 
 <style>
   /* ── Shell ── */
@@ -1233,5 +1372,107 @@
     to {
       transform: rotate(360deg);
     }
+  }
+
+  /* ── Save Modal ── */
+  .modal-backdrop {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(10, 15, 30, 0.6);
+    backdrop-filter: blur(4px);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 9999;
+  }
+  .modal-content {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 24px;
+    width: 400px;
+    max-width: 90vw;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+  }
+  .modal-content h3 {
+    margin: 0 0 20px 0;
+    font-size: 16px;
+    color: var(--text);
+  }
+  .form-group {
+    margin-bottom: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .form-group label, .label-text {
+    font-size: 13px;
+    color: var(--text2);
+    font-weight: 500;
+  }
+  .form-input {
+    background: var(--bg3);
+    border: 1px solid var(--border2);
+    color: var(--text);
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-family: inherit;
+    font-size: 14px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  .form-input:focus {
+    border-color: var(--primary);
+  }
+  .toggle-group {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .toggle-wrap { display: flex; align-items: center; cursor: pointer; }
+  .toggle-wrap input { display: none; }
+  .toggle-track {
+    width: 36px; height: 20px; border-radius: 10px;
+    background: var(--surface2); border: 1px solid var(--border2);
+    position: relative; transition: all 0.25s;
+  }
+  .toggle-wrap input:checked + .toggle-track {
+    background: var(--primary); border-color: var(--primary);
+    box-shadow: 0 0 8px var(--glow);
+  }
+  .toggle-thumb {
+    width: 14px; height: 14px; border-radius: 50%;
+    background: var(--text3); position: absolute; top: 2px; left: 2px;
+    transition: all 0.25s;
+  }
+  .toggle-wrap input:checked + .toggle-track .toggle-thumb {
+    transform: translateX(16px); background: #fff;
+  }
+  .modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    margin-top: 24px;
+  }
+  .btn-cancel {
+    background: transparent;
+    border: 1px solid var(--border2);
+    color: var(--text2);
+    padding: 8px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .btn-save {
+    background: var(--primary);
+    border: none;
+    color: white;
+    padding: 8px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-family: inherit;
+    font-weight: 500;
+  }
+  .btn-save:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 </style>

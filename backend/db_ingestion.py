@@ -1,4 +1,5 @@
 import os
+import hashlib
 import psycopg2
 import logging
 from sentence_transformers import SentenceTransformer
@@ -56,81 +57,121 @@ def chunk_markdown(text: str, chunk_size: int = 1500, overlap: int = 200) -> lis
         
     return chunks
 
+# ===================================================================
+# Projects CRUD — ตรงกับ schema:
+#   projects(project_id SERIAL PK, project_code VARCHAR UNIQUE NOT NULL,
+#            project_name VARCHAR NOT NULL, description TEXT,
+#            status VARCHAR DEFAULT 'Active', created_at TIMESTAMP)
+# ===================================================================
+
 def get_projects():
     """Fetch all projects from the database."""
+    conn = None
+    cursor = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
-        # Check column names first to handle new schema vs old schema gracefully
-        cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'projects';")
-        cols = [r[0] for r in cursor.fetchall()]
-        
-        if 'project_id' in cols and 'project_code' in cols:
-            # New schema
-            cursor.execute("SELECT project_id, project_name, project_code, description, status FROM projects ORDER BY project_id DESC;")
-            projects = [{"id": row[0], "name": row[1], "project_code": row[2], "description": row[3], "status": row[4]} for row in cursor.fetchall()]
-        else:
-            # Old schema
-            try:
-                cursor.execute("SELECT id, name FROM projects ORDER BY id DESC;")
-            except psycopg2.errors.UndefinedColumn:
-                conn.rollback()
-                cursor.execute("SELECT id, title as name FROM projects ORDER BY id DESC;")
-            projects = [{"id": row[0], "name": row[1]} for row in cursor.fetchall()]
-            
-        cursor.close()
-        conn.close()
+        cursor.execute(
+            "SELECT project_id, project_name, project_code, description, status, created_at "
+            "FROM projects ORDER BY project_id DESC;"
+        )
+        projects = [
+            {
+                "id": str(row[0]) if row[0] else None,
+                "name": row[1],
+                "project_code": row[2],
+                "description": row[3],
+                "status": row[4],
+                "created_at": row[5].isoformat() if row[5] else None
+            }
+            for row in cursor.fetchall()
+        ]
         return projects
     except Exception as e:
-        logger.error(f"Error fetching projects: {e}")
+        logger.error(f"Error fetching projects: {e}", exc_info=True)
         return []
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
 
-def add_project(name: str = None, project_code: str = None, project_name: str = None, description: str = '', status: str = 'Active'):
+
+def add_project(name: str = None, project_code: str = None, project_name: str = None,
+                description: str = '', status: str = 'Active'):
     """Add a new project to the database."""
+    conn = None
+    cursor = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
-        # Check columns
-        cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'projects';")
-        cols = [r[0] for r in cursor.fetchall()]
-        
-        if 'project_code' in cols and 'project_name' in cols:
-            # New schema
-            # If name is provided instead of project_name (old API call), map it
-            p_name = project_name if project_name else name
-            import uuid
-            p_code = project_code if project_code else f"PRJ-{uuid.uuid4().hex[:6].upper()}"
-            
-            cursor.execute(
-                "INSERT INTO projects (project_code, project_name, description, status) VALUES (%s, %s, %s, %s) RETURNING project_id;",
-                (p_code, p_name, description, status)
-            )
-            project_id = cursor.fetchone()[0]
-            conn.commit()
-            cursor.close()
-            conn.close()
-            return {"id": project_id, "name": p_name, "project_code": p_code, "description": description, "status": status}
-        else:
-            # Old schema
-            try:
-                cursor.execute("INSERT INTO projects (name) VALUES (%s) RETURNING id;", (name or project_name,))
-            except psycopg2.errors.UndefinedColumn:
-                conn.rollback()
-                cursor.execute("INSERT INTO projects (title) VALUES (%s) RETURNING id;", (name or project_name,))
-                
-            project_id = cursor.fetchone()[0]
-            conn.commit()
-            cursor.close()
-            conn.close()
-            return {"id": project_id, "name": name or project_name}
+
+        p_name = project_name or name
+        if not p_name:
+            raise Exception("กรุณาระบุชื่อโครงการ")
+
+        import uuid
+        p_code = project_code if project_code else f"PRJ-{uuid.uuid4().hex[:6].upper()}"
+
+        logger.info(f"Inserting project: code={p_code}, name={p_name}, status={status}")
+        cursor.execute(
+            "INSERT INTO projects (project_code, project_name, description, status) "
+            "VALUES (%s, %s, %s, %s) RETURNING project_id;",
+            (p_code, p_name, description, status)
+        )
+        project_id = cursor.fetchone()[0]
+        conn.commit()
+        logger.info(f"Project created successfully: id={project_id}")
+        return {
+            "id": project_id,
+            "name": p_name,
+            "project_code": p_code,
+            "description": description,
+            "status": status
+        }
+    except psycopg2.errors.UniqueViolation:
+        if conn: conn.rollback()
+        raise Exception(f"Project Code '{project_code}' ซ้ำกับโครงการที่มีอยู่แล้ว")
     except Exception as e:
-        logger.error(f"Error adding project: {e}")
-        return None
+        if conn: conn.rollback()
+        logger.error(f"Error adding project: {e}", exc_info=True)
+        raise
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
 
-def ingest_markdown_document(filename: str, markdown_text: str, project_id: int = None):
+def delete_project(project_id: str):
+    """Delete a project and all its associated documents (CASCADE)."""
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM projects WHERE project_id = %s::uuid;", (project_id,))
+        if cursor.rowcount == 0:
+            raise Exception("ไม่พบโครงการที่ต้องการลบ")
+        conn.commit()
+        return True
+    except Exception as e:
+        if conn: conn.rollback()
+        logger.error(f"Error deleting project: {e}", exc_info=True)
+        raise
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
 
+# ===================================================================
+# Document Ingestion — ตรงกับ schema:
+#   documents(doc_id SERIAL PK, project_id INT FK, doc_category VARCHAR NOT NULL,
+#             doc_type VARCHAR NOT NULL, original_filename VARCHAR,
+#             full_markdown_content TEXT, is_golden_data BOOL, file_hash VARCHAR,
+#             version INT, status VARCHAR, created_at TIMESTAMP)
+#   document_chunks(chunk_id SERIAL PK, doc_id INT FK,
+#                   chunk_text TEXT NOT NULL, embedding vector(384),
+#                   created_at TIMESTAMP)
+# ===================================================================
+
+def ingest_markdown_document(filename: str, markdown_text: str, project_id: int = None,
+                              doc_category: str = 'OCR', doc_type: str = 'PDF',
+                              is_golden_data: bool = False):
     """
     Ingests a markdown document into the pgvector database.
     1. Chunks the text
@@ -140,85 +181,115 @@ def ingest_markdown_document(filename: str, markdown_text: str, project_id: int 
     if not markdown_text.strip():
         logger.warning("Empty markdown text provided. Skipping ingestion.")
         return False
-        
+
+    conn = None
+    cursor = None
     try:
         logger.info(f"Starting database ingestion for document: {filename}")
-        
+
         # 1. Chunking
         chunks = chunk_markdown(markdown_text)
         logger.info(f"Generated {len(chunks)} chunks.")
+
+        # 2. Embedding
+        embedder = get_model()
+        embeddings = embedder.encode(chunks)
+
+        # 3. Compute file hash for duplicate detection
+        file_hash = hashlib.sha256(markdown_text.encode('utf-8')).hexdigest()
+
+        # 4. DB Insertion
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Check for duplicate by file_hash
+        cursor.execute("SELECT doc_id FROM documents WHERE file_hash = %s AND status = 'Active';", (file_hash,))
+        existing = cursor.fetchone()
+        if existing:
+            logger.info(f"Document with same hash already exists (doc_id={existing[0]}). Skipping ingestion.")
+            return True, "already ingested"
+
+        if project_id is None:
+            raise ValueError("project_id is required and must be a valid UUID")
+        effective_project_id = project_id
+
+        cursor.execute(
+            "INSERT INTO documents (project_id, doc_category, doc_type, original_filename, "
+            "full_markdown_content, file_hash, is_golden_data) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING doc_id;",
+            (effective_project_id, doc_category, doc_type, filename, markdown_text, file_hash, is_golden_data)
+        )
+        document_id = cursor.fetchone()[0]
+
+        # Insert chunks
+        for chunk_text, emb in zip(chunks, embeddings):
+            cursor.execute(
+                "INSERT INTO document_chunks (doc_id, chunk_text, embedding) VALUES (%s, %s, %s);",
+                (document_id, chunk_text, emb.tolist())
+            )
+
+        conn.commit()
+        logger.info(f"Successfully ingested '{filename}' (doc_id: {document_id}) with {len(chunks)} chunks.")
+        return True, str(document_id)
+
+    except Exception as e:
+        if conn: conn.rollback()
+        logger.error(f"Error during document ingestion: {e}", exc_info=True)
+        return False, str(e)
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+
+
+def update_markdown_document(doc_id: str, new_markdown_text: str):
+    """
+    Updates the markdown content of an existing document, and re-generates its chunks and embeddings.
+    """
+    if not new_markdown_text.strip():
+        return False, "Empty markdown text provided."
+
+    conn = None
+    cursor = None
+    try:
+        # 1. Chunking
+        chunks = chunk_markdown(new_markdown_text)
         
         # 2. Embedding
         embedder = get_model()
         embeddings = embedder.encode(chunks)
         
-        # 3. DB Insertion
+        # 3. Compute file hash
+        file_hash = hashlib.sha256(new_markdown_text.encode('utf-8')).hexdigest()
+
         conn = get_db_connection()
         cursor = conn.cursor()
-        
-        # Attempt to insert document.
-        # This uses try-except blocks to gracefully handle potential schema variations
-        # (e.g. if the table expects 'title' instead of 'filename' or requires 'project_id').
-        try:
-            if project_id is not None:
-                cursor.execute(
-                    "INSERT INTO documents (project_id, filename, content) VALUES (%s, %s, %s) RETURNING id;",
-                    (project_id, filename, markdown_text)
-                )
-            else:
-                cursor.execute(
-                    "INSERT INTO documents (filename, content) VALUES (%s, %s) RETURNING id;",
-                    (filename, markdown_text)
-                )
-        except psycopg2.errors.UndefinedColumn:
-            conn.rollback()
-            try:
-                if project_id is not None:
-                    cursor.execute(
-                        "INSERT INTO documents (project_id, title, content) VALUES (%s, %s, %s) RETURNING id;",
-                        (project_id, filename, markdown_text)
-                    )
-                else:
-                    cursor.execute(
-                        "INSERT INTO documents (title, content) VALUES (%s, %s) RETURNING id;",
-                        (filename, markdown_text)
-                    )
-            except psycopg2.errors.NotNullViolation as e:
-                conn.rollback()
-                if 'project_id' in str(e):
-                    cursor.execute(
-                        "INSERT INTO documents (project_id, filename, content) VALUES (%s, %s, %s) RETURNING id;",
-                        (project_id or 1, filename, markdown_text)
-                    )
-                else:
-                    raise e
-        except psycopg2.errors.NotNullViolation as e:
-            conn.rollback()
-            if 'project_id' in str(e):
-                cursor.execute(
-                    "INSERT INTO documents (project_id, filename, content) VALUES (%s, %s, %s) RETURNING id;",
-                    (project_id or 1, filename, markdown_text)
-                )
-            else:
-                raise e
 
-            
-        document_id = cursor.fetchone()[0]
-        
-        # Insert chunks to 'document_chunks' table
-        for chunk, emb in zip(chunks, embeddings):
+        # Update document
+        cursor.execute(
+            "UPDATE documents SET full_markdown_content = %s, file_hash = %s WHERE doc_id = %s",
+            (new_markdown_text, file_hash, doc_id)
+        )
+        if cursor.rowcount == 0:
+            raise Exception("Document not found.")
+
+        # Delete old chunks
+        cursor.execute("DELETE FROM document_chunks WHERE doc_id = %s", (doc_id,))
+
+        # Insert new chunks
+        for chunk_text, emb in zip(chunks, embeddings):
             cursor.execute(
-                "INSERT INTO document_chunks (document_id, chunk_text, embedding) VALUES (%s, %s, %s);",
-                (document_id, chunk, emb.tolist())
+                "INSERT INTO document_chunks (doc_id, chunk_text, embedding) VALUES (%s, %s, %s);",
+                (doc_id, chunk_text, emb.tolist())
             )
-            
+
         conn.commit()
-        cursor.close()
-        conn.close()
-        
-        logger.info(f"Successfully ingested '{filename}' (ID: {document_id}) into database.")
-        return True
-        
+        logger.info(f"Successfully updated document '{doc_id}' with {len(chunks)} new chunks.")
+        return True, "Update successful"
+
     except Exception as e:
-        logger.error(f"Error during document ingestion: {e}")
-        return False
+        if conn: conn.rollback()
+        logger.error(f"Error updating document {doc_id}: {e}", exc_info=True)
+        return False, str(e)
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()

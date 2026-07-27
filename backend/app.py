@@ -52,7 +52,9 @@ app.config['MAX_CONTENT_LENGTH'] = MAX_CONTENT_LENGTH
 
 UPLOAD_FOLDER.mkdir(exist_ok=True)
 CACHE_FOLDER = BASE_DIR / 'uploads' / 'cache'
-CACHE_FOLDER.mkdir(exist_ok=True)
+CACHE_FOLDER.mkdir(exist_ok=True, parents=True)
+KB_IMAGES_FOLDER = BASE_DIR / 'uploads' / 'kb_images'
+KB_IMAGES_FOLDER.mkdir(exist_ok=True, parents=True)
 
 
 def enrich_errors_with_boxes(errors: List[Dict], words_map: List[Dict]) -> List[Dict]:
@@ -158,6 +160,7 @@ def list_projects():
 def create_project():
     """Create a new project"""
     data = request.get_json()
+    logger.info(f"Create project request: {data}")
     if not data or ('name' not in data and 'project_name' not in data):
         return jsonify({'error': 'กรุณาระบุชื่อโครงการ (name หรือ project_name)'}), 400
         
@@ -168,6 +171,10 @@ def create_project():
         desc = data.get('description', '')
         status = data.get('status', 'Active')
         
+        # ถ้า project_code เป็น string ว่าง ให้ใช้ None แทน (auto-generate)
+        if p_code is not None and not p_code.strip():
+            p_code = None
+        
         project = add_project(
             name=p_name,
             project_name=p_name,
@@ -175,11 +182,20 @@ def create_project():
             description=desc,
             status=status
         )
-        if project:
-            return jsonify({'success': True, 'project': project})
-        return jsonify({'error': 'ไม่สามารถสร้างโครงการได้ (อาจมี Project Code ซ้ำหรือเกิดข้อผิดพลาดอื่น)'}), 500
+        return jsonify({'success': True, 'project': project})
     except Exception as e:
-        logger.error(f"Error creating project: {e}")
+        logger.error(f"Error creating project: {e}", exc_info=True)
+        return jsonify({'error': f'สร้างโครงการไม่สำเร็จ: {str(e)}'}), 500
+
+@app.route('/api/projects/<string:project_id>', methods=['DELETE'])
+def delete_project_api(project_id):
+    """Delete a project"""
+    try:
+        from db_ingestion import delete_project
+        success = delete_project(project_id)
+        return jsonify({'success': True, 'message': 'ลบโครงการเรียบร้อยแล้ว'})
+    except Exception as e:
+        logger.error(f"Error deleting project {project_id}: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 
@@ -400,6 +416,7 @@ def process_stream():
     dpi = int(request.args.get('dpi', 300))
     auto_spellcheck = request.args.get('auto_spellcheck', 'false').lower() == 'true'
     include_suggestions = request.args.get('include_suggestions', 'true').lower() == 'true'
+    
     pdf_bytes = file.read()
     filename = secure_filename(file.filename)
 
@@ -595,6 +612,11 @@ def reload_dict():
 # ========================
 # Knowledge Base API Routes
 # ========================
+# Schema Reference:
+#   projects(project_id, project_code, project_name, description, status, created_at)
+#   documents(doc_id, project_id, doc_category, doc_type, original_filename,
+#             full_markdown_content, is_golden_data, file_hash, version, status, created_at)
+#   document_chunks(chunk_id, doc_id, chunk_text, embedding vector(384), created_at)
 
 @app.route('/api/kb/stats', methods=['GET'])
 def kb_stats():
@@ -604,29 +626,14 @@ def kb_stats():
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        # Count projects
-        try:
-            cursor.execute("SELECT COUNT(*) FROM projects;")
-            project_count = cursor.fetchone()[0]
-        except Exception:
-            conn.rollback()
-            project_count = 0
+        cursor.execute("SELECT COUNT(*) FROM projects;")
+        project_count = cursor.fetchone()[0]
 
-        # Count documents
-        try:
-            cursor.execute("SELECT COUNT(*) FROM documents;")
-            doc_count = cursor.fetchone()[0]
-        except Exception:
-            conn.rollback()
-            doc_count = 0
+        cursor.execute("SELECT COUNT(*) FROM documents;")
+        doc_count = cursor.fetchone()[0]
 
-        # Count chunks / embeddings
-        try:
-            cursor.execute("SELECT COUNT(*) FROM document_chunks;")
-            chunk_count = cursor.fetchone()[0]
-        except Exception:
-            conn.rollback()
-            chunk_count = 0
+        cursor.execute("SELECT COUNT(*) FROM document_chunks;")
+        chunk_count = cursor.fetchone()[0]
 
         cursor.close()
         conn.close()
@@ -659,51 +666,39 @@ def kb_documents():
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        # Detect column names dynamically
-        cursor.execute("""
-            SELECT column_name FROM information_schema.columns
-            WHERE table_name = 'documents'
-            ORDER BY ordinal_position;
-        """)
-        cols = [r[0] for r in cursor.fetchall()]
-        name_col = 'filename' if 'filename' in cols else 'title'
-        has_project = 'project_id' in cols
-        has_created = 'created_at' in cols
-
-        select_cols = ['id', name_col + ' AS name']
-        if has_project:
-            select_cols.append('project_id')
-        if has_created:
-            select_cols.append('created_at')
-
-        if project_id and has_project:
+        if project_id:
             cursor.execute(
-                f"SELECT {', '.join(select_cols)} FROM documents WHERE project_id = %s ORDER BY id DESC LIMIT %s OFFSET %s;",
+                "SELECT doc_id, original_filename, project_id, doc_category, doc_type, status, created_at, is_golden_data "
+                "FROM documents WHERE project_id = %s ORDER BY doc_id DESC LIMIT %s OFFSET %s;",
                 (project_id, limit, offset)
             )
         else:
             cursor.execute(
-                f"SELECT {', '.join(select_cols)} FROM documents ORDER BY id DESC LIMIT %s OFFSET %s;",
+                "SELECT doc_id, original_filename, project_id, doc_category, doc_type, status, created_at, is_golden_data "
+                "FROM documents ORDER BY doc_id DESC LIMIT %s OFFSET %s;",
                 (limit, offset)
             )
 
         rows = cursor.fetchall()
-        col_names = [desc[0] for desc in cursor.description]
-
         documents = []
         for row in rows:
-            doc = dict(zip(col_names, row))
-            # Count chunks for this document
-            try:
-                cursor.execute("SELECT COUNT(*) FROM document_chunks WHERE document_id = %s;", (doc['id'],))
-                doc['chunk_count'] = cursor.fetchone()[0]
-            except Exception:
-                conn.rollback()
-                doc['chunk_count'] = 0
-            documents.append(doc)
+            doc_id_val = row[0]
+            cursor.execute("SELECT COUNT(*) FROM document_chunks WHERE doc_id = %s;", (doc_id_val,))
+            chunk_count = cursor.fetchone()[0]
 
-        # Total count
-        if project_id and has_project:
+            documents.append({
+                'id': doc_id_val,
+                'name': row[1] or 'ไม่ระบุชื่อ',
+                'project_id': row[2],
+                'doc_category': row[3],
+                'doc_type': row[4],
+                'status': row[5],
+                'created_at': row[6].isoformat() if row[6] else None,
+                'is_golden_data': row[7] if len(row) > 7 else False,
+                'chunk_count': chunk_count
+            })
+
+        if project_id:
             cursor.execute("SELECT COUNT(*) FROM documents WHERE project_id = %s;", (project_id,))
         else:
             cursor.execute("SELECT COUNT(*) FROM documents;")
@@ -714,11 +709,11 @@ def kb_documents():
 
         return jsonify({'success': True, 'documents': documents, 'total': total})
     except Exception as e:
-        logger.error(f"KB documents error: {e}")
+        logger.error(f"KB documents error: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/api/kb/documents/<int:doc_id>', methods=['GET'])
+@app.route('/api/kb/documents/<string:doc_id>', methods=['GET'])
 def kb_document_detail(doc_id):
     """ดูรายละเอียดเอกสาร รวมถึง content และ chunks"""
     try:
@@ -726,24 +721,49 @@ def kb_document_detail(doc_id):
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        # Get document
-        cursor.execute("""
-            SELECT column_name FROM information_schema.columns
-            WHERE table_name = 'documents' ORDER BY ordinal_position;
-        """)
-        cols = [r[0] for r in cursor.fetchall()]
-        cursor.execute(f"SELECT * FROM documents WHERE id = %s;", (doc_id,))
+        cursor.execute(
+            """
+            SELECT d.doc_id, d.project_id, d.doc_category, d.doc_type, d.original_filename,
+                   d.full_markdown_content, d.is_golden_data, d.file_hash, d.version, d.status, d.created_at,
+                   p.project_name
+            FROM documents d
+            LEFT JOIN projects p ON d.project_id = p.project_id
+            WHERE d.doc_id = %s;
+            """,
+            (doc_id,)
+        )
         row = cursor.fetchone()
         if not row:
             cursor.close()
             conn.close()
             return jsonify({'error': 'ไม่พบเอกสาร'}), 404
 
-        doc = dict(zip(cols, row))
+        doc = {
+            'id': str(row[0]) if row[0] else None,
+            'project_id': str(row[1]) if row[1] else None,
+            'doc_category': row[2],
+            'doc_type': row[3],
+            'filename': row[4],
+            'content': row[5],
+            'is_golden_data': row[6],
+            'file_hash': row[7],
+            'version': row[8],
+            'status': row[9],
+            'created_at': row[10].isoformat() if row[10] else None,
+            'project_name': row[11]
+        }
 
-        # Get chunks (text only, not embedding vector)
+        # Check total pages in kb_images directory
+        total_pages = 0
+        img_dir = KB_IMAGES_FOLDER / doc['id']
+        if img_dir.exists():
+            import glob
+            total_pages = len(glob.glob(str(img_dir / 'page_*.jpg')))
+        doc['total_pages'] = total_pages
+
+        # Fetch chunks
         cursor.execute(
-            "SELECT id, chunk_text FROM document_chunks WHERE document_id = %s ORDER BY id ASC;",
+            "SELECT chunk_id, chunk_text FROM document_chunks WHERE doc_id = %s ORDER BY chunk_id ASC;",
             (doc_id,)
         )
         chunks = [{'id': r[0], 'text': r[1]} for r in cursor.fetchall()]
@@ -753,7 +773,7 @@ def kb_document_detail(doc_id):
 
         return jsonify({'success': True, 'document': doc, 'chunks': chunks})
     except Exception as e:
-        logger.error(f"KB document detail error: {e}")
+        logger.error(f"KB document detail error: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 
@@ -778,32 +798,24 @@ def kb_search():
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        cursor.execute("""
-            SELECT column_name FROM information_schema.columns
-            WHERE table_name = 'documents' ORDER BY ordinal_position;
-        """)
-        doc_cols = [r[0] for r in cursor.fetchall()]
-        name_col = 'filename' if 'filename' in doc_cols else 'title'
-        has_project = 'project_id' in doc_cols
-
-        if project_id and has_project:
-            cursor.execute(f"""
-                SELECT dc.id, dc.document_id, dc.chunk_text,
+        if project_id:
+            cursor.execute("""
+                SELECT dc.chunk_id, dc.doc_id, dc.chunk_text,
                        dc.embedding <=> %s::vector AS distance,
-                       d.{name_col} AS doc_name
+                       d.original_filename AS doc_name
                 FROM document_chunks dc
-                JOIN documents d ON d.id = dc.document_id
+                JOIN documents d ON d.doc_id = dc.doc_id
                 WHERE d.project_id = %s
                 ORDER BY distance ASC
                 LIMIT %s;
             """, (query_vec, project_id, top_k))
         else:
-            cursor.execute(f"""
-                SELECT dc.id, dc.document_id, dc.chunk_text,
+            cursor.execute("""
+                SELECT dc.chunk_id, dc.doc_id, dc.chunk_text,
                        dc.embedding <=> %s::vector AS distance,
-                       d.{name_col} AS doc_name
+                       d.original_filename AS doc_name
                 FROM document_chunks dc
-                JOIN documents d ON d.id = dc.document_id
+                JOIN documents d ON d.doc_id = dc.doc_id
                 ORDER BY distance ASC
                 LIMIT %s;
             """, (query_vec, top_k))
@@ -815,7 +827,7 @@ def kb_search():
                 'document_id': r[1],
                 'chunk_text': r[2],
                 'similarity': round(1 - float(r[3]), 4),
-                'doc_name': r[4]
+                'doc_name': r[4] or 'ไม่ระบุชื่อ'
             }
             for r in rows
         ]
@@ -825,7 +837,7 @@ def kb_search():
 
         return jsonify({'success': True, 'results': results, 'query': query_text})
     except Exception as e:
-        logger.error(f"KB search error: {e}")
+        logger.error(f"KB search error: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 
@@ -854,6 +866,121 @@ def save_format_rules_route():
             return jsonify({'error': 'ไม่สามารถบันทึกกฎได้'}), 500
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/kb/ingest', methods=['POST'])
+def kb_ingest():
+    """บันทึกเอกสารเข้า Project (Knowledge Base) ด้วยตัวเอง"""
+    data = request.get_json()
+    if not data:
+        return jsonify({'error': 'No data provided'}), 400
+
+    filename = data.get('filename')
+    markdown_text = data.get('markdown_text')
+    project_id = data.get('project_id')
+    doc_category = data.get('doc_category', 'Reference')
+    doc_type = data.get('doc_type', 'PDF')
+    is_golden_data = data.get('is_golden_data', False)
+
+    session_id = data.get('session_id')
+
+    if not filename or not markdown_text or not project_id:
+        return jsonify({'error': 'กรุณาระบุ filename, markdown_text, และ project_id'}), 400
+
+    try:
+        from db_ingestion import ingest_markdown_document
+        import shutil
+        
+        logger.info(f"Manual DB ingestion for {filename} (Project ID: {project_id})...")
+        success, msg_or_err = ingest_markdown_document(
+            filename=filename,
+            markdown_text=markdown_text.strip(),
+            project_id=project_id,
+            doc_category=doc_category,
+            doc_type=doc_type,
+            is_golden_data=is_golden_data
+        )
+        if success:
+            doc_id = msg_or_err
+            
+            # If session_id provided, copy images to permanent storage
+            if session_id:
+                src_dir = CACHE_FOLDER / session_id
+                if src_dir.exists():
+                    dest_dir = KB_IMAGES_FOLDER / doc_id
+                    dest_dir.mkdir(exist_ok=True, parents=True)
+                    for item in src_dir.glob("page_*.jpg"):
+                        shutil.copy2(item, dest_dir / item.name)
+                        
+            return jsonify({'success': True, 'message': 'บันทึกเอกสารเข้าโครงการสำเร็จ', 'doc_id': doc_id})
+        else:
+            return jsonify({'error': f'การบันทึกเอกสารไม่สำเร็จ: {msg_or_err}'}), 500
+    except Exception as e:
+        logger.error(f"KB ingest error: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/kb/documents/<string:doc_id>', methods=['PUT'])
+def kb_update_document(doc_id):
+    """แก้ไขเนื้อหาเอกสาร (Markdown) และทำการ Chunk/Embed ใหม่"""
+    try:
+        data = request.get_json()
+        new_markdown = data.get('markdown_text', '')
+        
+        if not new_markdown.strip():
+            return jsonify({'error': 'เนื้อหาเอกสารว่างเปล่า'}), 400
+
+        from db_ingestion import update_markdown_document
+        success, msg = update_markdown_document(doc_id, new_markdown)
+        if success:
+            return jsonify({'success': True, 'message': 'อัปเดตเอกสารและ Chunks สำเร็จ'})
+        else:
+            return jsonify({'error': f'การอัปเดตไม่สำเร็จ: {msg}'}), 500
+    except Exception as e:
+        logger.error(f"Error updating doc {doc_id}: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/kb/view/<string:doc_id>/<int:page_num>')
+def kb_view_page(doc_id, page_num):
+    """Serve permanent page image from Knowledge Base"""
+    from werkzeug.utils import secure_filename
+    doc_id = secure_filename(doc_id)
+    directory = KB_IMAGES_FOLDER / doc_id
+    filename = f"page_{page_num}.jpg"
+    full_path = directory / filename
+    
+    if not full_path.exists():
+        return "Image not found", 404
+        
+    return send_from_directory(str(directory), filename)
+
+
+@app.route('/api/kb/documents/<string:doc_id>', methods=['DELETE'])
+def kb_delete_document(doc_id):
+    """ลบเอกสารออกจาก Knowledge Base"""
+    conn = None
+    try:
+        from db_ingestion import get_db_connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Check if doc exists
+        cursor.execute("SELECT doc_id FROM documents WHERE doc_id = %s;", (doc_id,))
+        if not cursor.fetchone():
+            return jsonify({'error': 'ไม่พบเอกสารที่ต้องการลบ'}), 404
+            
+        # Delete document (CASCADE will delete chunks)
+        cursor.execute("DELETE FROM documents WHERE doc_id = %s;", (doc_id,))
+        conn.commit()
+        
+        return jsonify({'success': True, 'message': 'ลบเอกสารเรียบร้อยแล้ว'})
+    except Exception as e:
+        if conn: conn.rollback()
+        logger.error(f"KB delete document error: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn: conn.close()
 
 
 if __name__ == '__main__':

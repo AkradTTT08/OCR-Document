@@ -34,8 +34,11 @@
   let viewingProject = null;
 
   // ── Load on mount ──
+  let isInitialLoading = true;
   onMount(async () => {
+    isInitialLoading = true;
     await Promise.all([loadStats(), loadProjects()]);
+    isInitialLoading = false;
   });
 
   async function loadStats() {
@@ -60,6 +63,7 @@
     isLoadingDocs = true;
     selectedDoc = null;
     docDetail = null;
+    isEditingDoc = false;
     try {
       const url = projectId
         ? `${API}/kb/documents?project_id=${projectId}`
@@ -73,19 +77,52 @@
     isLoadingDocs = false;
   }
 
+  let isEditingDoc = false;
+  let editingMarkdown = '';
+  let isSavingDoc = false;
+
   async function loadDocDetail(docId) {
     isLoadingDetail = true;
     selectedDoc = docId;
     docDetail = null;
+    isEditingDoc = false;
     try {
       const r = await fetch(`${API}/kb/documents/${docId}`);
       const d = await r.json();
-      if (d.success) docDetail = d;
+      if (d.success) {
+        docDetail = d;
+        editingMarkdown = d.document.content || '';
+      }
       else toast(d.error || 'โหลดรายละเอียดไม่สำเร็จ', 'error');
     } catch (e) {
       toast('เกิดข้อผิดพลาด', 'error');
     }
     isLoadingDetail = false;
+  }
+
+  async function saveDocEdit() {
+    if (!docDetail) return;
+    isSavingDoc = true;
+    try {
+      const r = await fetch(`${API}/kb/documents/${docDetail.document.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ markdown_text: editingMarkdown })
+      });
+      const d = await r.json();
+      if (d.success) {
+        toast('อัปเดตเอกสารสำเร็จ!', 'success');
+        isEditingDoc = false;
+        // Reload detail to get new chunks
+        await loadDocDetail(docDetail.document.id);
+      } else {
+        toast(d.error || 'อัปเดตไม่สำเร็จ', 'error');
+      }
+    } catch (e) {
+      toast('เกิดข้อผิดพลาดในการเชื่อมต่อ', 'error');
+    } finally {
+      isSavingDoc = false;
+    }
   }
 
   async function doSearch() {
@@ -103,6 +140,128 @@
     }
     isSearching = false;
   }
+
+  // --- Markdown Parser for Preview ---
+  function escapeHtml(unsafe) {
+    return unsafe
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+  }
+
+  function parseMarkdownToHtml(text) {
+    if (!text) return "";
+    const lines = text.split("\n");
+    const html = [];
+    let inTable = false;
+    let tableHeaders = [];
+    let tableRows = [];
+    
+    let inCodeBlock = false;
+    let codeBlockContent = [];
+    let codeLanguage = '';
+
+    for (let i = 0; i < lines.length; i++) {
+      const rawLine = lines[i];
+      const line = rawLine.trim();
+
+      if (line.startsWith("```")) {
+        if (!inCodeBlock) {
+          inCodeBlock = true;
+          codeLanguage = line.substring(3).trim();
+          codeBlockContent = [];
+          continue;
+        } else {
+          inCodeBlock = false;
+          html.push(`<div class="code-block" style="background:#1e1e2e; border-radius:8px; padding:12px; margin:12px 0; overflow-x:auto; border: 1px solid var(--border2);"><div style="font-size:12px; color:#a6accd; margin-bottom:8px; font-weight:600; text-transform:uppercase;">${codeLanguage || 'code'}</div><pre style="margin:0; color:#cdd6f4; font-family:monospace; font-size:13px;"><code>${escapeHtml(codeBlockContent.join("\n"))}</code></pre></div>`);
+          continue;
+        }
+      }
+      
+      if (inCodeBlock) {
+        codeBlockContent.push(rawLine); // keep original indent
+        continue;
+      }
+
+      // ตรวจสอบว่าเป็นบรรทัดของตารางหรือไม่
+      if (line.startsWith("|") && line.endsWith("|")) {
+        const cells = line.split("|").map((c) => c.trim()).slice(1, -1);
+        if (!inTable) {
+          const nextLine = (lines[i + 1] || "").trim();
+          if (nextLine.startsWith("|") && /^[|:\s-]+$/.test(nextLine) && nextLine.includes("-")) {
+            inTable = true;
+            tableHeaders = cells;
+            i++; 
+            continue;
+          }
+        }
+        if (inTable) {
+          const isRowEmpty = cells.every((c) => c === "");
+          if (!isRowEmpty) {
+            tableRows.push(cells);
+          }
+          continue;
+        }
+      }
+
+      if (inTable) {
+        html.push(renderHtmlTable(tableHeaders, tableRows));
+        inTable = false;
+        tableHeaders = [];
+        tableRows = [];
+      }
+
+      if (line === "") {
+        html.push("<br/>");
+      } else if (line.startsWith("- ") || line.startsWith("* ")) {
+        html.push(`<li style="margin-left: 20px;">${line.substring(2)}</li>`);
+      } else if (/^\d+\.\s/.test(line)) {
+        const match = line.match(/^(\d+)\.\s(.*)/);
+        if (match) html.push(`<ol start="${match[1]}" style="margin-left: 20px; margin-bottom: 4px;"><li>${match[2]}</li></ol>`);
+        else html.push(`<div>${line}</div>`);
+      } else if (line.startsWith("### ")) {
+        html.push(`<h3 style="margin-top:16px; margin-bottom:8px; color:var(--text); font-size:16px;">${line.substring(4)}</h3>`);
+      } else if (line.startsWith("## ")) {
+        html.push(`<h2 style="margin-top:20px; margin-bottom:12px; color:var(--text); font-size:18px;">${line.substring(3)}</h2>`);
+      } else if (line.startsWith("# ")) {
+        html.push(`<h1 style="margin-top:24px; margin-bottom:16px; color:var(--primary); font-size:22px;">${line.substring(2)}</h1>`);
+      } else {
+        html.push(`<div style="margin-bottom:6px;">${line}</div>`);
+      }
+    }
+
+    if (inTable) html.push(renderHtmlTable(tableHeaders, tableRows));
+    if (inCodeBlock) {
+      // Unclosed code block
+      html.push(`<div class="code-block" style="background:#1e1e2e; border-radius:8px; padding:12px; margin:12px 0; overflow-x:auto;"><pre style="margin:0; color:#cdd6f4; font-family:monospace; font-size:13px;"><code>${escapeHtml(codeBlockContent.join("\n"))}</code></pre></div>`);
+    }
+
+    return html.join("\n");
+  }
+
+  function renderHtmlTable(headers, rows) {
+    const html = ['<div style="overflow-x:auto; margin: 12px 0;"><table style="width:100%; border-collapse:collapse; font-size:14px; text-align:left;">'];
+    if (headers.length > 0) {
+      html.push('<thead><tr style="background:var(--surface2); border-bottom:1px solid var(--border2);">');
+      headers.forEach((h) => html.push(`<th style="padding:10px 12px; border-right:1px solid var(--border2);">${h}</th>`));
+      html.push("</tr></thead>");
+    }
+    if (rows.length > 0) {
+      html.push("<tbody>");
+      rows.forEach((row, idx) => {
+        const bg = idx % 2 === 0 ? 'background:transparent;' : 'background:rgba(255,255,255,0.02);';
+        html.push(`<tr style="${bg} border-bottom:1px solid var(--border2);">`);
+        row.forEach((cell) => html.push(`<td style="padding:10px 12px; border-right:1px solid var(--border2);">${cell}</td>`));
+        html.push("</tr>");
+      });
+      html.push("</tbody>");
+    }
+    html.push("</table></div>");
+    return html.join("");
+  }
+  // ---------------------------------
 
   function selectProject(p) {
     selectedProject = p ? p.id : null;
@@ -122,6 +281,7 @@
         body: JSON.stringify(newProject)
       });
       const d = await r.json();
+      console.log('Create project response:', d);
       if (d.success) {
         toast('สร้างโครงการสำเร็จ', 'success');
         showAddProject = false;
@@ -129,10 +289,12 @@
         await Promise.all([loadStats(), loadProjects()]);
         selectProject(d.project);
       } else {
+        console.error('Create project error:', d.error);
         toast(d.error || 'สร้างโครงการไม่สำเร็จ', 'error');
       }
     } catch (e) {
-      toast('เกิดข้อผิดพลาดในการเชื่อมต่อ', 'error');
+      console.error('Create project network error:', e);
+      toast('เกิดข้อผิดพลาดในการเชื่อมต่อ: ' + e.message, 'error');
     }
     isAddingProject = false;
   }
@@ -140,6 +302,39 @@
   function openProjectInfo(p) {
     viewingProject = p;
     showProjectInfo = true;
+  }
+
+  let projectToDelete = null;
+  let showDeleteProjConfirm = false;
+  let isDeletingProject = false;
+
+  function confirmDeleteProject(p) {
+    projectToDelete = p;
+    showDeleteProjConfirm = true;
+  }
+
+  async function executeDeleteProject() {
+    if (!projectToDelete) return;
+    isDeletingProject = true;
+    try {
+      const res = await fetch(`${API}/projects/${projectToDelete.id}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (res.ok) {
+        toast('ลบโครงการสำเร็จ', 'success');
+        if (selectedProject === projectToDelete.id) {
+          selectProject(null);
+        }
+        await Promise.all([loadStats(), loadProjects()]);
+      } else {
+        toast(data.error || 'ลบโครงการไม่สำเร็จ', 'error');
+      }
+    } catch (e) {
+      toast('เกิดข้อผิดพลาดในการเชื่อมต่อ', 'error');
+    } finally {
+      isDeletingProject = false;
+    }
+    showDeleteProjConfirm = false;
+    projectToDelete = null;
   }
 
   function formatDate(val) {
@@ -151,6 +346,40 @@
     if (s >= 0.75) return '#4ade80';
     if (s >= 0.5)  return '#facc15';
     return '#f87171';
+  }
+
+  let docToDelete = null;
+  let showDeleteDocConfirm = false;
+  let isDeletingDoc = false;
+
+  function confirmDeleteDoc(docId) {
+    docToDelete = docId;
+    showDeleteDocConfirm = true;
+  }
+
+  async function executeDeleteDoc() {
+    if (!docToDelete) return;
+    isDeletingDoc = true;
+    try {
+      const res = await fetch(`${API}/kb/documents/${docToDelete}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (res.ok) {
+        toast('ลบเอกสารสำเร็จ', 'success');
+        if (selectedDoc === docToDelete) {
+          selectedDoc = null;
+          docDetail = null;
+        }
+        await loadProjects(); // reload docs
+      } else {
+        toast(data.error || 'ลบเอกสารไม่สำเร็จ', 'error');
+      }
+    } catch (e) {
+      toast('เกิดข้อผิดพลาดในการเชื่อมต่อ', 'error');
+    } finally {
+      isDeletingDoc = false;
+    }
+    showDeleteDocConfirm = false;
+    docToDelete = null;
   }
 </script>
 
@@ -211,11 +440,16 @@
         </button>
         {#each projects as p}
           <div class="project-item" class:active={selectedProject === p.id}>
-            <div class="project-item-content" on:click={() => selectProject(p)}>
+            <button class="project-item-content" on:click={() => selectProject(p)}>
               <span class="proj-icon">📂</span>
               <span class="truncate">{p.name}</span>
+            </button>
+            <div class="project-actions">
+              <button class="btn-view-proj" on:click|stopPropagation={() => openProjectInfo(p)} title="ดูรายละเอียดโครงการ">ℹ️</button>
+              <button class="btn-del-proj" on:click|stopPropagation={() => confirmDeleteProject(p)} title="ลบโครงการ">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+              </button>
             </div>
-            <button class="btn-view-proj" on:click={() => openProjectInfo(p)} title="ดูรายละเอียดโครงการ">ℹ️</button>
           </div>
         {/each}
         {#if projects.length === 0 && !dbError}
@@ -231,17 +465,29 @@
             <div class="loading-pulse">กำลังโหลด...</div>
           {:else}
             {#each documents as doc}
-              <button
-                class="doc-item"
-                class:active={selectedDoc === doc.id}
-                on:click={() => loadDocDetail(doc.id)}
-              >
-                <span class="doc-icon">📄</span>
-                <div class="doc-meta">
-                  <span class="doc-name truncate">{doc.name}</span>
-                  <span class="doc-info">{doc.chunk_count} chunks · {formatDate(doc.created_at)}</span>
-                </div>
-              </button>
+              <div class="doc-item-wrap" class:active={selectedDoc === doc.id}>
+                <button
+                  class="doc-item"
+                  on:click={() => loadDocDetail(doc.id)}
+                >
+                  <span class="doc-icon">📄</span>
+                  <div class="doc-meta">
+                    <span class="doc-name truncate">
+                      {doc.name}
+                      {#if doc.is_golden_data}
+                        <span class="badge-golden" title="Golden Data">⭐</span>
+                      {/if}
+                    </span>
+                    <span class="doc-info">
+                      <span class="badge-cat">{doc.doc_category || 'General'}</span>
+                      {doc.chunk_count} chunks · {formatDate(doc.created_at)}
+                    </span>
+                  </div>
+                </button>
+                <button class="btn-del" title="ลบเอกสาร" on:click={() => confirmDeleteDoc(doc.id)}>
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                </button>
+              </div>
             {/each}
           {/if}
         </div>
@@ -313,9 +559,9 @@
       <div class="doc-detail-wrap">
         <!-- Meta -->
         <div class="detail-meta-grid">
-          <div class="meta-chip"><span class="meta-k">ID</span><span class="meta-v">#{docDetail.document.id}</span></div>
-          {#if docDetail.document.project_id}
-            <div class="meta-chip"><span class="meta-k">Project</span><span class="meta-v">#{docDetail.document.project_id}</span></div>
+          <div class="meta-chip"><span class="meta-k">ชื่อเอกสาร</span><span class="meta-v">{docDetail.document.filename}</span></div>
+          {#if docDetail.document.project_name}
+            <div class="meta-chip"><span class="meta-k">โครงการ</span><span class="meta-v">{docDetail.document.project_name}</span></div>
           {/if}
           <div class="meta-chip"><span class="meta-k">Chunks</span><span class="meta-v">{docDetail.chunks.length}</span></div>
           {#if docDetail.document.created_at}
@@ -323,10 +569,68 @@
           {/if}
         </div>
 
-        <!-- Full content -->
-        {#if docDetail.document.content}
-          <div class="section-label" style="margin-top:20px">เนื้อหาเต็ม (Markdown)</div>
-          <div class="markdown-content">{docDetail.document.content}</div>
+        <!-- View Mode Tabs -->
+        {#if docDetail.document.content !== undefined}
+          <div class="view-mode-tabs" style="display: flex; gap: 8px; margin-top: 24px; margin-bottom: 12px; border-bottom: 1px solid var(--border2); padding-bottom: 8px;">
+            <button 
+              class="tab-btn {isEditingDoc ? '' : 'active'}" 
+              style="padding: 6px 16px; border-radius: 6px; border: none; background: {!isEditingDoc ? 'var(--primary)' : 'transparent'}; color: {!isEditingDoc ? '#fff' : 'var(--text2)'}; cursor: pointer; font-size: 14px; transition: all 0.2s;"
+              on:click={() => isEditingDoc = false}
+            >
+              👁️ พรีวิว (Preview)
+            </button>
+            <button 
+              class="tab-btn {isEditingDoc ? 'active' : ''}" 
+              style="padding: 6px 16px; border-radius: 6px; border: none; background: {isEditingDoc ? 'var(--primary)' : 'transparent'}; color: {isEditingDoc ? '#fff' : 'var(--text2)'}; cursor: pointer; font-size: 14px; transition: all 0.2s;"
+              on:click={() => { isEditingDoc = true; editingMarkdown = docDetail.document.content; }}
+            >
+              ✎ แก้ไขเนื้อหา (Markdown)
+            </button>
+          </div>
+
+          {#if !isEditingDoc}
+            <!-- Preview Mode -->
+            {#if docDetail.document.total_pages && docDetail.document.total_pages > 0}
+              <div style="display: flex; gap: 20px; align-items: flex-start; margin-bottom: 24px;">
+                <!-- Original Images Panel -->
+                <div style="flex: 1; background: var(--surface2); padding: 16px; border-radius: 8px; border: 1px solid var(--border2); max-height: 800px; overflow-y: auto;">
+                  <h4 style="margin-top: 0; margin-bottom: 12px; color: var(--text2); font-size: 14px; font-weight: 500;">ไฟล์ต้นฉบับ ({docDetail.document.total_pages} หน้า)</h4>
+                  <div style="display: flex; flex-direction: column; gap: 16px;">
+                    {#each Array(docDetail.document.total_pages) as _, i}
+                      <div style="position: relative; background: #fff; padding: 4px; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
+                        <div style="position: absolute; top: 8px; left: 8px; background: rgba(0,0,0,0.6); color: #fff; font-size: 11px; padding: 2px 6px; border-radius: 4px; backdrop-filter: blur(4px);">หน้า {i + 1}</div>
+                        <img 
+                          src={`http://localhost:5000/api/kb/view/${docDetail.document.id}/${i + 1}`} 
+                          alt={`หน้า ${i + 1}`} 
+                          style="width: 100%; border-radius: 4px; display: block;"
+                        />
+                      </div>
+                    {/each}
+                  </div>
+                </div>
+                
+                <!-- Markdown Rendered Panel -->
+                <div class="rendered-html" style="flex: 1; background: var(--bg3); border: 1px solid var(--border2); color: var(--text); padding: 24px; border-radius: 8px; line-height: 1.6; font-size: 15px; max-height: 800px; overflow-y: auto;">
+                  {@html parseMarkdownToHtml(docDetail.document.content)}
+                </div>
+              </div>
+            {:else}
+              <div class="rendered-html" style="background: var(--bg3); border: 1px solid var(--border2); color: var(--text); padding: 24px; border-radius: 8px; line-height: 1.6; font-size: 15px;">
+                {@html parseMarkdownToHtml(docDetail.document.content)}
+              </div>
+            {/if}
+          {:else}
+            <!-- Edit Mode -->
+            <div style="margin-bottom: 12px; display: flex; justify-content: flex-end; gap: 8px;">
+              <button class="btn-sm" style="background: transparent; border: 1px solid var(--border2); color: var(--text2); padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 13px;" on:click={() => { isEditingDoc = false; editingMarkdown = docDetail.document.content; }} disabled={isSavingDoc}>
+                ยกเลิก
+              </button>
+              <button class="btn-sm" style="background: var(--primary); border: none; color: #fff; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 500;" on:click={saveDocEdit} disabled={isSavingDoc}>
+                {isSavingDoc ? 'กำลังบันทึก...' : '💾 บันทึก & อัปเดต Chunk'}
+              </button>
+            </div>
+            <textarea class="markdown-editor" bind:value={editingMarkdown} disabled={isSavingDoc} style="width: 100%; min-height: 500px; background: #1e1e2e; border: 1px solid var(--primary); color: #cdd6f4; padding: 16px; border-radius: 8px; font-family: monospace; font-size: 14px; resize: vertical; line-height: 1.6; outline: none; box-shadow: 0 0 0 2px rgba(108,142,251,0.2);"></textarea>
+          {/if}
         {/if}
 
         <!-- Chunks -->
@@ -363,8 +667,10 @@
 
   <!-- ── Add Project Modal ── -->
   {#if showAddProject}
-    <div class="modal-backdrop" on:click={() => showAddProject = false}>
-      <div class="modal-content" on:click|stopPropagation>
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="modal-backdrop" on:click={() => showAddProject = false} on:keydown={(e) => e.key === 'Escape' && (showAddProject = false)} role="presentation">
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="modal-content" on:click|stopPropagation on:keydown|stopPropagation role="dialog" aria-modal="true" aria-label="เพิ่มโครงการใหม่">
         <div class="modal-header">
           <h3>เพิ่มโครงการใหม่</h3>
           <button class="btn-close" on:click={() => showAddProject = false}>✕</button>
@@ -402,8 +708,10 @@
 
   <!-- ── View Project Modal ── -->
   {#if showProjectInfo && viewingProject}
-    <div class="modal-backdrop" on:click={() => showProjectInfo = false}>
-      <div class="modal-content" on:click|stopPropagation>
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="modal-backdrop" on:click={() => showProjectInfo = false} on:keydown={(e) => e.key === 'Escape' && (showProjectInfo = false)} role="presentation">
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="modal-content" on:click|stopPropagation on:keydown|stopPropagation role="dialog" aria-modal="true" aria-label="รายละเอียดโครงการ">
         <div class="modal-header">
           <h3>รายละเอียดโครงการ</h3>
           <button class="btn-close" on:click={() => showProjectInfo = false}>✕</button>
@@ -434,6 +742,85 @@
       </div>
     </div>
   {/if}
+
+  <!-- ── Delete Project Confirm Modal ── -->
+  {#if showDeleteProjConfirm && projectToDelete}
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="modal-backdrop" on:click={() => showDeleteProjConfirm = false} on:keydown={(e) => e.key === 'Escape' && (showDeleteProjConfirm = false)} role="presentation">
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="modal-content modal-sm" on:click|stopPropagation on:keydown|stopPropagation role="dialog" aria-modal="true" aria-label="ยืนยันการลบโครงการ">
+        <div class="modal-header">
+          <h3 class="danger-text" style="display: flex; align-items: center; gap: 8px;">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+            ยืนยันการลบโครงการ
+          </h3>
+          <button class="btn-close" on:click={() => showDeleteProjConfirm = false}>✕</button>
+        </div>
+        <div class="modal-body">
+          <p style="margin: 0; font-size: 14px; color: var(--text);">
+            คุณต้องการลบโครงการ <strong style="color: var(--primary);">"{projectToDelete.name}"</strong> ใช่หรือไม่?
+          </p>
+          <p style="margin: 0; font-size: 13px; color: #f87171; background: rgba(239,68,68,0.1); padding: 10px; border-radius: 6px; border: 1px solid rgba(239,68,68,0.2);">
+            ข้อมูลเอกสารและ Chunks ทั้งหมดในโครงการนี้จะถูกลบทิ้งอย่างถาวร และไม่สามารถกู้คืนได้
+          </p>
+        </div>
+        <div class="modal-footer">
+          <button class="btn-cancel" on:click={() => showDeleteProjConfirm = false} disabled={isDeletingProject}>ยกเลิก</button>
+          <button class="btn-submit danger-bg" on:click={executeDeleteProject} disabled={isDeletingProject}>
+            {#if isDeletingProject}
+              <div class="loading-spin" style="width: 14px; height: 14px; margin-right: 6px; border-color: rgba(255,255,255,0.3); border-top-color: #fff; display: inline-block; vertical-align: middle;"></div> กำลังลบ...
+            {:else}
+              ลบโครงการถาวร
+            {/if}
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  <!-- ── Delete Document Confirm Modal ── -->
+  {#if showDeleteDocConfirm && docToDelete}
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="modal-backdrop" on:click={() => showDeleteDocConfirm = false} on:keydown={(e) => e.key === 'Escape' && (showDeleteDocConfirm = false)} role="presentation">
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="modal-content modal-sm" on:click|stopPropagation on:keydown|stopPropagation role="dialog" aria-modal="true" aria-label="ยืนยันการลบเอกสาร">
+        <div class="modal-header">
+          <h3 class="danger-text" style="display: flex; align-items: center; gap: 8px;">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+            ยืนยันการลบเอกสาร
+          </h3>
+          <button class="btn-close" on:click={() => showDeleteDocConfirm = false}>✕</button>
+        </div>
+        <div class="modal-body">
+          <p style="margin: 0; font-size: 14px; color: var(--text);">
+            คุณต้องการลบเอกสารนี้ใช่หรือไม่?
+          </p>
+          <p style="margin: 0; font-size: 13px; color: #f87171; background: rgba(239,68,68,0.1); padding: 10px; border-radius: 6px; border: 1px solid rgba(239,68,68,0.2);">
+            ข้อมูลเอกสารนี้จะถูกลบทิ้งอย่างถาวร และไม่สามารถกู้คืนได้
+          </p>
+        </div>
+        <div class="modal-footer">
+          <button class="btn-cancel" on:click={() => showDeleteDocConfirm = false} disabled={isDeletingDoc}>ยกเลิก</button>
+          <button class="btn-submit danger-bg" on:click={executeDeleteDoc} disabled={isDeletingDoc}>
+            {#if isDeletingDoc}
+              <div class="loading-spin" style="width: 14px; height: 14px; margin-right: 6px; border-color: rgba(255,255,255,0.3); border-top-color: #fff; display: inline-block; vertical-align: middle;"></div> กำลังลบ...
+            {:else}
+              ลบเอกสารถาวร
+            {/if}
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  <!-- ── Initial Loading Modal ── -->
+  {#if isInitialLoading}
+    <div class="modal-backdrop" style="z-index: 9999; display: flex; flex-direction: column; gap: 16px;">
+      <div class="loading-spin" style="width: 40px; height: 40px; border-width: 4px; border-color: rgba(108,142,251,0.2); border-top-color: var(--primary);"></div>
+      <div style="color: var(--text); font-size: 16px; font-weight: 500;">กำลังโหลดข้อมูล Knowledge Base...</div>
+    </div>
+  {/if}
+
 </div>
 
 <style>
@@ -550,6 +937,11 @@
   padding: 9px 14px;
   cursor: pointer;
   min-width: 0;
+  background: transparent;
+  border: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
 }
 .doc-item {
   width: 100%;
@@ -578,22 +970,38 @@
   font-weight: 600;
 }
 .proj-icon, .doc-icon { flex-shrink: 0; font-size: 14px; }
-.btn-view-proj {
+.project-actions {
+  display: flex;
+  align-items: center;
+  opacity: 0;
+  transition: opacity 0.2s;
+  padding-right: 4px;
+}
+.project-item:hover .project-actions {
+  opacity: 1;
+}
+.btn-view-proj, .btn-del-proj {
   background: transparent;
   border: none;
   color: var(--text3);
   cursor: pointer;
-  padding: 4px;
+  padding: 6px;
   border-radius: 4px;
   font-size: 12px;
-  opacity: 0.5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   transition: all 0.2s;
 }
 .btn-view-proj:hover {
-  background: var(--surface);
-  color: var(--primary);
-  opacity: 1;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text);
 }
+.btn-del-proj:hover {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.1);
+}
+
 .doc-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .doc-name { font-size: 12px; font-weight: 600; display: block; }
 .doc-info { font-size: 10px; color: var(--text3); }
@@ -950,6 +1358,17 @@ textarea.form-input { resize: vertical; }
   font-family: var(--font-th, inherit);
   transition: all 0.2s;
 }
+.btn-submit:hover { opacity: 0.9; transform: translateY(-1px); }
+
+.danger-bg {
+  background: linear-gradient(135deg, #ef4444, #dc2626);
+}
+.danger-text {
+  color: #ef4444 !important;
+}
+.modal-sm {
+  max-width: 380px;
+}
 .btn-submit:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* Info Group styles for viewing project */
@@ -983,4 +1402,55 @@ textarea.form-input { resize: vertical; }
 }
 .status-active { color: #4ade80; font-weight: 600; }
 .status-inactive { color: #f87171; font-weight: 600; }
+
+.badge-cat {
+  background: rgba(108, 142, 251, 0.15);
+  color: var(--primary2);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  margin-right: 6px;
+  border: 1px solid rgba(108, 142, 251, 0.3);
+}
+
+.doc-item-wrap {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--border2);
+}
+.doc-item-wrap.active {
+  background: var(--bg3);
+}
+.doc-item-wrap:hover .btn-del {
+  opacity: 1;
+}
+.doc-item-wrap .doc-item {
+  flex: 1;
+  border-bottom: none;
+}
+.btn-del {
+  background: transparent;
+  border: none;
+  color: var(--text3);
+  padding: 8px;
+  cursor: pointer;
+  opacity: 0;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 12px;
+  border-radius: 6px;
+}
+.btn-del:hover {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.1);
+}
+.badge-golden {
+  font-size: 12px;
+  margin-left: 4px;
+  filter: drop-shadow(0 0 4px rgba(250, 204, 21, 0.5));
+}
 </style>

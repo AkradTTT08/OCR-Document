@@ -1,5 +1,5 @@
 <script>
-  import { createEventDispatcher } from 'svelte';
+  import { createEventDispatcher, onMount } from 'svelte';
   import DictStats from './DictStats.svelte';
   import FormatRules from './FormatRules.svelte';
   import { toast } from './toastStore.js';
@@ -14,6 +14,9 @@
   let lang = 'tha+eng';
   let dpi = '300';
   let autoSpellCheck = false;
+
+  // ── DB Ingestion State ──
+  // Removed from here, moved to ResultsPanel
 
   // ── File ──
   /** @param {any} e */

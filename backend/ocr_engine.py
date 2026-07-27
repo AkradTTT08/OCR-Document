@@ -122,12 +122,15 @@ def ocr_image(pil_image: Image.Image, lang: str = 'tha+eng') -> dict:
     model_name = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash-lite')
     w, h = pil_image.size
 
-    # ลดขนาด Prompt ลงเพื่อประหยัด Token และให้กระชับที่สุด
+    # ลดขนาด Prompt ลงเพื่อประหยัด Token และให้กระชับที่สุด แต่เพิ่มเงื่อนไข Mermaid
     system_prompt = (
         "Extract text from image exactly as is. DO NOT fix typos or grammar. "
-        "Return raw text only without markdown. Stop generating when text ends."
+        "Return raw text only without markdown. Stop generating when text ends. "
+        "CRITICAL INSTRUCTION FOR FLOWCHARTS: If the image contains a flowchart or process diagram, "
+        "you MUST convert it into a Mermaid.js graph. Embed the Mermaid code within the text using ```mermaid ... ``` block. "
+        "Preserve the semantic meaning, steps, and conditions accurately."
     )
-    user_prompt = "Transcribe exactly. Preserve all intentional typos."
+    user_prompt = "Transcribe exactly. Preserve typos. Convert flowcharts to Mermaid.js code if present."
 
 
     try:
@@ -189,9 +192,8 @@ def ocr_image(pil_image: Image.Image, lang: str = 'tha+eng') -> dict:
             logger.warning(f"Gemini returned no text. Finish reason: {finish}")
             text = ""
 
-        # ลบ Markdown code block ถ้ามี (```...```)
-        text = re.sub(r'```[^\n]*\n?', '', text)
-        text = re.sub(r'```', '', text)
+        # อนุญาตให้มี Markdown code block (เช่น ```mermaid) เพื่อเก็บโครงสร้าง Flowchart
+        # หากมี ``` ครอบข้อความธรรมดามา ก็ปล่อยไว้เพราะระบบเก็บเป็น Markdown อยู่แล้ว
         text = text.strip()
 
         # Post-processing
@@ -211,7 +213,10 @@ def ocr_image(pil_image: Image.Image, lang: str = 'tha+eng') -> dict:
         import traceback
         tb = traceback.format_exc()
         logger.error(f"OCR Error: {e}\n{tb}")
-        return {'text': f"Error: {e}", 'words': [], 'error': str(e)}
+        err_msg = str(e)
+        if '429' in err_msg or 'RESOURCE_EXHAUSTED' in err_msg:
+            err_msg = "ข้อผิดพลาด 429: โควต้า API ของ Gemini สำหรับ Free Tier เต็ม หรือส่งคำขอถี่เกินไป กรุณารอสักครู่ (ประมาณ 1 นาที) แล้วกดแสกนใหม่อีกครั้ง"
+        return {'text': f"❌ {err_msg}", 'words': [], 'error': err_msg}
 
 
 def ocr_pdf_file(pdf_path: str, dpi: int = 150, lang: str = 'tha+eng', progress_callback=None) -> list[dict]:
@@ -256,6 +261,10 @@ def ocr_pdf_file(pdf_path: str, dpi: int = 150, lang: str = 'tha+eng', progress_
                 'total_pages': total_pages,
                 'time_taken': round(time.time() - page_start, 2)
             })
+
+        # หน่วงเวลา 4 วินาทีระหว่างหน้า เพื่อป้องกัน Rate Limit (15 RPM) สำหรับ Free Tier API
+        if i < total_pages - 1:
+            time.sleep(4)
 
     return results
 
@@ -346,3 +355,7 @@ def ocr_pdf_bytes_generator(pdf_bytes: bytes, dpi: int = 150, lang: str = 'tha+e
                 'time_taken': round(time.time() - page_start, 2)
             }
         yield res, image
+        
+        # หน่วงเวลา 4 วินาทีระหว่างหน้า เพื่อป้องกัน Rate Limit (15 RPM)
+        if i < total_pages - 1:
+            time.sleep(4)
