@@ -396,32 +396,67 @@
       </div>
     </div>
   {:else if !result}
-    <div class="state-screen empty">
-      <div class="empty-icon">
-        <svg viewBox="0 0 80 80" fill="none">
-          <circle
-            cx="40"
-            cy="40"
-            r="38"
-            stroke="rgba(108,142,251,0.18)"
-            stroke-width="2"
-            stroke-dasharray="5 4"
-          />
-          <path
-            d="M28 52V30a2 2 0 012-2h16l6 6v18a2 2 0 01-2 2H30a2 2 0 01-2-2z"
-            stroke="rgba(108,142,251,0.4)"
-            stroke-width="1.5"
-          />
-          <path
-            d="M46 28v8h8M34 44h12M34 49h8"
-            stroke="rgba(108,142,251,0.4)"
-            stroke-width="1.5"
-            stroke-linecap="round"
-          />
+    <div class="state-screen empty" style="justify-content: center; gap: 24px;">
+      <!-- Animated Prism Illustration -->
+      <div class="prism-hero" style="width: 240px; height: 160px; display: flex; align-items: center; justify-content: center;">
+        <svg viewBox="0 0 800 500" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg" style="overflow: visible;">
+          <defs>
+            <!-- Glowing effect -->
+            <filter id="glow-beam" x="-20%" y="-20%" width="140%" height="140%">
+              <feGaussianBlur stdDeviation="8" result="blur" />
+              <feMerge>
+                <feMergeNode in="blur"/>
+                <feMergeNode in="SourceGraphic"/>
+              </feMerge>
+            </filter>
+            <!-- Animation for the white beam shooting in -->
+            <linearGradient id="beam-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stop-color="transparent" />
+              <stop offset="100%" stop-color="#ffffff" />
+            </linearGradient>
+          </defs>
+
+          <!-- Light Beam (White) with stroke animation -->
+          <line x1="-100" y1="300" x2="330" y2="250" stroke="url(#beam-grad)" stroke-width="14" stroke-linecap="round" filter="url(#glow-beam)" stroke-dasharray="450" stroke-dashoffset="450">
+            <animate attributeName="stroke-dashoffset" values="450; 0; 0" dur="2.5s" repeatCount="indefinite" />
+          </line>
+          
+          <circle cx="330" cy="250" r="14" fill="#ffffff" filter="url(#glow-beam)">
+            <animate attributeName="r" values="12; 16; 12" dur="1s" repeatCount="indefinite" />
+          </circle>
+          
+          <!-- Prism (Triangle) floating -->
+          <g>
+            <animateTransform attributeName="transform" type="translate" values="0,0; 0,-15; 0,0" dur="4s" repeatCount="indefinite" />
+            <polygon points="400,100 550,400 250,400" fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.25)" stroke-width="6" stroke-linejoin="round" />
+            <polygon points="400,100 480,260 300,260" fill="rgba(255,255,255,0.04)" />
+          </g>
+          
+          <!-- Dispersed Spectrum Beams with staggered animation -->
+          <g filter="url(#glow-beam)">
+            <line x1="470" y1="230" x2="1000" y2="60" stroke="var(--spec-red)" stroke-width="12" stroke-linecap="round" stroke-dasharray="600" stroke-dashoffset="600">
+              <animate attributeName="stroke-dashoffset" values="600; 600; 0" keyTimes="0; 0.3; 1" dur="2.5s" repeatCount="indefinite" />
+            </line>
+            <line x1="470" y1="230" x2="1000" y2="150" stroke="var(--spec-org)" stroke-width="12" stroke-linecap="round" stroke-dasharray="600" stroke-dashoffset="600">
+              <animate attributeName="stroke-dashoffset" values="600; 600; 0" keyTimes="0; 0.35; 1" dur="2.5s" repeatCount="indefinite" />
+            </line>
+            <line x1="470" y1="230" x2="1000" y2="240" stroke="var(--spec-grn)" stroke-width="12" stroke-linecap="round" stroke-dasharray="600" stroke-dashoffset="600">
+              <animate attributeName="stroke-dashoffset" values="600; 600; 0" keyTimes="0; 0.4; 1" dur="2.5s" repeatCount="indefinite" />
+            </line>
+            <line x1="470" y1="230" x2="1000" y2="330" stroke="var(--spec-blu)" stroke-width="12" stroke-linecap="round" stroke-dasharray="600" stroke-dashoffset="600">
+              <animate attributeName="stroke-dashoffset" values="600; 600; 0" keyTimes="0; 0.45; 1" dur="2.5s" repeatCount="indefinite" />
+            </line>
+            <line x1="470" y1="230" x2="1000" y2="420" stroke="var(--spec-pur)" stroke-width="12" stroke-linecap="round" stroke-dasharray="600" stroke-dashoffset="600">
+              <animate attributeName="stroke-dashoffset" values="600; 600; 0" keyTimes="0; 0.5; 1" dur="2.5s" repeatCount="indefinite" />
+            </line>
+          </g>
         </svg>
       </div>
-      <p class="empty-title">ยังไม่มีผลลัพธ์</p>
-      <p class="empty-sub">อัปโหลด PDF และกด "ประมวลผล" เพื่อดูผลการตรวจสอบ</p>
+
+      <div style="text-align: center;">
+        <p class="empty-title" style="color: var(--text); font-size: 20px; letter-spacing: 1px;">ยังไม่มีผลลัพธ์</p>
+        <p class="empty-sub" style="color: var(--text3);">อัปโหลด PDF และกด "ประมวลผล" เพื่อดูผลการตรวจสอบอัจฉริยะ</p>
+      </div>
     </div>
   {:else}
     <!-- ─── Results ─── -->

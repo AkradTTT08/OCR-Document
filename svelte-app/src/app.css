@@ -4,28 +4,36 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --bg:       #080c18;
-  --bg2:      #0d1220;
-  --bg3:      #111827;
-  --surface:  rgba(255,255,255,0.04);
-  --surface2: rgba(255,255,255,0.07);
+  --bg:       #0a0b12; /* Deep obsidian */
+  --bg2:      #11131a; /* slightly lighter obsidian */
+  --bg3:      #181b24; /* even lighter */
+  --surface:  rgba(255,255,255,0.03);
+  --surface2: rgba(255,255,255,0.06);
   --border:   rgba(255,255,255,0.08);
-  --border2:  rgba(255,255,255,0.13);
+  --border2:  rgba(255,255,255,0.15);
 
-  --primary:  #6c8efb;
-  --primary2: #8aa4ff;
-  --accent:   #a78bfa;
-  --success:  #34d399;
-  --danger:   #f87171;
-  --warning:  #fbbf24;
-  --info:     #38bdf8;
+  /* Spectrum Colors */
+  --spec-red:   #ff2a5f;
+  --spec-org:   #ff7e27;
+  --spec-grn:   #00e676;
+  --spec-blu:   #18a0fb;
+  --spec-pur:   #b45cff;
+  
+  --primary:  var(--spec-blu); /* Vibrant Blue for buttons */
+  --primary2: #38bdf8;
+  --white-beam: #ffffff;
+  --accent:   var(--spec-pur);
+  --success:  var(--spec-grn);
+  --danger:   var(--spec-red);
+  --warning:  var(--spec-org);
+  --info:     var(--spec-blu);
 
-  --text:     #e8edf8;
-  --text2:    #9ba3c0;
-  --text3:    #60698a;
+  --text:     #f1f5f9;
+  --text2:    #94a3b8;
+  --text3:    #475569;
 
-  --glow:     rgba(108,142,251,0.22);
-  --glow2:    rgba(167,139,250,0.15);
+  --glow:     rgba(255,255,255,0.15);
+  --glow-spec: linear-gradient(135deg, var(--spec-red), var(--spec-org), var(--spec-grn), var(--spec-blu), var(--spec-pur));
 
   --font-th:  'Sarabun', sans-serif;
   --font-en:  'Inter', 'Sarabun', sans-serif;

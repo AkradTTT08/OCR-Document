@@ -7,8 +7,9 @@ from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
-# Load environment variables
-load_dotenv()
+# Load environment variables explicitly from backend directory
+env_path = os.path.join(os.path.dirname(__file__), '.env')
+load_dotenv(env_path)
 
 # We initialize the model at the module level so it loads only once.
 # "paraphrase-multilingual-MiniLM-L12-v2" is a lightweight model suitable for multi-lingual text (Thai/English).
