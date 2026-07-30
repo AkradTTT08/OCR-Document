@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width,initial-scale=1.0" name="viewport"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+    }
+  </style>
+</head>
+<body>
+<!-- STITCH_SVG_START:ANIMATION_23 class="fixed inset-0 w-full h-full" --><div class="fixed inset-0 w-full h-full" id="animated-svg-ANIMATION_23" style="display:block;"><svg viewbox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+<!-- Glow Effect -->
+<defs>
+<filter height="140%" id="glow" width="140%" x="-20%" y="-20%">
+<fegaussianblur result="blur" stddeviation="3"></fegaussianblur>
+<fecomposite in="SourceGraphic" in2="blur" operator="over"></fecomposite>
+</filter>
+<lineargradient id="spectrum" x1="0%" x2="100%" y1="0%" y2="0%">
+<stop offset="0%" stop-color="#6366f1">
+<animate attributename="stop-color" dur="4s" repeatcount="indefinite" values="#6366f1;#ec4899;#8b5cf6;#6366f1"></animate>
+</stop>
+<stop offset="50%" stop-color="#8b5cf6">
+<animate attributename="stop-color" dur="4s" repeatcount="indefinite" values="#8b5cf6;#6366f1;#ec4899;#8b5cf6"></animate>
+</stop>
+<stop offset="100%" stop-color="#ec4899">
+<animate attributename="stop-color" dur="4s" repeatcount="indefinite" values="#ec4899;#8b5cf6;#6366f1;#ec4899"></animate>
+</stop>
+</lineargradient>
+</defs>
+<!-- Background Circle (Dark Navy) -->
+<circle cx="100" cy="100" fill="#0b1326" r="80"></circle>
+<!-- Prism Base -->
+<path d="M100 45 L155 140 L45 140 Z" fill="none" stroke="white" stroke-opacity="0.3" stroke-width="1.5"></path>
+<!-- Prism Detail Lines -->
+<path d="M100 45 L100 140 M100 45 L155 140 M100 45 L45 140" stroke="white" stroke-opacity="0.2" stroke-width="0.8"></path>
+<!-- Incoming Light Beam -->
+<line stroke="white" stroke-width="2" x1="20" x2="80" y1="100" y2="100">
+<animate attributename="x2" dur="2s" repeatcount="indefinite" values="20;80;80;20"></animate>
+<animate attributename="opacity" dur="2s" repeatcount="indefinite" values="0;1;1;0"></animate>
+</line>
+<!-- Refracted Spectrum -->
+<path d="M105 95 Q130 90 180 80" fill="none" filter="url(#glow)" stroke="url(#spectrum)" stroke-width="6">
+<animate attributename="stroke-dasharray" dur="2s" repeatcount="indefinite" values="0,100;100,0"></animate>
+</path>
+<path d="M105 100 Q130 100 180 100" fill="none" filter="url(#glow)" opacity="0.7" stroke="url(#spectrum)" stroke-width="6">
+<animate attributename="stroke-dasharray" begin="0.2s" dur="2s" repeatcount="indefinite" values="0,100;100,0"></animate>
+</path>
+<path d="M105 105 Q130 110 180 120" fill="none" filter="url(#glow)" opacity="0.5" stroke="url(#spectrum)" stroke-width="6">
+<animate attributename="stroke-dasharray" begin="0.4s" dur="2s" repeatcount="indefinite" values="0,100;100,0"></animate>
+</path>
+<!-- Pulse Effect -->
+<circle cx="100" cy="100" fill="none" r="80" stroke="url(#spectrum)" stroke-width="2">
+<animate attributename="r" dur="2s" repeatcount="indefinite" values="80;90"></animate>
+<animate attributename="opacity" dur="2s" repeatcount="indefinite" values="0.5;0"></animate>
+</circle>
+</svg></div><!-- STITCH_SVG_END:ANIMATION_23 -->
+</body>
+</html>

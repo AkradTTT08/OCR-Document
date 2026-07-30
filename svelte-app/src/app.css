@@ -1,7 +1,6 @@
 /* ── Global Reset & Variables ── */
-@import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&family=Inter:wght@400;500;600;700&display=swap');
-
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+input, button, textarea, select { font-family: inherit; }
 
 :root {
   --bg:       #0a0b12; /* Deep obsidian */
@@ -35,8 +34,8 @@
   --glow:     rgba(255,255,255,0.15);
   --glow-spec: linear-gradient(135deg, var(--spec-red), var(--spec-org), var(--spec-grn), var(--spec-blu), var(--spec-pur));
 
-  --font-th:  'Sarabun', sans-serif;
-  --font-en:  'Inter', 'Sarabun', sans-serif;
+  --font-th:  'Prompt', sans-serif;
+  --font-en:  'Prompt', sans-serif;
 
   --radius:   16px;
   --radius2:  10px;

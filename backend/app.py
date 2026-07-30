@@ -120,6 +120,99 @@ def allowed_file(filename: str) -> bool:
 
 
 # ========================
+# Authentication (JWT + ORM)
+# ========================
+import hmac
+import hashlib
+import base64
+import json
+import time
+from functools import wraps
+from flask import request, jsonify
+from auth_db import SessionLocal
+from auth_models import User
+
+JWT_SECRET = os.environ.get('JWT_SECRET', 'spectra-qa-super-secret-key-2024')
+
+def encode_jwt(payload):
+    header = base64.urlsafe_b64encode(json.dumps({"alg": "HS256", "typ": "JWT"}).encode()).decode().rstrip('=')
+    payload_b64 = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip('=')
+    signature = base64.urlsafe_b64encode(
+        hmac.new(JWT_SECRET.encode(), f"{header}.{payload_b64}".encode(), hashlib.sha256).digest()
+    ).decode().rstrip('=')
+    return f"{header}.{payload_b64}.{signature}"
+
+def decode_jwt(token):
+    try:
+        parts = token.split('.')
+        if len(parts) != 3: return None
+        signature = base64.urlsafe_b64encode(
+            hmac.new(JWT_SECRET.encode(), f"{parts[0]}.{parts[1]}".encode(), hashlib.sha256).digest()
+        ).decode().rstrip('=')
+        if not hmac.compare_digest(parts[2], signature): return None
+        
+        payload = json.loads(base64.urlsafe_b64decode(parts[1] + '==').decode())
+        if payload.get('exp', 0) < time.time(): return None
+        return payload
+    except Exception:
+        return None
+
+def token_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if request.method == 'OPTIONS':
+            return f(*args, **kwargs)
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({'error': 'Unauthorized, please login'}), 401
+        
+        token = auth_header.split(' ')[1]
+        payload = decode_jwt(token)
+        if not payload:
+            return jsonify({'error': 'Invalid or expired token'}), 401
+            
+        return f(*args, **kwargs)
+    return decorated
+
+@app.route('/api/login', methods=['POST'])
+def login():
+    data = request.get_json()
+    if not data:
+        return jsonify({'error': 'No data provided'}), 400
+        
+    username = data.get('username')
+    password = data.get('password')
+    
+    if not username or not password:
+        return jsonify({'error': 'Username and password required'}), 400
+        
+    try:
+        db = SessionLocal()
+        pwd_hash = hashlib.sha256(password.encode()).hexdigest()
+        
+        user = db.query(User).filter(User.username == username, User.password_hash == pwd_hash).first()
+        
+        if user:
+            # Token expires in 24 hours
+            payload = {
+                'user_id': user.id,
+                'user': user.username,
+                'role': user.role,
+                'exp': int(time.time()) + (24 * 3600)
+            }
+            token = encode_jwt(payload)
+            db.close()
+            return jsonify({'success': True, 'token': token, 'user': user.username, 'role': user.role})
+            
+        db.close()
+        return jsonify({'error': 'Invalid credentials'}), 401
+        
+    except Exception as e:
+        logger.error(f"Login DB error: {e}")
+        return jsonify({'error': 'Database connection error. Is the Auth DB running?'}), 500
+
+
+# ========================
 # Serve Frontend
 # ========================
 
@@ -146,6 +239,7 @@ def health():
     })
 
 @app.route('/api/projects', methods=['GET'])
+@token_required
 def list_projects():
     """List all projects for document ingestion"""
     try:
@@ -157,6 +251,7 @@ def list_projects():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/projects', methods=['POST'])
+@token_required
 def create_project():
     """Create a new project"""
     data = request.get_json()
