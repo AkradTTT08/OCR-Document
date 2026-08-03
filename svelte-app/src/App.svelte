@@ -1,6 +1,9 @@
 <script>
 <<<<<<< HEAD
+<<<<<<< HEAD
   import { fade, fly } from 'svelte/transition';
+=======
+>>>>>>> parent of 66dfb22 (commit)
 =======
 >>>>>>> parent of 66dfb22 (commit)
   import UploadPanel from './lib/UploadPanel.svelte';
@@ -9,9 +12,12 @@
   import SkillManager from './lib/SkillManager.svelte';
   import Toast from './lib/Toast.svelte';
 <<<<<<< HEAD
+<<<<<<< HEAD
   import Login from "./lib/Login.svelte";
   import ComingSoon from "./lib/ComingSoon.svelte";
   import { showLogin, authRole, authUser, logout } from "./lib/authStore.js";
+=======
+>>>>>>> parent of 66dfb22 (commit)
 =======
 >>>>>>> parent of 66dfb22 (commit)
 
@@ -110,6 +116,7 @@
   <!-- ── Right Panel ── -->
   <main class="right-panel">
 <<<<<<< HEAD
+<<<<<<< HEAD
     {#key activeView}
       <div style="width:100%; height:100%;" in:fly="{{ y: 20, duration: 400, delay: 150 }}" out:fade="{{ duration: 150 }}">
         {#if activeView === "ocr"}
@@ -122,6 +129,8 @@
       </div>
     {/key}
 =======
+=======
+>>>>>>> parent of 66dfb22 (commit)
     {#if activeView === 'ocr'}
       <ResultsPanel result={scanResult} {isProcessing} {progress} />
     {:else if activeView === 'kb'}
@@ -129,6 +138,9 @@
     {:else if activeView === 'skills'}
       <SkillManager />
     {/if}
+<<<<<<< HEAD
+>>>>>>> parent of 66dfb22 (commit)
+=======
 >>>>>>> parent of 66dfb22 (commit)
   </main>
   {/if}
