@@ -1,13 +1,19 @@
 <script>
+<<<<<<< HEAD
   import { fade, fly } from 'svelte/transition';
+=======
+>>>>>>> parent of 66dfb22 (commit)
   import UploadPanel from './lib/UploadPanel.svelte';
   import ResultsPanel from './lib/ResultsPanel.svelte';
   import KnowledgeBase from './lib/KnowledgeBase.svelte';
   import SkillManager from './lib/SkillManager.svelte';
   import Toast from './lib/Toast.svelte';
+<<<<<<< HEAD
   import Login from "./lib/Login.svelte";
   import ComingSoon from "./lib/ComingSoon.svelte";
   import { showLogin, authRole, authUser, logout } from "./lib/authStore.js";
+=======
+>>>>>>> parent of 66dfb22 (commit)
 
   let scanResult = null;
   let isProcessing = false;
@@ -92,21 +98,18 @@
       </div>
     </header>
 
-    {#key activeView}
-      <div style="flex:1; display:flex; flex-direction:column; overflow:hidden;" in:fade="{{ duration: 300, delay: 150 }}">
-        {#if activeView === "ocr"}
-          <UploadPanel on:result={handleResult} on:processing={handleProcessing} />
-        {:else if activeView === "kb"}
-          <div class="kb-hint">
-            <p>เลือกโครงการและเอกสารในพื้นที่หลัก เพื่อดูข้อมูล Knowledge Base</p>
-          </div>
-        {/if}
+    {#if activeView === 'ocr'}
+      <UploadPanel on:result={handleResult} on:processing={handleProcessing} />
+    {:else if activeView === 'kb'}
+      <div class="kb-hint">
+        <p>เลือกโครงการและเอกสารในพื้นที่หลัก เพื่อดูข้อมูล Knowledge Base</p>
       </div>
-    {/key}
+    {/if}
   </aside>
 
   <!-- ── Right Panel ── -->
   <main class="right-panel">
+<<<<<<< HEAD
     {#key activeView}
       <div style="width:100%; height:100%;" in:fly="{{ y: 20, duration: 400, delay: 150 }}" out:fade="{{ duration: 150 }}">
         {#if activeView === "ocr"}
@@ -118,6 +121,15 @@
         {/if}
       </div>
     {/key}
+=======
+    {#if activeView === 'ocr'}
+      <ResultsPanel result={scanResult} {isProcessing} {progress} />
+    {:else if activeView === 'kb'}
+      <KnowledgeBase />
+    {:else if activeView === 'skills'}
+      <SkillManager />
+    {/if}
+>>>>>>> parent of 66dfb22 (commit)
   </main>
   {/if}
 </div>
