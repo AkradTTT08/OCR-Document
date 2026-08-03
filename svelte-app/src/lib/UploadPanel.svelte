@@ -291,6 +291,9 @@
         <span class="file-size">{formatBytes(file.size)}</span>
       </div>
       <button class="btn-remove" on:click|stopPropagation={removeFile} title="ลบ">✕</button>
+<<<<<<< HEAD
+>>>>>>> parent of 460b7b2 (commit)
+=======
 >>>>>>> parent of 460b7b2 (commit)
     </div>
 
@@ -837,5 +840,8 @@ select:focus { border-color: var(--primary); }
 .btn-process:disabled {
   opacity: 0.35; cursor: not-allowed; transform: none;
 }
+<<<<<<< HEAD
+>>>>>>> parent of 460b7b2 (commit)
+=======
 >>>>>>> parent of 460b7b2 (commit)
 </style>
