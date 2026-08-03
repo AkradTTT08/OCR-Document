@@ -5,9 +5,6 @@
   import KnowledgeBase from './lib/KnowledgeBase.svelte';
   import SkillManager from './lib/SkillManager.svelte';
   import Toast from './lib/Toast.svelte';
-  import Login from "./lib/Login.svelte";
-  import ComingSoon from "./lib/ComingSoon.svelte";
-  import { showLogin, authRole, authUser, logout } from "./lib/authStore.js";
 
   let scanResult = null;
   let isProcessing = false;
@@ -24,11 +21,6 @@
 </script>
 
 <div class="shell">
-  {#if $showLogin}
-    <Login />
-  {:else if $authRole !== 'admin'}
-    <ComingSoon />
-  {:else}
   <!-- ── Left Panel ── -->
   <aside class="left-panel" class:collapsed-left={activeView === 'skills'}>
     <header class="panel-header">
@@ -84,12 +76,6 @@
           AI Skills
         </button>
       </nav>
-      <div class="user-info">
-         <button class="btn-logout" on:click={logout}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
-          Logout
-        </button>
-      </div>
     </header>
 
     {#key activeView}
@@ -119,7 +105,6 @@
       </div>
     {/key}
   </main>
-  {/if}
 </div>
 
 <!-- Global Toast Notifications -->
@@ -207,22 +192,6 @@
     color: var(--primary);
     font-weight: 700;
     box-shadow: 0 0 10px var(--glow);
-  }
-
-  .user-info {
-    margin-top: 14px;
-    display: flex;
-    justify-content: flex-end;
-  }
-
-  .btn-logout {
-    display: flex; align-items: center; gap: 8px;
-    background: transparent; border: none;
-    color: var(--danger); font-size: 12px; cursor: pointer;
-    padding: 6px 12px; border-radius: 6px; transition: background 0.2s;
-  }
-  .btn-logout:hover {
-    background: rgba(248, 113, 113, 0.1);
   }
 
   /* KB hint when KB view active */

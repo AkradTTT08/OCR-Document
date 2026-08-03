@@ -15,9 +15,6 @@
   let dpi = '300';
   let autoSpellCheck = false;
 
-  // ── DB Ingestion State ──
-  // Removed from here, moved to ResultsPanel
-
   // ── File ──
   /** @param {any} e */
   function onDrop(e) {
@@ -191,7 +188,6 @@
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 </script>
 
-<<<<<<< HEAD
 <!-- Dashboard Container -->
 <div class="dashboard-container">
   <div class="hero-section">
@@ -254,50 +250,7 @@
           </div>
         {/if}
       </div>
-=======
-<!-- Drop Zone -->
-<div class="upload-area"
-     role="button"
-     tabindex="0"
-     on:dragover|preventDefault={() => isDragging = true}
-     on:dragleave={() => isDragging = false}
-     on:drop={onDrop}
-     on:click={() => !file && document.getElementById('fileInput')?.click()}
-     on:keydown={e => e.key === 'Enter' && !file && document.getElementById('fileInput')?.click()}
-     class:dragging={isDragging}
-     class:has-file={!!file}
->
-  {#if !file}
-    <div class="drop-icon" class:bounce={isDragging}>
-      <svg viewBox="0 0 64 64" fill="none">
-        <circle cx="32" cy="32" r="30" stroke="currentColor" stroke-width="1.5" stroke-dasharray="4 3"/>
-        <path d="M32 20v16M24 28l8-8 8 8" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-        <path d="M22 44h20" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-      </svg>
     </div>
-    <p class="drop-title">ลากไฟล์ PDF มาวางที่นี่</p>
-    <p class="drop-hint">หรือ <span class="link-text">เลือกไฟล์</span> (สูงสุด 50 MB)</p>
-    <input id="fileInput" type="file" accept=".pdf" hidden on:change={onFileChange}/>
-  {:else}
-    <div class="file-card">
-      <div class="file-icon-wrap">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="24" height="24">
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-          <polyline points="14 2 14 8 20 8"/>
-        </svg>
-      </div>
-      <div class="file-info">
-        <span class="file-name truncate">{file.name}</span>
-        <span class="file-size">{formatBytes(file.size)}</span>
-      </div>
-      <button class="btn-remove" on:click|stopPropagation={removeFile} title="ลบ">✕</button>
-<<<<<<< HEAD
->>>>>>> parent of 460b7b2 (commit)
-=======
->>>>>>> parent of 460b7b2 (commit)
-    </div>
-
-<<<<<<< HEAD
     <!-- Right Column: Settings -->
     <div class="col-right">
       <div class="settings-panel">
@@ -660,188 +613,4 @@
     flex: 1;
     margin: 0 !important;
   }
-=======
-<!-- Settings -->
-<div class="settings-block">
-  <div class="setting-row">
-    <label class="setting-label" for="sel-lang">ภาษา OCR</label>
-    <select id="sel-lang" bind:value={lang}>
-      <option value="tha+eng">ไทย + อังกฤษ</option>
-      <option value="tha">ไทยเท่านั้น</option>
-      <option value="eng">อังกฤษเท่านั้น</option>
-    </select>
-  </div>
-  <div class="setting-row">
-    <label class="setting-label" for="sel-dpi">ความละเอียด</label>
-    <select id="sel-dpi" bind:value={dpi}>
-      <option value="200">200 DPI (เร็ว)</option>
-      <option value="300">300 DPI (แนะนำ)</option>
-      <option value="400">400 DPI (ละเอียด)</option>
-    </select>
-  </div>
-  <div class="setting-row">
-    <span class="setting-label">โหมด Auto ตรวจคำผิด</span>
-    <label class="toggle-wrap">
-      <input type="checkbox" bind:checked={autoSpellCheck}/>
-      <span class="toggle-track"><span class="toggle-thumb"></span></span>
-    </label>
-  </div>
-</div>
-
-<!-- Process Button -->
-<div class="btn-wrap">
-  <button class="btn-process" on:click={process} disabled={!file}>
-    <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
-      <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"/>
-    </svg>
-    ประมวลผล OCR + ตรวจคำ
-  </button>
-</div>
-
-<!-- Dict stats mini -->
-<DictStats />
-<FormatRules />
-
-<style>
-/* ── Upload area ── */
-.upload-area {
-  margin: 16px 16px 0;
-  border: 2px dashed rgba(108,142,251,0.28);
-  border-radius: var(--radius2);
-  padding: 32px 20px;
-  text-align: center;
-  cursor: pointer;
-  transition: all 0.3s;
-  background: rgba(108,142,251,0.02);
-  min-height: 180px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-}
-.upload-area:hover, .upload-area.dragging {
-  border-color: var(--primary);
-  background: rgba(108,142,251,0.06);
-  box-shadow: 0 0 0 3px var(--glow);
-}
-.upload-area.has-file {
-  border-style: solid;
-  border-color: rgba(108,142,251,0.25);
-  padding: 16px 20px;
-  min-height: auto;
-  cursor: default;
-}
-
-.drop-icon {
-  width: 60px; height: 60px; color: var(--primary);
-  filter: drop-shadow(0 0 12px var(--glow));
-  transition: transform 0.3s;
-}
-.drop-icon.bounce { transform: translateY(-6px); }
-
-.drop-title {
-  font-size: 15px; font-weight: 600; color: var(--text);
-}
-.drop-hint {
-  font-size: 13px; color: var(--text3);
-}
-.link-text {
-  color: var(--primary2); cursor: pointer; text-decoration: underline;
-}
-
-/* ── File card ── */
-.file-card {
-  display: flex; align-items: center; gap: 10px; width: 100%;
-}
-.file-icon-wrap {
-  width: 38px; height: 38px; border-radius: 8px;
-  background: rgba(108,142,251,0.14);
-  display: flex; align-items: center; justify-content: center;
-  color: var(--primary); flex-shrink: 0;
-}
-.file-info {
-  flex: 1; min-width: 0; text-align: left;
-  display: flex; flex-direction: column; gap: 2px;
-}
-.file-name { font-size: 13px; font-weight: 600; display: block; }
-.file-size { font-size: 11px; color: var(--text3); }
-.btn-remove {
-  background: rgba(248,113,113,0.1); border: 1px solid rgba(248,113,113,0.2);
-  color: var(--danger); width: 26px; height: 26px; border-radius: 5px;
-  cursor: pointer; font-size: 12px; flex-shrink: 0;
-  display: flex; align-items: center; justify-content: center;
-  transition: background 0.2s;
-}
-.btn-remove:hover { background: rgba(248,113,113,0.22); }
-
-/* ── Settings ── */
-.settings-block {
-  margin: 14px 16px 0;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius2);
-  padding: 12px 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.setting-row {
-  display: flex; align-items: center; justify-content: space-between;
-  font-size: 13px; color: var(--text2);
-}
-.setting-label { font-weight: 500; }
-select {
-  background: var(--bg3); border: 1px solid var(--border2);
-  color: var(--text); font-family: var(--font-th); font-size: 12px;
-  border-radius: 6px; padding: 5px 8px; cursor: pointer; outline: none;
-  transition: border-color 0.2s;
-}
-select:focus { border-color: var(--primary); }
-
-/* ── Toggle ── */
-.toggle-wrap { display: flex; align-items: center; cursor: pointer; }
-.toggle-wrap input { display: none; }
-.toggle-track {
-  width: 36px; height: 20px; border-radius: 10px;
-  background: var(--surface2); border: 1px solid var(--border2);
-  position: relative; transition: all 0.25s;
-}
-.toggle-wrap input:checked + .toggle-track {
-  background: var(--primary); border-color: var(--primary);
-  box-shadow: 0 0 8px var(--glow);
-}
-.toggle-thumb {
-  width: 14px; height: 14px; border-radius: 50%;
-  background: var(--text3); position: absolute; top: 2px; left: 2px;
-  transition: all 0.25s;
-}
-.toggle-wrap input:checked + .toggle-track .toggle-thumb {
-  transform: translateX(16px); background: #fff;
-}
-
-/* ── Btn ── */
-.btn-wrap {
-  padding: 14px 16px 0;
-}
-.btn-process {
-  display: flex; align-items: center; justify-content: center; gap: 8px;
-  width: 100%; padding: 13px;
-  background: linear-gradient(135deg, var(--primary), var(--accent));
-  border: none; border-radius: var(--radius2);
-  color: #fff; font-family: var(--font-th); font-size: 15px; font-weight: 600;
-  cursor: pointer; transition: all 0.3s;
-  box-shadow: 0 4px 20px var(--glow);
-  letter-spacing: 0.01em;
-}
-.btn-process:hover:not(:disabled) {
-  transform: translateY(-2px); box-shadow: 0 8px 28px var(--glow);
-}
-.btn-process:disabled {
-  opacity: 0.35; cursor: not-allowed; transform: none;
-}
-<<<<<<< HEAD
->>>>>>> parent of 460b7b2 (commit)
-=======
->>>>>>> parent of 460b7b2 (commit)
 </style>
