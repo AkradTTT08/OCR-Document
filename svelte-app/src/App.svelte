@@ -91,11 +91,12 @@
         {#key activeView}
           <div in:fade="{{ duration: 300, delay: 150 }}">
             {#if activeView === "ocr"}
-              {#if !isProcessing && !scanResult}
-                <UploadPanel on:result={handleResult} on:processing={handleProcessing} />
-              {:else}
+              {#if isProcessing || scanResult}
                 <ResultsPanel result={scanResult} {isProcessing} {progress} on:close={() => {scanResult = null; isProcessing = false;}} />
               {/if}
+              <div style:display={isProcessing || scanResult ? 'none' : 'contents'}>
+                <UploadPanel on:result={handleResult} on:processing={handleProcessing} />
+              </div>
             {:else if activeView === "kb"}
               <KnowledgeBase />
             {:else if activeView === "skills"}
