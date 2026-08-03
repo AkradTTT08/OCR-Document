@@ -1,6 +1,5 @@
 <script>
   import { onMount } from 'svelte';
-  import { toast } from './toastStore.js';
 
   // ── States ──
   let skills = [];
@@ -52,14 +51,12 @@
   // ── Functions ──
   async function fetchSkills() {
     loading = true;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 seconds timeout
     try {
       let url = 'http://localhost:5000/api/skills?';
       if (search) url += `search=${encodeURIComponent(search)}&`;
       if (filterDocType) url += `target_doc_type=${encodeURIComponent(filterDocType)}&`;
 
-      const res = await fetch(url, { signal: controller.signal });
+      const res = await fetch(url);
       const data = await res.json();
       if (res.ok) {
         skills = data.skills || [];
@@ -69,11 +66,7 @@
       }
     } catch (e) {
       console.error('Failed to fetch skills:', e);
-      if (e.name === 'AbortError') {
-        console.error('Fetch timeout - backend might be offline');
-      }
     } finally {
-      clearTimeout(timeoutId);
       loading = false;
     }
   }
@@ -117,7 +110,7 @@
 
   async function saveSkill() {
     if (!form.skill_name.trim() || !form.markdown_instructions.trim()) {
-      toast('กรุณากรอก ชื่อ Skill และ เนื้อหา Markdown Instructions', 'error');
+      alert('กรุณากรอก ชื่อ Skill และ เนื้อหา Markdown Instructions');
       return;
     }
 
@@ -135,17 +128,17 @@
       const data = await res.json();
 
       if (res.ok) {
-        toast(isNew ? 'สร้าง Skill ใหม่สำเร็จ!' : 'อัปเดต Skill สำเร็จ!', 'success');
+        alert(isNew ? 'สร้าง Skill ใหม่สำเร็จ' : 'อัปเดต Skill สำเร็จ');
         await fetchSkills();
         if (data.skill_id) {
           const created = skills.find(s => s.skill_id === data.skill_id);
           if (created) selectSkill(created);
         }
       } else {
-        toast(`ข้อผิดพลาด: ${data.error}`, 'error');
+        alert(`ข้อผิดพลาด: ${data.error}`);
       }
     } catch (e) {
-      toast(`เกิดข้อผิดพลาด: ${e.message}`, 'error');
+      alert(`เกิดข้อผิดพลาด: ${e.message}`);
     } finally {
       saving = false;
     }
@@ -161,16 +154,16 @@
       });
       const data = await res.json();
       if (res.ok) {
-        toast('ลบ Skill สำเร็จ', 'success');
+        alert('ลบ Skill สำเร็จ');
         activeSkill = null;
         await fetchSkills();
         if (skills.length > 0) selectSkill(skills[0]);
         else startCreateNew();
       } else {
-        toast(`ลบไม่สำเร็จ: ${data.error}`, 'error');
+        alert(`ลบไม่สำเร็จ: ${data.error}`);
       }
     } catch (e) {
-      toast(`เกิดข้อผิดพลาด: ${e.message}`, 'error');
+      alert(`เกิดข้อผิดพลาด: ${e.message}`);
     }
   }
 

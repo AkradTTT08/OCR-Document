@@ -86,7 +86,6 @@
     selectedDoc = docId;
     docDetail = null;
     isEditingDoc = false;
-    showAddDocPanel = false;
     try {
       const r = await fetch(`${API}/kb/documents/${docId}`);
       const d = await r.json();
@@ -264,95 +263,8 @@
   }
   // ---------------------------------
 
-  // ── Add / Import Markdown Document ──
-  let showAddDocPanel = false;
-  let isSubmittingDoc = false;
-  let addDocTab = 'edit'; // 'edit' | 'preview'
-  let addDocForm = {
-    filename: '',
-    markdown_text: '',
-    doc_category: 'Reference',
-    doc_type: 'Markdown',
-    is_golden_data: false
-  };
-
-  function openAddDocPanel() {
-    addDocForm = { filename: '', markdown_text: '', doc_category: 'Reference', doc_type: 'Markdown', is_golden_data: false };
-    addDocTab = 'edit';
-    showAddDocPanel = true;
-    selectedDoc = null;
-    docDetail = null;
-    viewingProject = null;
-    activeTab = 'browse';
-  }
-
-  function handleImportMd(e) {
-    const file = e.target.files[0];
-    if (!file) return;
-    if (!file.name.endsWith('.md')) {
-      toast('กรุณาเลือกไฟล์ .md เท่านั้น', 'error');
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      addDocForm = {
-        filename: file.name.replace('.md', ''),
-        markdown_text: ev.target.result,
-        doc_category: 'Reference',
-        doc_type: 'Markdown',
-        is_golden_data: false
-      };
-      addDocTab = 'preview'; // Show preview automatically on import
-      showAddDocPanel = true;
-      selectedDoc = null;
-      docDetail = null;
-      viewingProject = null;
-      activeTab = 'browse';
-    };
-    reader.readAsText(file);
-    e.target.value = ''; // reset input
-  }
-
-  async function submitAddDoc() {
-    if (!addDocForm.filename.trim() || !addDocForm.markdown_text.trim()) {
-      toast('กรุณาระบุชื่อไฟล์และเนื้อหา Markdown', 'error');
-      return;
-    }
-    if (!selectedProject) {
-      toast('กรุณาเลือกโครงการก่อน', 'error');
-      return;
-    }
-    
-    isSubmittingDoc = true;
-    try {
-      const payload = {
-        ...addDocForm,
-        project_id: selectedProject
-      };
-      const res = await fetch(`${API}/kb/ingest`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      const data = await res.json();
-      if (data.success) {
-        toast('บันทึกและประมวลผล Chunk สำเร็จ!', 'success');
-        showAddDocPanel = false;
-        loadDocuments(selectedProject);
-        await loadStats(); // Update global stats
-      } else {
-        toast(data.error || 'เกิดข้อผิดพลาดในการบันทึก', 'error');
-      }
-    } catch (e) {
-      toast('เกิดข้อผิดพลาดในการเชื่อมต่อ', 'error');
-    } finally {
-      isSubmittingDoc = false;
-    }
-  }
-
   function selectProject(p) {
     selectedProject = p ? p.id : null;
-    showAddDocPanel = false;
     loadDocuments(selectedProject);
   }
 
@@ -518,12 +430,14 @@
         </button>
       </div>
       <div class="project-list">
-        <div class="project-item" class:active={selectedProject === null}>
-          <button class="project-item-content" on:click={() => selectProject(null)}>
-            <span class="proj-icon">📁</span>
-            <span>ทั้งหมด</span>
-          </button>
-        </div>
+        <button
+          class="project-item"
+          class:active={selectedProject === null}
+          on:click={() => selectProject(null)}
+        >
+          <span class="proj-icon">📁</span>
+          <span>ทั้งหมด</span>
+        </button>
         {#each projects as p}
           <div class="project-item" class:active={selectedProject === p.id}>
             <button class="project-item-content" on:click={() => selectProject(p)}>
@@ -544,51 +458,40 @@
       </div>
 
       <!-- Document list -->
-      <div class="section-label" style="display: flex; justify-content: space-between; align-items: center; padding-right: 8px;">
-        <span>เอกสาร ({documents.length})</span>
-        {#if selectedProject}
-          <div style="display: flex; gap: 6px;">
-            <input type="file" id="import-md-input" accept=".md" style="display:none" on:change={handleImportMd} />
-            <button class="btn-icon" style="font-size: 11px; padding: 4px 8px; border-radius: 4px; background: var(--surface2); color: var(--text); border: 1px solid var(--border2); cursor: pointer;" on:click={() => document.getElementById('import-md-input').click()} title="นำเข้าไฟล์ Markdown (.md)">📥 Import</button>
-            <button class="btn-icon" style="font-size: 11px; padding: 4px 8px; border-radius: 4px; background: var(--primary); color: #fff; border: none; cursor: pointer;" on:click={openAddDocPanel} title="เพิ่มเอกสารใหม่">➕ Add</button>
-          </div>
-        {/if}
-      </div>
-      <div class="doc-list">
-        {#if isLoadingDocs}
-          <div class="loading-pulse" style="text-align: center; padding: 20px 0;">กำลังโหลด...</div>
-        {:else if documents.length === 0}
-          <div class="empty-hint" style="text-align: center; color: var(--text3); font-size: 13px; margin-top: 16px;">
-            ไม่พบเอกสารที่เกี่ยวข้อง
-          </div>
-        {:else}
-          {#each documents as doc}
-            <div class="doc-item-wrap" class:active={selectedDoc === doc.id}>
-              <button
-                class="doc-item"
-                on:click={() => loadDocDetail(doc.id)}
-              >
-                <span class="doc-icon">📄</span>
-                <div class="doc-meta">
-                  <span class="doc-name truncate">
-                    {doc.name}
-                    {#if doc.is_golden_data}
-                      <span class="badge-golden" title="Golden Data">⭐</span>
-                    {/if}
-                  </span>
-                  <span class="doc-info">
-                    <span class="badge-cat">{doc.doc_category || 'General'}</span>
-                    {doc.chunk_count} chunks · {formatDate(doc.created_at)}
-                  </span>
-                </div>
-              </button>
-              <button class="btn-del" title="ลบเอกสาร" on:click={() => confirmDeleteDoc(doc.id)}>
-                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-              </button>
-            </div>
-          {/each}
-        {/if}
-      </div>
+      {#if documents.length > 0 || isLoadingDocs}
+        <div class="section-label">เอกสาร ({documents.length})</div>
+        <div class="doc-list">
+          {#if isLoadingDocs}
+            <div class="loading-pulse">กำลังโหลด...</div>
+          {:else}
+            {#each documents as doc}
+              <div class="doc-item-wrap" class:active={selectedDoc === doc.id}>
+                <button
+                  class="doc-item"
+                  on:click={() => loadDocDetail(doc.id)}
+                >
+                  <span class="doc-icon">📄</span>
+                  <div class="doc-meta">
+                    <span class="doc-name truncate">
+                      {doc.name}
+                      {#if doc.is_golden_data}
+                        <span class="badge-golden" title="Golden Data">⭐</span>
+                      {/if}
+                    </span>
+                    <span class="doc-info">
+                      <span class="badge-cat">{doc.doc_category || 'General'}</span>
+                      {doc.chunk_count} chunks · {formatDate(doc.created_at)}
+                    </span>
+                  </div>
+                </button>
+                <button class="btn-del" title="ลบเอกสาร" on:click={() => confirmDeleteDoc(doc.id)}>
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                </button>
+              </div>
+            {/each}
+          {/if}
+        </div>
+      {/if}
 
     {:else}
       <!-- Vector Search -->
@@ -744,80 +647,6 @@
 
     {:else if isLoadingDetail}
       <div class="empty-state"><div class="loading-spin"></div><p>กำลังโหลด...</p></div>
-
-    {:else if showAddDocPanel}
-      <!-- Add / Import Document Panel (Redesigned like Add Skill) -->
-      <div style="display: flex; flex-direction: column; height: 100%; width: 100%;">
-        <header class="editor-header" style="padding: 16px 24px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; background: var(--bg2); flex-shrink: 0;">
-          <div class="header-info" style="display: flex; align-items: center; gap: 16px;">
-            <button class="btn-back" style="background:transparent; border:none; color:var(--text2); font-size: 20px; cursor: pointer; padding: 4px;" on:click={() => showAddDocPanel = false} title="กลับ">←</button>
-            <div>
-              <h2 style="margin: 0; font-size: 18px; color: var(--primary);">➕ เพิ่มเอกสาร (Manual / Markdown)</h2>
-              <span style="font-size: 12px; color: var(--text3);">ระบบจะบันทึกและแปลงเป็น Vector Chunks ให้อัตโนมัติ</span>
-            </div>
-          </div>
-          <div class="header-actions">
-            <button class="btn-submit" style="display: flex; gap: 8px; align-items: center; padding: 8px 16px; font-size: 14px; border-radius: 6px; font-weight: 600; background: var(--primary); color: #fff; border: none; cursor: pointer; transition: 0.2s;" on:click={submitAddDoc} disabled={isSubmittingDoc || !addDocForm.filename.trim() || !addDocForm.markdown_text.trim()}>
-              {#if isSubmittingDoc}
-                <div class="spinner" style="width: 14px; height: 14px; border-width: 2px;"></div> กำลังบันทึก...
-              {:else}
-                💾 บันทึกเอกสาร
-              {/if}
-            </button>
-          </div>
-        </header>
-
-        <div class="meta-grid" style="display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 20px; padding: 20px 24px; background: var(--bg2); border-bottom: 1px solid var(--border); flex-shrink: 0;">
-          <div class="form-group" style="display: flex; flex-direction: column; gap: 8px; margin: 0;">
-            <label for="md_filename" style="font-size: 12px; color: var(--text2);">ชื่อเอกสาร (Filename) <span style="color:var(--danger)">*</span></label>
-            <input id="md_filename" type="text" style="background: var(--bg3); border: 1px solid var(--border2); padding: 10px 12px; border-radius: 6px; font-size: 14px; color: var(--text); outline: none;" placeholder="เช่น API_Documentation..." bind:value={addDocForm.filename} />
-          </div>
-          
-          <div class="form-group" style="display: flex; flex-direction: column; gap: 8px; margin: 0;">
-            <label for="md_category" style="font-size: 12px; color: var(--text2);">หมวดหมู่ (Category)</label>
-            <select id="md_category" style="background: var(--bg3); border: 1px solid var(--border2); padding: 10px 12px; border-radius: 6px; font-size: 14px; color: var(--text); outline: none;" bind:value={addDocForm.doc_category}>
-              <option value="Reference">Reference</option>
-              <option value="Requirements">Requirements</option>
-              <option value="TestCase">TestCase</option>
-              <option value="Other">Other</option>
-            </select>
-          </div>
-          
-          <div class="form-group checkbox-group" style="display: flex; align-items: center; padding-top: 24px; margin: 0;">
-            <label class="toggle-wrap" style="display: flex; align-items: center; gap: 10px; cursor: pointer; padding: 8px 12px; border-radius: 6px; background: rgba(255, 215, 0, 0.05); border: 1px solid rgba(255, 215, 0, 0.1);">
-              <input type="checkbox" bind:checked={addDocForm.is_golden_data} style="width: 18px; height: 18px; accent-color: #fbbf24; cursor: pointer;" />
-              <span class="label-text" style="font-weight: 600; color: #fbbf24; font-size: 14px; line-height: 1;">⭐ Golden Data</span>
-            </label>
-          </div>
-        </div>
-
-        <div class="editor-container" style="flex: 1; display: flex; flex-direction: column; padding: 20px 24px; overflow: hidden; background: var(--bg);">
-          <div class="view-mode-tabs" style="display: flex; gap: 8px; margin-bottom: 12px; border-bottom: 1px solid var(--border2); padding-bottom: 8px;">
-            <button 
-              class="tab-btn {addDocTab === 'edit' ? 'active' : ''}" 
-              style="padding: 6px 16px; border-radius: 6px; border: none; background: {addDocTab === 'edit' ? 'var(--primary)' : 'transparent'}; color: {addDocTab === 'edit' ? '#fff' : 'var(--text2)'}; cursor: pointer; font-size: 14px; transition: all 0.2s;"
-              on:click={() => addDocTab = 'edit'}
-            >
-              ✎ แก้ไขเนื้อหา (Markdown)
-            </button>
-            <button 
-              class="tab-btn {addDocTab === 'preview' ? 'active' : ''}" 
-              style="padding: 6px 16px; border-radius: 6px; border: none; background: {addDocTab === 'preview' ? 'var(--primary)' : 'transparent'}; color: {addDocTab === 'preview' ? '#fff' : 'var(--text2)'}; cursor: pointer; font-size: 14px; transition: all 0.2s;"
-              on:click={() => addDocTab = 'preview'}
-            >
-              👁️ พรีวิวข้อมูล
-            </button>
-          </div>
-          
-          {#if addDocTab === 'edit'}
-            <textarea id="md_content" style="flex: 1; background: #0d1117; border: 1px solid var(--border); color: #c9d1d9; font-family: 'Consolas', 'Courier New', monospace; font-size: 14px; padding: 16px; border-radius: 8px; resize: none; outline: none; box-shadow: inset 0 2px 8px rgba(0,0,0,0.2);" placeholder="พิมพ์เนื้อหา Markdown หรือ Import ข้อมูลที่นี่..." bind:value={addDocForm.markdown_text}></textarea>
-          {:else}
-            <div class="rendered-html" style="flex: 1; background: var(--bg3); border: 1px solid var(--border2); color: var(--text); padding: 24px; border-radius: 8px; line-height: 1.6; font-size: 15px; overflow-y: auto;">
-              {@html addDocForm.markdown_text ? parseMarkdownToHtml(addDocForm.markdown_text) : '<span style="color:var(--text3);">ไม่มีเนื้อหา</span>'}
-            </div>
-          {/if}
-        </div>
-      </div>
 
     {:else}
       <!-- Welcome state -->

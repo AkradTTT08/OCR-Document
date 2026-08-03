@@ -752,7 +752,7 @@ def kb_documents():
     ดูเอกสารทั้งหมดใน DB (optionally filtered by project_id)
     Query: ?project_id=<id>&limit=50&offset=0
     """
-    project_id = request.args.get('project_id')
+    project_id = request.args.get('project_id', type=int)
     limit = request.args.get('limit', 50, type=int)
     offset = request.args.get('offset', 0, type=int)
 
@@ -879,7 +879,7 @@ def kb_search():
     Query: ?q=<text>&project_id=<id>&top_k=5
     """
     query_text = request.args.get('q', '').strip()
-    project_id = request.args.get('project_id')
+    project_id = request.args.get('project_id', type=int)
     top_k = request.args.get('top_k', 5, type=int)
 
     if not query_text:
@@ -900,10 +900,10 @@ def kb_search():
                        d.original_filename AS doc_name
                 FROM document_chunks dc
                 JOIN documents d ON d.doc_id = dc.doc_id
-                WHERE d.project_id = %s AND (dc.embedding <=> %s::vector) < 0.65
+                WHERE d.project_id = %s
                 ORDER BY distance ASC
                 LIMIT %s;
-            """, (query_vec, project_id, query_vec, top_k))
+            """, (query_vec, project_id, top_k))
         else:
             cursor.execute("""
                 SELECT dc.chunk_id, dc.doc_id, dc.chunk_text,
@@ -911,10 +911,9 @@ def kb_search():
                        d.original_filename AS doc_name
                 FROM document_chunks dc
                 JOIN documents d ON d.doc_id = dc.doc_id
-                WHERE (dc.embedding <=> %s::vector) < 0.65
                 ORDER BY distance ASC
                 LIMIT %s;
-            """, (query_vec, query_vec, top_k))
+            """, (query_vec, top_k))
 
         rows = cursor.fetchall()
         results = [
