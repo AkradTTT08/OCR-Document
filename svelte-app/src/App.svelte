@@ -1,27 +1,10 @@
 <script>
-<<<<<<< HEAD
-<<<<<<< HEAD
   import { fade, fly } from "svelte/transition";
   import UploadPanel from "./lib/UploadPanel.svelte";
   import ResultsPanel from "./lib/ResultsPanel.svelte";
   import KnowledgeBase from "./lib/KnowledgeBase.svelte";
   import SkillManager from "./lib/SkillManager.svelte";
   import Toast from "./lib/Toast.svelte";
-  import Login from "./lib/Login.svelte";
-  import ComingSoon from "./lib/ComingSoon.svelte";
-  import { showLogin, authRole, authUser, logout } from "./lib/authStore.js";
-=======
-=======
->>>>>>> parent of 66dfb22 (commit)
-  import UploadPanel from './lib/UploadPanel.svelte';
-  import ResultsPanel from './lib/ResultsPanel.svelte';
-  import KnowledgeBase from './lib/KnowledgeBase.svelte';
-  import SkillManager from './lib/SkillManager.svelte';
-  import Toast from './lib/Toast.svelte';
-<<<<<<< HEAD
->>>>>>> parent of 66dfb22 (commit)
-=======
->>>>>>> parent of 66dfb22 (commit)
 
   let scanResult = null;
   let isProcessing = false;
@@ -154,55 +137,17 @@
         </div>
       </header>
 
-      <!-- Content Area -->
-      <div class="content-scroll" id="main-content">
-        {#key activeView}
-          <div in:fade="{{ duration: 300, delay: 150 }}">
-            {#if activeView === "ocr"}
-              {#if isProcessing || scanResult}
-                <ResultsPanel result={scanResult} {isProcessing} {progress} on:close={() => {scanResult = null; isProcessing = false;}} />
-              {/if}
-              <div style:display={isProcessing || scanResult ? 'none' : 'contents'}>
-                <UploadPanel on:result={handleResult} on:processing={handleProcessing} />
-              </div>
-            {:else if activeView === "kb"}
-              <KnowledgeBase />
-            {:else if activeView === "skills"}
-              <SkillManager />
-            {/if}
+    {#key activeView}
+      <div style="flex:1; display:flex; flex-direction:column; overflow:hidden;" in:fade="{{ duration: 300, delay: 150 }}">
+        {#if activeView === "ocr"}
+          <UploadPanel on:result={handleResult} on:processing={handleProcessing} />
+        {:else if activeView === "kb"}
+          <div class="kb-hint">
+            <p>เลือกโครงการและเอกสารในพื้นที่หลัก เพื่อดูข้อมูล Knowledge Base</p>
           </div>
-        {/key}
+        {/if}
       </div>
-
-      <!-- ── Footer ── -->
-      <footer class="app-footer">
-        <div class="footer-left">
-          &copy; 2026 Spectra QA v1.0.4. Powered by Prism AI.
-        </div>
-        <div class="footer-links">
-          <a href="#">Privacy Policy</a>
-          <a href="#">Terms of Service</a>
-          <a href="#">Security Architecture</a>
-        </div>
-      </footer>
-    </main>
-  {/if}
-=======
-    {#if activeView === 'ocr'}
-      <UploadPanel on:result={handleResult} on:processing={handleProcessing} />
-    {:else if activeView === 'kb'}
-      <div class="kb-hint">
-        <p>เลือกโครงการและเอกสารในพื้นที่หลัก เพื่อดูข้อมูล Knowledge Base</p>
-      </div>
-=======
-    {#if activeView === 'ocr'}
-      <UploadPanel on:result={handleResult} on:processing={handleProcessing} />
-    {:else if activeView === 'kb'}
-      <div class="kb-hint">
-        <p>เลือกโครงการและเอกสารในพื้นที่หลัก เพื่อดูข้อมูล Knowledge Base</p>
-      </div>
->>>>>>> parent of 66dfb22 (commit)
-    {/if}
+    {/key}
   </aside>
 
   <!-- ── Right Panel ── -->
@@ -250,60 +195,31 @@
   }
 
   .logo-icon {
-<<<<<<< HEAD
-<<<<<<< HEAD
-    width: 32px;
-    height: 32px;
-    background: rgba(255,255,255,0.05);
-    border: 1px solid rgba(255,255,255,0.1);
-    border-radius: 8px;
+    width: 36px;
+    height: 36px;
+    background: linear-gradient(135deg, var(--primary), var(--accent));
+    border-radius: 9px;
     display: flex;
     align-items: center;
     justify-content: center;
+    box-shadow: 0 0 16px var(--glow);
+    flex-shrink: 0;
   }
-
-  .logo-title {
-    font-size: 16px;
-    font-weight: 700;
+  .logo-icon svg {
     color: #fff;
-=======
-    width: 36px; height: 36px;
-    background: linear-gradient(135deg, var(--primary), var(--accent));
-    border-radius: 9px;
-    display: flex; align-items: center; justify-content: center;
-    box-shadow: 0 0 16px var(--glow);
-    flex-shrink: 0;
+    stroke: #fff;
   }
-  .logo-icon svg { color: #fff; stroke: #fff; }
 
   .logo-title {
-    font-size: 15px; font-weight: 700; color: var(--text);
->>>>>>> parent of 66dfb22 (commit)
-=======
-    width: 36px; height: 36px;
-    background: linear-gradient(135deg, var(--primary), var(--accent));
-    border-radius: 9px;
-    display: flex; align-items: center; justify-content: center;
-    box-shadow: 0 0 16px var(--glow);
-    flex-shrink: 0;
-  }
-  .logo-icon svg { color: #fff; stroke: #fff; }
-
-  .logo-title {
-    font-size: 15px; font-weight: 700; color: var(--text);
->>>>>>> parent of 66dfb22 (commit)
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text);
     line-height: 1.2;
   }
   
   .logo-sub {
-<<<<<<< HEAD
-<<<<<<< HEAD
     font-size: 11px;
-    color: #64748b;
-=======
-=======
->>>>>>> parent of 66dfb22 (commit)
-    font-size: 11px; color: var(--text3);
+    color: var(--text3);
     margin-top: 2px;
 >>>>>>> parent of 66dfb22 (commit)
   }
@@ -506,12 +422,18 @@
     color: #94a3b8;
 =======
   @media (max-width: 780px) {
-    .shell { flex-direction: column; overflow: auto; }
-    .left-panel { width: 100%; border-right: none; border-bottom: 1px solid var(--border); }
-    .right-panel { flex: none; min-height: 60vh; }
-<<<<<<< HEAD
->>>>>>> parent of 66dfb22 (commit)
-=======
->>>>>>> parent of 66dfb22 (commit)
+    .shell {
+      flex-direction: column;
+      overflow: auto;
+    }
+    .left-panel {
+      width: 100%;
+      border-right: none;
+      border-bottom: 1px solid var(--border);
+    }
+    .right-panel {
+      flex: none;
+      min-height: 60vh;
+    }
   }
 </style>
