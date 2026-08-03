@@ -1,5 +1,6 @@
 <script>
 <<<<<<< HEAD
+<<<<<<< HEAD
   import { fade, fly } from "svelte/transition";
   import UploadPanel from "./lib/UploadPanel.svelte";
   import ResultsPanel from "./lib/ResultsPanel.svelte";
@@ -10,11 +11,16 @@
   import ComingSoon from "./lib/ComingSoon.svelte";
   import { showLogin, authRole, authUser, logout } from "./lib/authStore.js";
 =======
+=======
+>>>>>>> parent of 66dfb22 (commit)
   import UploadPanel from './lib/UploadPanel.svelte';
   import ResultsPanel from './lib/ResultsPanel.svelte';
   import KnowledgeBase from './lib/KnowledgeBase.svelte';
   import SkillManager from './lib/SkillManager.svelte';
   import Toast from './lib/Toast.svelte';
+<<<<<<< HEAD
+>>>>>>> parent of 66dfb22 (commit)
+=======
 >>>>>>> parent of 66dfb22 (commit)
 
   let scanResult = null;
@@ -117,6 +123,7 @@
       </nav>
 
 <<<<<<< HEAD
+<<<<<<< HEAD
       <div class="sidebar-footer">
         <button class="btn-logout" on:click={logout}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
@@ -187,6 +194,14 @@
       <div class="kb-hint">
         <p>เลือกโครงการและเอกสารในพื้นที่หลัก เพื่อดูข้อมูล Knowledge Base</p>
       </div>
+=======
+    {#if activeView === 'ocr'}
+      <UploadPanel on:result={handleResult} on:processing={handleProcessing} />
+    {:else if activeView === 'kb'}
+      <div class="kb-hint">
+        <p>เลือกโครงการและเอกสารในพื้นที่หลัก เพื่อดูข้อมูล Knowledge Base</p>
+      </div>
+>>>>>>> parent of 66dfb22 (commit)
     {/if}
   </aside>
 
@@ -236,6 +251,7 @@
 
   .logo-icon {
 <<<<<<< HEAD
+<<<<<<< HEAD
     width: 32px;
     height: 32px;
     background: rgba(255,255,255,0.05);
@@ -263,14 +279,30 @@
   .logo-title {
     font-size: 15px; font-weight: 700; color: var(--text);
 >>>>>>> parent of 66dfb22 (commit)
+=======
+    width: 36px; height: 36px;
+    background: linear-gradient(135deg, var(--primary), var(--accent));
+    border-radius: 9px;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 0 16px var(--glow);
+    flex-shrink: 0;
+  }
+  .logo-icon svg { color: #fff; stroke: #fff; }
+
+  .logo-title {
+    font-size: 15px; font-weight: 700; color: var(--text);
+>>>>>>> parent of 66dfb22 (commit)
     line-height: 1.2;
   }
   
   .logo-sub {
 <<<<<<< HEAD
+<<<<<<< HEAD
     font-size: 11px;
     color: #64748b;
 =======
+=======
+>>>>>>> parent of 66dfb22 (commit)
     font-size: 11px; color: var(--text3);
     margin-top: 2px;
 >>>>>>> parent of 66dfb22 (commit)
@@ -477,6 +509,9 @@
     .shell { flex-direction: column; overflow: auto; }
     .left-panel { width: 100%; border-right: none; border-bottom: 1px solid var(--border); }
     .right-panel { flex: none; min-height: 60vh; }
+<<<<<<< HEAD
+>>>>>>> parent of 66dfb22 (commit)
+=======
 >>>>>>> parent of 66dfb22 (commit)
   }
 </style>
