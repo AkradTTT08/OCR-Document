@@ -1,6 +1,7 @@
 /* ── Global Reset & Variables ── */
+@import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&family=Inter:wght@400;500;600;700&display=swap');
+
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-input, button, textarea, select { font-family: inherit; }
 
 :root {
   --bg:       #080c18;
@@ -26,8 +27,8 @@ input, button, textarea, select { font-family: inherit; }
   --glow:     rgba(108,142,251,0.22);
   --glow2:    rgba(167,139,250,0.15);
 
-  --font-th:  'Prompt', sans-serif;
-  --font-en:  'Prompt', sans-serif;
+  --font-th:  'Sarabun', sans-serif;
+  --font-en:  'Inter', 'Sarabun', sans-serif;
 
   --radius:   16px;
   --radius2:  10px;
