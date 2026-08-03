@@ -125,18 +125,29 @@
 </script>
 
 <div class="fmt-panel">
-  <button class="fmt-toggle" on:click={() => open = !open}>
-    <svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14" style="color:var(--warning)">
+  <button class="fmt-toggle" on:click={() => open = true}>
+    <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16" style="color:var(--warning)">
       <path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.533 1.533 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.533 1.533 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd" />
     </svg>
-    <span>กฎการจัดฟอร์แมตเอกสาร</span>
+    <div class="fmt-title-wrap">
+      <span>กฎการจัดฟอร์แมต</span>
+      <span>เอกสาร</span>
+    </div>
     <span class="count-badge">{rules.length}</span>
-    <svg class="chev" class:open viewBox="0 0 16 16" fill="currentColor" width="11" height="11" style="margin-left:auto;color:var(--text3)">
-      <path d="M4.22 6.22a.75.75 0 011.06 0L8 8.94l2.72-2.72a.75.75 0 111.06 1.06l-3.25 3.25a.75.75 0 01-1.06 0L4.22 7.28a.75.75 0 010-1.06z"/>
-    </svg>
   </button>
 
   {#if open}
+    <!-- svelte-ignore a11y-click-events-have-key-events -->
+    <!-- svelte-ignore a11y-no-static-element-interactions -->
+    <div class="modal-backdrop" on:click={() => open = false}>
+      <div class="modal-content" on:click|stopPropagation>
+        <div class="modal-header">
+          <div class="modal-title">
+            <svg viewBox="0 0 20 20" fill="currentColor" width="18" height="18"><path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.533 1.533 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.533 1.533 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd" /></svg>
+            กฎการจัดฟอร์แมตเอกสาร
+          </div>
+          <button class="btn-close" on:click={() => open = false}>✕</button>
+        </div>
     <div class="fmt-body">
       {#if loading}
         <div class="dots"><span></span><span></span><span></span></div>
@@ -211,40 +222,107 @@
           </div>
         {/if}
       {/if}
+      </div>
+      </div>
     </div>
   {/if}
 </div>
 
 <style>
 .fmt-panel {
-  margin: 0 16px 16px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius2);
-  overflow: hidden;
+  display: inline-block;
 }
 .fmt-toggle {
-  display: flex; align-items: center; gap: 7px; width: 100%;
-  background: none; border: none; cursor: pointer;
-  padding: 10px 14px; font-family: var(--font-th);
-  font-size: 13px; font-weight: 600; color: var(--text2);
-  transition: background 0.2s;
+  display: flex; align-items: center; gap: 12px;
+  background: transparent; border: none; cursor: pointer;
+  padding: 8px 12px; font-family: var(--font-th);
+  font-size: 14px; font-weight: 700; color: #fff;
+  transition: all 0.2s;
+  border-radius: 8px;
 }
-.fmt-toggle:hover { background: var(--surface2); }
-.chev { transition: transform 0.25s; }
-.chev.open { transform: rotate(180deg); }
+.fmt-toggle:hover {
+  background: rgba(255,255,255,0.05);
+}
+
+.fmt-title-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.2;
+}
 
 .count-badge {
   background: rgba(245, 158, 11, 0.15);
   color: var(--warning);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
-  padding: 1px 7px;
-  border-radius: 99px;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
   border: 1px solid rgba(245, 158, 11, 0.3);
+  margin-left: 4px;
 }
 
-.fmt-body { padding: 0 14px 14px; }
+/* Modal */
+.modal-backdrop {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  padding: 20px;
+}
+.modal-content {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  width: 100%;
+  max-width: 500px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+  animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  overflow: hidden;
+}
+@keyframes slideUp {
+  0% { transform: translateY(20px) scale(0.95); opacity: 0; }
+  100% { transform: translateY(0) scale(1); opacity: 1; }
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(255,255,255,0.02);
+}
+.modal-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.btn-close {
+  background: none; border: none; color: var(--text3);
+  font-size: 14px; cursor: pointer; padding: 4px;
+  transition: color 0.2s;
+}
+.btn-close:hover { color: #fff; }
+
+.fmt-body { 
+  padding: 20px;
+  overflow-y: auto;
+}
 
 .empty-rules {
   font-size: 11.5px;

@@ -146,9 +146,9 @@
 <style>
     .login-wrapper {
         position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
-        background: #0f172a; /* Dark background matching the logo */
+        background: var(--bg-dark);
         z-index: 9999;
-        font-family: 'Prompt', sans-serif;
+        font-family: var(--font-th);
         overflow: hidden;
     }
 
@@ -161,15 +161,15 @@
         left: -25vw;
         background: conic-gradient(
             from 180deg at 50% 50%,
-            #0f172a 0deg,
-            #ef4444 60deg,
-            #f59e0b 120deg,
-            #10b981 180deg,
-            #3b82f6 240deg,
-            #8b5cf6 300deg,
-            #0f172a 360deg
+            var(--bg-dark) 0deg,
+            var(--danger) 60deg,
+            var(--warning) 120deg,
+            var(--success) 180deg,
+            var(--primary) 240deg,
+            var(--secondary) 300deg,
+            var(--bg-dark) 360deg
         );
-        filter: blur(120px);
+        filter: blur(140px);
         opacity: 0.15;
         animation: spin 30s linear infinite;
         z-index: 1;
@@ -177,12 +177,13 @@
     }
     
     .spectrum-bg.layer-2 {
-        background: radial-gradient(circle at 70% 30%, rgba(59, 130, 246, 0.2), transparent 40%),
-                    radial-gradient(circle at 30% 70%, rgba(139, 92, 246, 0.2), transparent 40%);
-        filter: blur(80px);
-        opacity: 0.4;
+        background: radial-gradient(circle at 70% 30%, rgba(99, 102, 241, 0.25), transparent 40%),
+                    radial-gradient(circle at 30% 70%, rgba(168, 85, 247, 0.25), transparent 40%);
+        filter: blur(90px);
+        opacity: 0.6;
         animation: pulse 15s ease-in-out infinite alternate;
         z-index: 2;
+        pointer-events: none;
     }
 
     @keyframes spin { 100% { transform: rotate(360deg); } }
@@ -204,7 +205,7 @@
         align-items: center;
         justify-content: center;
         padding: 40px;
-        color: #ffffff;
+        color: var(--text-main);
     }
 
     .brand-content {
@@ -216,10 +217,11 @@
     }
 
     .welcome-text {
+        font-family: var(--font-en);
         font-size: clamp(32px, 4vw, 56px);
         font-weight: 800;
         margin-bottom: 40px;
-        color: #ffffff;
+        color: var(--text-main);
         letter-spacing: -0.5px;
         line-height: 1.1;
         white-space: nowrap;
@@ -228,16 +230,16 @@
     .logo-square {
         width: 140px;
         height: 140px;
-        background: rgba(15, 23, 42, 0.6);
-        border: 1px solid rgba(255,255,255,0.1);
-        border-radius: 28px;
+        background: var(--glass-bg);
+        border: 1px solid var(--glass-border-light);
+        border-radius: var(--radius-xl);
         display: flex;
         align-items: center;
         justify-content: center;
         margin-bottom: 30px;
-        box-shadow: 0 0 40px rgba(59, 130, 246, 0.3),
+        box-shadow: 0 0 40px var(--primary-glow),
                     inset 0 0 20px rgba(255, 255, 255, 0.05);
-        backdrop-filter: blur(10px);
+        backdrop-filter: var(--glass-blur);
         animation: float 5s ease-in-out infinite;
     }
     
@@ -248,35 +250,38 @@
     }
 
     .brand-title {
+        font-family: var(--font-en);
         font-size: 42px;
         font-weight: 800;
         margin-bottom: 15px;
         letter-spacing: 1px;
-        background: linear-gradient(to right, #ffffff, #94a3b8);
+        background: var(--gradient-text);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
     }
 
     .brand-desc {
+        font-family: var(--font-en);
         font-size: 16px;
         line-height: 1.6;
-        color: #94a3b8;
+        color: var(--text-muted);
         font-weight: 400;
     }
     
     .footer-text {
         position: absolute;
         bottom: 40px;
+        font-family: var(--font-en);
         font-size: 12px;
         font-weight: 600;
-        color: #64748b;
+        color: var(--text-dim);
         letter-spacing: 2px;
         display: flex;
         align-items: center;
         gap: 10px;
     }
     
-    .dot { color: #3b82f6; }
+    .dot { color: var(--primary); }
 
     /* ── Right Form Panel ── */
     .form-panel {
@@ -286,10 +291,10 @@
         align-items: center;
         justify-content: center;
         padding: 40px;
-        background: rgba(0, 0, 0, 0.45);
-        backdrop-filter: blur(16px);
-        border-left: 1px solid rgba(255, 255, 255, 0.05);
-        box-shadow: -20px 0 50px rgba(0, 0, 0, 0.2);
+        background: var(--glass-bg);
+        backdrop-filter: var(--glass-blur);
+        border-left: 1px solid var(--glass-border);
+        box-shadow: -20px 0 50px rgba(0, 0, 0, 0.4);
         overflow: hidden;
     }
 
@@ -306,7 +311,7 @@
         position: absolute;
         background: #ffffff;
         border-radius: 50%;
-        box-shadow: 0 0 8px #ffffff, 0 0 15px #3b82f6;
+        box-shadow: 0 0 8px #ffffff, 0 0 15px var(--primary);
         animation: float-particle linear infinite;
         opacity: 0;
     }
@@ -321,13 +326,14 @@
     .glass-card {
         width: 100%;
         max-width: 480px;
-        background: rgba(20, 30, 45, 0.5); /* Slightly darker glass for contrast */
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 24px;
+        background: rgba(10, 11, 18, 0.6);
+        border: 1px solid var(--glass-border-light);
+        border-radius: var(--radius-xl);
         padding: 50px;
-        box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.6);
         position: relative;
         z-index: 10;
+        backdrop-filter: blur(20px);
     }
     
     .form-footer {
@@ -336,30 +342,32 @@
         text-align: center;
         width: 100%;
         font-size: 12px;
-        color: #64748b;
+        color: var(--text-dim);
         line-height: 1.6;
+        font-family: var(--font-en);
     }
     
     .form-footer a {
-        color: #94a3b8;
+        color: var(--text-muted);
         text-decoration: none;
         transition: color 0.2s;
     }
     
     .form-footer a:hover {
-        color: #3b82f6;
+        color: var(--primary);
     }
 
     .form-title {
+        font-family: var(--font-en);
         font-size: 32px;
         font-weight: 700;
-        color: #ffffff;
+        color: var(--text-main);
         margin-bottom: 8px;
     }
     
     .form-subtitle {
         font-size: 14px;
-        color: #94a3b8;
+        color: var(--text-muted);
         margin-bottom: 40px;
     }
 
@@ -369,33 +377,35 @@
 
     .input-group label {
         display: block;
+        font-family: var(--font-en);
         font-size: 13px;
         font-weight: 600;
-        color: #cbd5e1;
+        color: var(--text-main);
         margin-bottom: 10px;
         letter-spacing: 0.5px;
     }
 
     .input-group input {
         width: 100%;
-        background: rgba(15, 23, 42, 0.6);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 12px;
+        background: rgba(0, 0, 0, 0.3);
+        border: 1px solid var(--glass-border);
+        border-radius: var(--radius-md);
         padding: 14px 18px;
         font-size: 15px;
-        color: #ffffff;
+        color: var(--text-main);
+        font-family: var(--font-en);
         outline: none;
         transition: all 0.3s;
     }
     
     .input-group input::placeholder {
-        color: #475569;
+        color: var(--text-dim);
     }
 
     .input-group input:focus {
-        border-color: #3b82f6;
-        background: rgba(15, 23, 42, 0.8);
-        box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.15);
+        border-color: var(--primary);
+        background: rgba(0, 0, 0, 0.5);
+        box-shadow: 0 0 0 4px var(--primary-glow);
     }
 
     /* ── Checkbox ── */
@@ -418,8 +428,8 @@
     .checkmark {
         width: 22px;
         height: 22px;
-        background: rgba(15, 23, 42, 0.6);
-        border: 1px solid rgba(255, 255, 255, 0.15);
+        background: rgba(0, 0, 0, 0.3);
+        border: 1px solid var(--glass-border-light);
         border-radius: 6px;
         display: flex;
         align-items: center;
@@ -437,8 +447,8 @@
     }
 
     .checkbox-container input:checked ~ .checkmark {
-        background: #3b82f6;
-        border-color: #3b82f6;
+        background: var(--primary);
+        border-color: var(--primary);
     }
 
     .checkbox-container input:checked ~ .checkmark .check-icon {
@@ -447,8 +457,9 @@
     }
 
     .check-label {
+        font-family: var(--font-en);
         font-size: 14px;
-        color: #94a3b8;
+        color: var(--text-muted);
         font-weight: 500;
         transition: color 0.2s;
     }
@@ -460,16 +471,17 @@
     /* ── Buttons ── */
     .btn-primary {
         width: 100%;
-        background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+        background: var(--gradient-main);
         color: white;
         border: none;
         padding: 16px;
-        border-radius: 12px;
+        border-radius: var(--radius-md);
+        font-family: var(--font-th);
         font-size: 16px;
         font-weight: 600;
         cursor: pointer;
-        transition: all 0.3s;
-        box-shadow: 0 10px 25px -5px rgba(59, 130, 246, 0.4);
+        transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+        box-shadow: 0 10px 25px -5px var(--primary-glow);
         display: flex;
         align-items: center;
         justify-content: center;
@@ -478,8 +490,8 @@
 
     .btn-primary:hover:not(:disabled) {
         transform: translateY(-2px);
-        box-shadow: 0 15px 30px -5px rgba(59, 130, 246, 0.5);
-        background: linear-gradient(135deg, #4f46e5, #9333ea);
+        box-shadow: 0 15px 30px -5px rgba(99, 102, 241, 0.6);
+        background: var(--gradient-glow);
     }
 
     .btn-primary:disabled {

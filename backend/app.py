@@ -1,8 +1,12 @@
 import logging
 from dotenv import load_dotenv
 
+import os
 # Initialize environment and logging first
-load_dotenv()
+from pathlib import Path
+env_path = Path(__file__).resolve().parent.parent / '.env'
+load_dotenv(dotenv_path=env_path, override=True)
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -120,7 +124,7 @@ def allowed_file(filename: str) -> bool:
 
 
 # ========================
-# Authentication (JWT + ORM)
+# Authentication (JWT)
 # ========================
 import hmac
 import hashlib
@@ -128,9 +132,6 @@ import base64
 import json
 import time
 from functools import wraps
-from flask import request, jsonify
-from auth_db import SessionLocal
-from auth_models import User
 
 JWT_SECRET = os.environ.get('JWT_SECRET', 'spectra-qa-super-secret-key-2024')
 
@@ -174,8 +175,11 @@ def token_required(f):
         return f(*args, **kwargs)
     return decorated
 
-@app.route('/api/login', methods=['POST'])
+@app.route('/api/login', methods=['POST', 'OPTIONS'])
 def login():
+    if request.method == 'OPTIONS':
+        return jsonify({}), 200
+        
     data = request.get_json()
     if not data:
         return jsonify({'error': 'No data provided'}), 400
@@ -187,29 +191,56 @@ def login():
         return jsonify({'error': 'Username and password required'}), 400
         
     try:
-        db = SessionLocal()
-        pwd_hash = hashlib.sha256(password.encode()).hexdigest()
+        from db_ingestion import get_db_connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
         
-        user = db.query(User).filter(User.username == username, User.password_hash == pwd_hash).first()
+        # ใช้ PostgreSQL crypt() ตรวจสอบ bcrypt password
+        cursor.execute(
+            "SELECT user_id, username, email, display_name, role, is_active "
+            "FROM users WHERE username = %s AND password_hash = crypt(%s, password_hash);",
+            (username, password)
+        )
+        user = cursor.fetchone()
         
-        if user:
+        if user and user[5]:  # is_active = True
+            user_id = str(user[0])
+            
+            # อัปเดต login_count และ last_login_at
+            cursor.execute(
+                "UPDATE users SET login_count = login_count + 1, last_login_at = NOW() WHERE user_id = %s;",
+                (user[0],)
+            )
+            conn.commit()
+            
             # Token expires in 24 hours
             payload = {
-                'user_id': user.id,
-                'user': user.username,
-                'role': user.role,
+                'user_id': user_id,
+                'user': user[1],
+                'role': user[4],
                 'exp': int(time.time()) + (24 * 3600)
             }
             token = encode_jwt(payload)
-            db.close()
-            return jsonify({'success': True, 'token': token, 'user': user.username, 'role': user.role})
             
-        db.close()
+            cursor.close()
+            conn.close()
+            return jsonify({
+                'success': True,
+                'token': token,
+                'user': user[1],
+                'email': user[2],
+                'display_name': user[3],
+                'role': user[4]
+            })
+            
+        cursor.close()
+        conn.close()
         return jsonify({'error': 'Invalid credentials'}), 401
         
     except Exception as e:
-        logger.error(f"Login DB error: {e}")
-        return jsonify({'error': 'Database connection error. Is the Auth DB running?'}), 500
+        logger.error(f"Login DB error: {e}", exc_info=True)
+        return jsonify({'error': 'Database connection error. Is the DB running?'}), 500
+
 
 
 # ========================
@@ -655,7 +686,11 @@ def process_stream():
             yield f"data: {json.dumps(final_data)}\n\n"
 
         except Exception as e:
+            import traceback
+            tb = traceback.format_exc()
             logger.error(f"Stream error: {e}", exc_info=True)
+            with open(os.path.join(BASE_DIR, 'backend', 'stream_error.txt'), 'w', encoding='utf-8') as f:
+                f.write(f"Error: {e}\nTraceback:\n{tb}")
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
 
     from flask import Response
@@ -670,6 +705,16 @@ def dictionary_stats():
         return jsonify({'success': True, 'stats': stats})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+@app.route('/api/debug_env', methods=['GET'])
+def debug_env():
+    import os
+    return jsonify({
+        'key_exists': 'GOOGLE_API_KEY' in os.environ,
+        'key_length': len(os.environ.get('GOOGLE_API_KEY', '')),
+        'cwd': os.getcwd(),
+        '__file__': __file__
+    })
 
 
 @app.route('/api/dictionary/add', methods=['POST'])
@@ -1377,6 +1422,102 @@ created_by: "{created_by or 'Admin'}"
         return jsonify({'error': str(e)}), 500
     finally:
         if conn: conn.close()
+
+from db_ingestion import search_knowledge_base
+from email_service import send_qa_report
+
+@app.route('/api/qa_consult', methods=['POST', 'OPTIONS'])
+def qa_consult_api():
+    if request.method == 'OPTIONS':
+        return '', 200
+        
+    try:
+        file = request.files.get('file')
+        doc_type = request.form.get('doc_type', 'Requirement')
+        email = request.form.get('email', '')
+        
+        if not file or not email:
+            return jsonify({'type': 'error', 'message': 'Missing file or email'}), 400
+
+        def generate():
+            try:
+                yield f"data: {json.dumps({'type': 'progress', 'pct': 10, 'message': 'กำลังวิเคราะห์ข้อความจากเอกสาร PDF...' })}\n\n"
+                
+                # 1. OCR
+                pdf_bytes = file.read()
+                from ocr_engine import ocr_pdf_bytes
+                
+                ocr_results = ocr_pdf_bytes(pdf_bytes)
+                extracted_text = ''
+                total_pages = len(ocr_results)
+                
+                for page in ocr_results:
+                    if 'error' not in page or not page['error']:
+                        extracted_text += page.get('text', '') + '\n\n'
+                
+                if not extracted_text.strip():
+                    yield f"data: {json.dumps({'type': 'error', 'message': 'ไม่พบข้อความในเอกสาร' })}\n\n"
+                    return
+
+                yield f"data: {json.dumps({'type': 'progress', 'pct': 40, 'message': 'กำลังสืบค้นฐานข้อมูล Knowledge Base (Vector Search)...' })}\n\n"
+                
+                # 2. Vector Search
+                kb_results = search_knowledge_base(extracted_text[:2000], doc_type=doc_type, top_k=5)
+                
+                kb_context = ''
+                for res in kb_results:
+                    kb_context += f"[Source: {res['filename']}]\n{res['chunk_text']}\n\n"
+                
+                yield f"data: {json.dumps({'type': 'progress', 'pct': 70, 'message': 'กำลังใช้ AI วิเคราะห์และเปรียบเทียบข้อมูล...' })}\n\n"
+                
+                # 3. Analyze with Gemini
+                from ocr_engine import _get_gemini_client
+                client = _get_gemini_client()
+                
+                prompt = f"""คุณคือผู้เชี่ยวชาญด้าน QA ของระบบ
+หน้าที่ของคุณคือเปรียบเทียบเอกสารที่อัปโหลดมา กับมาตรฐานในฐานข้อมูล (Knowledge Base)
+ประเภทเอกสาร: {doc_type}
+
+--- ข้อมูลอ้างอิงจาก Knowledge Base ---
+{kb_context if kb_context else 'ไม่พบข้อมูลอ้างอิงเฉพาะเจาะจงในระบบ'}
+
+--- เอกสารที่ต้องการตรวจสอบ ---
+{extracted_text[:8000]}
+
+กรุณาสรุป:
+1. ความสอดคล้องกับมาตรฐาน
+2. สิ่งที่ขาดหายไปหรือจุดที่พบข้อผิดพลาด
+3. ข้อเสนอแนะ
+"""
+                
+                gemini_res = client.models.generate_content(
+                    model='gemini-2.5-flash',
+                    contents=prompt,
+                )
+                
+                report = gemini_res.text
+                
+                yield f"data: {json.dumps({'type': 'progress', 'pct': 90, 'message': 'กำลังเตรียมส่งรายงานไปยังอีเมล...' })}\n\n"
+                
+                # 4. Send Email
+                email_sent = send_qa_report(email, doc_type, file.filename, report)
+                
+                if email_sent:
+                    yield f"data: {json.dumps({'type': 'complete', 'result': {'total_pages': total_pages, 'status': 'success'} })}\n\n"
+                else:
+                    yield f"data: {json.dumps({'type': 'error', 'message': 'วิเคราะห์สำเร็จ แต่ไม่สามารถส่งอีเมลได้ (ตรวจสอบ .env GMAIL_APP_PASSWORD)' })}\n\n"
+                    
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                yield f"data: {json.dumps({'type': 'error', 'message': str(e) })}\n\n"
+
+        return Response(generate(), mimetype='text/event-stream')
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'type': 'error', 'message': str(e)}), 500
 
 
 if __name__ == '__main__':

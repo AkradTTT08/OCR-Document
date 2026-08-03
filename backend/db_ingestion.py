@@ -294,3 +294,63 @@ def update_markdown_document(doc_id: str, new_markdown_text: str):
     finally:
         if cursor: cursor.close()
         if conn: conn.close()
+
+
+def search_knowledge_base(query_text: str, doc_type: str = None, top_k: int = 5):
+    """
+    Searches the knowledge base for chunks most similar to the query text.
+    Uses pgvector's <-> operator (L2 distance) or <=> (Cosine distance).
+    Optionally filters by doc_type (e.g. 'Requirement', 'Design').
+    """
+    if not query_text.strip():
+        return []
+
+    conn = None
+    cursor = None
+    try:
+        embedder = get_model()
+        # Encode query to vector
+        query_embedding = embedder.encode([query_text])[0]
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Build query
+        # Using cosine distance <=> for sentence embeddings is usually preferred
+        sql = """
+            SELECT 
+                dc.chunk_text, 
+                d.doc_type, 
+                d.original_filename,
+                1 - (dc.embedding <=> %s::vector) as similarity
+            FROM document_chunks dc
+            JOIN documents d ON dc.doc_id = d.doc_id
+            WHERE d.status = 'Active'
+        """
+        params = [query_embedding.tolist()]
+
+        if doc_type and doc_type != "Other":
+            sql += " AND d.doc_type = %s"
+            params.append(doc_type)
+
+        sql += " ORDER BY dc.embedding <=> %s::vector LIMIT %s;"
+        params.extend([query_embedding.tolist(), top_k])
+
+        cursor.execute(sql, params)
+        results = []
+        for row in cursor.fetchall():
+            results.append({
+                "chunk_text": row[0],
+                "doc_type": row[1],
+                "filename": row[2],
+                "similarity": float(row[3])
+            })
+            
+        return results
+
+    except Exception as e:
+        logger.error(f"Error searching knowledge base: {e}", exc_info=True)
+        return []
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
