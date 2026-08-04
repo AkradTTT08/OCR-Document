@@ -13,6 +13,10 @@ from PIL import Image
 from pdf2image import convert_from_path, convert_from_bytes
 from dotenv import load_dotenv
 
+from pathlib import Path
+env_path = Path(__file__).resolve().parent.parent / '.env'
+load_dotenv(dotenv_path=env_path, override=True)
+
 logger = logging.getLogger(__name__)
 
 # Global engine instance version
@@ -104,10 +108,22 @@ def _get_gemini_client():
     try:
         from google import genai
         api_key = os.environ.get('GOOGLE_API_KEY', '')
+        
+        # Fallback: Read .env manually if os.environ is empty
+        if not api_key:
+            from pathlib import Path
+            env_file = Path(__file__).resolve().parent.parent / '.env'
+            if env_file.exists():
+                with open(env_file, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        if line.startswith('GOOGLE_API_KEY='):
+                            api_key = line.split('=', 1)[1].strip()
+                            os.environ['GOOGLE_API_KEY'] = api_key
+                            break
+
         if not api_key:
             raise ValueError("ไม่พบ GOOGLE_API_KEY ใน environment variables กรุณาตั้งค่าใน .env")
-        client = genai.Client(api_key=api_key)
-        return client
+        return genai.Client(api_key=api_key)
     except ImportError:
         raise ImportError(
             "ไม่พบ library 'google-genai' กรุณารัน: pip install google-genai"
@@ -157,29 +173,41 @@ def ocr_image(pil_image: Image.Image, lang: str = 'tha+eng') -> dict:
         # -----------------------------------------
 
         max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=[
-                        types.Part.from_bytes(data=img_bytes, mime_type='image/png'),
-                        user_prompt,
-                    ],
-                    config=types.GenerateContentConfig(
-                        system_instruction=system_prompt,
-                        temperature=0.1,  # Set slightly above 0.0 to prevent infinite degenerate loops
-                        max_output_tokens=2048, # Lower from 8192 to prevent massive walls of text
+        fallback_models = [model_name, 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash']
+        
+        for current_model in fallback_models:
+            success = False
+            for attempt in range(max_retries):
+                try:
+                    logger.info(f"Calling Gemini API with model: {current_model} (Attempt {attempt+1})")
+                    response = client.models.generate_content(
+                        model=current_model,
+                        contents=[
+                            types.Part.from_bytes(data=img_bytes, mime_type='image/jpeg'),
+                            user_prompt,
+                        ],
+                        config=types.GenerateContentConfig(
+                            system_instruction=system_prompt,
+                            temperature=0.1,
+                            max_output_tokens=2048,
+                        )
                     )
-                )
-                break  # Success
-            except Exception as e:
-                error_msg = str(e)
-                if '429' in error_msg or 'Quota' in error_msg or 'RESOURCE_EXHAUSTED' in error_msg:
-                    if attempt < max_retries - 1:
-                        logger.warning(f"Rate limit exceeded (429). Retrying in 50 seconds... (Attempt {attempt + 1}/{max_retries})")
-                        time.sleep(50)
-                        continue
-                raise  # Re-raise if not a rate limit error or out of retries
+                    success = True
+                    break  # Success, break retry loop
+                except Exception as e:
+                    error_msg = str(e)
+                    if '503' in error_msg or 'UNAVAILABLE' in error_msg:
+                        logger.warning(f"Model {current_model} is overloaded (503). Switching to fallback model.")
+                        break # Break retry loop, go to next model in fallback_models
+                    elif '429' in error_msg or 'Quota' in error_msg or 'RESOURCE_EXHAUSTED' in error_msg:
+                        if attempt < max_retries - 1:
+                            logger.warning(f"Rate limit exceeded (429). Retrying in 10 seconds... (Attempt {attempt + 1}/{max_retries})")
+                            time.sleep(10)
+                            continue
+                    raise  # Re-raise if not a rate limit error or out of retries
+            
+            if success:
+                break # Success, break model fallback loop
 
         logger.info("Gemini API call successful.")
 

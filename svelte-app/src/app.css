@@ -1,9 +1,12 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700&family=Prompt:wght@300;400;500;600;700&display=swap');
+
 /* ── Global Reset & Variables ── */
 @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&family=Inter:wght@400;500;600;700&display=swap');
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
+<<<<<<< HEAD
   --bg:       #080c18;
   --bg2:      #0d1220;
   --bg3:      #111827;
@@ -35,26 +38,107 @@
   --radius3:  7px;
 
   --panel-w:  440px;   /* left panel fixed width */
+=======
+  /* Deep Modern Dark Theme */
+  --bg-dark:      #050505;
+  --bg:           #0a0b12;
+  --bg2:          #12141c;
+  
+  /* Glassmorphism Surfaces */
+  --glass-bg:     rgba(18, 20, 28, 0.45);
+  --glass-bg-hover: rgba(255, 255, 255, 0.04);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-border-light: rgba(255, 255, 255, 0.15);
+  --glass-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+  --glass-blur:   blur(16px);
+
+  /* Vibrant Colors (Cyberpunk / Modern Neon) */
+  --primary:      #6366f1; /* Indigo */
+  --primary-glow: rgba(99, 102, 241, 0.5);
+  --secondary:    #a855f7; /* Purple */
+  --accent:       #06b6d4; /* Cyan */
+  --success:      #10b981; /* Emerald */
+  --danger:       #f43f5e; /* Rose */
+  --warning:      #f59e0b; /* Amber */
+  
+  /* Gradient Magic */
+  --gradient-main: linear-gradient(135deg, var(--primary), var(--secondary));
+  --gradient-glow: linear-gradient(135deg, rgba(99, 102, 241, 0.8), rgba(168, 85, 247, 0.8));
+  --gradient-text: linear-gradient(to right, #e0e7ff, #c7d2fe);
+
+  /* Typography */
+  --text-main:    #f8fafc; /* Crisp White */
+  --text-muted:   #94a3b8; /* Slate 400 */
+  --text-dim:     #475569; /* Slate 600 */
+
+  --font-en:      'Outfit', 'Inter', sans-serif;
+  --font-th:      'Prompt', sans-serif;
+  
+  /* Metrics */
+  --radius-sm:    8px;
+  --radius-md:    12px;
+  --radius-lg:    20px;
+  --radius-xl:    28px;
+>>>>>>> df856a56efb793dd0e86bd37d93ef75eb31e12db
 }
 
 html, body {
   height: 100%;
   font-family: var(--font-th);
-  background: var(--bg);
-  color: var(--text);
+  background-color: var(--bg-dark);
+  color: var(--text-main);
   font-size: 14px;
   line-height: 1.6;
-  overflow: hidden;   /* no outer scroll – each panel scrolls internally */
+  overflow: hidden;
+  /* Smooth font rendering */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 #app { height: 100%; }
 
 /* ── Scrollbar ── */
-::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: var(--text3); }
+::-webkit-scrollbar-thumb { 
+  background: var(--glass-border-light); 
+  border-radius: 10px; 
+}
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
 
-/* ── Utility ── */
-.flex-center { display:flex; align-items:center; justify-content:center; }
-.truncate { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+/* ── Utility Classes ── */
+.flex-center { display: flex; align-items: center; justify-content: center; }
+.truncate { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+
+.glass-panel {
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--glass-shadow);
+}
+
+.text-gradient {
+  background: var(--gradient-text);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* ── Animations ── */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pulse-glow {
+  0% { box-shadow: 0 0 0 0 var(--primary-glow); }
+  70% { box-shadow: 0 0 15px 10px rgba(99, 102, 241, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0); }
+}
+
+@keyframes float {
+  0% { transform: translateY(0px); }
+  50% { transform: translateY(-8px); }
+  100% { transform: translateY(0px); }
+}
