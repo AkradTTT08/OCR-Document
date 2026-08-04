@@ -3,6 +3,8 @@ import smtplib
 import logging
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email import encoders
 from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
@@ -37,6 +39,23 @@ def send_qa_report(recipient_email: str, doc_type: str, filename: str, report_co
         msg['To'] = recipient_email
         msg['Subject'] = f"Spectra QA: รายงานผลการตรวจสอบเอกสาร {filename} ({doc_type})"
 
+        # Load SVG logo
+        svg_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'svelte-app', 'public', 'spectra-favicon.svg')
+        logo_html = ''
+        logo_part = None
+        try:
+            if os.path.exists(svg_path):
+                with open(svg_path, 'rb') as f:
+                    svg_data = f.read()
+                logo_part = MIMEBase('image', 'svg+xml')
+                logo_part.set_payload(svg_data)
+                encoders.encode_base64(logo_part)
+                logo_part.add_header('Content-ID', '<spectra_logo>')
+                logo_part.add_header('Content-Disposition', 'inline', filename='spectra-favicon.svg')
+                logo_html = '<img src="cid:spectra_logo" alt="Spectra QA Logo" style="width: 40px; height: 40px; vertical-align: middle; margin-right: 12px; border-radius: 8px;">'
+        except Exception as e:
+            logger.warning(f"Could not load logo for email: {e}")
+
         # Convert markdown report to simple HTML for email
         # Just wrapping in pre tag or basic formatting
         html_content = f"""
@@ -53,7 +72,8 @@ def send_qa_report(recipient_email: str, doc_type: str, filename: str, report_co
         <body>
             <div class="container">
                 <div class="header">
-                    <h2>Spectra QA Consult Report</h2>
+                    {logo_html}
+                    <h2 style="display: inline-block; vertical-align: middle; margin: 0;">Spectra QA Consult Report</h2>
                 </div>
                 <div class="content">
                     <p>เรียนผู้ใช้งาน,</p>
@@ -70,17 +90,22 @@ def send_qa_report(recipient_email: str, doc_type: str, filename: str, report_co
         """
         
         msg.attach(MIMEText(html_content, 'html'))
+        if logo_part:
+            msg.attach(logo_part)
 
+        # Prepare recipient list
+        to_list = [e.strip() for e in recipient_email.split(',') if e.strip()]
+        
         # Send email
-        logger.info(f"Connecting to SMTP server to send email to {recipient_email}...")
+        logger.info(f"Connecting to SMTP server to send email to {to_list}...")
         server = smtplib.SMTP('smtp.gmail.com', 587)
         server.starttls()
         server.login(GMAIL_USER, GMAIL_APP_PASSWORD)
         text = msg.as_string()
-        server.sendmail(GMAIL_USER, recipient_email, text)
+        server.sendmail(GMAIL_USER, to_list, text)
         server.quit()
         
-        logger.info(f"Successfully sent QA report to {recipient_email}")
+        logger.info(f"Successfully sent QA report to {to_list}")
         return True
     except Exception as e:
         logger.error(f"Failed to send email to {recipient_email}: {e}", exc_info=True)

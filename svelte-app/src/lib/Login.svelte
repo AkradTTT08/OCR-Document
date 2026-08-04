@@ -66,7 +66,7 @@
                 <h3 class="welcome-text">Welcome to QA Agent</h3>
                 
                 <div class="logo-square" style="padding: 10px;">
-                    <img src="/screen.png" alt="Spectra QA Logo" style="width: 100%; height: 100%; object-fit: contain; border-radius: 12px;" />
+                    <img src="/spectra-favicon.svg" alt="Spectra QA Logo" style="width: 100%; height: 100%; object-fit: contain; border-radius: 12px;" />
                 </div>
                 
                 <h1 class="brand-title">Spectra QA</h1>

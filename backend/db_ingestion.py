@@ -2,7 +2,6 @@ import os
 import hashlib
 import psycopg2
 import logging
-from sentence_transformers import SentenceTransformer
 from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
@@ -18,6 +17,7 @@ model = None
 def get_model():
     global model
     if model is None:
+        from sentence_transformers import SentenceTransformer
         logger.info(f"Loading embedding model: {MODEL_NAME}")
         model = SentenceTransformer(MODEL_NAME)
     return model
@@ -30,6 +30,16 @@ def get_db_connection():
         dbname=os.environ.get("DB_NAME", "qa_agent_db"),
         user=os.environ.get("DB_USER", "qa_admin"),
         password=os.environ.get("DB_PASS", "qa_password")
+    )
+
+def get_auth_db_connection():
+    """Establish a connection to the Auth PostgreSQL database (Port 8124)."""
+    return psycopg2.connect(
+        host=os.environ.get("AUTH_DB_HOST", "localhost"),
+        port=os.environ.get("AUTH_DB_PORT", "8124"),
+        dbname=os.environ.get("AUTH_DB_NAME", "postgres"),
+        user=os.environ.get("AUTH_DB_USER", "postgres"),
+        password=os.environ.get("AUTH_DB_PASS", "postgres")
     )
 
 def chunk_markdown(text: str, chunk_size: int = 1500, overlap: int = 200) -> list[str]:
@@ -295,11 +305,11 @@ def update_markdown_document(doc_id: str, new_markdown_text: str):
         if conn: conn.close()
 
 
-def search_knowledge_base(query_text: str, doc_type: str = None, top_k: int = 5):
+def search_knowledge_base(query_text: str, doc_type: str = None, top_k: int = 5, project_id: str = None):
     """
     Searches the knowledge base for chunks most similar to the query text.
     Uses pgvector's <-> operator (L2 distance) or <=> (Cosine distance).
-    Optionally filters by doc_type (e.g. 'Requirement', 'Design').
+    Optionally filters by doc_type (e.g. 'Requirement', 'Design') and project_id.
     """
     if not query_text.strip():
         return []
@@ -319,18 +329,30 @@ def search_knowledge_base(query_text: str, doc_type: str = None, top_k: int = 5)
         sql = """
             SELECT 
                 dc.chunk_text, 
-                d.doc_type, 
+                d.doc_category, 
                 d.original_filename,
                 1 - (dc.embedding <=> %s::vector) as similarity
             FROM document_chunks dc
             JOIN documents d ON dc.doc_id = d.doc_id
-            WHERE d.status = 'Active'
+            WHERE (d.status = 'Active' OR d.status IS NULL)
         """
         params = [query_embedding.tolist()]
 
-        if doc_type and doc_type != "Other":
-            sql += " AND d.doc_type = %s"
-            params.append(doc_type)
+        if project_id:
+            sql += " AND d.project_id = %s::uuid"
+            params.append(project_id)
+
+        if doc_type:
+            if isinstance(doc_type, list) and len(doc_type) > 0:
+                # exclude 'Other' or handle it if needed
+                valid_types = [dt.upper() for dt in doc_type if dt.upper() != 'OTHER']
+                if valid_types:
+                    placeholders = ', '.join(['%s'] * len(valid_types))
+                    sql += f" AND UPPER(TRIM(d.doc_category)) IN ({placeholders})"
+                    params.extend(valid_types)
+            elif isinstance(doc_type, str) and doc_type.upper() != "OTHER":
+                sql += " AND UPPER(TRIM(d.doc_category)) = %s"
+                params.append(doc_type.upper())
 
         sql += " ORDER BY dc.embedding <=> %s::vector LIMIT %s;"
         params.extend([query_embedding.tolist(), top_k])
@@ -353,3 +375,101 @@ def search_knowledge_base(query_text: str, doc_type: str = None, top_k: int = 5)
     finally:
         if cursor: cursor.close()
         if conn: conn.close()
+
+def init_qa_transactions_table():
+    """Initializes the qa_transactions table in the database."""
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        conn.autocommit = True
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS qa_transactions (
+                transaction_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                project_id UUID REFERENCES projects(project_id) ON DELETE CASCADE,
+                group_name VARCHAR(255),
+                group_type VARCHAR(100),
+                filename VARCHAR(255) NOT NULL,
+                doc_type VARCHAR(255),
+                extracted_text TEXT,
+                qa_report TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        try:
+            cursor.execute("ALTER TABLE qa_transactions ADD COLUMN group_name VARCHAR(255);")
+        except Exception:
+            pass # Column likely already exists
+            
+        try:
+            cursor.execute("ALTER TABLE qa_transactions ADD COLUMN group_type VARCHAR(100);")
+        except Exception:
+            pass # Column likely already exists
+            
+        logger.info("Checked/Created qa_transactions table.")
+    except Exception as e:
+        logger.error(f"Error initializing qa_transactions table: {e}", exc_info=True)
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+
+def save_qa_transaction(project_id, group_name, group_type, filename, doc_type, extracted_text, qa_report):
+    """Saves a QA consult transaction to the database."""
+    conn = None
+    cursor = None
+    try:
+        if not project_id:
+            logger.warning("No project_id provided, skipping saving QA transaction.")
+            return False
+            
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO qa_transactions (project_id, group_name, group_type, filename, doc_type, extracted_text, qa_report)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """, (project_id, group_name, group_type, filename, doc_type, extracted_text, qa_report))
+        conn.commit()
+        logger.info(f"Saved QA transaction for {filename} in project {project_id}.")
+        return True
+    except Exception as e:
+        if conn: conn.rollback()
+        logger.error(f"Error saving QA transaction: {e}", exc_info=True)
+        return False
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+
+def get_latest_qa_transaction(project_id, filename):
+    """Retrieves the latest QA transaction for a given project and filename."""
+    conn = None
+    cursor = None
+    try:
+        if not project_id:
+            return None
+            
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT extracted_text, qa_report, created_at
+            FROM qa_transactions
+            WHERE project_id = %s::uuid AND filename = %s
+            ORDER BY created_at DESC
+            LIMIT 1
+        """, (project_id, filename))
+        row = cursor.fetchone()
+        if row:
+            return {
+                'extracted_text': row[0],
+                'qa_report': row[1],
+                'created_at': row[2].isoformat() if row[2] else None
+            }
+        return None
+    except Exception as e:
+        logger.error(f"Error retrieving latest QA transaction: {e}", exc_info=True)
+        return None
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+

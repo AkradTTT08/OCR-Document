@@ -1,27 +1,20 @@
 <script>
-<<<<<<< HEAD
-  import { fade, fly } from 'svelte/transition';
-  import UploadPanel from './lib/UploadPanel.svelte';
-  import ResultsPanel from './lib/ResultsPanel.svelte';
-  import KnowledgeBase from './lib/KnowledgeBase.svelte';
-  import SkillManager from './lib/SkillManager.svelte';
-  import Toast from './lib/Toast.svelte';
-
-  let scanResult = null;
-  let isProcessing = false;
-  let progress = { pct: 0, label: '', step: 0 };
-  let activeView = 'ocr'; // 'ocr' | 'kb' | 'skills'
-=======
   import { fade, fly } from "svelte/transition";
   import UploadPanel from "./lib/UploadPanel.svelte";
   import ResultsPanel from "./lib/ResultsPanel.svelte";
   import KnowledgeBase from "./lib/KnowledgeBase.svelte";
   import SkillManager from "./lib/SkillManager.svelte";
+  import { qaHistory, selectedHistory, loadQAHistoryFromDB, selectedProjectStore, qaSessionGroups, activeQAContext } from "./lib/qaHistoryStore.js";
   import Toast from "./lib/Toast.svelte";
   import Login from "./lib/Login.svelte";
   import ComingSoon from "./lib/ComingSoon.svelte";
   import QAConsult from "./lib/QAConsult.svelte";
   import { showLogin, authRole, authUser, logout } from "./lib/authStore.js";
+  import { onMount } from "svelte";
+
+  onMount(() => {
+    loadQAHistoryFromDB();
+  });
 
   let scanResult = null;
   let isProcessing = false;
@@ -34,7 +27,6 @@
   } else if ($authRole === 'admin' && activeView === 'qa_consult') {
     activeView = 'ocr';
   }
->>>>>>> df856a56efb793dd0e86bd37d93ef75eb31e12db
 
   function handleResult(event) {
     scanResult = event.detail;
@@ -43,21 +35,50 @@
     isProcessing = event.detail.active;
     if (event.detail.progress) progress = event.detail.progress;
   }
+
+  function formatHistoryDate(dateString) {
+    if (!dateString) return "";
+    // If the database returns UTC time without a timezone marker, append 'Z'
+    // so JS parses it as UTC and correctly converts it to local time.
+    let parsedString = dateString;
+    if (!parsedString.endsWith('Z') && !parsedString.includes('+')) {
+      parsedString += 'Z';
+    }
+    const d = new Date(parsedString);
+    return d.toLocaleString('th-TH', { 
+      day: '2-digit', 
+      month: '2-digit', 
+      year: '2-digit', 
+      hour: '2-digit', 
+      minute: '2-digit'
+    });
+  }
+
+  $: projectGroups = (() => {
+    if (!$selectedProjectStore) return [];
+    const pId = $selectedProjectStore.id || $selectedProjectStore.project_id;
+    
+    const sessionGs = $qaSessionGroups.filter(g => g.project_id === pId);
+    
+    const histGs = $qaHistory.filter(h => h.project_id === pId).map(h => ({
+      group_name: h.group_name || 'General',
+      group_type: h.group_type || 'Project Plan',
+      project_id: pId
+    }));
+    
+    const all = [...sessionGs, ...histGs];
+    const unique = [];
+    const seen = new Set();
+    for (let g of all) {
+      if (!seen.has(g.group_name)) {
+        seen.add(g.group_name);
+        unique.push(g);
+      }
+    }
+    return unique;
+  })();
 </script>
 
-<<<<<<< HEAD
-<div class="shell">
-  <!-- ── Left Panel ── -->
-  <aside class="left-panel" class:collapsed-left={activeView === 'skills'}>
-    <header class="panel-header">
-      <div class="logo">
-        <div class="logo-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" stroke-linecap="round" stroke-linejoin="round">
-            <polygon points="12 3 3 21 21 21"></polygon>
-            <line x1="3" y1="14" x2="21" y2="14"></line>
-            <line x1="8" y1="10" x2="16" y2="10"></line>
-          </svg>
-=======
 <div class="app-wrapper">
   <!-- Glowing Background Orbs -->
   <div class="bg-glow glow-1"></div>
@@ -72,8 +93,7 @@
     <aside class="sidebar">
       <div class="sidebar-logo">
         <div class="logo-icon" style="padding: 2px;">
-          <img src="/screen.png" alt="Logo" style="width: 100%; height: 100%; object-fit: contain; border-radius: 4px;" />
->>>>>>> df856a56efb793dd0e86bd37d93ef75eb31e12db
+          <img src="/spectra-favicon.svg" alt="Logo" style="width: 100%; height: 100%; object-fit: contain; border-radius: 4px;" />
         </div>
         <div>
           <div class="logo-title">Spectra QA</div>
@@ -81,45 +101,6 @@
         </div>
       </div>
 
-<<<<<<< HEAD
-      <!-- Nav tabs -->
-      <nav class="nav-tabs">
-        <button
-          id="nav-ocr"
-          class="nav-tab"
-          class:active={activeView === 'ocr'}
-          on:click={() => activeView = 'ocr'}
-        >
-          <svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14">
-            <path fill-rule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clip-rule="evenodd"/>
-          </svg>
-          Scan OCR
-        </button>
-        <button
-          id="nav-kb"
-          class="nav-tab"
-          class:active={activeView === 'kb'}
-          on:click={() => activeView = 'kb'}
-        >
-          <svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14">
-            <path d="M3 12v3c0 1.657 3.134 3 7 3s7-1.343 7-3v-3c0 1.657-3.134 3-7 3s-7-1.343-7-3z"/>
-            <path d="M3 7v3c0 1.657 3.134 3 7 3s7-1.343 7-3V7c0 1.657-3.134 3-7 3S3 8.657 3 7z"/>
-            <path d="M17 5c0 1.657-3.134 3-7 3S3 6.657 3 5s3.134-3 7-3 7 1.343 7 3z"/>
-          </svg>
-          Knowledge Base
-        </button>
-        <button
-          id="nav-skills"
-          class="nav-tab"
-          class:active={activeView === 'skills'}
-          on:click={() => activeView = 'skills'}
-        >
-          <svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14">
-            <path d="M11 3a1 1 0 10-2 0v1a1 1 0 102 0V3zM15.657 5.757a1 1 0 00-1.414-1.414l-.707.707a1 1 0 001.414 1.414l.707-.707zM18 10a1 1 0 01-1 1h-1a1 1 0 110-2h1a1 1 0 011 1zM5.05 6.464A1 1 0 103.636 5.05l-.707.707a1 1 0 001.414 1.414l.707-.707zM5 10a1 1 0 01-1 1H3a1 1 0 110-2h1a1 1 0 011 1zM8 16v-1a1 1 0 112 0v1a1 1 0 11-2 0zM12 14a1 1 0 100-2 1 1 0 000 2z"/>
-          </svg>
-          AI Skills
-        </button>
-=======
       <nav class="sidebar-nav">
         {#if $authRole === 'admin'}
           <button class="nav-item" class:active={activeView === "ocr"} on:click={() => (activeView = "ocr")}>
@@ -139,40 +120,58 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
             QA Consult
           </button>
+          
+          {#if $selectedProjectStore && projectGroups.length > 0}
+            <div class="history-section">
+              <div class="history-title">กลุ่มการตรวจสอบ (Groups)</div>
+              <div class="history-list">
+                {#each projectGroups as group}
+                  <button class="history-item" on:click={() => { 
+                    activeView = "qa_consult"; 
+                    activeQAContext.set({ project: $selectedProjectStore, group_name: group.group_name, group_type: group.group_type }); 
+                  }}>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="flex-shrink: 0;"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+                    <div class="history-details">
+                      <span class="h-filename" style="color: #c4b5fd;">[{group.group_type || 'General'}] {group.group_name}</span>
+                    </div>
+                  </button>
+                {/each}
+              </div>
+            </div>
+          {/if}
+
+          {#if $selectedProjectStore && $qaHistory.filter(h => h.project_id === ($selectedProjectStore.id || $selectedProjectStore.project_id)).length > 0}
+            <div class="history-section">
+              <div class="history-title">ประวัติการวิเคราะห์ (History)</div>
+              <div class="history-list">
+                {#each $qaHistory.filter(h => h.project_id === ($selectedProjectStore.id || $selectedProjectStore.project_id)).slice(0, 10) as item}
+                  <button class="history-item" on:click={() => { activeView = "qa_consult"; selectedHistory.set(item); }}>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path></svg>
+                    <div class="history-details">
+                      <span class="h-filename">{item.filename}</span>
+                      <span class="h-project" style="color: #a78bfa;">
+                        {#if item.group_type}[{item.group_type}] {/if}{item.group_name || 'General'}
+                      </span>
+                      {#if item.date}
+                        <span class="h-date">{formatHistoryDate(item.date)}</span>
+                      {/if}
+                    </div>
+                  </button>
+                {/each}
+              </div>
+            </div>
+          {/if}
         {/if}
->>>>>>> df856a56efb793dd0e86bd37d93ef75eb31e12db
       </nav>
-    </header>
 
-    {#key activeView}
-      <div style="flex:1; display:flex; flex-direction:column; overflow:hidden;" in:fade="{{ duration: 300, delay: 150 }}">
-        {#if activeView === "ocr"}
-          <UploadPanel on:result={handleResult} on:processing={handleProcessing} />
-        {:else if activeView === "kb"}
-          <div class="kb-hint">
-            <p>เลือกโครงการและเอกสารในพื้นที่หลัก เพื่อดูข้อมูล Knowledge Base</p>
-          </div>
-        {/if}
+      <div class="sidebar-footer">
+        <button class="btn-logout" on:click={logout}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+          Logout
+        </button>
       </div>
-    {/key}
-  </aside>
+    </aside>
 
-<<<<<<< HEAD
-  <!-- ── Right Panel ── -->
-  <main class="right-panel">
-    {#key activeView}
-      <div style="width:100%; height:100%;" in:fly="{{ y: 20, duration: 400, delay: 150 }}" out:fade="{{ duration: 150 }}">
-        {#if activeView === "ocr"}
-          <ResultsPanel result={scanResult} {isProcessing} {progress} on:close={() => {scanResult = null; isProcessing = false;}} />
-        {:else if activeView === "kb"}
-          <KnowledgeBase />
-        {:else if activeView === "skills"}
-          <SkillManager />
-        {/if}
-      </div>
-    {/key}
-  </main>
-=======
     <!-- ── Main Workspace ── -->
     <main class="workspace">
       <!-- Topbar -->
@@ -200,8 +199,8 @@
         {#key activeView}
           <div class="view-wrapper" in:fade="{{ duration: 300, delay: 150 }}">
             {#if activeView === "ocr" && $authRole === "admin"}
-              <div style="display: {(!isProcessing && !scanResult) ? 'block' : 'none'}; width: 100%;">
-                <div class="upload-container">
+              <div style="display: {(!isProcessing && !scanResult) ? 'flex' : 'none'}; flex-direction: column; width: 100%; height: 100%;">
+                <div class="upload-container" style="flex: 1; padding: 0;">
                   <UploadPanel on:result={handleResult} on:processing={handleProcessing} />
                 </div>
               </div>
@@ -233,30 +232,12 @@
     </main>
   {/if}
   </div>
->>>>>>> df856a56efb793dd0e86bd37d93ef75eb31e12db
 </div>
 
 <!-- Global Toast Notifications -->
 <Toast />
 
 <style>
-<<<<<<< HEAD
-  .shell {
-    display: flex;
-    height: 100vh;
-    overflow: hidden;
-  }
-
-  /* ── Left ── */
-  .left-panel {
-    width: var(--panel-w);
-    flex-shrink: 0;
-    background: var(--bg2);
-    border-right: 1px solid var(--border);
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-=======
   .app-wrapper {
     position: relative;
     width: 100vw;
@@ -310,87 +291,22 @@
     flex-shrink: 0;
     z-index: 10;
     box-shadow: 4px 0 24px rgba(0,0,0,0.2);
->>>>>>> df856a56efb793dd0e86bd37d93ef75eb31e12db
   }
 
-  .panel-header {
-    padding: 18px 22px 14px;
-    border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
-  }
-
-  .logo {
+  .sidebar-logo {
     display: flex;
     align-items: center;
-    gap: 10px;
-    margin-bottom: 14px;
+    gap: 12px;
+    padding: 20px 20px 16px;
+    border-bottom: 1px solid var(--glass-border);
   }
 
   .logo-icon {
     width: 36px; height: 36px;
-    background: linear-gradient(135deg, var(--primary), var(--accent));
+    background: linear-gradient(135deg, var(--primary), var(--secondary));
     border-radius: 9px;
     display: flex; align-items: center; justify-content: center;
-    box-shadow: 0 0 16px var(--glow);
     flex-shrink: 0;
-  }
-  .logo-icon svg { color: #fff; stroke: #fff; }
-
-  .logo-title {
-    font-size: 15px; font-weight: 700; color: var(--text);
-    line-height: 1.2;
-  }
-  .logo-sub {
-    font-size: 11px; color: var(--text3);
-    margin-top: 2px;
-  }
-
-  /* Nav tabs */
-  .nav-tabs {
-    display: flex;
-    gap: 6px;
-  }
-  .nav-tab {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-<<<<<<< HEAD
-    gap: 6px;
-    padding: 8px 6px;
-    border: 1px solid var(--border);
-    border-radius: 9px;
-    background: transparent;
-    color: var(--text3);
-    font-family: var(--font-th, inherit);
-    font-size: 12px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-  .nav-tab:hover {
-    background: rgba(108,142,251,0.07);
-    color: var(--text2);
-  }
-  .nav-tab.active {
-    background: rgba(108,142,251,0.16);
-    border-color: var(--primary);
-    color: var(--primary);
-    font-weight: 700;
-    box-shadow: 0 0 10px var(--glow);
-  }
-
-  /* KB hint when KB view active */
-  .kb-hint {
-    padding: 20px 18px;
-    color: var(--text3);
-    font-size: 13px;
-    line-height: 1.6;
-  }
-
-  /* ── Right ── */
-  .right-panel {
-=======
   }
 
   .logo-title {
@@ -465,6 +381,67 @@
     filter: drop-shadow(0 0 8px rgba(168, 85, 247, 0.5));
   }
 
+  .history-section {
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid var(--glass-border);
+  }
+  .history-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    letter-spacing: 0.05em;
+    margin-bottom: 8px;
+    padding-left: 8px;
+  }
+  .history-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .history-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    background: transparent;
+    border: none;
+    padding: 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    text-align: left;
+    transition: background 0.2s;
+    color: var(--text-muted);
+  }
+  .history-item:hover {
+    background: var(--glass-bg-hover);
+    color: var(--text-main);
+  }
+  .history-item svg {
+    margin-top: 2px;
+    flex-shrink: 0;
+  }
+  .history-details {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .h-filename {
+    font-size: 13px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .h-project {
+    font-size: 10px;
+    color: var(--secondary);
+    opacity: 0.8;
+  }
+  .h-date {
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-top: 2px;
+  }
+
   .sidebar-footer {
     padding: 20px 16px;
     border-top: 1px solid var(--glass-border);
@@ -484,22 +461,11 @@
 
   /* ── Main Workspace ── */
   .workspace {
->>>>>>> df856a56efb793dd0e86bd37d93ef75eb31e12db
     flex: 1;
     min-width: 0;
     overflow: hidden;
     display: flex;
     flex-direction: column;
-<<<<<<< HEAD
-    background: var(--bg);
-  }
-
-  /* Responsive */
-  @media (max-width: 780px) {
-    .shell { flex-direction: column; overflow: auto; }
-    .left-panel { width: 100%; border-right: none; border-bottom: 1px solid var(--border); }
-    .right-panel { flex: none; min-height: 60vh; }
-=======
     min-width: 0;
     position: relative;
     background: rgba(18, 20, 28, 0.2);
@@ -658,6 +624,5 @@
   }
   .footer-links a:hover {
     color: var(--text-muted);
->>>>>>> df856a56efb793dd0e86bd37d93ef75eb31e12db
   }
 </style>

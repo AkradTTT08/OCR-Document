@@ -177,6 +177,7 @@ def ocr_image(pil_image: Image.Image, lang: str = 'tha+eng') -> dict:
         
         for current_model in fallback_models:
             success = False
+            last_error = None
             for attempt in range(max_retries):
                 try:
                     logger.info(f"Calling Gemini API with model: {current_model} (Attempt {attempt+1})")
@@ -195,19 +196,29 @@ def ocr_image(pil_image: Image.Image, lang: str = 'tha+eng') -> dict:
                     success = True
                     break  # Success, break retry loop
                 except Exception as e:
+                    last_error = e
                     error_msg = str(e)
                     if '503' in error_msg or 'UNAVAILABLE' in error_msg:
                         logger.warning(f"Model {current_model} is overloaded (503). Switching to fallback model.")
                         break # Break retry loop, go to next model in fallback_models
                     elif '429' in error_msg or 'Quota' in error_msg or 'RESOURCE_EXHAUSTED' in error_msg:
                         if attempt < max_retries - 1:
-                            logger.warning(f"Rate limit exceeded (429). Retrying in 10 seconds... (Attempt {attempt + 1}/{max_retries})")
+                            logger.warning(f"Rate limit exceeded (429) for {current_model}. Retrying in 10 seconds... (Attempt {attempt + 1}/{max_retries})")
                             time.sleep(10)
                             continue
-                    raise  # Re-raise if not a rate limit error or out of retries
+                        else:
+                            logger.warning(f"Rate limit exhausted for {current_model} after {max_retries} attempts. Switching to fallback model.")
+                            break
+                    else:
+                        # For other errors, log and try next model
+                        logger.error(f"Error with model {current_model}: {error_msg}")
+                        break
             
             if success:
                 break # Success, break model fallback loop
+
+        if not success and last_error:
+            raise last_error
 
         logger.info("Gemini API call successful.")
 

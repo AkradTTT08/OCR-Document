@@ -6,39 +6,6 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-<<<<<<< HEAD
-  --bg:       #080c18;
-  --bg2:      #0d1220;
-  --bg3:      #111827;
-  --surface:  rgba(255,255,255,0.04);
-  --surface2: rgba(255,255,255,0.07);
-  --border:   rgba(255,255,255,0.08);
-  --border2:  rgba(255,255,255,0.13);
-
-  --primary:  #6c8efb;
-  --primary2: #8aa4ff;
-  --accent:   #a78bfa;
-  --success:  #34d399;
-  --danger:   #f87171;
-  --warning:  #fbbf24;
-  --info:     #38bdf8;
-
-  --text:     #e8edf8;
-  --text2:    #9ba3c0;
-  --text3:    #60698a;
-
-  --glow:     rgba(108,142,251,0.22);
-  --glow2:    rgba(167,139,250,0.15);
-
-  --font-th:  'Sarabun', sans-serif;
-  --font-en:  'Inter', 'Sarabun', sans-serif;
-
-  --radius:   16px;
-  --radius2:  10px;
-  --radius3:  7px;
-
-  --panel-w:  440px;   /* left panel fixed width */
-=======
   /* Deep Modern Dark Theme */
   --bg-dark:      #050505;
   --bg:           #0a0b12;
@@ -79,7 +46,6 @@
   --radius-md:    12px;
   --radius-lg:    20px;
   --radius-xl:    28px;
->>>>>>> df856a56efb793dd0e86bd37d93ef75eb31e12db
 }
 
 html, body {

@@ -67,8 +67,19 @@ erDiagram
         TIMESTAMP   created_at
     }
 
+    qa_transactions {
+        UUID        transaction_id  PK "Default: gen_random_uuid()"
+        UUID        project_id      FK
+        VARCHAR(255) filename
+        VARCHAR(255) doc_type
+        TEXT        extracted_text
+        TEXT        qa_report       "ผลลัพธ์ของ AI (QA Consult)"
+        TIMESTAMP   created_at
+    }
+
     projects       ||--o{ documents        : "มี"
     projects       ||--o{ evaluation_logs  : "มี"
+    projects       ||--o{ qa_transactions  : "มี"
     documents      ||--o{ document_chunks  : "แบ่งเป็น"
     documents      ||--o{ evaluation_logs  : "ถูกประเมินใน"
     agent_skills   ||--o{ evaluation_logs  : "ใช้ใน"
@@ -159,6 +170,20 @@ erDiagram
 
 ---
 
+### 6. `qa_transactions` — ตารางประวัติการตรวจสอบเอกสาร (QA Consult)
+
+| Column | Type | Constraint | Description |
+|---|---|---|---|
+| `transaction_id` | UUID | PK | รหัสประวัติสแกน (gen_random_uuid) |
+| `project_id` | UUID | FK → `projects` (CASCADE) | โครงการ |
+| `filename` | VARCHAR(255) | NOT NULL | ชื่อไฟล์ที่สแกน |
+| `doc_type` | VARCHAR(255) | - | ประเภทเอกสาร |
+| `extracted_text` | TEXT | - | เนื้อหาที่ดึงออกมาจากไฟล์ด้วยระบบ OCR |
+| `qa_report` | TEXT | - | ผลการวิเคราะห์และการเปรียบเทียบจาก AI |
+| `created_at` | TIMESTAMP | DEFAULT NOW() | วันที่บันทึก |
+
+---
+
 ## 👁️ Views
 
 ### `project_reference_context`
@@ -230,6 +255,8 @@ projects (1) ──────────────── (∞) documents
 projects (1) ──── (∞) evaluation_logs ──── (∞) documents
                             │
                         (∞) agent_skills
+
+projects (1) ──── (∞) qa_transactions
 ```
 
 | Relationship | Type | On Delete |
@@ -239,6 +266,7 @@ projects (1) ──── (∞) evaluation_logs ──── (∞) documents
 | `projects` → `evaluation_logs` | One-to-Many | CASCADE |
 | `documents` → `evaluation_logs` | One-to-Many | CASCADE |
 | `agent_skills` → `evaluation_logs` | One-to-Many | SET NULL (default) |
+| `projects` → `qa_transactions` | One-to-Many | CASCADE |
 
 ถูกต้องและเป็นวิสัยทัศน์การออกแบบสถาปัตยกรรมระบบที่ ยอดเยี่ยมมากครับ! 🚀
 

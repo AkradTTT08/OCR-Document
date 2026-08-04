@@ -124,8 +124,6 @@ def allowed_file(filename: str) -> bool:
 
 
 # ========================
-<<<<<<< HEAD
-=======
 # Authentication (JWT)
 # ========================
 import hmac
@@ -193,8 +191,8 @@ def login():
         return jsonify({'error': 'Username and password required'}), 400
         
     try:
-        from db_ingestion import get_db_connection
-        conn = get_db_connection()
+        from db_ingestion import get_auth_db_connection
+        conn = get_auth_db_connection()
         cursor = conn.cursor()
         
         # ใช้ PostgreSQL crypt() ตรวจสอบ bcrypt password
@@ -241,12 +239,11 @@ def login():
         
     except Exception as e:
         logger.error(f"Login DB error: {e}", exc_info=True)
-        return jsonify({'error': 'Database connection error. Is the DB running?'}), 500
+        return jsonify({'error': f'Database connection error: {str(e)}'}), 500
 
 
 
 # ========================
->>>>>>> df856a56efb793dd0e86bd37d93ef75eb31e12db
 # Serve Frontend
 # ========================
 
@@ -1426,6 +1423,32 @@ created_by: "{created_by or 'Admin'}"
 from db_ingestion import search_knowledge_base
 from email_service import send_qa_report
 
+@app.route('/api/doc_types', methods=['GET'])
+def get_doc_types():
+    conn = None
+    try:
+        from db_ingestion import get_db_connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        project_id = request.args.get('project_id')
+        if project_id:
+            cursor.execute("SELECT DISTINCT doc_category FROM documents WHERE doc_category IS NOT NULL AND doc_category != '' AND project_id = %s;", (project_id,))
+        else:
+            cursor.execute("SELECT DISTINCT doc_category FROM documents WHERE doc_category IS NOT NULL AND doc_category != '';")
+            
+        rows = cursor.fetchall()
+        doc_categories = [r[0] for r in rows]
+        # Add some defaults if empty
+        if not doc_categories:
+            doc_categories = ['Requirement', 'Design', 'Manual', 'Other']
+        return jsonify(doc_categories)
+    except Exception as e:
+        logger.error(f"Error fetching doc categories: {e}")
+        return jsonify(['Requirement', 'Design', 'Manual', 'Other'])
+    finally:
+        if conn: conn.close()
+
 @app.route('/api/qa_consult', methods=['POST', 'OPTIONS'])
 def qa_consult_api():
     if request.method == 'OPTIONS':
@@ -1433,18 +1456,60 @@ def qa_consult_api():
         
     try:
         file = request.files.get('file')
-        doc_type = request.form.get('doc_type', 'Requirement')
+        doc_type_raw = request.form.get('doc_type', 'Requirement')
         email = request.form.get('email', '')
+        skill_id_raw = request.form.get('skill_id', '')
+        project_id = request.form.get('project_id', '')
+        group_name = request.form.get('group_name', 'General')
+        group_type = request.form.get('group_type', 'Project Plan')
+
+        # parse doc_type array
+        try:
+            doc_type = json.loads(doc_type_raw)
+        except:
+            doc_type = [doc_type_raw] if doc_type_raw else []
+
+        # parse skill_id array
+        try:
+            skill_ids = json.loads(skill_id_raw)
+        except:
+            skill_ids = [skill_id_raw] if skill_id_raw and skill_id_raw not in ["undefined", "null"] else []
         
         if not file or not email:
             return jsonify({'type': 'error', 'message': 'Missing file or email'}), 400
+
+        skill_instructions = ""
+        if skill_ids:
+            try:
+                from db_ingestion import get_db_connection
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                
+                placeholders = ', '.join(['%s::uuid'] * len(skill_ids))
+                cursor.execute(f"SELECT skill_name, markdown_instructions FROM agent_skills WHERE skill_id IN ({placeholders})", tuple(skill_ids))
+                rows = cursor.fetchall()
+                if rows:
+                    for r in rows:
+                        skill_instructions += f"### Skill: {r[0]}\n{r[1]}\n\n"
+                cursor.close()
+                conn.close()
+            except Exception as e:
+                logger.error(f"Failed to fetch skill: {e}")
+                # Ensure we close connections if there's an error
+                try:
+                    if 'cursor' in locals() and cursor: cursor.close()
+                    if 'conn' in locals() and conn: conn.close()
+                except:
+                    pass
+
+        # Read file bytes before generator starts to avoid I/O on closed file
+        pdf_bytes = file.read()
 
         def generate():
             try:
                 yield f"data: {json.dumps({'type': 'progress', 'pct': 10, 'message': 'กำลังวิเคราะห์ข้อความจากเอกสาร PDF...' })}\n\n"
                 
                 # 1. OCR
-                pdf_bytes = file.read()
                 from ocr_engine import ocr_pdf_bytes
                 
                 ocr_results = ocr_pdf_bytes(pdf_bytes)
@@ -1462,62 +1527,204 @@ def qa_consult_api():
                 yield f"data: {json.dumps({'type': 'progress', 'pct': 40, 'message': 'กำลังสืบค้นฐานข้อมูล Knowledge Base (Vector Search)...' })}\n\n"
                 
                 # 2. Vector Search
-                kb_results = search_knowledge_base(extracted_text[:2000], doc_type=doc_type, top_k=5)
+                from db_ingestion import search_knowledge_base, get_latest_qa_transaction, save_qa_transaction
+                kb_results = search_knowledge_base(extracted_text[:2000], doc_type=doc_type, top_k=5, project_id=project_id if project_id else None)
                 
                 kb_context = ''
                 for res in kb_results:
                     kb_context += f"[Source: {res['filename']}]\n{res['chunk_text']}\n\n"
                 
+                # Fetch previous transaction if exists
+                prev_transaction = None
+                original_filename = getattr(file, 'filename', 'document.pdf') or 'document.pdf'
+                if project_id:
+                    try:
+                        prev_transaction = get_latest_qa_transaction(project_id, original_filename)
+                    except Exception as e:
+                        logger.error(f"Failed to fetch previous transaction: {e}")
+
                 yield f"data: {json.dumps({'type': 'progress', 'pct': 70, 'message': 'กำลังใช้ AI วิเคราะห์และเปรียบเทียบข้อมูล...' })}\n\n"
                 
                 # 3. Analyze with Gemini
                 from ocr_engine import _get_gemini_client
+                import os
                 client = _get_gemini_client()
+                gemini_model = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash')
                 
-                prompt = f"""คุณคือผู้เชี่ยวชาญด้าน QA ของระบบ
-หน้าที่ของคุณคือเปรียบเทียบเอกสารที่อัปโหลดมา กับมาตรฐานในฐานข้อมูล (Knowledge Base)
-ประเภทเอกสาร: {doc_type}
-
---- ข้อมูลอ้างอิงจาก Knowledge Base ---
-{kb_context if kb_context else 'ไม่พบข้อมูลอ้างอิงเฉพาะเจาะจงในระบบ'}
-
---- เอกสารที่ต้องการตรวจสอบ ---
-{extracted_text[:8000]}
-
-กรุณาสรุป:
-1. ความสอดคล้องกับมาตรฐาน
-2. สิ่งที่ขาดหายไปหรือจุดที่พบข้อผิดพลาด
-3. ข้อเสนอแนะ
+                prev_report_context = ""
+                if prev_transaction:
+                    prev_report_context = f"""
+=== ประวัติการตรวจสอบครั้งก่อนหน้า (Previous QA Report) ===
+(ใช้อ้างอิงเพื่อตรวจสอบว่าผู้ใช้ได้แก้ไขตามข้อเสนอแนะเดิมหรือไม่)
+{prev_transaction['qa_report']}
 """
                 
-                gemini_res = client.models.generate_content(
-                    model='gemini-2.5-flash',
-                    contents=prompt,
-                )
+                instruction = "กรุณาวิเคราะห์และจัดทำรายงาน QA แจกแจงรายละเอียดดังต่อไปนี้:\n"
+                instruction += "1. ความสอดคล้อง (Conformity): เอกสารนี้สอดคล้องกับข้อมูลในฐานข้อมูลหรือไม่ อย่างไร\n"
+                instruction += "2. จุดที่พบข้อขัดแย้ง หรือข้อผิดพลาด (Discrepancies / Errors): มีส่วนใดที่ไม่ตรงกับฐานข้อมูล หรือผิดไปจากมาตรฐาน\n"
+                instruction += "3. สิ่งที่ขาดหายไป (Missing Information): ข้อมูลสำคัญใดที่ควรมีแต่ในเอกสารไม่มี\n"
+                
+                if prev_transaction:
+                    instruction += "4. การแก้ไขจากครั้งก่อน (Revision Check): เปรียบเทียบกับประวัติการตรวจสอบครั้งก่อนว่าปัญหาเดิมได้รับการแก้ไขแล้วหรือไม่\n"
+                    instruction += "5. ข้อเสนอแนะแนวทางแก้ไข (Recommendations)\n"
+                else:
+                    instruction += "4. ข้อเสนอแนะแนวทางแก้ไข (Recommendations)\n"
+
+                prompt = f"""คุณคือผู้เชี่ยวชาญด้านระบบสารสนเทศ และ System QA (Quality Assurance)
+หน้าที่ของคุณคือตรวจสอบและเปรียบเทียบความถูกต้องของ 'เอกสารที่อัปโหลด' กับ 'ข้อมูลมาตรฐาน' ที่มีอยู่ในฐานข้อมูล (Knowledge Base ของโครงการ AIAgentQA)
+
+ประเภทของเอกสารที่กำลังตรวจสอบ: {', '.join(doc_type) if isinstance(doc_type, list) else doc_type}
+
+{f"--- คำสั่งพิเศษเพิ่มเติมจาก AI Skill ---\n{skill_instructions}\n" if skill_instructions else ""}
+
+=== ข้อมูลมาตรฐานจากฐานข้อมูล AIAgentQA ===
+{kb_context if kb_context else 'ไม่พบข้อมูลที่ตรงกันเป๊ะในระบบ (โปรดประเมินจากความรู้ทั่วไปหรือโครงสร้างเอกสาร)'}
+{prev_report_context}
+=== เอกสารที่ผู้ใช้อัปโหลด ===
+{extracted_text[:8000]}
+
+{instruction}
+"""
+                
+                fallback_models = [gemini_model, 'gemini-2.5-flash', 'gemini-2.5-flash-lite']
+                gemini_res = None
+                last_err = None
+                
+                for current_model in fallback_models:
+                    success = False
+                    for attempt in range(3):
+                        try:
+                            logger.info(f"QA Consult: Calling Gemini API with model: {current_model} (Attempt {attempt+1})")
+                            gemini_res = client.models.generate_content(
+                                model=current_model,
+                                contents=prompt,
+                            )
+                            success = True
+                            break
+                        except Exception as e:
+                            last_err = e
+                            error_msg = str(e)
+                            if '429' in error_msg or 'Quota' in error_msg or 'RESOURCE_EXHAUSTED' in error_msg:
+                                if attempt < 2:
+                                    logger.warning(f"Rate limit exceeded (429) for {current_model}. Retrying in 10s...")
+                                    import time
+                                    time.sleep(10)
+                                    continue
+                                else:
+                                    logger.warning(f"Rate limit exhausted for {current_model}. Switching to fallback.")
+                                    break
+                            else:
+                                logger.error(f"Error with model {current_model}: {error_msg}")
+                                break
+                    if success:
+                        break
+                        
+                if not gemini_res:
+                    raise Exception(f"Failed to generate QA report: {str(last_err)}")
                 
                 report = gemini_res.text
                 
-                yield f"data: {json.dumps({'type': 'progress', 'pct': 90, 'message': 'กำลังเตรียมส่งรายงานไปยังอีเมล...' })}\n\n"
+                # Save transaction
+                if project_id:
+                    try:
+                        save_qa_transaction(project_id, group_name, group_type, original_filename, ', '.join(doc_type) if isinstance(doc_type, list) else doc_type, extracted_text[:8000], report)
+                    except Exception as e:
+                        logger.error(f"Failed to save QA transaction: {e}")
+
+                yield f"data: {json.dumps({'type': 'progress', 'pct': 100, 'message': 'ประมวลผลเสร็จสมบูรณ์ เตรียมแสดงรายงาน...' })}\n\n"
                 
-                # 4. Send Email
-                email_sent = send_qa_report(email, doc_type, file.filename, report)
+                # Instead of sending email immediately, return the report to the frontend
+                result_payload = {
+                    'total_pages': total_pages,
+                    'status': 'success',
+                    'report': report,
+                    'email': email,
+                    'doc_type': ', '.join(doc_type) if isinstance(doc_type, list) else doc_type,
+                    'filename': original_filename
+                }
                 
-                if email_sent:
-                    yield f"data: {json.dumps({'type': 'complete', 'result': {'total_pages': total_pages, 'status': 'success'} })}\n\n"
-                else:
-                    yield f"data: {json.dumps({'type': 'error', 'message': 'วิเคราะห์สำเร็จ แต่ไม่สามารถส่งอีเมลได้ (ตรวจสอบ .env GMAIL_APP_PASSWORD)' })}\n\n"
-                    
+                yield f"data: {json.dumps({'type': 'complete', 'result': result_payload })}\n\n"
+                
             except Exception as e:
                 import traceback
                 traceback.print_exc()
                 yield f"data: {json.dumps({'type': 'error', 'message': str(e) })}\n\n"
 
+        from flask import Response
         return Response(generate(), mimetype='text/event-stream')
 
     except Exception as e:
         import traceback
         traceback.print_exc()
         return jsonify({'type': 'error', 'message': str(e)}), 500
+
+@app.route('/api/qa_send_email', methods=['POST'])
+def qa_send_email():
+    """
+    รับ Report ที่ประมวลผลเสร็จแล้ว ส่งอีเมลแจ้งเตือน
+    """
+    try:
+        data = request.json
+        email = data.get('email')
+        doc_type = data.get('docType')
+        filename = data.get('filename')
+        report = data.get('report')
+
+        if not all([email, doc_type, filename, report]):
+            return jsonify({'error': 'Missing required fields'}), 400
+
+        from email_service import send_qa_report
+        email_sent = send_qa_report(email, doc_type, filename, report)
+
+        if email_sent:
+            return jsonify({'success': True, 'message': 'ส่งอีเมลสำเร็จ'})
+        else:
+            return jsonify({'error': 'ไม่สามารถส่งอีเมลได้ กรุณาตรวจสอบการตั้งค่า GMAIL_APP_PASSWORD ใน .env'}), 500
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/qa_transactions', methods=['GET'])
+def get_qa_transactions():
+    """Fetch recent QA transactions"""
+    try:
+        from db_ingestion import get_db_connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        limit = request.args.get('limit', 20, type=int)
+        
+        cursor.execute("""
+            SELECT t.transaction_id, t.project_id, t.group_name, t.group_type, t.filename, t.doc_type, t.qa_report, t.created_at, p.project_code
+            FROM qa_transactions t
+            LEFT JOIN projects p ON t.project_id = p.project_id
+            ORDER BY t.created_at DESC
+            LIMIT %s
+        """, (limit,))
+        
+        rows = cursor.fetchall()
+        transactions = []
+        for r in rows:
+            transactions.append({
+                'id': str(r[0]),
+                'project_id': str(r[1]),
+                'group_name': r[2] or 'General',
+                'group_type': r[3] or '',
+                'filename': r[4],
+                'docType': r[5],
+                'report': r[6],
+                'date': r[7].isoformat() if r[7] else None,
+                'project_code': r[8] or 'Unknown'
+            })
+            
+        cursor.close()
+        conn.close()
+        return jsonify({'success': True, 'transactions': transactions})
+    except Exception as e:
+        logger.error(f"Error fetching qa_transactions: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
 
 
 if __name__ == '__main__':
@@ -1530,8 +1737,17 @@ if __name__ == '__main__':
     stats = get_dictionary_stats()
     logger.info(f"Dictionary พร้อมใช้งาน: {stats['total_words']:,} คำ")
     
+    # Initialize QA transactions table
+    logger.info("กำลังเริ่มต้นตาราง DB ที่จำเป็น...")
+    try:
+        from db_ingestion import init_qa_transactions_table
+        init_qa_transactions_table()
+    except Exception as e:
+        logger.error(f"Failed to initialize DB tables: {e}")
+    
     app.run(
         host='0.0.0.0',
         port=5000,
         debug=False
     )
+

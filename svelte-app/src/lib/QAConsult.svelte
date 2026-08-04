@@ -1,14 +1,132 @@
 <script>
-  import { createEventDispatcher } from "svelte";
+  import { createEventDispatcher, onMount } from "svelte";
   import { fade } from "svelte/transition";
-  import { toast } from "./toastStore.js"; // global toast if needed
+  import { toast } from "./toastStore.js";
+  import { qaHistory, selectedHistory, loadQAHistoryFromDB, selectedProjectStore, qaSessionGroups, activeQAContext } from "./qaHistoryStore.js";
 
   const dispatch = createEventDispatcher();
 
-  let file = null;
-  let docType = "Requirement";
-  let email = "";
+  let skills = [];
+  let docTypes = ["Requirement", "Design", "Manual", "Other"];
+  let selectedSkill = "";
   
+  let projects = [];
+  
+  // Use store for selected project so App.svelte can filter history
+  $: selectedProjectObj = $selectedProjectStore;
+  function selectProject(p) {
+    selectedProjectStore.set(p);
+  }
+
+  onMount(async () => {
+    try {
+      const resSkills = await fetch("http://127.0.0.1:5000/api/skills");
+      if (resSkills.ok) {
+        const data = await resSkills.json();
+        skills = data.skills || [];
+      }
+      
+      // Load global doc types initially
+      await loadDocTypes();
+      
+      const resProjects = await fetch("http://127.0.0.1:5000/api/projects");
+      if (resProjects.ok) {
+        const pData = await resProjects.json();
+        projects = pData.projects || [];
+      }
+    } catch (err) {
+      console.error("Failed to load setup data:", err);
+    }
+  });
+
+  $: if ($activeQAContext && projects.length > 0) {
+    const ctx = $activeQAContext;
+    activeQAContext.set(null); // Clear it
+    
+    selectedProjectStore.set(ctx.project);
+    scanGroupName = ctx.group_name;
+    scanGroupType = ctx.group_type;
+    isGroupNameSet = true;
+    scanResult = null;
+    isProcessing = false;
+    file = null;
+  }
+
+  $: if ($selectedHistory && projects.length > 0) {
+    const item = $selectedHistory;
+    selectedHistory.set(null); // Clear it so it doesn't re-trigger
+
+    scanResult = {
+      status: 'success',
+      report: item.report,
+      email: email, // If email is not in DB, use current
+      doc_type: item.docType,
+      filename: item.filename,
+      emailSent: false
+    };
+
+    const p = projects.find(p => p.id === item.project_id || p.project_id === item.project_id);
+    if (p) {
+      selectedProjectStore.set(p);
+    }
+  }
+
+  async function loadDocTypes(projectId = null) {
+    try {
+      let url = "http://127.0.0.1:5000/api/doc_types";
+      if (projectId) url += `?project_id=${projectId}`;
+      const res = await fetch(url);
+      if (res.ok) {
+        docTypes = await res.json();
+        if (docTypes.length > 0 && !docTypes.includes(docType)) {
+          docType = docTypes[0];
+        }
+      }
+    } catch (err) {
+      console.error("Failed to load doc types:", err);
+    }
+  }
+
+  $: if (selectedProjectObj) {
+    loadDocTypes(selectedProjectObj.id || selectedProjectObj.project_id);
+  } else {
+    loadDocTypes();
+  }
+
+  let selectedDocTypes = [];
+  let selectedSkills = [];
+
+  // All skills are available for selection
+  $: filteredSkills = skills;
+
+  let file = null;
+  let emailInput = "";
+  let emailList = [];
+  $: email = emailList.join(",");
+
+  function addEmail() {
+    if (emailInput && emailInput.includes("@")) {
+      const emailTrimmed = emailInput.trim();
+      if (!emailList.includes(emailTrimmed)) {
+        emailList = [...emailList, emailTrimmed];
+      }
+      emailInput = "";
+    } else if (emailInput) {
+      toast.error("รูปแบบอีเมลไม่ถูกต้อง");
+    }
+  }
+
+  function removeEmail(index) {
+    emailList = emailList.filter((_, i) => i !== index);
+  }
+  
+  function handleEmailKeydown(e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      addEmail();
+    }
+  }
+
   let isDragging = false;
   let fileInput;
 
@@ -16,6 +134,34 @@
   let processStatus = "";
   let progressPct = 0;
   let scanResult = null;
+  let scanGroupName = "";
+  let scanGroupType = "Project Plan";
+  let isGroupNameSet = false;
+
+  let isSendingEmail = false;
+  let showConfirmModal = false;
+  let showSuccessModal = false;
+
+  let docTypeOpen = false;
+  let skillOpen = false;
+  let groupTypeOpen = false;
+  const masterGroupTypes = ["Project Plan", "SRS", "SDD", "UAT", "Test case"];
+
+  function toggleDocType(type) {
+    if (selectedDocTypes.includes(type)) {
+      selectedDocTypes = selectedDocTypes.filter(t => t !== type);
+    } else {
+      selectedDocTypes = [...selectedDocTypes, type];
+    }
+  }
+
+  function toggleSkill(skillId) {
+    if (selectedSkills.includes(skillId)) {
+      selectedSkills = selectedSkills.filter(s => s !== skillId);
+    } else {
+      selectedSkills = [...selectedSkills, skillId];
+    }
+  }
 
   function handleDragEnter(e) {
     e.preventDefault();
@@ -24,6 +170,20 @@
   function handleDragLeave(e) {
     e.preventDefault();
     isDragging = false;
+  }
+  
+  function confirmGroup() {
+    if (!scanGroupName.trim()) return;
+    
+    qaSessionGroups.update(groups => {
+      const pId = selectedProjectObj.id || selectedProjectObj.project_id;
+      if (!groups.find(g => g.group_name === scanGroupName.trim() && g.project_id === pId)) {
+        return [...groups, { group_name: scanGroupName.trim(), group_type: scanGroupType, project_id: pId }];
+      }
+      return groups;
+    });
+    
+    isGroupNameSet = true;
   }
   function handleDrop(e) {
     e.preventDefault();
@@ -46,12 +206,15 @@
   }
 
   async function processQAConsult() {
+    if (emailInput.trim() !== "") {
+      addEmail();
+    }
     if (!file) {
-      alert("กรุณาอัปโหลดไฟล์เอกสารก่อน");
+      toast("กรุณาอัปโหลดไฟล์เอกสารก่อน", "warning");
       return;
     }
     if (!email) {
-      alert("กรุณากรอกอีเมลสำหรับรับผลการตรวจสอบ");
+      toast("กรุณากรอกอีเมลสำหรับรับผลการตรวจสอบ", "warning");
       return;
     }
 
@@ -62,8 +225,16 @@
 
     const formData = new FormData();
     formData.append("file", file);
-    formData.append("doc_type", docType);
+    formData.append("doc_type", JSON.stringify(selectedDocTypes));
     formData.append("email", email);
+    formData.append("skill_id", JSON.stringify(selectedSkills));
+    if (selectedProjectObj) {
+      formData.append("project_id", selectedProjectObj.id || selectedProjectObj.project_id);
+    }
+    if (scanGroupName.trim()) {
+      formData.append("group_name", scanGroupName.trim());
+    }
+    formData.append("group_type", scanGroupType);
 
     try {
       // Create a stream request
@@ -107,6 +278,8 @@
             } else if (data.type === "complete") {
               progressPct = 100;
               scanResult = data.result;
+              // Refresh history from DB
+              loadQAHistoryFromDB();
             } else if (data.type === "error") {
               throw new Error(data.message);
             }
@@ -115,8 +288,46 @@
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      alert(`เกิดข้อผิดพลาด: ${msg}`);
+      toast(`เกิดข้อผิดพลาด: ${msg}`, "error");
       isProcessing = false;
+    }
+  }
+
+  function sendEmail() {
+    showConfirmModal = true;
+  }
+
+  async function executeSendEmail() {
+    isSendingEmail = true;
+    try {
+      const response = await fetch("http://127.0.0.1:5000/api/qa_send_email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email,
+          docType: selectedDocTypes.join(", "),
+          filename: scanResult.filename,
+          report: scanResult.report
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP Error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      if (data.success) {
+        showConfirmModal = false;
+        showSuccessModal = true;
+        scanResult.emailSent = true;
+      } else {
+        throw new Error(data.error || "Unknown error");
+      }
+    } catch (err) {
+      toast(`เกิดข้อผิดพลาดในการส่งอีเมล: ${err.message}`, "error");
+      showConfirmModal = false;
+    } finally {
+      isSendingEmail = false;
     }
   }
 
@@ -124,16 +335,145 @@
     file = null;
     scanResult = null;
     isProcessing = false;
+    isGroupNameSet = false;
+    scanGroupName = "";
+    scanGroupType = "Project Plan";
+    processStatus = "";
     if (fileInput) fileInput.value = "";
   }
 </script>
 
+  <svelte:window on:click={() => { docTypeOpen = false; skillOpen = false; groupTypeOpen = false; }} />
+
 <div class="qa-container" in:fade>
-  {#if !isProcessing && !scanResult}
+  {#if !selectedProjectObj}
+    <!-- PROJECT SELECTION STATE -->
+    <div class="header-text">
+      <h2>เลือกโครงการ (Project Selection)</h2>
+      <p>กรุณาเลือกโครงการที่ต้องการ เพื่อให้ AI อ้างอิงข้อมูลเปรียบเทียบจาก Knowledge Base ที่ถูกต้อง</p>
+    </div>
+
+    <div class="project-grid">
+      {#if projects.length === 0}
+        <div class="empty-state">
+          ไม่พบโครงการในระบบ กรุณาสร้างโครงการที่หน้า Knowledge Base ก่อน
+        </div>
+      {:else}
+        {#each projects as p}
+          <!-- svelte-ignore a11y-click-events-have-key-events -->
+          <!-- svelte-ignore a11y-no-static-element-interactions -->
+          <div class="project-card" on:click={() => selectProject(p)}>
+            <div class="card-header-row">
+              <div class="p-code">{p.project_code}</div>
+            </div>
+            <div class="p-name">{p.name}</div>
+            
+            <div class="p-status-section">
+              <div class="p-meta-label">สถานะ (STATUS)</div>
+              <div class="p-status-value" class:active={p.status === 'Active'} class:inactive={p.status !== 'Active'}>{p.status || 'Active'}</div>
+            </div>
+            
+            <div class="p-desc-section">
+              <div class="p-meta-label">รายละเอียด (DESCRIPTION)</div>
+              <div class="p-desc-box">
+                {#if p.description}
+                  {p.description}
+                {:else}
+                  <span class="empty-desc">ไม่มีรายละเอียด</span>
+                {/if}
+              </div>
+            </div>
+          </div>
+        {/each}
+      {/if}
+    </div>
+
+  {:else if !isGroupNameSet}
+    <!-- GROUP NAME FORM -->
+    <div class="top-nav">
+      <button class="btn-back" on:click={() => { selectedProjectObj = null; isGroupNameSet = false; scanGroupName = ""; }}>
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+          <path fill-rule="evenodd" d="M11.354 1.646a.5.5 0 0 1 0 .708L5.707 8l5.647 5.646a.5.5 0 0 1-.708.708l-6-6a.5.5 0 0 1 0-.708l6-6a.5.5 0 0 1 .708 0z"/>
+        </svg>
+        ย้อนกลับไปหน้าเลือกโครงการ
+      </button>
+    </div>
+
+    <div class="header-text">
+      <h2>กำหนดชื่อการตรวจสอบ (Scan Group)</h2>
+      <p>กรุณาระบุชื่อการตรวจสอบนี้เพื่อใช้จัดกลุ่มประวัติการตรวจสอบ (ตัวอย่าง: ตรวจเอกสาร UAT)</p>
+      <div class="active-project-badge">
+        โครงการปัจจุบัน: <strong>{selectedProjectObj.project_code} - {selectedProjectObj.name}</strong>
+      </div>
+    </div>
+
+    <div class="main-card" style="max-width: 600px; margin: 0 auto;">
+      <div class="setting-group relative">
+        <label>ชื่อการตรวจสอบ</label>
+        <input
+          type="text"
+          class="custom-select"
+          style="padding: 12px 16px; border: 1px solid rgba(139, 92, 246, 0.3); color: white; background: rgba(15, 23, 42, 0.6);"
+          bind:value={scanGroupName}
+          placeholder="เช่น ตรวจเอกสาร UAT รอบที่ 1..."
+          on:keydown={(e) => {
+            if (e.key === 'Enter' && scanGroupName.trim() !== '') {
+              confirmGroup();
+            }
+          }}
+        />
+      </div>
+
+      <div class="setting-group relative" style="margin-top: 15px;">
+        <label>ประเภท (Type)</label>
+        <!-- Custom Dropdown for Group Type -->
+        <div class="custom-select" on:click|stopPropagation={() => { groupTypeOpen = !groupTypeOpen; }}>
+          <div class="select-trigger" class:open={groupTypeOpen}>
+            {scanGroupType}
+            <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+          </div>
+          {#if groupTypeOpen}
+            <div class="options-menu" transition:fade={{duration: 100}}>
+              {#each masterGroupTypes as type}
+                <div class="option-item" class:selected={scanGroupType === type} on:click|stopPropagation={() => { scanGroupType = type; groupTypeOpen = false; }}>
+                  {type}
+                </div>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      </div>
+      
+      <button 
+        class="btn-primary" 
+        style="width: 100%; margin-top: 20px;"
+        disabled={!scanGroupName.trim()}
+        on:click={confirmGroup}
+      >
+        ดำเนินการต่อ
+      </button>
+    </div>
+
+  {:else if !isProcessing && !scanResult}
     <!-- INPUT FORM -->
+    <div class="top-nav">
+      <button class="btn-back" on:click={() => { isGroupNameSet = false; }}>
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+          <path fill-rule="evenodd" d="M11.354 1.646a.5.5 0 0 1 0 .708L5.707 8l5.647 5.646a.5.5 0 0 1-.708.708l-6-6a.5.5 0 0 1 0-.708l6-6a.5.5 0 0 1 .708 0z"/>
+        </svg>
+        ย้อนกลับไปหน้าเลือกโครงการ
+      </button>
+    </div>
+
     <div class="header-text">
       <h2>QA Consult - ระบบตรวจสอบเอกสารอัตโนมัติ</h2>
       <p>อัปโหลดเอกสารของคุณเพื่อเปรียบเทียบกับฐานข้อมูล Knowledge Base ของบริษัท และรับรายงานข้อผิดพลาดทางอีเมล</p>
+      <div class="active-project-badge">
+        โครงการปัจจุบัน: <strong>{selectedProjectObj.project_code} - {selectedProjectObj.name}</strong>
+        <span style="margin: 0 10px; color: #8b5cf6;">|</span>
+        ชื่อการตรวจสอบ: <strong>[{scanGroupType}] {scanGroupName}</strong>
+        <button class="btn-text-change" on:click={() => isGroupNameSet = false}>[ แก้ไข ]</button>
+      </div>
     </div>
 
     <div class="main-card">
@@ -183,23 +523,96 @@
 
         <!-- RIGHT: Settings -->
         <div class="settings-section">
-          <div class="setting-group">
+          <div class="setting-group relative">
             <label>ประเภทเอกสาร (Document Type)</label>
-            <select bind:value={docType}>
-              <option value="Requirement">Requirement (ข้อกำหนดระบบ)</option>
-              <option value="Design">Design (เอกสารออกแบบ)</option>
-              <option value="Manual">User Manual (คู่มือการใช้งาน)</option>
-              <option value="Other">อื่นๆ (ทั่วไป)</option>
-            </select>
+            <!-- Custom Dropdown for Doc Type -->
+            <div class="custom-select" on:click|stopPropagation={() => { docTypeOpen = !docTypeOpen; skillOpen = false; }}>
+              <div class="select-trigger" class:open={docTypeOpen}>
+                {#if selectedDocTypes.length === 0}
+                  <span style="color: #9ca3af;">-- เลือกประเภทเอกสาร --</span>
+                {:else if selectedDocTypes.length <= 2}
+                  {selectedDocTypes.join(", ")}
+                {:else}
+                  เลือกแล้ว {selectedDocTypes.length} รายการ
+                {/if}
+                <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+              </div>
+              {#if docTypeOpen}
+                <div class="options-menu" transition:fade={{duration: 100}}>
+                  {#each docTypes as type}
+                    <div class="option-item" class:selected={selectedDocTypes.includes(type)} on:click|stopPropagation={() => toggleDocType(type)}>
+                      <input type="checkbox" checked={selectedDocTypes.includes(type)} style="margin-right: 8px; cursor: pointer;" />
+                      {type}
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          </div>
+
+          <div class="setting-group relative">
+            <label>ทักษะ AI (AI Skill)</label>
+            <!-- Custom Dropdown for Skill -->
+            <div class="custom-select" on:click|stopPropagation={() => { skillOpen = !skillOpen; docTypeOpen = false; }}>
+              <div class="select-trigger" class:open={skillOpen}>
+                {#if selectedSkills.length === 0}
+                  <span style="color: #9ca3af;">-- ไม่ใช้ Skill --</span>
+                {:else if selectedSkills.length <= 2}
+                  {selectedSkills.map(id => skills.find(s => s.skill_id === id)?.skill_name).join(", ")}
+                {:else}
+                  เลือกแล้ว {selectedSkills.length} ทักษะ
+                {/if}
+                <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+              </div>
+              {#if skillOpen}
+                <div class="options-menu" transition:fade={{duration: 100}}>
+                  {#if filteredSkills.length === 0}
+                    <div class="option-item" style="color: #9ca3af; justify-content: center; cursor: default;">
+                      -- ไม่มีทักษะ AI ที่เกี่ยวข้อง --
+                    </div>
+                  {:else}
+                    {#each filteredSkills as skill}
+                      <div class="option-item" class:selected={selectedSkills.includes(skill.skill_id)} on:click|stopPropagation={() => toggleSkill(skill.skill_id)}>
+                        <input type="checkbox" checked={selectedSkills.includes(skill.skill_id)} style="margin-right: 8px; cursor: pointer;" />
+                        {skill.skill_name}
+                      </div>
+                    {/each}
+                  {/if}
+                </div>
+              {/if}
+            </div>
           </div>
 
           <div class="setting-group">
             <label>อีเมลผู้รับผลการตรวจสอบ</label>
-            <input type="email" bind:value={email} placeholder="your.email@example.com" />
-            <span class="hint-text">รายงานการเปรียบเทียบจะถูกจัดส่งไปยังอีเมลนี้</span>
+            <div class="email-input-container">
+              <input 
+                type="text" 
+                bind:value={emailInput} 
+                placeholder="ระบุอีเมลแล้วกด Enter หรือปุ่ม +" 
+                on:keydown={handleEmailKeydown}
+              />
+              <button class="btn-add-email" on:click={addEmail} disabled={!emailInput} title="เพิ่มอีเมล">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+              </button>
+            </div>
+            
+            {#if emailList.length > 0}
+              <div class="email-tags">
+                {#each emailList as e, i}
+                  <div class="email-tag">
+                    {e}
+                    <button class="remove-tag" on:click={() => removeEmail(i)}>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                    </button>
+                  </div>
+                {/each}
+              </div>
+            {/if}
+            <span class="hint-text">รายงานการเปรียบเทียบจะถูกจัดส่งไปยังอีเมลทั้งหมดนี้</span>
           </div>
 
-          <button class="btn-primary" on:click={processQAConsult} disabled={!file || !email}>
+          <button class="btn-primary" on:click={processQAConsult} disabled={!file || (emailList.length === 0 && emailInput.trim() === '')}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
             เริ่มตรวจสอบเอกสาร
           </button>
@@ -234,44 +647,117 @@
     </div>
 
   {:else if scanResult}
-    <!-- SUCCESS STATE -->
+    <!-- RESULT STATE -->
     <div class="result-state">
-      <div class="success-icon">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+      <div class="header-text" style="margin-bottom: 20px;">
+        <h2>ผลการวิเคราะห์ QA</h2>
+        <p>ตรวจสอบรายงานด้านล่าง ก่อนกดยืนยันการส่งอีเมล</p>
       </div>
-      <h2>ประมวลผลเสร็จสิ้น!</h2>
-      <p>ระบบได้ทำการเปรียบเทียบเอกสารกับฐานข้อมูล ({docType}) และสร้างรายงานเรียบร้อยแล้ว</p>
+
+      <div class="report-box email-preview">
+        <div class="email-header">
+          <h2>Spectra QA Consult Report</h2>
+        </div>
+        <div class="email-body">
+          <p>เรียนผู้ใช้งาน,</p>
+          <p>ระบบ Spectra QA ได้ทำการตรวจสอบเอกสาร <b>{scanResult.filename || 'ไม่ระบุชื่อไฟล์'}</b> ประเภท <b>{scanResult.doc_type || 'ไม่ระบุประเภท'}</b> เรียบร้อยแล้ว</p>
+          <p>นี่คือผลการวิเคราะห์และเปรียบเทียบกับฐานข้อมูล Knowledge Base:</p>
+          <hr>
+          {#if scanResult.report}
+            <pre>{scanResult.report}</pre>
+          {:else}
+            <div style="color: red; padding: 10px; background: #fee2e2; border-radius: 4px;">
+              ไม่พบเนื้อหารายงาน (AI ไม่ได้ส่งข้อความกลับมา หรือเกิดข้อผิดพลาดในการรับข้อมูล)<br>
+              <pre style="font-size: 11px; margin-top: 10px;">{JSON.stringify(scanResult, null, 2)}</pre>
+            </div>
+          {/if}
+          <hr>
+          <p class="footer-note"><small>สร้างโดย Spectra QA Intelligent Analysis System</small></p>
+        </div>
+      </div>
       
       <div class="result-summary">
         <div class="summary-item">
           <span class="lbl">ส่งผลลัพธ์ไปที่:</span>
-          <span class="val">{email}</span>
+          <span class="val">{scanResult.email || "- ไม่ระบุ -"}</span>
         </div>
         <div class="summary-item">
           <span class="lbl">จำนวนหน้าที่วิเคราะห์:</span>
-          <span class="val">{scanResult.total_pages || 0} หน้า</span>
+          <span class="val">{scanResult.total_pages ? scanResult.total_pages + ' หน้า' : '- ไม่ทราบจำนวน -'}</span>
         </div>
-        <div class="summary-item">
-          <span class="lbl">สถานะการส่งอีเมล:</span>
-          <span class="val success">สำเร็จ</span>
-        </div>
+        {#if scanResult.emailSent}
+          <div class="summary-item">
+            <span class="lbl">สถานะการส่งอีเมล:</span>
+            <span class="val success">ส่งสำเร็จแล้ว</span>
+          </div>
+        {/if}
       </div>
 
-      <button class="btn-outline" on:click={resetForm}>
-        ตรวจสอบเอกสารอื่นเพิ่มเติม
-      </button>
+      <div class="action-buttons">
+        <button class="btn-outline" on:click={resetForm} disabled={isSendingEmail}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><polyline points="1 4 1 10 7 10"></polyline><polyline points="23 20 23 14 17 14"></polyline><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"></path></svg>
+          เริ่มใหม่
+        </button>
+        <button class="btn-primary" on:click={sendEmail} disabled={isSendingEmail || scanResult.emailSent || !scanResult.email}>
+          {#if isSendingEmail}
+            กำลังส่งอีเมล...
+          {:else if scanResult.emailSent}
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><polyline points="20 6 9 17 4 12"></polyline></svg>
+            ส่งอีเมลแล้ว
+          {:else}
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+            ยืนยันส่งรายงานเข้าอีเมล
+          {/if}
+        </button>
+      </div>
     </div>
   {/if}
 </div>
 
+{#if showConfirmModal}
+  <div class="modal-backdrop" transition:fade={{duration: 200}}>
+    <div class="modal-card">
+      <div class="modal-icon warning">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="32" height="32"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+      </div>
+      <h3>ยืนยันการส่งอีเมล</h3>
+      <p>คุณต้องการส่งรายงานผลการตรวจสอบนี้ ไปยังอีเมล <b>{email}</b> ใช่หรือไม่?</p>
+      <div class="modal-actions">
+        <button class="btn-outline" on:click={() => showConfirmModal = false} disabled={isSendingEmail}>ยกเลิก</button>
+        <button class="btn-primary" on:click={executeSendEmail} disabled={isSendingEmail}>
+          {#if isSendingEmail}กำลังส่ง...{:else}ยืนยันส่งอีเมล{/if}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+{#if showSuccessModal}
+  <div class="modal-backdrop" transition:fade={{duration: 200}}>
+    <div class="modal-card">
+      <div class="modal-icon success">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="32" height="32"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+      </div>
+      <h3>ส่งอีเมลสำเร็จ</h3>
+      <p>รายงานถูกส่งไปยัง <b>{email}</b> เรียบร้อยแล้ว</p>
+      <div class="modal-actions centered">
+        <button class="btn-primary" on:click={() => showSuccessModal = false}>ตกลง</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
 <style>
   .qa-container {
-    max-width: 1000px;
+    width: 100%;
+    max-width: 1400px;
+    height: 100%;
     margin: 0 auto;
-    padding: 20px;
+    padding: 20px 40px;
     display: flex;
     flex-direction: column;
     gap: 30px;
+    overflow-y: auto;
   }
   .header-text {
     text-align: center;
@@ -402,7 +888,9 @@
     font-weight: 500;
     color: var(--text2);
   }
-  select, input[type="email"] {
+  
+  /* Input Email */
+  .email-input-container input {
     background: rgba(0,0,0,0.2);
     border: 1px solid var(--border);
     color: var(--text);
@@ -410,14 +898,154 @@
     border-radius: 8px;
     font-size: 15px;
     outline: none;
-    transition: border-color 0.2s;
+    transition: border-color 0.2s, box-shadow 0.2s;
   }
-  select:focus, input[type="email"]:focus {
+  .email-input-container input:focus {
     border-color: #9333ea;
+    box-shadow: 0 0 0 2px rgba(147, 51, 234, 0.2);
   }
+
+  /* Custom Select Dropdowns */
+  .relative {
+    position: relative;
+  }
+  .custom-select {
+    position: relative;
+    user-select: none;
+    cursor: pointer;
+  }
+  .select-trigger {
+    background: rgba(0,0,0,0.2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 12px 16px;
+    border-radius: 8px;
+    font-size: 15px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    transition: all 0.2s;
+  }
+  .select-trigger:hover {
+    border-color: rgba(147, 51, 234, 0.4);
+  }
+  .select-trigger.open {
+    border-color: #9333ea;
+    box-shadow: 0 0 0 2px rgba(147, 51, 234, 0.2);
+  }
+  .select-trigger .chevron {
+    width: 18px;
+    height: 18px;
+    color: var(--text3);
+    transition: transform 0.2s ease-in-out;
+  }
+  .select-trigger.open .chevron {
+    transform: rotate(180deg);
+  }
+  .options-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    width: 100%;
+    background: #181824; /* deep dark background */
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+    z-index: 100;
+    max-height: 220px;
+    overflow-y: auto;
+    padding: 6px;
+    backdrop-filter: blur(10px);
+  }
+  /* Custom scrollbar for options menu */
+  .options-menu::-webkit-scrollbar {
+    width: 6px;
+  }
+  .options-menu::-webkit-scrollbar-thumb {
+    background: rgba(255,255,255,0.1);
+    border-radius: 3px;
+  }
+  .option-item {
+    padding: 10px 14px;
+    border-radius: 6px;
+    color: var(--text2);
+    font-size: 14px;
+    transition: all 0.15s;
+  }
+  .option-item:hover {
+    background: rgba(255,255,255,0.06);
+    color: var(--text);
+  }
+  .option-item.selected {
+    background: rgba(147, 51, 234, 0.15);
+    color: #d8b4fe; /* lighter purple */
+    font-weight: 500;
+  }
+
   .hint-text {
     font-size: 12px;
     color: var(--text3);
+  }
+
+  .email-input-container {
+    display: flex;
+    gap: 8px;
+  }
+  .email-input-container input {
+    flex: 1;
+  }
+  .btn-add-email {
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text-main);
+    width: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .btn-add-email:hover:not(:disabled) {
+    background: #9333ea;
+    border-color: #9333ea;
+  }
+  .btn-add-email:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .email-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .email-tag {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(147, 51, 234, 0.2);
+    border: 1px solid rgba(147, 51, 234, 0.5);
+    padding: 4px 10px;
+    border-radius: 16px;
+    font-size: 13px;
+    color: #d8b4fe;
+  }
+  .remove-tag {
+    background: none;
+    border: none;
+    color: #d8b4fe;
+    cursor: pointer;
+    padding: 2px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    transition: background 0.2s;
+  }
+  .remove-tag:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
   }
   .btn-primary {
     margin-top: auto;
@@ -539,5 +1167,335 @@
   }
   .btn-outline:hover {
     background: rgba(255,255,255,0.05);
+  }
+  
+  /* Top Navigation / Back Button */
+  .top-nav {
+    position: absolute;
+    top: 30px;
+    left: 40px;
+    z-index: 50;
+  }
+  .btn-back {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: transparent;
+    border: none;
+    color: #9ca3af;
+    font-size: 14px;
+    cursor: pointer;
+    padding: 8px 12px;
+    border-radius: 8px;
+    transition: all 0.2s;
+  }
+  .btn-back:hover {
+    color: #ffffff;
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  /* Project Selection Styles */
+  .project-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 20px;
+    width: 100%;
+  }
+  .project-card {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 16px;
+    padding: 24px;
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    text-align: left;
+    position: relative;
+    overflow: hidden;
+    backdrop-filter: blur(10px);
+  }
+  .project-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.15), transparent);
+  }
+  .project-card:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(147, 51, 234, 0.5);
+    box-shadow: 0 12px 30px -10px rgba(147, 51, 234, 0.4);
+    transform: translateY(-4px);
+  }
+  .p-code {
+    font-size: 12px;
+    color: #c084fc;
+    font-weight: 700;
+    margin-bottom: 12px;
+    background: rgba(147, 51, 234, 0.15);
+    padding: 6px 12px;
+    border-radius: 6px;
+    display: inline-block;
+    letter-spacing: 0.5px;
+  }
+  .p-name {
+    font-size: 18px;
+    font-weight: 600;
+    color: #ffffff;
+    margin-bottom: 20px;
+    line-height: 1.4;
+  }
+  .p-status-section {
+    margin-bottom: 16px;
+  }
+  .p-desc-section {
+    margin-bottom: 0;
+  }
+  .p-meta-label {
+    font-size: 12px;
+    color: #ffffff;
+    font-weight: 700;
+    margin-bottom: 6px;
+  }
+  .p-status-value {
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .p-status-value.active {
+    color: #22c55e; /* Green */
+  }
+  .p-status-value.inactive {
+    color: #ef4444; /* Red */
+  }
+  .p-desc-box {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    padding: 12px 16px;
+    font-size: 14px;
+    color: #e5e7eb;
+    line-height: 1.5;
+    min-height: 48px;
+  }
+  .empty-desc {
+    color: #9ca3af;
+  }
+  .empty-state {
+    grid-column: 1 / -1;
+    text-align: center;
+    padding: 40px;
+    background: rgba(0,0,0,0.2);
+    border-radius: 12px;
+    color: var(--text3);
+    border: 1px dashed var(--border);
+  }
+  .active-project-badge {
+    margin-top: 15px;
+    font-size: 14px;
+    color: var(--text2);
+    background: rgba(147, 51, 234, 0.1);
+    padding: 8px 16px;
+    border-radius: 8px;
+    display: inline-block;
+    border: 1px solid rgba(147, 51, 234, 0.3);
+  }
+  .active-project-badge strong {
+    color: #d8b4fe;
+    font-weight: 600;
+  }
+  .btn-text-change {
+    background: none;
+    border: none;
+    color: #9ca3af;
+    cursor: pointer;
+    font-size: 13px;
+    margin-left: 10px;
+    padding: 0;
+    transition: color 0.2s;
+  }
+  .btn-text-change:hover {
+    color: #fff;
+    text-decoration: underline;
+  }
+
+  .report-box.email-preview {
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 0;
+    margin-bottom: 24px;
+    text-align: left;
+    max-height: 60vh;
+    overflow-y: auto;
+    width: 100%;
+    color: #333;
+    font-family: Arial, sans-serif;
+  }
+  .email-header {
+    background-color: #7c3aed;
+    color: white;
+    padding: 16px 24px;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+  .email-header h2 {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 600;
+  }
+  .email-body {
+    padding: 24px;
+  }
+  .email-body p {
+    color: #333;
+    margin-bottom: 12px;
+    font-size: 15px;
+  }
+  .email-body hr {
+    border: 0;
+    border-top: 1px solid #e5e7eb;
+    margin: 20px 0;
+  }
+  .email-body pre {
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: inherit;
+    font-size: 15px;
+    line-height: 1.6;
+    color: #333;
+    margin: 0;
+  }
+  .footer-note {
+    margin-bottom: 0 !important;
+    color: #6b7280 !important;
+  }
+
+  .report-box::-webkit-scrollbar {
+    width: 8px;
+  }
+  .report-box::-webkit-scrollbar-thumb {
+    background: rgba(0,0,0,0.2);
+    border-radius: 4px;
+  }
+
+  .result-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+    background: rgba(255, 255, 255, 0.03);
+    padding: 16px 24px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    margin-bottom: 20px;
+    justify-content: center;
+  }
+  .summary-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+  }
+  .summary-item .lbl {
+    font-size: 13px;
+    color: var(--text3);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .summary-item .val {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-main);
+  }
+  .summary-item .val.success {
+    color: #10b981;
+  }
+
+  .action-buttons {
+    display: flex;
+    justify-content: center;
+    gap: 16px;
+    margin-top: 10px;
+    width: 100%;
+  }
+  .action-buttons .btn-primary, .action-buttons .btn-outline {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    margin-top: 0;
+    min-width: 180px;
+    padding: 12px 24px;
+  }
+
+  /* Modals */
+  .modal-backdrop {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+  .modal-card {
+    background: #1e1e2d;
+    border: 1px solid #333;
+    border-radius: 16px;
+    padding: 32px;
+    width: 90%;
+    max-width: 400px;
+    text-align: center;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+  }
+  .modal-icon {
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 20px;
+  }
+  .modal-icon.warning {
+    background: rgba(245, 158, 11, 0.1);
+    color: #f59e0b;
+  }
+  .modal-icon.success {
+    background: rgba(34, 197, 94, 0.1);
+    color: #22c55e;
+  }
+  .modal-card h3 {
+    margin: 0 0 12px;
+    font-size: 20px;
+    color: white;
+  }
+  .modal-card p {
+    color: #9ca3af;
+    margin: 0 0 24px;
+    line-height: 1.5;
+  }
+  .modal-card b {
+    color: white;
+  }
+  .modal-actions {
+    display: flex;
+    gap: 12px;
+    justify-content: stretch;
+  }
+  .modal-actions.centered {
+    justify-content: center;
+  }
+  .modal-actions button {
+    flex: 1;
+    margin: 0;
+  }
+  .modal-actions.centered button {
+    flex: none;
+    min-width: 120px;
   }
 </style>
