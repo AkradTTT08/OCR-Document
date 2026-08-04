@@ -9,8 +9,11 @@
   import Login from "./lib/Login.svelte";
   import ComingSoon from "./lib/ComingSoon.svelte";
   import QAConsult from "./lib/QAConsult.svelte";
-  import { showLogin, authRole, authUser, logout } from "./lib/authStore.js";
+  import QAMember from "./lib/QAMember.svelte";
+  import { showLogin, authRole, authUser, authDisplayName, authAvatar, logout } from "./lib/authStore.js";
+  import { globalSearchQuery, triggerGlobalSearch } from "./lib/globalStore.js";
   import { onMount } from "svelte";
+  import { toast } from "./lib/toastStore.js";
 
   onMount(() => {
     loadQAHistoryFromDB();
@@ -34,6 +37,94 @@
   function handleProcessing(event) {
     isProcessing = event.detail.active;
     if (event.detail.progress) progress = event.detail.progress;
+  }
+
+  function onGlobalSearchKey(e) {
+    if (e.key === 'Enter' && $globalSearchQuery.trim()) {
+      activeView = 'kb';
+      triggerGlobalSearch.set(true);
+    }
+  }
+
+  let showProfileMenu = false;
+  let showMyProfileModal = false;
+  let myProfileFormData = { display_name: '', password: '' };
+  let showMyPassword = false;
+  let myProfileAvatarFile = null;
+  let myProfileAvatarPreview = null;
+  
+  function getUserIdFromToken() {
+      const token = localStorage.getItem('jwt_token');
+      if (!token) return null;
+      try {
+          const base64Url = token.split('.')[1];
+          const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+          const payload = JSON.parse(window.atob(base64));
+          return payload.user_id;
+      } catch(e) { return null; }
+  }
+  
+  function openMyProfileModal() {
+      showProfileMenu = false;
+      let currentDisplayName = localStorage.getItem('auth_display_name') || localStorage.getItem('auth_user');
+      let currentAvatar = localStorage.getItem('auth_avatar_path');
+      myProfileFormData = { display_name: currentDisplayName, password: '' };
+      myProfileAvatarFile = null;
+      myProfileAvatarPreview = currentAvatar ? `http://localhost:5000${currentAvatar}` : null;
+      showMyProfileModal = true;
+  }
+  
+  async function saveMyProfile() {
+      const userId = getUserIdFromToken();
+      if (!userId) {
+          toast('Session invalid. Please login again.', 'error');
+          return;
+      }
+      
+      try {
+          const token = localStorage.getItem('jwt_token');
+          const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` };
+          
+          const res = await fetch(`http://localhost:5000/api/users/${userId}`, {
+              method: 'PUT',
+              headers,
+              body: JSON.stringify(myProfileFormData)
+          });
+          const data = await res.json();
+          
+          if (res.ok && data.success) {
+              let newAvatarPath = data.user.avatar_path;
+              if (myProfileAvatarFile) {
+                  const fd = new FormData();
+                  fd.append('avatar', myProfileAvatarFile);
+                  const avaRes = await fetch(`http://localhost:5000/api/users/${userId}/avatar`, {
+                      method: 'POST',
+                      headers: { 'Authorization': `Bearer ${token}` },
+                      body: fd
+                  });
+                  const avaData = await avaRes.json();
+                  if (avaRes.ok && avaData.success) {
+                      newAvatarPath = avaData.avatar_path;
+                  }
+              }
+              
+              localStorage.setItem('auth_display_name', data.user.display_name);
+              if (newAvatarPath) {
+                  localStorage.setItem('auth_avatar_path', newAvatarPath);
+              }
+              toast('Profile updated successfully!', 'success');
+              setTimeout(() => { window.location.reload(); }, 1000);
+          } else {
+              toast(data.error || 'Failed to update profile', 'error');
+          }
+      } catch (e) {
+          toast('Network error', 'error');
+      }
+  }
+  
+  function doLogout() {
+      showProfileMenu = false;
+      logout();
   }
 
   function formatHistoryDate(dateString) {
@@ -115,6 +206,10 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"></path></svg>
             AI Skills
           </button>
+          <button class="nav-item" class:active={activeView === "qa_member"} on:click={() => (activeView = "qa_member")}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+            QA Member
+          </button>
         {:else if $authRole === 'user'}
           <button class="nav-item" class:active={activeView === "qa_consult"} on:click={() => (activeView = "qa_consult")}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
@@ -180,22 +275,53 @@
         <div class="topbar-right">
           <div class="search-box">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-            <input type="text" placeholder="ค้นหาเอกสารหรือวิเคราะห์..." />
+            <input type="text" bind:value={$globalSearchQuery} on:keydown={onGlobalSearchKey} placeholder="ค้นหาเอกสารหรือวิเคราะห์..." />
           </div>
-          <button class="icon-btn">
+          <button class="icon-btn" on:click={() => {
+            if ($globalSearchQuery.trim()) {
+              activeView = 'kb';
+              triggerGlobalSearch.set(true);
+            }
+          }}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 01-3.46 0"></path></svg>
           </button>
           <div class="status-badge">
             <span class="dot"></span> System Ready
           </div>
-          <div class="avatar" title="{$authUser} ({$authRole})">
-            {$authUser ? $authUser.charAt(0).toUpperCase() : 'A'}
+          <!-- svelte-ignore a11y-click-events-have-key-events -->
+          <div class="user-profile-container" style="position: relative;" on:click={() => showProfileMenu = !showProfileMenu}>
+            <div class="user-info">
+              <span class="user-name">{$authDisplayName || $authUser}</span>
+              <span class="user-role">{$authRole === 'admin' ? 'System Admin' : 'Standard User'}</span>
+            </div>
+            <div class="avatar" title="{$authDisplayName || $authUser} ({$authRole})">
+              {#if $authAvatar}
+                <img src={`http://localhost:5000${$authAvatar}`} alt="Profile" />
+              {:else}
+                {$authDisplayName ? $authDisplayName.charAt(0).toUpperCase() : ($authUser ? $authUser.charAt(0).toUpperCase() : 'A')}
+              {/if}
+            </div>
+            
+            {#if showProfileMenu}
+              <!-- svelte-ignore a11y-click-events-have-key-events -->
+              <div class="dropdown-overlay" on:click|stopPropagation={() => showProfileMenu = false}></div>
+              <div class="profile-dropdown">
+                <button class="dropdown-item" on:click|stopPropagation={openMyProfileModal}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+                  Profile
+                </button>
+                <button class="dropdown-item logout-btn" on:click|stopPropagation={doLogout}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+                  Logout
+                </button>
+              </div>
+            {/if}
           </div>
         </div>
       </header>
 
       <!-- Content Area -->
-      <div class="content-scroll" id="main-content" class:no-padding={activeView === 'kb' || activeView === 'ocr' || activeView === 'qa_consult'}>
+      <div class="content-scroll" id="main-content" class:no-padding={activeView === 'kb' || activeView === 'ocr' || activeView === 'qa_consult' || activeView === 'qa_member'}>
         {#key activeView}
           <div class="view-wrapper" in:fade="{{ duration: 300, delay: 150 }}">
             {#if activeView === "ocr" && $authRole === "admin"}
@@ -211,6 +337,8 @@
               <KnowledgeBase />
             {:else if activeView === "skills" && $authRole === "admin"}
               <SkillManager />
+            {:else if activeView === "qa_member" && $authRole === "admin"}
+              <QAMember />
             {:else if activeView === "qa_consult" && $authRole === "user"}
               <QAConsult />
             {/if}
@@ -236,6 +364,62 @@
 
 <!-- Global Toast Notifications -->
 <Toast />
+
+{#if showMyProfileModal}
+<div class="modal-backdrop">
+    <div class="modal-content glass-card">
+        <button class="close-btn" on:click={() => showMyProfileModal = false}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+        
+        <h2 class="modal-title">แก้ไขข้อมูลส่วนตัว</h2>
+        
+        <div class="avatar-upload-container">
+            <div class="avatar-preview">
+                {#if myProfileAvatarPreview}
+                    <img src={myProfileAvatarPreview} alt="Preview" />
+                {:else}
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+                {/if}
+            </div>
+            <div class="upload-btn-wrapper">
+                <button class="btn-secondary btn-sm" type="button">เปลี่ยนรูปโปรไฟล์</button>
+                <input type="file" accept="image/*" on:change={(e) => {
+                    const file = e.target.files[0];
+                    if (file) {
+                        myProfileAvatarFile = file;
+                        myProfileAvatarPreview = URL.createObjectURL(file);
+                    }
+                }} />
+            </div>
+        </div>
+        
+        <div class="form-group">
+            <label for="my_display_name">Display Name</label>
+            <input type="text" id="my_display_name" bind:value={myProfileFormData.display_name} placeholder="e.g. John Doe" />
+        </div>
+        
+        <div class="form-group">
+            <label>Password (ปล่อยว่างหากไม่ต้องการเปลี่ยน)</label>
+            <div style="display: flex; gap: 8px; align-items: center; position: relative;">
+                <input type={showMyPassword ? "text" : "password"} bind:value={myProfileFormData.password} placeholder="••••••••" style="flex: 1; padding-right: 40px;" />
+                <button type="button" class="eye-btn" on:click={() => showMyPassword = !showMyPassword}>
+                    {#if showMyPassword}
+                        <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>
+                    {:else}
+                        <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                    {/if}
+                </button>
+            </div>
+        </div>
+        
+        <div class="modal-actions">
+            <button class="btn-secondary" on:click={() => showMyProfileModal = false}>ยกเลิก</button>
+            <button class="btn-primary" on:click={saveMyProfile}>บันทึกข้อมูล</button>
+        </div>
+    </div>
+</div>
+{/if}
 
 <style>
   .app-wrapper {
@@ -553,16 +737,52 @@
     box-shadow: 0 0 8px var(--success);
   }
 
+  .user-profile-container {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    cursor: pointer;
+    padding: 4px 12px 4px 16px;
+    border-radius: 30px;
+    transition: background 0.3s;
+    border: 1px solid transparent;
+  }
+  .user-profile-container:hover {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.1);
+  }
+  .user-info {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+  }
+  .user-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-main);
+    line-height: 1.2;
+    font-family: var(--font-th);
+  }
+  .user-role {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: var(--font-en);
+  }
+
   .avatar {
     width: 36px; height: 36px; border-radius: 50%;
     background: var(--gradient-main);
     display: flex; align-items: center; justify-content: center;
-    font-weight: 700; font-size: 14px; cursor: pointer;
+    font-weight: 700; font-size: 14px;
     font-family: var(--font-en);
     box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
     transition: transform 0.3s;
+    overflow: hidden;
   }
-  .avatar:hover { transform: scale(1.05); }
+  .avatar img {
+    width: 100%; height: 100%; object-fit: cover;
+  }
+  .user-profile-container:hover .avatar { transform: scale(1.05); }
 
   /* Content Scroll */
   .content-scroll {
@@ -625,4 +845,100 @@
   .footer-links a:hover {
     color: var(--text-muted);
   }
+
+  /* Profile Dropdown */
+  .dropdown-overlay {
+    position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+    z-index: 90;
+  }
+  .profile-dropdown {
+    position: absolute; top: 100%; right: 0; margin-top: 10px;
+    background: var(--bg-dark); border: 1px solid var(--glass-border);
+    border-radius: var(--radius-md); box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    padding: 8px; z-index: 100; min-width: 160px;
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .dropdown-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 16px; background: transparent; border: none;
+    color: var(--text-main); font-size: 13px; font-family: var(--font-en);
+    border-radius: 6px; cursor: pointer; transition: all 0.2s;
+    text-align: left;
+  }
+  .dropdown-item:hover {
+    background: rgba(255,255,255,0.05);
+  }
+  .dropdown-item svg { width: 16px; height: 16px; color: var(--text-muted); }
+  .logout-btn:hover { background: rgba(239, 68, 68, 0.1); color: var(--danger); }
+  .logout-btn:hover svg { color: var(--danger); }
+
+  /* Modal Base */
+  .modal-backdrop {
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.75); z-index: 1000;
+    display: flex; align-items: center; justify-content: center;
+    backdrop-filter: blur(5px);
+  }
+  .modal-content {
+    background: var(--bg-dark); border: 1px solid var(--glass-border);
+    border-radius: var(--radius-lg); padding: 32px; width: 100%; max-width: 500px;
+    position: relative; box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+  }
+  .close-btn {
+    position: absolute; top: 20px; right: 20px;
+    background: transparent; border: none; color: var(--text-muted);
+    cursor: pointer; transition: color 0.2s;
+  }
+  .close-btn:hover { color: white; }
+  .close-btn svg { width: 24px; height: 24px; }
+  .modal-title {
+    font-size: 20px; font-weight: 600; margin-top: 0; margin-bottom: 24px;
+    color: white; font-family: var(--font-th);
+  }
+
+  /* Form & Avatar in Modal */
+  .form-group {
+    display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px;
+    text-align: left;
+  }
+  .form-group label {
+    font-size: 13px; color: var(--text-muted); font-weight: 500; font-family: var(--font-en);
+  }
+  .form-group input {
+    background: rgba(0,0,0,0.2); border: 1px solid var(--glass-border);
+    border-radius: var(--radius-md); padding: 12px 15px; color: white;
+    font-size: 14px; font-family: var(--font-en); transition: border-color 0.3s;
+  }
+  .form-group input:focus { border-color: var(--primary); outline: none; }
+  
+  .eye-btn {
+    position: absolute; right: 12px; background: transparent; border: none;
+    color: var(--text-muted); cursor: pointer; display: flex; align-items: center;
+    justify-content: center; padding: 4px; border-radius: 4px; transition: color 0.2s;
+  }
+  .eye-btn:hover { color: var(--text-main); }
+  .avatar-upload-container {
+    display: flex; align-items: center; gap: 20px; margin-bottom: 20px;
+  }
+  .avatar-preview {
+    width: 60px; height: 60px; border-radius: 50%;
+    background: rgba(255,255,255,0.05); border: 1px dashed var(--glass-border);
+    display: flex; align-items: center; justify-content: center; overflow: hidden;
+  }
+  .avatar-preview img { width: 100%; height: 100%; object-fit: cover; }
+  .avatar-preview svg { width: 30px; height: 30px; color: var(--text-muted); }
+  .upload-btn-wrapper { position: relative; overflow: hidden; display: inline-block; }
+  .upload-btn-wrapper input[type=file] {
+    font-size: 100px; position: absolute; left: 0; top: 0; opacity: 0; cursor: pointer;
+  }
+  .modal-actions {
+    display: flex; justify-content: flex-end; gap: 10px; margin-top: 25px;
+  }
+  .btn-secondary {
+    background: rgba(255,255,255,0.05); border: 1px solid var(--glass-border);
+    color: white; padding: 10px 20px; border-radius: var(--radius-md);
+    cursor: pointer; transition: background 0.2s; font-family: var(--font-th);
+  }
+  .btn-secondary:hover { background: rgba(255,255,255,0.1); }
+  .btn-sm { padding: 6px 12px; font-size: 13px; }
 </style>

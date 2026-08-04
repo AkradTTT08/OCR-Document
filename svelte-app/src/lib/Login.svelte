@@ -4,6 +4,7 @@
 
     let email = localStorage.getItem('remembered_email') || '';
     let password = '';
+    let showPassword = false;
     let remember = !!localStorage.getItem('remembered_email');
     let isLoading = false;
     
@@ -40,8 +41,8 @@
                 } else {
                     localStorage.removeItem('remembered_email');
                 }
-                login(data.token, data.user, data.role);
-                toast(`เข้าสู่ระบบสำเร็จ! ยินดีต้อนรับ ${data.user}`, 'success');
+                login(data.token, data.user, data.role, data.display_name, data.avatar_path);
+                toast(`เข้าสู่ระบบสำเร็จ! ยินดีต้อนรับ ${data.display_name || data.user}`, 'success');
             } else {
                 toast(data.error || 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง', 'error');
             }
@@ -106,7 +107,16 @@
                     
                     <div class="input-group">
                         <label for="password">Password</label>
-                        <input type="password" id="password" bind:value={password} placeholder="••••••••" autocomplete="current-password" />
+                        <div class="password-wrapper">
+                            <input type={showPassword ? "text" : "password"} id="password" bind:value={password} placeholder="••••••••" autocomplete="current-password" />
+                            <button type="button" class="eye-btn" on:click={() => showPassword = !showPassword}>
+                                {#if showPassword}
+                                    <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>
+                                {:else}
+                                    <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                                {/if}
+                            </button>
+                        </div>
                     </div>
                     
                     <div class="remember-me">
@@ -406,6 +416,33 @@
         border-color: var(--primary);
         background: rgba(0, 0, 0, 0.5);
         box-shadow: 0 0 0 4px var(--primary-glow);
+    }
+
+    /* ── Password Field ── */
+    .password-wrapper {
+        position: relative;
+        display: flex;
+        align-items: center;
+    }
+    .password-wrapper input {
+        padding-right: 44px;
+    }
+    .eye-btn {
+        position: absolute;
+        right: 12px;
+        background: transparent;
+        border: none;
+        color: var(--text-muted);
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 4px;
+        border-radius: 4px;
+        transition: color 0.2s;
+    }
+    .eye-btn:hover {
+        color: var(--text-main);
     }
 
     /* ── Checkbox ── */

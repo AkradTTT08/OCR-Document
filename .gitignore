@@ -22,8 +22,6 @@ uploads/*
 !uploads/.gitkeep
 out.txt
 
-# Tesseract data (optional to ignore, but usually kept separate)
-# tessdata/
 
 # JavaScript / Node
 node_modules/

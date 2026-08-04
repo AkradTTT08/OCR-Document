@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import { toast } from './toastStore.js';
+  import { globalSearchQuery, triggerGlobalSearch } from './globalStore.js';
 
   const API = 'http://localhost:5000/api';
 
@@ -40,6 +41,15 @@
     await Promise.all([loadStats(), loadProjects()]);
     isInitialLoading = false;
   });
+
+  $: if ($triggerGlobalSearch) {
+      triggerGlobalSearch.set(false);
+      if ($globalSearchQuery.trim()) {
+          activeTab = 'search';
+          searchQuery = $globalSearchQuery;
+          doSearch();
+      }
+  }
 
   async function loadStats() {
     try {
@@ -430,14 +440,12 @@
         </button>
       </div>
       <div class="project-list">
-        <button
-          class="project-item"
-          class:active={selectedProject === null}
-          on:click={() => selectProject(null)}
-        >
-          <span class="proj-icon">📁</span>
-          <span>ทั้งหมด</span>
-        </button>
+        <div class="project-item" class:active={selectedProject === null}>
+            <button class="project-item-content" on:click={() => selectProject(null)}>
+                <span class="proj-icon">📁</span>
+                <span>ทั้งหมด</span>
+            </button>
+        </div>
         {#each projects as p}
           <div class="project-item" class:active={selectedProject === p.id}>
             <button class="project-item-content" on:click={() => selectProject(p)}>

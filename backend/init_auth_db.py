@@ -31,6 +31,7 @@ def init_auth_db():
                 email VARCHAR(255) UNIQUE NOT NULL,
                 password_hash VARCHAR(255) NOT NULL,
                 display_name VARCHAR(100),
+                avatar_path VARCHAR(255),
                 role VARCHAR(20) DEFAULT 'user',
                 is_active BOOLEAN DEFAULT true,
                 login_count INTEGER DEFAULT 0,

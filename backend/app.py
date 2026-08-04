@@ -59,6 +59,8 @@ CACHE_FOLDER = BASE_DIR / 'uploads' / 'cache'
 CACHE_FOLDER.mkdir(exist_ok=True, parents=True)
 KB_IMAGES_FOLDER = BASE_DIR / 'uploads' / 'kb_images'
 KB_IMAGES_FOLDER.mkdir(exist_ok=True, parents=True)
+AVATARS_FOLDER = BASE_DIR / 'uploads' / 'avatars'
+AVATARS_FOLDER.mkdir(exist_ok=True, parents=True)
 
 
 def enrich_errors_with_boxes(errors: List[Dict], words_map: List[Dict]) -> List[Dict]:
@@ -197,7 +199,7 @@ def login():
         
         # ใช้ PostgreSQL crypt() ตรวจสอบ bcrypt password
         cursor.execute(
-            "SELECT user_id, username, email, display_name, role, is_active "
+            "SELECT user_id, username, email, display_name, role, is_active, avatar_path "
             "FROM users WHERE username = %s AND password_hash = crypt(%s, password_hash);",
             (username, password)
         )
@@ -230,7 +232,8 @@ def login():
                 'user': user[1],
                 'email': user[2],
                 'display_name': user[3],
-                'role': user[4]
+                'role': user[4],
+                'avatar_path': user[6]
             })
             
         cursor.close()
@@ -260,6 +263,243 @@ def frontend_files(filename):
 # ========================
 # API Routes
 # ========================
+
+# ── User Management ──
+
+@app.route('/api/users', methods=['GET'])
+@token_required
+def get_users():
+    try:
+        from db_ingestion import get_auth_db_connection
+        conn = get_auth_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT user_id, username, email, display_name, role, is_active, 
+                   login_count, last_login_at, created_at, avatar_path
+            FROM users 
+            ORDER BY user_id ASC;
+        """)
+        
+        users_data = []
+        for row in cursor.fetchall():
+            users_data.append({
+                'user_id': row[0],
+                'username': row[1],
+                'email': row[2],
+                'display_name': row[3],
+                'role': row[4],
+                'is_active': row[5],
+                'login_count': row[6],
+                'last_login_at': row[7].isoformat() if row[7] else None,
+                'created_at': row[8].isoformat() if row[8] else None,
+                'avatar_path': row[9]
+            })
+            
+        cursor.close()
+        conn.close()
+        return jsonify({'success': True, 'users': users_data})
+    except Exception as e:
+        logger.error(f"Error fetching users: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/users', methods=['POST'])
+@token_required
+def create_user():
+    data = request.get_json()
+    if not data:
+        return jsonify({'error': 'No data provided'}), 400
+        
+    username = data.get('username')
+    email = data.get('email')
+    password = data.get('password')
+    display_name = data.get('display_name', '')
+    role = data.get('role', 'user')
+    
+    if not username or not email or not password:
+        return jsonify({'error': 'Username, email, and password required'}), 400
+        
+    try:
+        from db_ingestion import get_auth_db_connection
+        conn = get_auth_db_connection()
+        cursor = conn.cursor()
+        
+        # Check if username or email already exists
+        cursor.execute("SELECT user_id FROM users WHERE username = %s OR email = %s", (username, email))
+        if cursor.fetchone():
+            cursor.close()
+            conn.close()
+            return jsonify({'error': 'Username or Email already exists'}), 400
+            
+        cursor.execute("""
+            INSERT INTO users (username, email, password_hash, display_name, role, is_active)
+            VALUES (%s, %s, crypt(%s, gen_salt('bf')), %s, %s, true)
+            RETURNING user_id, username, email, display_name, role, is_active, created_at, avatar_path;
+        """, (username, email, password, display_name, role))
+        
+        new_user = cursor.fetchone()
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        return jsonify({
+            'success': True,
+            'user': {
+                'user_id': new_user[0],
+                'username': new_user[1],
+                'email': new_user[2],
+                'display_name': new_user[3],
+                'role': new_user[4],
+                'is_active': new_user[5],
+                'created_at': new_user[6].isoformat() if new_user[6] else None,
+                'avatar_path': new_user[7]
+            }
+        })
+    except Exception as e:
+        logger.error(f"Error creating user: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/users/<int:user_id>', methods=['PUT'])
+@token_required
+def update_user(user_id):
+    data = request.get_json()
+    if not data:
+        return jsonify({'error': 'No data provided'}), 400
+        
+    try:
+        from db_ingestion import get_auth_db_connection
+        conn = get_auth_db_connection()
+        cursor = conn.cursor()
+        
+        update_fields = []
+        params = []
+        
+        if 'display_name' in data:
+            update_fields.append("display_name = %s")
+            params.append(data['display_name'])
+        if 'role' in data:
+            update_fields.append("role = %s")
+            params.append(data['role'])
+        if 'is_active' in data:
+            update_fields.append("is_active = %s")
+            params.append(data['is_active'])
+        if 'password' in data and data['password']:
+            update_fields.append("password_hash = crypt(%s, gen_salt('bf'))")
+            params.append(data['password'])
+            
+        if not update_fields:
+            cursor.close()
+            conn.close()
+            return jsonify({'error': 'No fields to update'}), 400
+            
+        params.append(user_id)
+        
+        query = f"UPDATE users SET {', '.join(update_fields)} WHERE user_id = %s RETURNING user_id, username, email, display_name, role, is_active, avatar_path;"
+        cursor.execute(query, tuple(params))
+        
+        updated_user = cursor.fetchone()
+        if not updated_user:
+            conn.rollback()
+            cursor.close()
+            conn.close()
+            return jsonify({'error': 'User not found'}), 404
+            
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        return jsonify({
+            'success': True,
+            'user': {
+                'user_id': updated_user[0],
+                'username': updated_user[1],
+                'email': updated_user[2],
+                'display_name': updated_user[3],
+                'role': updated_user[4],
+                'is_active': updated_user[5],
+                'avatar_path': updated_user[6]
+            }
+        })
+    except Exception as e:
+        logger.error(f"Error updating user: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/users/<int:user_id>', methods=['DELETE'])
+@token_required
+def delete_user(user_id):
+    auth_header = request.headers.get('Authorization')
+    token = auth_header.split(' ')[1]
+    payload = decode_jwt(token)
+    
+    if str(payload.get('user_id')) == str(user_id):
+        return jsonify({'error': 'Cannot delete your own account'}), 403
+        
+    try:
+        from db_ingestion import get_auth_db_connection
+        conn = get_auth_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("DELETE FROM users WHERE user_id = %s RETURNING user_id;", (user_id,))
+        deleted = cursor.fetchone()
+        
+        if not deleted:
+            conn.rollback()
+            cursor.close()
+            conn.close()
+            return jsonify({'error': 'User not found'}), 404
+            
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        return jsonify({'success': True, 'message': 'User deleted successfully'})
+    except Exception as e:
+        logger.error(f"Error deleting user: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/users/<int:user_id>/avatar', methods=['POST'])
+@token_required
+def upload_avatar(user_id):
+    if 'avatar' not in request.files:
+        return jsonify({'error': 'No avatar file provided'}), 400
+        
+    file = request.files['avatar']
+    if file.filename == '':
+        return jsonify({'error': 'No file selected'}), 400
+        
+    if file:
+        ext = file.filename.rsplit('.', 1)[-1].lower()
+        if ext not in {'png', 'jpg', 'jpeg', 'gif', 'webp'}:
+            return jsonify({'error': 'Invalid image format'}), 400
+            
+        filename = secure_filename(f"avatar_{user_id}_{int(time.time())}.{ext}")
+        filepath = AVATARS_FOLDER / filename
+        file.save(filepath)
+        
+        avatar_path = f"/api/avatars/{filename}"
+        
+        try:
+            from db_ingestion import get_auth_db_connection
+            conn = get_auth_db_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("UPDATE users SET avatar_path = %s WHERE user_id = %s RETURNING avatar_path;", (avatar_path, user_id))
+            updated = cursor.fetchone()
+            conn.commit()
+            cursor.close()
+            conn.close()
+            
+            if not updated:
+                return jsonify({'error': 'User not found'}), 404
+                
+            return jsonify({'success': True, 'avatar_path': avatar_path})
+        except Exception as e:
+            logger.error(f"Error saving avatar: {e}")
+            return jsonify({'error': str(e)}), 500
+
+@app.route('/api/avatars/<path:filename>')
+def serve_avatar(filename):
+    return send_from_directory(str(AVATARS_FOLDER), filename)
 
 @app.route('/api/health', methods=['GET'])
 def health():
@@ -1570,12 +1810,13 @@ def qa_consult_api():
                 else:
                     instruction += "4. ข้อเสนอแนะแนวทางแก้ไข (Recommendations)\n"
 
+                skill_section = f"--- คำสั่งพิเศษเพิ่มเติมจาก AI Skill ---\n{skill_instructions}\n" if skill_instructions else ""
                 prompt = f"""คุณคือผู้เชี่ยวชาญด้านระบบสารสนเทศ และ System QA (Quality Assurance)
 หน้าที่ของคุณคือตรวจสอบและเปรียบเทียบความถูกต้องของ 'เอกสารที่อัปโหลด' กับ 'ข้อมูลมาตรฐาน' ที่มีอยู่ในฐานข้อมูล (Knowledge Base ของโครงการ AIAgentQA)
 
 ประเภทของเอกสารที่กำลังตรวจสอบ: {', '.join(doc_type) if isinstance(doc_type, list) else doc_type}
 
-{f"--- คำสั่งพิเศษเพิ่มเติมจาก AI Skill ---\n{skill_instructions}\n" if skill_instructions else ""}
+{skill_section}
 
 === ข้อมูลมาตรฐานจากฐานข้อมูล AIAgentQA ===
 {kb_context if kb_context else 'ไม่พบข้อมูลที่ตรงกันเป๊ะในระบบ (โปรดประเมินจากความรู้ทั่วไปหรือโครงสร้างเอกสาร)'}

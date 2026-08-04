@@ -108,3 +108,33 @@ html, body {
   50% { transform: translateY(-8px); }
   100% { transform: translateY(0px); }
 }
+
+/* ── Global Buttons ── */
+.btn-primary {
+  background: var(--gradient-main);
+  border: none; color: white;
+  padding: 10px 24px; border-radius: var(--radius-md);
+  cursor: pointer; transition: all 0.3s ease;
+  font-family: var(--font-th); font-weight: 500; font-size: 14px;
+  box-shadow: 0 4px 15px rgba(99, 102, 241, 0.3);
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+}
+.btn-primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px rgba(99, 102, 241, 0.5);
+}
+.btn-primary:active {
+  transform: translateY(0);
+}
+
+.btn-warning {
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid var(--warning); color: var(--warning);
+  padding: 10px 20px; border-radius: var(--radius-md);
+  cursor: pointer; transition: all 0.3s ease;
+  font-family: var(--font-en); font-weight: 500; font-size: 14px;
+}
+.btn-warning:hover {
+  background: var(--warning); color: white;
+  box-shadow: 0 4px 15px rgba(245, 158, 11, 0.4);
+}
