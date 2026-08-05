@@ -21,9 +21,10 @@ if not os.environ.get('GMAIL_USER'):
 GMAIL_USER = os.environ.get('GMAIL_USER')
 GMAIL_APP_PASSWORD = os.environ.get('GMAIL_APP_PASSWORD')
 
-def send_qa_report(recipient_email: str, doc_type: str, filename: str, report_content: str) -> bool:
+def send_qa_report(recipient_email: str, doc_type: str, filename: str, report_content: str, excel_download_url: str = '') -> bool:
     """
     Sends a QA Consult report via Gmail SMTP.
+    Optionally includes an Excel report download link.
     """
     if not GMAIL_USER or not GMAIL_APP_PASSWORD:
         logger.error("GMAIL_USER or GMAIL_APP_PASSWORD not set in .env")
@@ -56,6 +57,20 @@ def send_qa_report(recipient_email: str, doc_type: str, filename: str, report_co
         except Exception as e:
             logger.warning(f"Could not load logo for email: {e}")
 
+        # Excel download section
+        excel_section = ''
+        if excel_download_url:
+            excel_section = f"""
+                <div style="margin: 20px 0; padding: 20px; background: linear-gradient(135deg, #7c3aed15, #3b82f615); border: 1px solid #7c3aed30; border-radius: 12px; text-align: center;">
+                    <p style="margin: 0 0 12px 0; font-size: 14px; color: #555;">📊 รายงาน QA Report (Excel) พร้อมดาวน์โหลด</p>
+                    <a href="{excel_download_url}" 
+                       style="display: inline-block; padding: 12px 32px; background: linear-gradient(135deg, #7c3aed, #6d28d9); color: white; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 14px; box-shadow: 0 4px 12px rgba(124, 58, 237, 0.3);">
+                        ⬇️ ดาวน์โหลด Excel QA Report
+                    </a>
+                    <p style="margin: 10px 0 0 0; font-size: 12px; color: #999;">คลิกที่ปุ่มด้านบนเพื่อดาวน์โหลดรายงานในรูปแบบ Excel</p>
+                </div>
+            """
+
         # Convert markdown report to simple HTML for email
         # Just wrapping in pre tag or basic formatting
         html_content = f"""
@@ -79,6 +94,7 @@ def send_qa_report(recipient_email: str, doc_type: str, filename: str, report_co
                     <p>เรียนผู้ใช้งาน,</p>
                     <p>ระบบ Spectra QA ได้ทำการตรวจสอบเอกสาร <b>{filename}</b> ประเภท <b>{doc_type}</b> เรียบร้อยแล้ว</p>
                     <p>นี่คือผลการวิเคราะห์และเปรียบเทียบกับฐานข้อมูล Knowledge Base:</p>
+                    {excel_section}
                     <hr>
                     <pre>{report_content}</pre>
                     <hr>
@@ -110,3 +126,4 @@ def send_qa_report(recipient_email: str, doc_type: str, filename: str, report_co
     except Exception as e:
         logger.error(f"Failed to send email to {recipient_email}: {e}", exc_info=True)
         return False
+

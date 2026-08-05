@@ -2,7 +2,7 @@
   import { createEventDispatcher, onMount } from "svelte";
   import { fade } from "svelte/transition";
   import { toast } from "./toastStore.js";
-  import { qaHistory, selectedHistory, loadQAHistoryFromDB, selectedProjectStore, qaSessionGroups, activeQAContext } from "./qaHistoryStore.js";
+  import { qaHistory, selectedHistory, loadQAHistoryFromDB, selectedProjectStore, qaSessionGroups, activeQAContext, loadQAGroupsFromDB } from "./qaHistoryStore.js";
 
   const dispatch = createEventDispatcher();
 
@@ -56,14 +56,24 @@
     const item = $selectedHistory;
     selectedHistory.set(null); // Clear it so it doesn't re-trigger
 
+    const baseName = item.filename ? item.filename.replace(/\.[^/.]+$/, "") : "";
+    const safeName = baseName.replace(/[^\w\-.]/g, '_');
+    const computedExcelUrl = `http://127.0.0.1:5000/api/qa_report/download/QA_Report_${safeName}_${item.id}.xlsx`;
+
     scanResult = {
       status: 'success',
       report: item.report,
-      email: email, // If email is not in DB, use current
+      email: item.email || email, // If email is in DB, use it, otherwise use current
+      total_pages: item.total_pages,
       doc_type: item.docType,
       filename: item.filename,
-      emailSent: false
+      emailSent: false,
+      excel_url: computedExcelUrl
     };
+
+    scanGroupName = item.group_name || 'General';
+    scanGroupType = item.group_type || '';
+    isGroupNameSet = true;
 
     const p = projects.find(p => p.id === item.project_id || p.project_id === item.project_id);
     if (p) {
@@ -172,13 +182,37 @@
     isDragging = false;
   }
   
-  function confirmGroup() {
+  async function confirmGroup() {
     if (!scanGroupName.trim()) return;
     
+    const pId = selectedProjectObj.id || selectedProjectObj.project_id;
+    const groupName = scanGroupName.trim();
+    
+    // Save to DB via API
+    try {
+      const res = await fetch("http://127.0.0.1:5000/api/qa_groups", {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_id: pId,
+          group_name: groupName,
+          group_type: scanGroupType
+        })
+      });
+      if (res.ok) {
+        // Reload groups from DB so sidebar updates immediately
+        await loadQAGroupsFromDB();
+      } else {
+        console.error("Failed to save QA group to DB");
+      }
+    } catch (err) {
+      console.error("Error saving QA group:", err);
+    }
+    
+    // Fallback/immediate UI update
     qaSessionGroups.update(groups => {
-      const pId = selectedProjectObj.id || selectedProjectObj.project_id;
-      if (!groups.find(g => g.group_name === scanGroupName.trim() && g.project_id === pId)) {
-        return [...groups, { group_name: scanGroupName.trim(), group_type: scanGroupType, project_id: pId }];
+      if (!groups.find(g => g.group_name === groupName && g.project_id === pId)) {
+        return [...groups, { group_name: groupName, group_type: scanGroupType, project_id: pId, project_code: selectedProjectObj.project_code || '' }];
       }
       return groups;
     });
@@ -230,6 +264,7 @@
     formData.append("skill_id", JSON.stringify(selectedSkills));
     if (selectedProjectObj) {
       formData.append("project_id", selectedProjectObj.id || selectedProjectObj.project_id);
+      formData.append("project_name", `${selectedProjectObj.project_code || ''} ${selectedProjectObj.name || ''}`.trim() || 'Unknown Project');
     }
     if (scanGroupName.trim()) {
       formData.append("group_name", scanGroupName.trim());
@@ -307,7 +342,8 @@
           email,
           docType: selectedDocTypes.join(", "),
           filename: scanResult.filename,
-          report: scanResult.report
+          report: scanResult.report,
+          excel_url: scanResult.excel_url || ''
         })
       });
 
@@ -345,7 +381,7 @@
 
   <svelte:window on:click={() => { docTypeOpen = false; skillOpen = false; groupTypeOpen = false; }} />
 
-<div class="qa-container" in:fade>
+<div class="qa-container" in:fade class:full-width={!!scanResult}>
   {#if !selectedProjectObj}
     <!-- PROJECT SELECTION STATE -->
     <div class="header-text">
@@ -391,7 +427,7 @@
   {:else if !isGroupNameSet}
     <!-- GROUP NAME FORM -->
     <div class="top-nav">
-      <button class="btn-back" on:click={() => { selectedProjectObj = null; isGroupNameSet = false; scanGroupName = ""; }}>
+      <button class="btn-back" on:click={() => { selectedProjectStore.set(null); isGroupNameSet = false; scanGroupName = ""; }}>
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
           <path fill-rule="evenodd" d="M11.354 1.646a.5.5 0 0 1 0 .708L5.707 8l5.647 5.646a.5.5 0 0 1-.708.708l-6-6a.5.5 0 0 1 0-.708l6-6a.5.5 0 0 1 .708 0z"/>
         </svg>
@@ -457,7 +493,7 @@
   {:else if !isProcessing && !scanResult}
     <!-- INPUT FORM -->
     <div class="top-nav">
-      <button class="btn-back" on:click={() => { isGroupNameSet = false; }}>
+      <button class="btn-back" on:click={() => { selectedProjectStore.set(null); isGroupNameSet = false; scanGroupName = ""; }}>
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
           <path fill-rule="evenodd" d="M11.354 1.646a.5.5 0 0 1 0 .708L5.707 8l5.647 5.646a.5.5 0 0 1-.708.708l-6-6a.5.5 0 0 1 0-.708l6-6a.5.5 0 0 1 .708 0z"/>
         </svg>
@@ -649,12 +685,62 @@
   {:else if scanResult}
     <!-- RESULT STATE -->
     <div class="result-state">
-      <div class="header-text" style="margin-bottom: 20px;">
-        <h2>ผลการวิเคราะห์ QA</h2>
-        <p>ตรวจสอบรายงานด้านล่าง ก่อนกดยืนยันการส่งอีเมล</p>
+      <div class="dashboard-top-bar" style="display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,0.1); width: 100%; flex-wrap: wrap; gap: 16px;">
+        <div class="left-content" style="display: flex; flex-direction: column; gap: 10px;">
+          <div class="header-text" style="text-align: left; margin: 0;">
+            <h2 style="font-size: 22px; margin-bottom: 2px;">ผลการวิเคราะห์ QA</h2>
+            <p style="font-size: 13px; margin: 0; color: #9ca3af;">ตรวจสอบรายงานด้านล่าง ก่อนกดยืนยันการส่งอีเมล</p>
+          </div>
+          <div class="result-summary" style="margin: 0; padding: 0; background: none; border: none; justify-content: flex-start; gap: 24px;">
+            <div class="summary-item" style="flex-direction: row; align-items: baseline; gap: 8px;">
+              <span class="lbl" style="margin: 0;">ส่งผลลัพธ์ไปที่:</span>
+              <span class="val" style="margin: 0;">{scanResult.email || "- ไม่ระบุ -"}</span>
+            </div>
+            <div class="summary-item" style="flex-direction: row; align-items: baseline; gap: 8px;">
+              <span class="lbl" style="margin: 0;">จำนวนหน้า:</span>
+              <span class="val" style="margin: 0;">{scanResult.total_pages ? scanResult.total_pages + ' หน้า' : '- ไม่ทราบ -'}</span>
+            </div>
+            {#if scanResult.emailSent}
+              <div class="summary-item" style="flex-direction: row; align-items: baseline; gap: 8px;">
+                <span class="lbl" style="margin: 0;">สถานะส่งอีเมล:</span>
+                <span class="val success" style="margin: 0;">ส่งสำเร็จแล้ว</span>
+              </div>
+            {/if}
+          </div>
+        </div>
+
+        <div class="right-actions" style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+          <button class="btn-outline" on:click={resetForm} disabled={isSendingEmail} style="padding: 10px 16px; min-width: 0; height: 42px; margin: 0;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><polyline points="1 4 1 10 7 10"></polyline><polyline points="23 20 23 14 17 14"></polyline><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"></path></svg>
+            เริ่มใหม่
+          </button>
+          
+          {#if scanResult.excel_url}
+            <a href={scanResult.excel_url} target="_blank" rel="noopener noreferrer" class="btn-download-excel" style="padding: 10px 16px; margin: 0; height: 42px; border-radius: 8px; font-size: 14px; box-shadow: none;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="7 10 12 15 17 10"></polyline>
+                <line x1="12" y1="15" x2="12" y2="3"></line>
+              </svg>
+              ดาวน์โหลด Excel
+            </a>
+          {/if}
+
+          <button class="btn-primary" on:click={sendEmail} disabled={isSendingEmail || scanResult.emailSent || !scanResult.email} style="padding: 10px 20px; min-width: 0; height: 42px; margin: 0; border-radius: 8px; font-size: 14px;">
+            {#if isSendingEmail}
+              กำลังส่ง...
+            {:else if scanResult.emailSent}
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><polyline points="20 6 9 17 4 12"></polyline></svg>
+              ส่งแล้ว
+            {:else}
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+              ส่งรายงานเข้าอีเมล
+            {/if}
+          </button>
+        </div>
       </div>
 
-      <div class="report-box email-preview">
+      <div class="report-box email-preview" style="max-height: none;">
         <div class="email-header">
           <h2>Spectra QA Consult Report</h2>
         </div>
@@ -674,41 +760,6 @@
           <hr>
           <p class="footer-note"><small>สร้างโดย Spectra QA Intelligent Analysis System</small></p>
         </div>
-      </div>
-      
-      <div class="result-summary">
-        <div class="summary-item">
-          <span class="lbl">ส่งผลลัพธ์ไปที่:</span>
-          <span class="val">{scanResult.email || "- ไม่ระบุ -"}</span>
-        </div>
-        <div class="summary-item">
-          <span class="lbl">จำนวนหน้าที่วิเคราะห์:</span>
-          <span class="val">{scanResult.total_pages ? scanResult.total_pages + ' หน้า' : '- ไม่ทราบจำนวน -'}</span>
-        </div>
-        {#if scanResult.emailSent}
-          <div class="summary-item">
-            <span class="lbl">สถานะการส่งอีเมล:</span>
-            <span class="val success">ส่งสำเร็จแล้ว</span>
-          </div>
-        {/if}
-      </div>
-
-      <div class="action-buttons">
-        <button class="btn-outline" on:click={resetForm} disabled={isSendingEmail}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><polyline points="1 4 1 10 7 10"></polyline><polyline points="23 20 23 14 17 14"></polyline><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"></path></svg>
-          เริ่มใหม่
-        </button>
-        <button class="btn-primary" on:click={sendEmail} disabled={isSendingEmail || scanResult.emailSent || !scanResult.email}>
-          {#if isSendingEmail}
-            กำลังส่งอีเมล...
-          {:else if scanResult.emailSent}
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><polyline points="20 6 9 17 4 12"></polyline></svg>
-            ส่งอีเมลแล้ว
-          {:else}
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
-            ยืนยันส่งรายงานเข้าอีเมล
-          {/if}
-        </button>
       </div>
     </div>
   {/if}
@@ -758,6 +809,10 @@
     flex-direction: column;
     gap: 30px;
     overflow-y: auto;
+  }
+  .qa-container.full-width {
+    max-width: 100%;
+    padding: 20px 20px;
   }
   .header-text {
     text-align: center;
@@ -1077,12 +1132,25 @@
   }
 
   /* Loading State */
-  .loading-state, .result-state {
+  .loading-state {
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
     padding: 60px 20px;
+    background: var(--surface2);
+    border-radius: 16px;
+    border: 1px solid var(--border);
+    min-height: 400px;
+  }
+  
+  /* Result State */
+  .result-state {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    padding: 24px 32px;
     background: var(--surface2);
     border-radius: 16px;
     border: 1px solid var(--border);
@@ -1497,5 +1565,63 @@
   .modal-actions.centered button {
     flex: none;
     min-width: 120px;
+  }
+
+  /* Excel Download Section */
+  .excel-download-section {
+    margin: 20px 0;
+  }
+  .excel-badge {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 18px 24px;
+    background: linear-gradient(135deg, rgba(124, 58, 237, 0.08), rgba(59, 130, 246, 0.08));
+    border: 1px solid rgba(124, 58, 237, 0.25);
+    border-radius: 14px;
+    transition: all 0.25s ease;
+  }
+  .excel-badge:hover {
+    border-color: rgba(124, 58, 237, 0.45);
+    background: linear-gradient(135deg, rgba(124, 58, 237, 0.12), rgba(59, 130, 246, 0.12));
+  }
+  .excel-badge > svg {
+    color: #10b981;
+    flex-shrink: 0;
+  }
+  .excel-info {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    flex: 1;
+  }
+  .excel-title {
+    font-weight: 600;
+    font-size: 14px;
+    color: white;
+  }
+  .excel-desc {
+    font-size: 12px;
+    color: #9ca3af;
+  }
+  .btn-download-excel {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 22px;
+    background: linear-gradient(135deg, #10b981, #059669);
+    color: white;
+    text-decoration: none;
+    border-radius: 10px;
+    font-weight: 600;
+    font-size: 13px;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+    box-shadow: 0 4px 14px rgba(16, 185, 129, 0.25);
+  }
+  .btn-download-excel:hover {
+    background: linear-gradient(135deg, #059669, #047857);
+    transform: translateY(-1px);
+    box-shadow: 0 6px 18px rgba(16, 185, 129, 0.35);
   }
 </style>

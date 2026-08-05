@@ -376,7 +376,7 @@ def search_knowledge_base(query_text: str, doc_type: str = None, top_k: int = 5,
         if cursor: cursor.close()
         if conn: conn.close()
 
-def init_qa_transactions_table():
+def init_qa_transactions():
     """Initializes the qa_transactions table in the database."""
     conn = None
     cursor = None
@@ -395,18 +395,30 @@ def init_qa_transactions_table():
                 doc_type VARCHAR(255),
                 extracted_text TEXT,
                 qa_report TEXT,
+                total_pages INTEGER,
+                email VARCHAR(255),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
         try:
             cursor.execute("ALTER TABLE qa_transactions ADD COLUMN group_name VARCHAR(255);")
         except Exception:
-            pass # Column likely already exists
+            pass 
             
         try:
             cursor.execute("ALTER TABLE qa_transactions ADD COLUMN group_type VARCHAR(100);")
         except Exception:
-            pass # Column likely already exists
+            pass 
+            
+        try:
+            cursor.execute("ALTER TABLE qa_transactions ADD COLUMN total_pages INTEGER;")
+        except Exception:
+            pass
+            
+        try:
+            cursor.execute("ALTER TABLE qa_transactions ADD COLUMN email VARCHAR(255);")
+        except Exception:
+            pass
             
         logger.info("Checked/Created qa_transactions table.")
     except Exception as e:
@@ -415,7 +427,7 @@ def init_qa_transactions_table():
         if cursor: cursor.close()
         if conn: conn.close()
 
-def save_qa_transaction(project_id, group_name, group_type, filename, doc_type, extracted_text, qa_report):
+def save_qa_transaction(project_id, group_name, group_type, filename, doc_type, extracted_text, qa_report, total_pages=None, email=None):
     """Saves a QA consult transaction to the database."""
     conn = None
     cursor = None
@@ -427,12 +439,14 @@ def save_qa_transaction(project_id, group_name, group_type, filename, doc_type, 
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO qa_transactions (project_id, group_name, group_type, filename, doc_type, extracted_text, qa_report)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-        """, (project_id, group_name, group_type, filename, doc_type, extracted_text, qa_report))
+            INSERT INTO qa_transactions (project_id, group_name, group_type, filename, doc_type, extracted_text, qa_report, total_pages, email)
+            VALUES (%s::uuid, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING transaction_id
+        """, (project_id, group_name, group_type, filename, doc_type, extracted_text, qa_report, total_pages, email))
+        transaction_id = cursor.fetchone()[0]
         conn.commit()
         logger.info(f"Saved QA transaction for {filename} in project {project_id}.")
-        return True
+        return str(transaction_id)
     except Exception as e:
         if conn: conn.rollback()
         logger.error(f"Error saving QA transaction: {e}", exc_info=True)
@@ -473,3 +487,95 @@ def get_latest_qa_transaction(project_id, filename):
         if cursor: cursor.close()
         if conn: conn.close()
 
+def init_qa_groups_table():
+    """Initializes the qa_groups table in the database."""
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        conn.autocommit = True
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS qa_groups (
+                group_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                project_id UUID REFERENCES projects(project_id) ON DELETE CASCADE,
+                group_name VARCHAR(255) NOT NULL,
+                group_type VARCHAR(100) NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(project_id, group_name)
+            );
+        """)
+        logger.info("Checked/Created qa_groups table.")
+    except Exception as e:
+        logger.error(f"Error initializing qa_groups table: {e}", exc_info=True)
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+
+def save_qa_group(project_id, group_name, group_type):
+    """Saves a QA group to the database."""
+    conn = None
+    cursor = None
+    try:
+        if not project_id or not group_name:
+            return False, "project_id and group_name are required"
+            
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        # Insert or ignore (using ON CONFLICT DO NOTHING)
+        cursor.execute("""
+            INSERT INTO qa_groups (project_id, group_name, group_type)
+            VALUES (%s::uuid, %s, %s)
+            ON CONFLICT (project_id, group_name) DO NOTHING
+            RETURNING group_id
+        """, (project_id, group_name, group_type))
+        conn.commit()
+        return True, "Group saved"
+    except Exception as e:
+        if conn: conn.rollback()
+        logger.error(f"Error saving QA group: {e}", exc_info=True)
+        return False, str(e)
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+
+def get_qa_groups(project_id=None):
+    """Retrieves all QA groups, optionally filtered by project."""
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        sql = """
+            SELECT g.group_id, g.project_id, g.group_name, g.group_type, g.created_at, p.project_code
+            FROM qa_groups g
+            LEFT JOIN projects p ON g.project_id = p.project_id
+        """
+        params = []
+        if project_id:
+            sql += " WHERE g.project_id = %s::uuid"
+            params.append(project_id)
+            
+        sql += " ORDER BY g.created_at DESC"
+        
+        cursor.execute(sql, params)
+        rows = cursor.fetchall()
+        groups = []
+        for r in rows:
+            groups.append({
+                'group_id': str(r[0]),
+                'project_id': str(r[1]),
+                'group_name': r[2],
+                'group_type': r[3],
+                'created_at': r[4].isoformat() if r[4] else None,
+                'project_code': r[5] or 'Unknown'
+            })
+        return groups
+    except Exception as e:
+        logger.error(f"Error retrieving QA groups: {e}", exc_info=True)
+        return []
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()

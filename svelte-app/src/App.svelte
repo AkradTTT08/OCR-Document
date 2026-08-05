@@ -4,7 +4,7 @@
   import ResultsPanel from "./lib/ResultsPanel.svelte";
   import KnowledgeBase from "./lib/KnowledgeBase.svelte";
   import SkillManager from "./lib/SkillManager.svelte";
-  import { qaHistory, selectedHistory, loadQAHistoryFromDB, selectedProjectStore, qaSessionGroups, activeQAContext } from "./lib/qaHistoryStore.js";
+  import { qaHistory, selectedHistory, loadQAHistoryFromDB, selectedProjectStore, qaSessionGroups, activeQAContext, allGroups, loadQAGroupsFromDB } from "./lib/qaHistoryStore.js";
   import Toast from "./lib/Toast.svelte";
   import Login from "./lib/Login.svelte";
   import ComingSoon from "./lib/ComingSoon.svelte";
@@ -15,9 +15,39 @@
   import { onMount } from "svelte";
   import { toast } from "./lib/toastStore.js";
 
-  onMount(() => {
+  let sidebarProjects = [];
+
+  onMount(async () => {
     loadQAHistoryFromDB();
+    loadQAGroupsFromDB();
+    // Load projects for sidebar group mapping
+    try {
+      const res = await fetch('http://127.0.0.1:5000/api/projects');
+      if (res.ok) {
+        const data = await res.json();
+        sidebarProjects = data.projects || [];
+      }
+    } catch(e) {
+      console.error('Failed to load projects for sidebar:', e);
+    }
   });
+
+  function handleGroupClick(group) {
+    // Find the project for this group
+    const proj = sidebarProjects.find(p => (p.id || p.project_id) === group.project_id);
+    if (proj) {
+      activeView = 'qa_consult';
+      activeQAContext.set({ project: proj, group_name: group.group_name, group_type: group.group_type });
+    } else {
+      // If project not found in list, still try to navigate
+      activeView = 'qa_consult';
+      activeQAContext.set({ 
+        project: { id: group.project_id, project_id: group.project_id, project_code: group.project_code || 'Unknown', name: group.project_code || 'Project' }, 
+        group_name: group.group_name, 
+        group_type: group.group_type 
+      });
+    }
+  }
 
   let scanResult = null;
   let isProcessing = false;
@@ -171,10 +201,9 @@
 </script>
 
 <div class="app-wrapper">
-  <!-- Glowing Background Orbs -->
-  <div class="bg-glow glow-1"></div>
-  <div class="bg-glow glow-2"></div>
-  <div class="bg-glow glow-3"></div>
+  <!-- ── Animated Spectrum Background ── -->
+  <div class="spectrum-bg"></div>
+  <div class="spectrum-bg layer-2"></div>
 
   <div class="app-container">
   {#if $showLogin}
@@ -215,46 +244,54 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
             QA Consult
           </button>
-          
-          {#if $selectedProjectStore && projectGroups.length > 0}
-            <div class="history-section">
-              <div class="history-title">กลุ่มการตรวจสอบ (Groups)</div>
-              <div class="history-list">
-                {#each projectGroups as group}
-                  <button class="history-item" on:click={() => { 
-                    activeView = "qa_consult"; 
-                    activeQAContext.set({ project: $selectedProjectStore, group_name: group.group_name, group_type: group.group_type }); 
-                  }}>
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="flex-shrink: 0;"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
-                    <div class="history-details">
-                      <span class="h-filename" style="color: #c4b5fd;">[{group.group_type || 'General'}] {group.group_name}</span>
-                    </div>
-                  </button>
-                {/each}
+          {#if $selectedProjectStore}
+            <!-- Groups filtered by selected project -->
+            {#if $allGroups.filter(g => g.project_id === ($selectedProjectStore.id || $selectedProjectStore.project_id)).length > 0}
+              <div class="history-section">
+                <div class="history-title">กลุ่มการตรวจสอบ (Groups)</div>
+                <div class="history-list">
+                  {#each $allGroups.filter(g => g.project_id === ($selectedProjectStore.id || $selectedProjectStore.project_id)) as group}
+                    <button class="history-item group-item" on:click={() => handleGroupClick(group)}>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="flex-shrink: 0;">
+                        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                      </svg>
+                      <div class="history-details">
+                        <span class="h-filename" style="color: #c4b5fd;">[{group.group_type || 'General'}] {group.group_name}</span>
+                        <span class="h-project">{group.project_code}</span>
+                        {#if group.scan_count > 0}
+                          <span class="h-date">{group.scan_count} ไฟล์ที่ scan แล้ว</span>
+                        {:else}
+                          <span class="h-date" style="color: #f59e0b;">ยังไม่มีไฟล์</span>
+                        {/if}
+                      </div>
+                    </button>
+                  {/each}
+                </div>
               </div>
-            </div>
-          {/if}
+            {/if}
 
-          {#if $selectedProjectStore && $qaHistory.filter(h => h.project_id === ($selectedProjectStore.id || $selectedProjectStore.project_id)).length > 0}
-            <div class="history-section">
-              <div class="history-title">ประวัติการวิเคราะห์ (History)</div>
-              <div class="history-list">
-                {#each $qaHistory.filter(h => h.project_id === ($selectedProjectStore.id || $selectedProjectStore.project_id)).slice(0, 10) as item}
-                  <button class="history-item" on:click={() => { activeView = "qa_consult"; selectedHistory.set(item); }}>
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path></svg>
-                    <div class="history-details">
-                      <span class="h-filename">{item.filename}</span>
-                      <span class="h-project" style="color: #a78bfa;">
-                        {#if item.group_type}[{item.group_type}] {/if}{item.group_name || 'General'}
-                      </span>
-                      {#if item.date}
-                        <span class="h-date">{formatHistoryDate(item.date)}</span>
-                      {/if}
-                    </div>
-                  </button>
-                {/each}
+            <!-- History filtered by selected project -->
+            {#if $qaHistory.filter(h => h.project_id === ($selectedProjectStore.id || $selectedProjectStore.project_id)).length > 0}
+              <div class="history-section">
+                <div class="history-title">ประวัติการวิเคราะห์ (History)</div>
+                <div class="history-list">
+                  {#each $qaHistory.filter(h => h.project_id === ($selectedProjectStore.id || $selectedProjectStore.project_id)).slice(0, 10) as item}
+                    <button class="history-item" on:click={() => { activeView = "qa_consult"; selectedHistory.set(item); }}>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path></svg>
+                      <div class="history-details">
+                        <span class="h-filename">{item.filename}</span>
+                        <span class="h-project" style="color: #a78bfa;">
+                          {#if item.group_type}[{item.group_type}] {/if}{item.group_name || 'General'}
+                        </span>
+                        {#if item.date}
+                          <span class="h-date">{formatHistoryDate(item.date)}</span>
+                        {/if}
+                      </div>
+                    </button>
+                  {/each}
+                </div>
               </div>
-            </div>
+            {/if}
           {/if}
         {/if}
       </nav>
@@ -426,34 +463,45 @@
     position: relative;
     width: 100vw;
     height: 100vh;
-    background-color: var(--bg-dark);
+    background-color: transparent; /* Changed from var(--bg-dark) to show body animated background */
     overflow: hidden;
   }
 
-  /* ── Ambient Background Glows ── */
-  .bg-glow {
+  /* ── Animated Spectrum Background ── */
+  .spectrum-bg {
     position: absolute;
-    border-radius: 50%;
-    filter: blur(120px);
-    opacity: 0.6;
+    width: 150vw;
+    height: 150vh;
+    top: -25vh;
+    left: -25vw;
+    background: conic-gradient(
+        from 180deg at 50% 50%,
+        var(--bg-dark) 0deg,
+        var(--danger) 60deg,
+        var(--warning) 120deg,
+        var(--success) 180deg,
+        var(--primary) 240deg,
+        var(--secondary) 300deg,
+        var(--bg-dark) 360deg
+    );
+    filter: blur(140px);
+    opacity: 0.15;
+    animation: spin 30s linear infinite;
     z-index: 0;
     pointer-events: none;
-    animation: float 20s ease-in-out infinite alternate;
   }
-  .glow-1 {
-    top: -10%; left: -5%; width: 400px; height: 400px;
-    background: rgba(99, 102, 241, 0.35); /* Primary */
+  
+  .spectrum-bg.layer-2 {
+    background: radial-gradient(circle at 70% 30%, rgba(99, 102, 241, 0.25), transparent 40%),
+                radial-gradient(circle at 30% 70%, rgba(168, 85, 247, 0.25), transparent 40%);
+    filter: blur(90px);
+    opacity: 0.6;
+    animation: pulse 15s ease-in-out infinite alternate;
+    z-index: 0;
   }
-  .glow-2 {
-    bottom: -10%; right: -5%; width: 500px; height: 500px;
-    background: rgba(168, 85, 247, 0.25); /* Secondary */
-    animation-delay: -5s;
-  }
-  .glow-3 {
-    top: 40%; left: 50%; width: 300px; height: 300px;
-    background: rgba(6, 182, 212, 0.2); /* Accent */
-    animation-delay: -10s;
-  }
+
+  @keyframes spin { 100% { transform: rotate(360deg); } }
+  @keyframes pulse { 0% { transform: scale(1); } 100% { transform: scale(1.1); } }
 
   .app-container {
     position: relative;
@@ -599,6 +647,15 @@
   .history-item:hover {
     background: var(--glass-bg-hover);
     color: var(--text-main);
+  }
+  .history-item.group-item {
+    border-left: 3px solid transparent;
+    padding-left: 10px;
+    transition: all 0.2s ease;
+  }
+  .history-item.group-item:hover {
+    border-left-color: #8b5cf6;
+    background: rgba(139, 92, 246, 0.08);
   }
   .history-item svg {
     margin-top: 2px;

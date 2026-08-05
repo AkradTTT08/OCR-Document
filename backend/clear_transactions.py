@@ -5,10 +5,10 @@ import psycopg2
 load_dotenv()
 
 DB_HOST = os.getenv("DB_HOST", "localhost")
-DB_PORT = os.getenv("DB_PORT", "5432")
-DB_NAME = os.getenv("DB_NAME", "spectra_qa")
-DB_USER = os.getenv("DB_USER", "postgres")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "postgres")
+DB_PORT = os.getenv("DB_PORT", "8123")
+DB_NAME = os.getenv("DB_NAME", "qa_agent_db")
+DB_USER = os.getenv("DB_USER", "qa_admin")
+DB_PASSWORD = os.getenv("DB_PASS", "qa_password")
 
 def clear_data():
     try:

@@ -1662,6 +1662,7 @@ created_by: "{created_by or 'Admin'}"
 
 from db_ingestion import search_knowledge_base
 from email_service import send_qa_report
+from excel_report import generate_qa_excel
 
 @app.route('/api/doc_types', methods=['GET'])
 def get_doc_types():
@@ -1700,6 +1701,7 @@ def qa_consult_api():
         email = request.form.get('email', '')
         skill_id_raw = request.form.get('skill_id', '')
         project_id = request.form.get('project_id', '')
+        project_name = request.form.get('project_name', 'โครงการนี้')
         group_name = request.form.get('group_name', 'General')
         group_type = request.form.get('group_type', 'Project Plan')
 
@@ -1812,13 +1814,13 @@ def qa_consult_api():
 
                 skill_section = f"--- คำสั่งพิเศษเพิ่มเติมจาก AI Skill ---\n{skill_instructions}\n" if skill_instructions else ""
                 prompt = f"""คุณคือผู้เชี่ยวชาญด้านระบบสารสนเทศ และ System QA (Quality Assurance)
-หน้าที่ของคุณคือตรวจสอบและเปรียบเทียบความถูกต้องของ 'เอกสารที่อัปโหลด' กับ 'ข้อมูลมาตรฐาน' ที่มีอยู่ในฐานข้อมูล (Knowledge Base ของโครงการ AIAgentQA)
+หน้าที่ของคุณคือตรวจสอบและเปรียบเทียบความถูกต้องของ 'เอกสารที่อัปโหลด' กับ 'ข้อมูลมาตรฐาน' ที่มีอยู่ในฐานข้อมูล (Knowledge Base ของโครงการ {project_name})
 
 ประเภทของเอกสารที่กำลังตรวจสอบ: {', '.join(doc_type) if isinstance(doc_type, list) else doc_type}
 
 {skill_section}
 
-=== ข้อมูลมาตรฐานจากฐานข้อมูล AIAgentQA ===
+=== ข้อมูลมาตรฐานจากฐานข้อมูล {project_name} ===
 {kb_context if kb_context else 'ไม่พบข้อมูลที่ตรงกันเป๊ะในระบบ (โปรดประเมินจากความรู้ทั่วไปหรือโครงสร้างเอกสาร)'}
 {prev_report_context}
 === เอกสารที่ผู้ใช้อัปโหลด ===
@@ -1866,11 +1868,49 @@ def qa_consult_api():
                 report = gemini_res.text
                 
                 # Save transaction
+                transaction_id = None
                 if project_id:
                     try:
-                        save_qa_transaction(project_id, group_name, group_type, original_filename, ', '.join(doc_type) if isinstance(doc_type, list) else doc_type, extracted_text[:8000], report)
+                        transaction_id = save_qa_transaction(project_id, group_name, group_type, original_filename, ', '.join(doc_type) if isinstance(doc_type, list) else doc_type, extracted_text[:8000], report, total_pages, email)
                     except Exception as e:
                         logger.error(f"Failed to save QA transaction: {e}")
+
+                yield f"data: {json.dumps({'type': 'progress', 'pct': 90, 'message': 'กำลังสร้าง Excel QA Report...' })}\n\n"
+
+                # Generate Excel Report
+                excel_download_url = ''
+                try:
+                    doc_type_str = ', '.join(doc_type) if isinstance(doc_type, list) else doc_type
+                    p_code = ''
+                    if project_id:
+                        try:
+                            from db_ingestion import get_db_connection as _gdc
+                            _conn = _gdc()
+                            _cur = _conn.cursor()
+                            _cur.execute("SELECT project_code FROM projects WHERE project_id = %s", (project_id,))
+                            _row = _cur.fetchone()
+                            if _row: p_code = _row[0]
+                            _cur.close()
+                            _conn.close()
+                        except:
+                            pass
+                    from excel_report import generate_qa_excel
+                    excel_path = generate_qa_excel(
+                        report_text=report,
+                        filename=original_filename,
+                        doc_type=doc_type_str,
+                        project_code=p_code,
+                        group_name=group_name,
+                        group_type=group_type,
+                        transaction_id=transaction_id
+                    )
+                    # Create download URL from filename
+                    import os as _os
+                    excel_basename = _os.path.basename(excel_path)
+                    excel_download_url = f"http://127.0.0.1:5000/api/qa_report/download/{excel_basename}"
+                    logger.info(f"Excel report generated: {excel_path}")
+                except Exception as excel_err:
+                    logger.error(f"Failed to generate Excel report: {excel_err}")
 
                 yield f"data: {json.dumps({'type': 'progress', 'pct': 100, 'message': 'ประมวลผลเสร็จสมบูรณ์ เตรียมแสดงรายงาน...' })}\n\n"
                 
@@ -1881,7 +1921,8 @@ def qa_consult_api():
                     'report': report,
                     'email': email,
                     'doc_type': ', '.join(doc_type) if isinstance(doc_type, list) else doc_type,
-                    'filename': original_filename
+                    'filename': original_filename,
+                    'excel_url': excel_download_url
                 }
                 
                 yield f"data: {json.dumps({'type': 'complete', 'result': result_payload })}\n\n"
@@ -1910,12 +1951,13 @@ def qa_send_email():
         doc_type = data.get('docType')
         filename = data.get('filename')
         report = data.get('report')
+        excel_url = data.get('excel_url', '')
 
         if not all([email, doc_type, filename, report]):
             return jsonify({'error': 'Missing required fields'}), 400
 
         from email_service import send_qa_report
-        email_sent = send_qa_report(email, doc_type, filename, report)
+        email_sent = send_qa_report(email, doc_type, filename, report, excel_download_url=excel_url)
 
         if email_sent:
             return jsonify({'success': True, 'message': 'ส่งอีเมลสำเร็จ'})
@@ -1926,6 +1968,47 @@ def qa_send_email():
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
+
+@app.route('/api/qa_report/download/<path:filename>', methods=['GET'])
+def download_qa_excel(filename):
+    """Download generated QA Excel report"""
+    try:
+        reports_dir = Path(__file__).parent.parent / "reports"
+        safe_name = secure_filename(filename)
+        filepath = reports_dir / safe_name
+        
+        if not filepath.exists():
+            # Fallback for old history files with different naming conventions
+            import re, os
+            match = re.match(r'QA_Report_(.+)_[a-zA-Z0-9\-]+\.xlsx', safe_name)
+            if match:
+                base_search = match.group(1)
+                best_match = None
+                best_mtime = 0
+                for f in os.listdir(reports_dir):
+                    if f.startswith(f"QA_Report_{base_search}_") and f.endswith(".xlsx"):
+                        f_mtime = os.path.getmtime(reports_dir / f)
+                        if f_mtime > best_mtime:
+                            best_match = f
+                            best_mtime = f_mtime
+                if best_match:
+                    safe_name = best_match
+                    filepath = reports_dir / safe_name
+                else:
+                    return jsonify({'error': 'ไม่พบไฟล์รายงาน'}), 404
+            else:
+                return jsonify({'error': 'ไม่พบไฟล์รายงาน'}), 404
+        
+        return send_from_directory(
+            str(reports_dir),
+            safe_name,
+            as_attachment=True,
+            download_name=safe_name,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+    except Exception as e:
+        logger.error(f"Error downloading Excel report: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/qa_transactions', methods=['GET'])
 def get_qa_transactions():
@@ -1938,7 +2021,7 @@ def get_qa_transactions():
         limit = request.args.get('limit', 20, type=int)
         
         cursor.execute("""
-            SELECT t.transaction_id, t.project_id, t.group_name, t.group_type, t.filename, t.doc_type, t.qa_report, t.created_at, p.project_code
+            SELECT t.transaction_id, t.project_id, t.group_name, t.group_type, t.filename, t.doc_type, t.qa_report, t.created_at, p.project_code, t.total_pages, t.email
             FROM qa_transactions t
             LEFT JOIN projects p ON t.project_id = p.project_id
             ORDER BY t.created_at DESC
@@ -1957,7 +2040,9 @@ def get_qa_transactions():
                 'docType': r[5],
                 'report': r[6],
                 'date': r[7].isoformat() if r[7] else None,
-                'project_code': r[8] or 'Unknown'
+                'project_code': r[8] or 'Unknown',
+                'total_pages': r[9] if len(r) > 9 else None,
+                'email': r[10] if len(r) > 10 else None
             })
             
         cursor.close()
@@ -1966,6 +2051,35 @@ def get_qa_transactions():
     except Exception as e:
         logger.error(f"Error fetching qa_transactions: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
+
+@app.route('/api/qa_groups', methods=['GET', 'POST'])
+def handle_qa_groups():
+    """Handle QA groups (create and list)"""
+    from db_ingestion import get_qa_groups, save_qa_group
+    
+    if request.method == 'GET':
+        try:
+            project_id = request.args.get('project_id')
+            groups = get_qa_groups(project_id)
+            return jsonify({'success': True, 'groups': groups})
+        except Exception as e:
+            logger.error(f"Error fetching qa_groups: {e}", exc_info=True)
+            return jsonify({'error': str(e)}), 500
+            
+    elif request.method == 'POST':
+        try:
+            data = request.json
+            if not data or not data.get('project_id') or not data.get('group_name'):
+                return jsonify({'error': 'project_id and group_name are required'}), 400
+                
+            success, msg = save_qa_group(data['project_id'], data['group_name'], data.get('group_type', 'Project Plan'))
+            if success:
+                return jsonify({'success': True, 'message': msg})
+            else:
+                return jsonify({'error': msg}), 500
+        except Exception as e:
+            logger.error(f"Error creating qa_group: {e}", exc_info=True)
+            return jsonify({'error': str(e)}), 500
 
 
 if __name__ == '__main__':
@@ -1981,8 +2095,8 @@ if __name__ == '__main__':
     # Initialize QA transactions table
     logger.info("กำลังเริ่มต้นตาราง DB ที่จำเป็น...")
     try:
-        from db_ingestion import init_qa_transactions_table
-        init_qa_transactions_table()
+        from db_ingestion import init_qa_transactions
+        init_qa_transactions()
     except Exception as e:
         logger.error(f"Failed to initialize DB tables: {e}")
     
