@@ -2,11 +2,23 @@
     import { onMount } from 'svelte';
     import { toast } from './toastStore.js';
     import { authUser } from './authStore.js';
+    import CustomSelect from './CustomSelect.svelte';
 
     let users = [];
     let isLoading = true;
     let searchQuery = '';
     let roleFilter = 'all';
+
+    const roleFilterOptions = [
+        { value: 'all', label: 'ทุกระดับสิทธิ์ (All)', icon: '👥' },
+        { value: 'admin', label: 'ผู้ดูแลระบบ (Admin)', icon: '🛡️' },
+        { value: 'user', label: 'ผู้ใช้ทั่วไป (User)', icon: '👤' }
+    ];
+
+    const roleFormOptions = [
+        { value: 'user', label: 'ผู้ใช้ทั่วไป (Standard User)', icon: '👤' },
+        { value: 'admin', label: 'ผู้ดูแลระบบ (Admin)', icon: '🛡️' }
+    ];
 
     let avatarFile = null;
     let avatarPreview = null;
@@ -288,11 +300,11 @@
             <input type="text" bind:value={searchQuery} placeholder="ค้นหาชื่อ, อีเมล หรือ Username..." />
         </div>
         <div class="role-filter">
-            <select bind:value={roleFilter}>
-                <option value="all">ทุกระดับสิทธิ์ (All)</option>
-                <option value="admin">ผู้ดูแลระบบ (Admin)</option>
-                <option value="user">ผู้ใช้ทั่วไป (User)</option>
-            </select>
+            <CustomSelect 
+                bind:value={roleFilter} 
+                options={roleFilterOptions} 
+                minWidth="200px" 
+            />
         </div>
     </div>
 
@@ -446,10 +458,12 @@
         
         <div class="form-group">
             <label for="role">ระดับสิทธิ์ (Role)</label>
-            <select id="role" bind:value={formData.role}>
-                <option value="user">ผู้ใช้ทั่วไป (Standard User)</option>
-                <option value="admin">ผู้ดูแลระบบ (Admin)</option>
-            </select>
+            <CustomSelect 
+                id="role"
+                bind:value={formData.role} 
+                options={roleFormOptions} 
+                width="100%" 
+            />
         </div>
         
         <div class="modal-actions">

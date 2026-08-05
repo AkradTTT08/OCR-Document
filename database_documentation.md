@@ -146,68 +146,82 @@ erDiagram
 | `skill_description` | TEXT | - | คำอธิบายสั้นๆ ให้คนอ่านเข้าใจ |
 | `markdown_instructions`| TEXT | NOT NULL | เนื้อหาคู่มือการทำงาน (Skill.md) |
 | `target_doc_type` | VARCHAR(50) | - | ประเภทเอกสารเป้าหมาย (Nullable) |
-| `version` | INT | DEFAULT `1` | เวอร์ชัน Skill |
-| `is_active` | BOOLEAN | DEFAULT `TRUE` | Skill ที่ใช้งานอยู่ |
-| `created_by` | VARCHAR(50) | - | ผู้สร้าง |
-| `created_at` | TIMESTAMP | DEFAULT NOW() | วันที่สร้าง |
-
----
-
-### 5. `evaluation_logs` — ตารางผลการประเมิน QA
-
-| Column | Type | Constraint | Description |
-|---|---|---|---|
-| `log_id` | UUID | PK | รหัส Log (gen_random_uuid) |
-| `project_id` | UUID | FK → `projects` (CASCADE) | โครงการ |
-| `doc_id` | UUID | FK → `documents` (CASCADE) | เอกสารที่ถูกประเมิน |
-| `skill_id` | UUID | FK → `agent_skills` | Skill ที่ใช้ (Nullable) |
-| `ai_model` | VARCHAR(50) | - | ชื่อ AI Model เช่น `claude-3-5-sonnet` |
-| `ai_result` | TEXT | - | ผลลัพธ์จาก AI |
-| `human_feedback_score` | INT | CHECK (1–5) | คะแนนจาก Human (1=แย่, 5=ดีมาก) |
-| `human_remark` | TEXT | - | ความคิดเห็นเพิ่มเติม |
-| `processing_time_ms` | INT | - | เวลาที่ใช้ประมวลผล (ms) |
-| `created_at` | TIMESTAMP | DEFAULT NOW() | วันที่บันทึก |
-
----
-
-### 6. `qa_transactions` — ตารางประวัติการตรวจสอบเอกสาร (QA Consult)
-
-| Column | Type | Constraint | Description |
-|---|---|---|---|
-| `transaction_id` | UUID | PK | รหัสประวัติสแกน (gen_random_uuid) |
-| `project_id` | UUID | FK → `projects` (CASCADE) | โครงการ |
-| `filename` | VARCHAR(255) | NOT NULL | ชื่อไฟล์ที่สแกน |
-| `doc_type` | VARCHAR(255) | - | ประเภทเอกสาร |
+| `version` | INT | DEFAULT `1` | เวอร์ชัน Skill | `doc_type` | VARCHAR(255) | - | ประเภทเอกสาร |
 | `extracted_text` | TEXT | - | เนื้อหาที่ดึงออกมาจากไฟล์ด้วยระบบ OCR |
 | `qa_report` | TEXT | - | ผลการวิเคราะห์และการเปรียบเทียบจาก AI |
 | `created_at` | TIMESTAMP | DEFAULT NOW() | วันที่บันทึก |
 
 ---
 
-## 👁️ Views
-
-### `project_reference_context`
-
-View สำหรับให้ AI Agent ค้นหาเอกสาร Reference เฉพาะที่ยังใช้งานอยู่ (status = 'Active')
-
-```sql
-SELECT 
-    c.chunk_id, 
-    d.project_id, 
-    d.doc_type, 
-    c.chunk_text, 
-    c.embedding
-FROM document_chunks c
-JOIN documents d ON c.doc_id = d.doc_id
-WHERE d.doc_category = 'Reference' AND d.status = 'Active';
-```
-
-> **วัตถุประสงค์:** ป้องกันไม่ให้ Agent เห็นเอกสารที่ถูก Archive แล้ว และจำกัด Scope เฉพาะไฟล์ Reference
+### 7. `exit_criteria_templates` — ตารางแม่แบบ Exit Criteria
+| Column | Type | Constraint | Description |
+|---|---|---|---|
+| `template_id` | UUID | PK | รหัส Template (gen_random_uuid) |
+| `project_id` | UUID | FK → `projects` (CASCADE) | ผูกกับโครงการ (NULL = ใช้ได้กับทุกโครงการ) |
+| `title` | VARCHAR(255) | NOT NULL | ชื่อ Checklist Template |
+| `description` | TEXT | - | คำอธิบายรายละเอียด |
+| `doc_type` | VARCHAR(50) | DEFAULT `'ALL'` | ประเภทเอกสารที่ใช้เกณฑ์นี้ |
+| `is_active` | BOOLEAN | DEFAULT `TRUE` | สถานะการใช้งาน |
+| `created_at` | TIMESTAMP | DEFAULT NOW() | วันที่สร้าง |
+| `updated_at` | TIMESTAMP | DEFAULT NOW() | วันที่แก้ไข |
 
 ---
 
-## 🔧 MCP Tools ที่เชื่อมต่อกับ DB
+### 8. `exit_criteria_items` — ตารางรายการตรวจสอบใน Template
+| Column | Type | Constraint | Description |
+|---|---|---|---|
+| `item_id` | UUID | PK | รหัสรายการ (gen_random_uuid) |
+| `template_id` | UUID | FK → `exit_criteria_templates` (CASCADE) | ผูกกับ Template แม่ |
+| `item_code` | VARCHAR(50) | NOT NULL | รหัสข้อ เช่น `1.1`, `2.1` |
+| `category` | VARCHAR(100) | NOT NULL | หมวดหมู่ เช่น `Defect & Comment Resolution` |
+| `question_text` | TEXT | NOT NULL | คำถาม/ข้อคำนึงในการตรวจ |
+| `target_metric` | VARCHAR(100) | DEFAULT `'100% (ผ่านบริบูรณ์)'` | ตัวชี้วัด / KPI Metric (เช่น `100% Resolved`, `< 1% Typo`) |
+| `severity` | VARCHAR(20) | DEFAULT `'Major'` | `Critical`, `Major`, `Minor` |
+| `is_mandatory` | BOOLEAN | DEFAULT `TRUE` | จำเป็นต้องผ่านหรือไม่ |
+| `order_index` | INT | DEFAULT `0` | ลำดับการแสดงผล |
+| `created_at` | TIMESTAMP | DEFAULT NOW() | วันที่สร้าง |
 
+---
+
+### 9. `document_exit_evaluations` — ตารางประเมินผล Exit Criteria ของเอกสาร
+| Column | Type | Constraint | Description |
+|---|---|---|---|
+| `evaluation_id` | UUID | PK | รหัสผลการประเมิน (gen_random_uuid) |
+| `doc_id` | UUID | FK → `documents` (CASCADE) | เอกสารที่ถูกประเมิน |
+| `project_id` | UUID | FK → `projects` (CASCADE) | โครงการ |
+| `template_id` | UUID | FK → `exit_criteria_templates` (SET NULL) | Template ที่ใช้ประเมิน |
+| `version` | INT | DEFAULT `1` | เวอร์ชันเอกสารที่ตรวจ |
+| `review_round` | INT | DEFAULT `1` | รอบการตรวจ (1, 2, 3...) |
+| `status` | VARCHAR(30) | DEFAULT `'PENDING'` | `PASSED`, `CONDITIONAL_PASSED`, `REJECTED`, `PENDING` |
+| `total_items` | INT | DEFAULT `0` | จำนวนหัวข้อทั้งหมด |
+| `passed_items` | INT | DEFAULT `0` | จำนวนหัวข้อที่ผ่าน |
+| `failed_items` | INT | DEFAULT `0` | จำนวนหัวข้อที่ไม่ผ่าน |
+| `na_items` | INT | DEFAULT `0` | จำนวนหัวข้อที่ไม่เกี่ยวข้อง |
+| `score_percentage` | NUMERIC(5,2) | DEFAULT `0.00` | % คะแนนที่ได้ |
+| `evaluated_by` | VARCHAR(100) | - | ผู้ตรวจ/ประเมิน (ชื่อผู้ใช้ หรือ AI System) |
+| `evaluator_type` | VARCHAR(50) | DEFAULT `'HYBRID'` | `AI_AGENT`, `HUMAN_QA`, `HYBRID` |
+| `summary_remarks` | TEXT | - | ข้อสรุปผลการประเมินภาพรวม |
+| `created_at` | TIMESTAMP | DEFAULT NOW() | วันที่บันทึก |
+| `updated_at` | TIMESTAMP | DEFAULT NOW() | วันที่แก้ไข |
+
+---
+
+### 10. `document_exit_evaluation_items` — ตารางรายละเอียดผลตรวจายข้อ
+| Column | Type | Constraint | Description |
+|---|---|---|---|
+| `result_id` | UUID | PK | รหัสรายละเอียดผลตรวจ (gen_random_uuid) |
+| `evaluation_id` | UUID | FK → `document_exit_evaluations` (CASCADE) | ผูกกับรอบการประเมิน |
+| `item_id` | UUID | FK → `exit_criteria_items` (SET NULL) | อ้างอิงข้อตรวจต้นทาง |
+| `item_code` | VARCHAR(50) | - | รหัสข้อ ณ ตอนตรวจ |
+| `category` | VARCHAR(100) | - | หมวดหมู่ |
+| `question_text` | TEXT | - | คำถาม |
+| `target_metric` | VARCHAR(100) | - | ตัวชี้วัด / KPI Metric |
+| `severity` | VARCHAR(20) | - | ความรุนแรง |
+| `is_mandatory` | BOOLEAN | DEFAULT `TRUE` | บังคับผ่านหรือไม่ |
+| `status` | VARCHAR(20) | DEFAULT `'NA'` | `PASS`, `FAIL`, `NA` |
+| `remarks` | TEXT | - | ความคิดเห็น/เหตุผลประกอบ |
+| `evidence_text` | TEXT | - | ร่องรอยอ้างอิ�| `document_exit_evaluations` → `document_exit_evaluation_items` | One-to-Many | CASCADE |�� `document_exit_evaluations` | One-to-Many | SET NULL |
+| `document_exit_evaluations` → `document_exit_evaluation_items` | One-to-Many | CASCADE |
 | Tool | ตารางที่ใช้ | คำอธิบาย |
 |---|---|---|
 | `list_project_documents` | `documents` | แสดงรายการเอกสารทั้งหมดของโครงการ |

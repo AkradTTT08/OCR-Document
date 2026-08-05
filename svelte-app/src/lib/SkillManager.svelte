@@ -1,5 +1,6 @@
 <script>
   import { onMount } from 'svelte';
+  import CustomSelect from './CustomSelect.svelte';
 
   // ── States ──
   let skills = [];
@@ -25,6 +26,12 @@
   };
 
   const docTypes = ['General', 'Flowchart', 'Table', 'SRS Document', 'PDF', 'Image', 'Word', 'Other'];
+
+  $: filterDocTypeOptions = [
+    { value: '', label: 'ทุกประเภท (Doc Type)', icon: '📁' },
+    ...docTypes.map(t => ({ value: t, label: t, icon: '📄' }))
+  ];
+  $: targetDocTypeOptions = docTypes.map(t => ({ value: t, label: t, icon: '📄' }));
 
   // Prompt Templates
   const templates = [
@@ -59,7 +66,10 @@
       const res = await fetch(url);
       const data = await res.json();
       if (res.ok) {
-        skills = data.skills || [];
+        skills = (data.skills || []).filter(s => 
+          !s.skill_name?.startsWith('[Exit Criteria]') && 
+          !s.skill_name?.includes('Exit Criteria')
+        );
         if (skills.length > 0 && !activeSkill) {
           selectSkill(skills[0]);
         }
@@ -238,12 +248,12 @@ ${form.markdown_instructions}
           on:input={fetchSkills}
           class="search-input"
         />
-        <select bind:value={filterDocType} on:change={fetchSkills} class="filter-select">
-          <option value="">ทุกประเภท (Doc Type)</option>
-          {#each docTypes as t}
-            <option value={t}>{t}</option>
-          {/each}
-        </select>
+        <CustomSelect 
+          bind:value={filterDocType} 
+          options={filterDocTypeOptions} 
+          on:change={fetchSkills}
+          minWidth="190px"
+        />
       </div>
     </div>
 
@@ -305,11 +315,11 @@ ${form.markdown_instructions}
         </div>
         <div class="form-group">
           <label>ประเภทเอกสารเป้าหมาย (Target Doc Type)</label>
-          <select bind:value={form.target_doc_type}>
-            {#each docTypes as dt}
-              <option value={dt}>{dt}</option>
-            {/each}
-          </select>
+          <CustomSelect 
+            bind:value={form.target_doc_type} 
+            options={targetDocTypeOptions} 
+            width="100%"
+          />
         </div>
         <div class="form-group">
           <label>เวอร์ชัน (Version)</label>

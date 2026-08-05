@@ -1,5 +1,6 @@
 <script>
   import { toast } from "./toastStore.js";
+  import CustomSelect from "./CustomSelect.svelte";
   /** @type {any} */
   export let result = null;
   export let isProcessing = false;
@@ -303,8 +304,18 @@
 
   // ── Save to DB State ──
   let showSaveModal = false;
-  let isSaving = false;
   let projects = [];
+  $: projectSelectOptions = [
+    { value: '', label: '-- เลือกโครงการ --', icon: '📁' },
+    ...(projects || []).map(p => ({ value: p.id, label: `${p.project_code || ''} - ${p.name || ''}`, icon: '📌' }))
+  ];
+
+  const categorySelectOptions = [
+    { value: 'Reference', label: 'เอกสารอ้างอิง (Reference)', icon: '📚' },
+    { value: 'TestCase', label: 'TestCase', icon: '🧪' },
+    { value: 'Requirements', label: 'Requirements', icon: '📋' },
+    { value: 'Other', label: 'อื่นๆ (Other)', icon: '📁' }
+  ];
   let saveForm = {
     project_id: '',
     filename: '',
@@ -728,22 +739,22 @@
 
       <div class="form-group">
         <label for="save-project">โครงการ (Project)</label>
-        <select id="save-project" bind:value={saveForm.project_id} class="form-input">
-          <option value="" disabled>-- เลือกโครงการ --</option>
-          {#each projects as p}
-            <option value={p.id}>{p.project_code} - {p.name}</option>
-          {/each}
-        </select>
+        <CustomSelect 
+          id="save-project" 
+          bind:value={saveForm.project_id} 
+          options={projectSelectOptions} 
+          width="100%"
+        />
       </div>
 
       <div class="form-group">
         <label for="save-category">หมวดหมู่เอกสาร</label>
-        <select id="save-category" bind:value={saveForm.doc_category} class="form-input">
-          <option value="Reference">เอกสารอ้างอิง (Reference)</option>
-          <option value="TestCase">TestCase</option>
-          <option value="Requirements">Requirements</option>
-          <option value="Other">อื่นๆ (Other)</option>
-        </select>
+        <CustomSelect 
+          id="save-category" 
+          bind:value={saveForm.doc_category} 
+          options={categorySelectOptions} 
+          width="100%"
+        />
       </div>
 
       <div class="form-group" style="display: none;">

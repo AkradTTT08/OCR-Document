@@ -170,33 +170,27 @@ def parse_qa_report_regex(report_text: str, filename: str) -> list[dict]:
     return rows
 
 
-def generate_qa_excel(
-    report_text: str,
-    filename: str,
-    doc_type: str = "",
-    project_code: str = "",
-    group_name: str = "",
-    group_type: str = "",
-    transaction_id: str = None
-) -> str:
+def generate_qa_excel(report_text: str, filename: str, doc_type: str = "Requirement", project_code: str = "", group_name: str = "", group_type: str = "", transaction_id: str = None, exit_criteria_eval: dict = None) -> str:
     """
-    Generate a professional QA Report Excel file.
-    Returns the file path of the generated Excel.
+    Generate Excel QA Report from report text and optional Exit Criteria evaluation.
     """
     if not HAS_OPENPYXL:
-        raise ImportError("openpyxl is required. Install with: pip install openpyxl")
-    
-    # Parse report into structured rows
+        raise ImportError("openpyxl is required to generate Excel reports.")
+        
     rows = parse_qa_report_with_ai(report_text, filename)
     
     wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "QA Report"
     
-    # === Styles ===
-    # Header style
+    # Sheet 1: QA Findings Report
+    ws = wb.active
+    ws.title = "QA Audit Summary"
+    
+    # Enable grid lines
+    ws.views.sheetView[0].showGridLines = True
+    
+    # Header styles
     header_font = Font(name='Tahoma', bold=True, size=11, color='FFFFFF')
-    header_fill = PatternFill(start_color='1A4441', end_color='1A4441', fill_type='solid') # Dark Teal
+    header_fill = PatternFill(start_color='1F4E78', end_color='1F4E78', fill_type='solid') # Deep Navy
     header_alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
     
     # Title style
@@ -211,7 +205,7 @@ def generate_qa_excel(
     data_alignment = Alignment(vertical='top', wrap_text=True)
     center_alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
     
-    # Severity colors (Match screenshot)
+    # Severity colors
     severity_fills = {
         'Critical': PatternFill(start_color='FF0000', end_color='FF0000', fill_type='solid'), # Red
         'High': PatternFill(start_color='FFA500', end_color='FFA500', fill_type='solid'), # Orange
@@ -238,7 +232,7 @@ def generate_qa_excel(
     # === Title Section ===
     ws.merge_cells('A1:H1')
     title_cell = ws['A1']
-    title_cell.value = "QA Report Part 2 – Technical / Mockup vs Requirements / SRS Completeness"
+    title_cell.value = "QA Audit Findings Report"
     title_cell.font = title_font
     title_cell.fill = title_fill
     title_cell.alignment = Alignment(horizontal='center', vertical='center')
@@ -246,8 +240,8 @@ def generate_qa_excel(
     
     ws.merge_cells('A2:H2')
     subtitle_cell = ws['A2']
-    project_str = project_code if project_code else (group_name if group_name else "2Hand To You (ระบบซื้อ-ขายสินค้ามือสอง)")
-    subtitle_cell.value = f"โครงการ: {project_str} - Software Engineering, Burapha University, Team 7 | ผู้ตรวจสอบ: QA Auditor | วันที่ตรวจสอบ: {datetime.now().strftime('%d/%m/%Y')}"
+    project_str = project_code if project_code else (group_name if group_name else "Spectra QA System")
+    subtitle_cell.value = f"โครงการ: {project_str} | ผู้ตรวจสอบ: QA Auditor / AIAgentQA | วันที่ตรวจสอบ: {datetime.now().strftime('%d/%m/%Y %H:%M')}"
     subtitle_cell.font = subtitle_font
     subtitle_cell.fill = subtitle_fill
     subtitle_cell.alignment = Alignment(horizontal='center', vertical='center')
@@ -257,18 +251,7 @@ def generate_qa_excel(
     table_start_row = 3
     
     # Column headers
-    headers = [
-        "ลำดับ",
-        "เอกสาร / หน้า",
-        "ประเด็นที่พบ",
-        "ระดับความรุนแรง",
-        "ประเภทการตรวจ",
-        "ข้อความในเอกสาร",
-        "สิ่งที่ควรเป็น",
-        "ข้อเสนอแนะ"
-    ]
-    
-    # Column widths
+    headers = ["ลำดับ", "เอกสาร / หน้า", "ประเด็นที่พบ", "ระดับความรุนแรง", "ประเภทการตรวจ", "ข้อความในเอกสาร", "สิ่งที่ควรเป็น", "ข้อเสนอแนะ"]
     col_widths = [8, 25, 40, 15, 25, 45, 45, 45]
     
     for col_idx, (header, width) in enumerate(zip(headers, col_widths), 1):
@@ -284,9 +267,7 @@ def generate_qa_excel(
     # Data rows
     for row_idx, row_data in enumerate(rows, 1):
         excel_row = table_start_row + row_idx
-        
         severity = row_data.get('severity', 'Info')
-        
         values = [
             row_idx,
             row_data.get('document_page', filename),
@@ -305,19 +286,92 @@ def generate_qa_excel(
             cell.border = thin_border
             
             # Apply severity color
-            if col_idx == 4:  # ระดับความรุนแรง
+            if col_idx == 4:
                 cell.fill = severity_fills.get(severity, PatternFill())
                 cell.font = severity_fonts.get(severity, data_font)
         
         ws.row_dimensions[excel_row].height = 50
     
-    # === Footer ===
+    # Footer
     footer_row = table_start_row + len(rows) + 2
     ws.merge_cells(start_row=footer_row, start_column=1, end_row=footer_row, end_column=8)
     footer_cell = ws.cell(row=footer_row, column=1, value="สร้างโดย Spectra QA Intelligent Analysis System | Powered by Gemini AI")
     footer_cell.font = Font(name='Tahoma', italic=True, size=9, color='999999')
     footer_cell.alignment = Alignment(horizontal='center')
     
+    # === Sheet 2: Exit Criteria Checklist (If evaluation data exists) ===
+    if exit_criteria_eval and isinstance(exit_criteria_eval, dict):
+        ws_exit = wb.create_sheet(title="Exit Criteria Checklist")
+        ws_exit.views.sheetView[0].showGridLines = True
+        
+        # Title
+        ws_exit.merge_cells('A1:G1')
+        t_cell = ws_exit['A1']
+        t_cell.value = f"📋 Exit Criteria Gate Assessment Report - {exit_criteria_eval.get('template_title', 'Universal')}"
+        t_cell.font = title_font
+        t_cell.fill = PatternFill(start_color='1E293B', end_color='1E293B', fill_type='solid')
+        t_cell.alignment = Alignment(horizontal='center', vertical='center')
+        ws_exit.row_dimensions[1].height = 25
+
+        # Subtitle
+        ws_exit.merge_cells('A2:G2')
+        sub_cell = ws_exit['A2']
+        status_text = exit_criteria_eval.get('status', 'PENDING')
+        score = exit_criteria_eval.get('score_percentage', 0)
+        sub_cell.value = f"Final Gate Result: {status_text} | Score: {score}% | PASS: {exit_criteria_eval.get('passed_items',0)} | FAIL: {exit_criteria_eval.get('failed_items',0)} | N/A: {exit_criteria_eval.get('na_items',0)}"
+        sub_cell.font = Font(name='Tahoma', bold=True, size=11, color='FFFFFF')
+        
+        status_color = '059669' if status_text == 'PASSED' else ('D97706' if status_text == 'CONDITIONAL_PASSED' else 'DC2626')
+        sub_cell.fill = PatternFill(start_color=status_color, end_color=status_color, fill_type='solid')
+        sub_cell.alignment = Alignment(horizontal='center', vertical='center')
+        ws_exit.row_dimensions[2].height = 22
+
+        # Table headers
+        exit_headers = ["ข้อตรวจ", "หมวดหมู่", "รายการประเมิน (Checklist Item)", "ตัวชี้วัด (KPI Indicator)", "ความรุนแรง", "ผลการตรวจ", "ข้อสังเกต / ร่องรอยที่พบ"]
+        exit_col_widths = [10, 25, 45, 25, 12, 12, 45]
+        
+        for col_idx, (hdr, width) in enumerate(zip(exit_headers, exit_col_widths), 1):
+            c = ws_exit.cell(row=3, column=col_idx, value=hdr)
+            c.font = header_font
+            c.fill = header_fill
+            c.alignment = header_alignment
+            c.border = thin_border
+            ws_exit.column_dimensions[get_column_letter(col_idx)].width = width
+            
+        ws_exit.row_dimensions[3].height = 25
+        
+        # Rows
+        eval_items = exit_criteria_eval.get('items', [])
+        for r_idx, item in enumerate(eval_items, 4):
+            item_status = item.get('status', 'NA')
+            vals = [
+                item.get('item_code', '-'),
+                item.get('category', '-'),
+                item.get('question_text', '-'),
+                item.get('target_metric', '100% (ผ่านบริบูรณ์)'),
+                item.get('severity', 'Major'),
+                item_status,
+                f"{item.get('remarks', '')} {('(' + item.get('evidence_text') + ')') if item.get('evidence_text') else ''}".strip()
+            ]
+            for c_idx, val in enumerate(vals, 1):
+                c = ws_exit.cell(row=r_idx, column=c_idx, value=val)
+                c.font = data_font
+                c.alignment = center_alignment if c_idx in [1, 5, 6] else data_alignment
+                c.border = thin_border
+                
+                # Color coding status
+                if c_idx == 6:
+                    if item_status == 'PASS':
+                        c.fill = PatternFill(start_color='D1FAE5', end_color='D1FAE5', fill_type='solid')
+                        c.font = Font(name='Tahoma', bold=True, color='065F46')
+                    elif item_status == 'FAIL':
+                        c.fill = PatternFill(start_color='FEE2E2', end_color='FEE2E2', fill_type='solid')
+                        c.font = Font(name='Tahoma', bold=True, color='991B1B')
+                    else:
+                        c.fill = PatternFill(start_color='F3F4F6', end_color='F3F4F6', fill_type='solid')
+                        c.font = Font(name='Tahoma', bold=False, color='4B5563')
+            ws_exit.row_dimensions[r_idx].height = 35
+
     # === Save file ===
     report_id = transaction_id or str(uuid.uuid4())[:8]
     safe_filename = re.sub(r'[^\w\-.]', '_', filename.rsplit('.', 1)[0])

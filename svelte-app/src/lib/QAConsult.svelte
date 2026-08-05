@@ -3,8 +3,12 @@
   import { fade } from "svelte/transition";
   import { toast } from "./toastStore.js";
   import { qaHistory, selectedHistory, loadQAHistoryFromDB, selectedProjectStore, qaSessionGroups, activeQAContext, loadQAGroupsFromDB } from "./qaHistoryStore.js";
+  import GateResultModal from "./GateResultModal.svelte";
 
   const dispatch = createEventDispatcher();
+
+  let showGateModal = false;
+  let gateResultData = null;
 
   let skills = [];
   let docTypes = ["Requirement", "Design", "Manual", "Other"];
@@ -22,8 +26,10 @@
     try {
       const resSkills = await fetch("http://127.0.0.1:5000/api/skills");
       if (resSkills.ok) {
-        const data = await resSkills.json();
-        skills = data.skills || [];
+        skills = (data.skills || []).filter(s => 
+          !s.skill_name?.startsWith('[Exit Criteria]') && 
+          !s.skill_name?.includes('Exit Criteria')
+        );
       }
       
       // Load global doc types initially
@@ -313,6 +319,10 @@
             } else if (data.type === "complete") {
               progressPct = 100;
               scanResult = data.result;
+              if (scanResult && scanResult.exit_criteria_eval) {
+                gateResultData = scanResult.exit_criteria_eval;
+                showGateModal = true;
+              }
               // Refresh history from DB
               loadQAHistoryFromDB();
             } else if (data.type === "error") {
@@ -683,12 +693,19 @@
     </div>
 
   {:else if scanResult}
+    <!-- Gate Result Modal Animation -->
+    <GateResultModal 
+      showModal={showGateModal} 
+      resultData={gateResultData} 
+      onClose={() => showGateModal = false} 
+    />
+
     <!-- RESULT STATE -->
     <div class="result-state">
       <div class="dashboard-top-bar" style="display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,0.1); width: 100%; flex-wrap: wrap; gap: 16px;">
         <div class="left-content" style="display: flex; flex-direction: column; gap: 10px;">
           <div class="header-text" style="text-align: left; margin: 0;">
-            <h2 style="font-size: 22px; margin-bottom: 2px;">ผลการวิเคราะห์ QA</h2>
+            <h2 style="font-size: 22px; margin-bottom: 2px;">ผลการวิเคราะห์ QA & Exit Criteria Review Gate</h2>
             <p style="font-size: 13px; margin: 0; color: #9ca3af;">ตรวจสอบรายงานด้านล่าง ก่อนกดยืนยันการส่งอีเมล</p>
           </div>
           <div class="result-summary" style="margin: 0; padding: 0; background: none; border: none; justify-content: flex-start; gap: 24px;">
@@ -710,6 +727,12 @@
         </div>
 
         <div class="right-actions" style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+          {#if scanResult.exit_criteria_eval}
+            <button class="btn-outline-glow" on:click={() => { gateResultData = scanResult.exit_criteria_eval; showGateModal = true; }} style="height: 42px; font-weight: 600;">
+              ✨ แสดง Modal Animation
+            </button>
+          {/if}
+
           <button class="btn-outline" on:click={resetForm} disabled={isSendingEmail} style="padding: 10px 16px; min-width: 0; height: 42px; margin: 0;">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><polyline points="1 4 1 10 7 10"></polyline><polyline points="23 20 23 14 17 14"></polyline><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"></path></svg>
             เริ่มใหม่
@@ -739,6 +762,85 @@
           </button>
         </div>
       </div>
+
+      <!-- Exit Criteria Review Gate Card -->
+      {#if scanResult.exit_criteria_eval}
+        <div class="exit-criteria-gate-result-card glass-panel" style="margin-bottom: 24px;">
+          <div class="gate-result-header">
+            <div class="gate-header-title">
+              <h3>📋 ผลการประเมิน Exit Criteria Review Gate</h3>
+              <span class="template-badge">{scanResult.exit_criteria_eval.template_title}</span>
+            </div>
+            <div class="gate-header-actions">
+              <span class="gate-status-pill status-{scanResult.exit_criteria_eval.status.toLowerCase()}">
+                {scanResult.exit_criteria_eval.status}
+              </span>
+            </div>
+          </div>
+
+          <div class="gate-summary-bar">
+            <div class="summary-stat">
+              <span class="stat-num">{scanResult.exit_criteria_eval.score_percentage}%</span>
+              <span class="stat-lbl">คะแนนสมบูรณ์</span>
+            </div>
+            <div class="summary-stat green">
+              <span class="stat-num">{scanResult.exit_criteria_eval.passed_items}</span>
+              <span class="stat-lbl">ผ่าน (PASS)</span>
+            </div>
+            <div class="summary-stat red">
+              <span class="stat-num">{scanResult.exit_criteria_eval.failed_items}</span>
+              <span class="stat-lbl">ไม่ผ่าน (FAIL)</span>
+            </div>
+            <div class="summary-stat gray">
+              <span class="stat-num">{scanResult.exit_criteria_eval.na_items}</span>
+              <span class="stat-lbl">ข้าม (N/A)</span>
+            </div>
+          </div>
+
+          <!-- Categorized Checklist Items -->
+          <div class="exit-checklist-table-wrapper">
+            <table class="exit-checklist-table">
+              <thead>
+                <tr>
+                  <th style="width: 70px;">ข้อตรวจ</th>
+                  <th style="width: 180px;">หมวดหมู่</th>
+                  <th>รายการประเมิน (Checklist Item)</th>
+                  <th style="width: 150px;">📊 ตัวชี้วัด (KPI Indicator)</th>
+                  <th style="width: 90px;">ความรุนแรง</th>
+                  <th style="width: 95px;">ผลการตรวจ</th>
+                  <th>ข้อสังเกต / ร่องรอยที่พบ</th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each scanResult.exit_criteria_eval.items as item}
+                  <tr class="row-status-{item.status.toLowerCase()}">
+                    <td class="item-code-cell"><strong>{item.item_code}</strong></td>
+                    <td class="category-cell">{item.category}</td>
+                    <td class="question-cell">{item.question_text}</td>
+                    <td class="metric-cell">
+                      <span class="badge-metric">{item.target_metric || '100% (ผ่านบริบูรณ์)'}</span>
+                    </td>
+                    <td class="severity-cell">
+                      <span class="badge-sev badge-sev-{item.severity.toLowerCase()}">{item.severity}</span>
+                    </td>
+                    <td class="status-cell">
+                      <span class="badge-status status-tag-{item.status.toLowerCase()}">
+                        {item.status === 'PASS' ? '✅ PASS' : item.status === 'FAIL' ? '❌ FAIL' : '⚪ N/A'}
+                      </span>
+                    </td>
+                    <td class="remarks-cell">
+                      <div class="remark-text">{item.remarks}</div>
+                      {#if item.evidence_text}
+                        <div class="evidence-text">🔎 <em>{item.evidence_text}</em></div>
+                      {/if}
+                    </td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      {/if}
 
       <div class="report-box email-preview" style="max-height: none;">
         <div class="email-header">
@@ -970,29 +1072,36 @@
     cursor: pointer;
   }
   .select-trigger {
-    background: rgba(0,0,0,0.2);
-    border: 1px solid var(--border);
-    color: var(--text);
+    background: rgba(18, 20, 28, 0.85);
+    border: 1px solid rgba(168, 85, 247, 0.35);
+    color: #f8fafc;
     padding: 12px 16px;
-    border-radius: 8px;
-    font-size: 15px;
+    border-radius: 12px;
+    font-size: 14px;
+    font-weight: 500;
     display: flex;
     justify-content: space-between;
     align-items: center;
-    transition: all 0.2s;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3), inset 0 1px 1px rgba(255, 255, 255, 0.08);
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   }
   .select-trigger:hover {
-    border-color: rgba(147, 51, 234, 0.4);
+    border-color: rgba(168, 85, 247, 0.75);
+    background-color: rgba(28, 30, 46, 0.95);
+    box-shadow: 0 6px 20px rgba(168, 85, 247, 0.3);
+    transform: translateY(-1px);
   }
   .select-trigger.open {
-    border-color: #9333ea;
-    box-shadow: 0 0 0 2px rgba(147, 51, 234, 0.2);
+    border-color: var(--secondary);
+    box-shadow: 0 0 0 3px rgba(168, 85, 247, 0.35), 0 8px 24px rgba(168, 85, 247, 0.35);
   }
   .select-trigger .chevron {
     width: 18px;
     height: 18px;
-    color: var(--text3);
-    transition: transform 0.2s ease-in-out;
+    color: #a855f7;
+    transition: transform 0.25s ease-in-out;
   }
   .select-trigger.open .chevron {
     transform: rotate(180deg);
@@ -1002,39 +1111,43 @@
     top: calc(100% + 6px);
     left: 0;
     width: 100%;
-    background: #181824; /* deep dark background */
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+    background: rgba(15, 17, 26, 0.95); /* deep dark glass background */
+    border: 1px solid rgba(168, 85, 247, 0.35);
+    border-radius: 12px;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.8), 0 0 20px rgba(168, 85, 247, 0.15);
     z-index: 100;
-    max-height: 220px;
+    max-height: 240px;
     overflow-y: auto;
     padding: 6px;
-    backdrop-filter: blur(10px);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
   }
   /* Custom scrollbar for options menu */
   .options-menu::-webkit-scrollbar {
     width: 6px;
   }
   .options-menu::-webkit-scrollbar-thumb {
-    background: rgba(255,255,255,0.1);
-    border-radius: 3px;
+    background: rgba(168, 85, 247, 0.4);
+    border-radius: 4px;
   }
   .option-item {
     padding: 10px 14px;
-    border-radius: 6px;
-    color: var(--text2);
-    font-size: 14px;
-    transition: all 0.15s;
+    border-radius: 8px;
+    color: #e2e8f0;
+    font-size: 13.5px;
+    display: flex;
+    align-items: center;
+    transition: all 0.2s ease;
   }
   .option-item:hover {
-    background: rgba(255,255,255,0.06);
-    color: var(--text);
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.3), rgba(168, 85, 247, 0.3));
+    color: #ffffff;
+    transform: translateX(3px);
   }
   .option-item.selected {
-    background: rgba(147, 51, 234, 0.15);
-    color: #d8b4fe; /* lighter purple */
-    font-weight: 500;
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.5), rgba(168, 85, 247, 0.5));
+    color: #ffffff;
+    font-weight: 600;
   }
 
   .hint-text {
@@ -1623,5 +1736,169 @@
     background: linear-gradient(135deg, #059669, #047857);
     transform: translateY(-1px);
     box-shadow: 0 6px 18px rgba(16, 185, 129, 0.35);
+  }
+
+  /* Exit Criteria Gate Card & Table Styles */
+  .exit-criteria-gate-result-card {
+    background: rgba(15, 23, 42, 0.85);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 16px;
+    padding: 20px 24px;
+    backdrop-filter: blur(12px);
+  }
+
+  .gate-result-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    padding-bottom: 14px;
+    margin-bottom: 16px;
+  }
+
+  .gate-header-title {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .gate-header-title h3 {
+    margin: 0;
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: #f8fafc;
+  }
+
+  .template-badge {
+    background: rgba(99, 102, 241, 0.2);
+    border: 1px solid rgba(99, 102, 241, 0.4);
+    color: #a5b4fc;
+    font-size: 0.75rem;
+    padding: 3px 10px;
+    border-radius: 14px;
+  }
+
+  .btn-outline-glow {
+    background: rgba(99, 102, 241, 0.15);
+    border: 1px solid rgba(99, 102, 241, 0.4);
+    color: #c7d2fe;
+    padding: 6px 14px;
+    border-radius: 8px;
+    font-size: 0.82rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .btn-outline-glow:hover {
+    background: rgba(99, 102, 241, 0.3);
+    color: #ffffff;
+    box-shadow: 0 0 12px rgba(99, 102, 241, 0.4);
+  }
+
+  .gate-status-pill {
+    padding: 6px 16px;
+    border-radius: 20px;
+    font-size: 0.85rem;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+  }
+
+  .gate-status-pill.status-passed { background: #059669; color: #ffffff; }
+  .gate-status-pill.status-conditional_passed { background: #d97706; color: #ffffff; }
+  .gate-status-pill.status-rejected { background: #dc2626; color: #ffffff; }
+
+  .gate-summary-bar {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+
+  .summary-stat {
+    background: rgba(30, 41, 59, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .summary-stat.green { background: rgba(16, 185, 129, 0.12); border-color: rgba(16, 185, 129, 0.3); }
+  .summary-stat.red { background: rgba(239, 68, 68, 0.12); border-color: rgba(239, 68, 68, 0.3); }
+  .summary-stat.gray { background: rgba(148, 163, 184, 0.12); border-color: rgba(148, 163, 184, 0.3); }
+
+  .stat-num { font-size: 1.25rem; font-weight: 700; color: #f8fafc; }
+  .summary-stat.green .stat-num { color: #34d399; }
+  .summary-stat.red .stat-num { color: #f87171; }
+  .summary-stat.gray .stat-num { color: #94a3b8; }
+
+  .stat-lbl { font-size: 0.75rem; color: #94a3b8; margin-top: 2px; }
+
+  .exit-checklist-table-wrapper {
+    overflow-x: auto;
+  }
+
+  .exit-checklist-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+  }
+
+  .exit-checklist-table th {
+    background: rgba(30, 41, 59, 0.9);
+    color: #cbd5e1;
+    text-align: left;
+    padding: 10px 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  }
+
+  .exit-checklist-table td {
+    padding: 10px 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    color: #e2e8f0;
+    vertical-align: top;
+  }
+
+  .row-status-fail { background: rgba(239, 68, 68, 0.06); }
+  .row-status-pass { background: rgba(16, 185, 129, 0.02); }
+
+  .badge-status {
+    display: inline-block;
+    padding: 3px 8px;
+    border-radius: 6px;
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+
+  .status-tag-pass { background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4); }
+  .status-tag-fail { background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4); }
+  .status-tag-na { background: rgba(148, 163, 184, 0.2); color: #94a3b8; border: 1px solid rgba(148, 163, 184, 0.4); }
+
+  .badge-sev {
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.72rem;
+    font-weight: 600;
+  }
+  .badge-sev-critical { background: rgba(239, 68, 68, 0.2); color: #f87171; }
+  .badge-sev-major { background: rgba(245, 158, 11, 0.2); color: #fbbf24; }
+  .badge-sev-minor { background: rgba(59, 130, 246, 0.2); color: #60a5fa; }
+
+  .badge-metric {
+    display: inline-block;
+    padding: 3px 8px;
+    background: rgba(99, 102, 241, 0.18);
+    border: 1px solid rgba(99, 102, 241, 0.35);
+    color: #c7d2fe;
+    border-radius: 6px;
+    font-size: 0.76rem;
+    font-weight: 600;
+  }
+
+  .evidence-text {
+    margin-top: 4px;
+    font-size: 0.78rem;
+    color: #fbbf24;
   }
 </style>

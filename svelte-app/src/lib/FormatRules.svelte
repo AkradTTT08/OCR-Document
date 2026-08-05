@@ -1,7 +1,15 @@
 <script>
   import { onMount } from 'svelte';
   import { toast } from './toastStore.js';
+  import CustomSelect from './CustomSelect.svelte';
   const API = 'http://localhost:5000/api';
+
+  const formatRuleOptions = [
+    { value: 'preceded_by_space', label: 'ต้องมีช่องว่างข้างหน้า (Preceded by Space)', icon: '⬅️' },
+    { value: 'followed_by_space', label: 'ต้องมีช่องว่างข้างหลัง (Followed by Space)', icon: '➡️' },
+    { value: 'forbidden_pattern', label: 'คำต้องห้าม / คำผิดตรงตัว (Forbidden Word)', icon: '🚫' },
+    { value: 'custom_regex', label: 'Regex กำหนดเอง (Custom Regex Pattern)', icon: '⚡' }
+  ];
 
   /** @type {any[]} */
   let rules = [];
@@ -192,12 +200,13 @@
 
             <div class="form-group">
               <label for="fmt-type">ประเภทการเช็ค</label>
-              <select id="fmt-type" bind:value={ruleType} on:change={handleTypeChange}>
-                <option value="preceded_by_space">ต้องมีช่องว่างข้างหน้า (Preceded by Space)</option>
-                <option value="followed_by_space">ต้องมีช่องว่างข้างหลัง (Followed by Space)</option>
-                <option value="forbidden_pattern">คำต้องห้าม / คำผิดตรงตัว (Forbidden Word)</option>
-                <option value="custom_regex">Regex กำหนดเอง (Custom Regex Pattern)</option>
-              </select>
+              <CustomSelect 
+                id="fmt-type" 
+                bind:value={ruleType} 
+                options={formatRuleOptions} 
+                on:change={handleTypeChange}
+                width="100%"
+              />
             </div>
 
             <div class="form-group">

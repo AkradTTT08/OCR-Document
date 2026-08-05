@@ -3,7 +3,20 @@
   import DictStats from './DictStats.svelte';
   import FormatRules from './FormatRules.svelte';
   import { toast } from './toastStore.js';
+  import CustomSelect from './CustomSelect.svelte';
   const dispatch = createEventDispatcher();
+
+  const langOptions = [
+    { value: 'tha+eng', label: 'ไทย + อังกฤษ', icon: '🇹🇭' },
+    { value: 'tha', label: 'ไทยเท่านั้น', icon: '🇹🇭' },
+    { value: 'eng', label: 'อังกฤษเท่านั้น', icon: '🇬🇧' }
+  ];
+
+  const dpiOptions = [
+    { value: '200', label: '200 DPI (เร็ว)', icon: '⚡' },
+    { value: '300', label: '300 DPI (แนะนำ)', icon: '⭐' },
+    { value: '400', label: '400 DPI (ละเอียด)', icon: '🔍' }
+  ];
 
   const API = 'http://localhost:5000/api';
 
@@ -288,19 +301,21 @@
         <div class="settings-block">
           <div class="setting-row">
             <label class="setting-label" for="sel-lang">ภาษา OCR</label>
-            <select id="sel-lang" bind:value={lang}>
-              <option value="tha+eng">ไทย + อังกฤษ</option>
-              <option value="tha">ไทยเท่านั้น</option>
-              <option value="eng">อังกฤษเท่านั้น</option>
-            </select>
+            <CustomSelect 
+              id="sel-lang" 
+              bind:value={lang} 
+              options={langOptions} 
+              minWidth="160px" 
+            />
           </div>
           <div class="setting-row">
             <label class="setting-label" for="sel-dpi">ความละเอียด</label>
-            <select id="sel-dpi" bind:value={dpi}>
-              <option value="200">200 DPI (เร็ว)</option>
-              <option value="300">300 DPI (แนะนำ)</option>
-              <option value="400">400 DPI (ละเอียด)</option>
-            </select>
+            <CustomSelect 
+              id="sel-dpi" 
+              bind:value={dpi} 
+              options={dpiOptions} 
+              minWidth="160px" 
+            />
           </div>
           <div class="setting-row toggle-row">
             <div class="toggle-text">

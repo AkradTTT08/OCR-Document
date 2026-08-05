@@ -2,6 +2,12 @@
   import { onMount } from 'svelte';
   import { toast } from './toastStore.js';
   import { globalSearchQuery, triggerGlobalSearch } from './globalStore.js';
+  import CustomSelect from './CustomSelect.svelte';
+
+  const projectStatusOptions = [
+    { value: 'Active', label: 'Active', icon: '🟢' },
+    { value: 'Inactive', label: 'Inactive', icon: '🔴' }
+  ];
 
   const API = 'http://localhost:5000/api';
 
@@ -698,10 +704,12 @@
           </div>
           <div class="form-group">
             <label for="p_status">สถานะ (Status)</label>
-            <select id="p_status" class="form-input" bind:value={newProject.status}>
-              <option value="Active">Active</option>
-              <option value="Inactive">Inactive</option>
-            </select>
+            <CustomSelect 
+              id="p_status" 
+              bind:value={newProject.status} 
+              options={projectStatusOptions} 
+              width="100%"
+            />
           </div>
         </div>
         <div class="modal-footer">

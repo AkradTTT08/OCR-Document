@@ -21,10 +21,10 @@ if not os.environ.get('GMAIL_USER'):
 GMAIL_USER = os.environ.get('GMAIL_USER')
 GMAIL_APP_PASSWORD = os.environ.get('GMAIL_APP_PASSWORD')
 
-def send_qa_report(recipient_email: str, doc_type: str, filename: str, report_content: str, excel_download_url: str = '') -> bool:
+def send_qa_report(recipient_email: str, doc_type: str, filename: str, report_content: str, excel_download_url: str = '', exit_criteria_eval: dict = None) -> bool:
     """
     Sends a QA Consult report via Gmail SMTP.
-    Optionally includes an Excel report download link.
+    Optionally includes an Excel report download link and Exit Criteria Gate evaluation.
     """
     if not GMAIL_USER or not GMAIL_APP_PASSWORD:
         logger.error("GMAIL_USER or GMAIL_APP_PASSWORD not set in .env")
@@ -57,6 +57,55 @@ def send_qa_report(recipient_email: str, doc_type: str, filename: str, report_co
         except Exception as e:
             logger.warning(f"Could not load logo for email: {e}")
 
+        # Exit Criteria HTML Section
+        exit_criteria_html = ''
+        if exit_criteria_eval:
+            status = exit_criteria_eval.get('status', 'PASSED')
+            score = exit_criteria_eval.get('score_percentage', 100)
+            passed_cnt = exit_criteria_eval.get('passed_items', 0)
+            failed_cnt = exit_criteria_eval.get('failed_items', 0)
+            na_cnt = exit_criteria_eval.get('na_items', 0)
+            
+            badge_bg = '#10B981'
+            badge_text = 'PASSED (ผ่านบริบูรณ์)'
+            if status == 'CONDITIONAL_PASSED':
+                badge_bg = '#F59E0B'
+                badge_text = 'CONDITIONAL PASSED (ผ่านแบบมีเงื่อนไข)'
+            elif status == 'REJECTED':
+                badge_bg = '#EF4444'
+                badge_text = 'REJECTED (ไม่ผ่าน - ต้องส่งตรวจใหม่)'
+
+            failed_items_html = ''
+            failed_list = [i for i in exit_criteria_eval.get('items', []) if i.get('status') == 'FAIL']
+            if failed_list:
+                failed_items_html += '<div style="margin-top: 12px; text-align: left;"><strong style="color: #991b1b;">⚠️ รายการที่ไม่ผ่านเกณฑ์ (Failed Checklist Items):</strong><ul style="margin: 8px 0; padding-left: 20px;">'
+                for fi in failed_list:
+                    failed_items_html += f"""
+                        <li style="margin-bottom: 6px; color: #4b5563;">
+                            <strong style="color: #b91c1C;">[{fi.get('item_code')}] {fi.get('category')}</strong> ({fi.get('severity')}): {fi.get('question_text')}<br>
+                            <span style="font-size: 12px; color: #6b7280;">📌 {fi.get('remarks')}</span>
+                        </li>
+                    """
+                failed_items_html += '</ul></div>'
+            else:
+                failed_items_html = '<p style="margin: 8px 0 0 0; color: #065f46; font-size: 13px;">✅ เอกสารผ่านเกณฑ์มาตรฐานครบทุกรายการ ไม่พบข้อผิดพลาดรุนแรง</p>'
+
+            exit_criteria_html = f"""
+                <div style="margin: 20px 0; padding: 20px; background: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
+                    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #f3f4f6; padding-bottom: 12px; margin-bottom: 12px;">
+                        <h3 style="margin: 0; font-size: 16px; color: #1f2937;">📋 ผลการประเมิน Exit Criteria Review Gate</h3>
+                        <span style="display: inline-block; padding: 6px 14px; background: {badge_bg}; color: white; border-radius: 20px; font-weight: bold; font-size: 13px;">{badge_text}</span>
+                    </div>
+                    <p style="margin: 4px 0; font-size: 14px; color: #4b5563;">
+                        คะแนนความสมบูรณ์: <strong style="color: #4f46e5;">{score}%</strong> (ผ่าน {passed_cnt} ข้อ / ไม่ผ่าน {failed_cnt} ข้อ / ข้าม {na_cnt} ข้อ)
+                    </p>
+                    <p style="margin: 4px 0; font-size: 13px; color: #6b7280; italic;">
+                        {exit_criteria_eval.get('summary_remarks', '')}
+                    </p>
+                    {failed_items_html}
+                </div>
+            """
+
         # Excel download section
         excel_section = ''
         if excel_download_url:
@@ -65,40 +114,41 @@ def send_qa_report(recipient_email: str, doc_type: str, filename: str, report_co
                     <p style="margin: 0 0 12px 0; font-size: 14px; color: #555;">📊 รายงาน QA Report (Excel) พร้อมดาวน์โหลด</p>
                     <a href="{excel_download_url}" 
                        style="display: inline-block; padding: 12px 32px; background: linear-gradient(135deg, #7c3aed, #6d28d9); color: white; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 14px; box-shadow: 0 4px 12px rgba(124, 58, 237, 0.3);">
-                        ⬇️ ดาวน์โหลด Excel QA Report
+                        ⬇️ ดาวน์โหลด Excel QA Report (พร้อม Sheet Exit Criteria)
                     </a>
                     <p style="margin: 10px 0 0 0; font-size: 12px; color: #999;">คลิกที่ปุ่มด้านบนเพื่อดาวน์โหลดรายงานในรูปแบบ Excel</p>
                 </div>
             """
 
-        # Convert markdown report to simple HTML for email
-        # Just wrapping in pre tag or basic formatting
         html_content = f"""
         <html>
         <head>
             <style>
                 body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
                 .container {{ padding: 20px; }}
-                .header {{ background-color: #7c3aed; color: white; padding: 10px 20px; border-radius: 8px 8px 0 0; }}
+                .header {{ background-color: #7c3aed; color: white; padding: 16px 20px; border-radius: 8px 8px 0 0; }}
                 .content {{ background-color: #f9fafb; padding: 20px; border: 1px solid #e5e7eb; border-radius: 0 0 8px 8px; }}
-                pre {{ white-space: pre-wrap; font-family: inherit; }}
+                pre {{ white-space: pre-wrap; font-family: inherit; background: #ffffff; padding: 15px; border-radius: 8px; border: 1px solid #e5e7eb; }}
             </style>
         </head>
         <body>
             <div class="container">
                 <div class="header">
                     {logo_html}
-                    <h2 style="display: inline-block; vertical-align: middle; margin: 0;">Spectra QA Consult Report</h2>
+                    <h2 style="display: inline-block; vertical-align: middle; margin: 0;">Spectra QA Consult & Exit Criteria Report</h2>
                 </div>
                 <div class="content">
                     <p>เรียนผู้ใช้งาน,</p>
                     <p>ระบบ Spectra QA ได้ทำการตรวจสอบเอกสาร <b>{filename}</b> ประเภท <b>{doc_type}</b> เรียบร้อยแล้ว</p>
-                    <p>นี่คือผลการวิเคราะห์และเปรียบเทียบกับฐานข้อมูล Knowledge Base:</p>
+                    
+                    {exit_criteria_html}
                     {excel_section}
-                    <hr>
+                    
+                    <hr style="border: 0; border-top: 1px solid #e5e7eb; margin: 20px 0;">
+                    <h4 style="margin: 0 0 10px 0; color: #374151;">📝 รายงานผลการวิเคราะห์ QA Consult (Detailed Findings):</h4>
                     <pre>{report_content}</pre>
-                    <hr>
-                    <p><small>สร้างโดย Spectra QA Intelligent Analysis System</small></p>
+                    <hr style="border: 0; border-top: 1px solid #e5e7eb; margin: 20px 0;">
+                    <p><small style="color: #9ca3af;">สร้างโดย Spectra QA Intelligent Analysis System | Powered by Gemini AI</small></p>
                 </div>
             </div>
         </body>

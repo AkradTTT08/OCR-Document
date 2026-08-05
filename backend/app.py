@@ -1406,6 +1406,7 @@ def get_skills():
 
         search = request.args.get('search', '').strip()
         target_type = request.args.get('target_doc_type', '').strip()
+        include_system = request.args.get('include_system', 'false').lower() == 'true'
 
         query = """
             SELECT skill_id, skill_name, skill_description, markdown_instructions,
@@ -1414,6 +1415,10 @@ def get_skills():
             WHERE 1=1
         """
         params = []
+
+        if not include_system:
+            query += " AND skill_name NOT ILIKE %s"
+            params.append('%Exit Criteria%')
 
         if search:
             query += " AND (skill_name ILIKE %s OR skill_description ILIKE %s OR markdown_instructions ILIKE %s)"
@@ -1875,6 +1880,15 @@ def qa_consult_api():
                     except Exception as e:
                         logger.error(f"Failed to save QA transaction: {e}")
 
+                # 4. Evaluate Exit Criteria Checklist Gate
+                exit_criteria_eval = None
+                try:
+                    yield f"data: {json.dumps({'type': 'progress', 'pct': 85, 'message': 'กำลังตรวจสอบเกณฑ์ Exit Criteria Review Gate...' })}\n\n"
+                    doc_type_str = ', '.join(doc_type) if isinstance(doc_type, list) else doc_type
+                    exit_criteria_eval = evaluate_document_exit_criteria(extracted_text, doc_type=doc_type_str, project_id=project_id)
+                except Exception as eval_err:
+                    logger.error(f"Failed to evaluate document exit criteria: {eval_err}")
+
                 yield f"data: {json.dumps({'type': 'progress', 'pct': 90, 'message': 'กำลังสร้าง Excel QA Report...' })}\n\n"
 
                 # Generate Excel Report
@@ -1902,7 +1916,8 @@ def qa_consult_api():
                         project_code=p_code,
                         group_name=group_name,
                         group_type=group_type,
-                        transaction_id=transaction_id
+                        transaction_id=transaction_id,
+                        exit_criteria_eval=exit_criteria_eval
                     )
                     # Create download URL from filename
                     import os as _os
@@ -1914,7 +1929,7 @@ def qa_consult_api():
 
                 yield f"data: {json.dumps({'type': 'progress', 'pct': 100, 'message': 'ประมวลผลเสร็จสมบูรณ์ เตรียมแสดงรายงาน...' })}\n\n"
                 
-                # Instead of sending email immediately, return the report to the frontend
+                # Return report and exit criteria evaluation to frontend
                 result_payload = {
                     'total_pages': total_pages,
                     'status': 'success',
@@ -1922,7 +1937,8 @@ def qa_consult_api():
                     'email': email,
                     'doc_type': ', '.join(doc_type) if isinstance(doc_type, list) else doc_type,
                     'filename': original_filename,
-                    'excel_url': excel_download_url
+                    'excel_url': excel_download_url,
+                    'exit_criteria_eval': exit_criteria_eval
                 }
                 
                 yield f"data: {json.dumps({'type': 'complete', 'result': result_payload })}\n\n"
@@ -1952,12 +1968,13 @@ def qa_send_email():
         filename = data.get('filename')
         report = data.get('report')
         excel_url = data.get('excel_url', '')
+        exit_criteria_eval = data.get('exit_criteria_eval')
 
         if not all([email, doc_type, filename, report]):
             return jsonify({'error': 'Missing required fields'}), 400
 
         from email_service import send_qa_report
-        email_sent = send_qa_report(email, doc_type, filename, report, excel_download_url=excel_url)
+        email_sent = send_qa_report(email, doc_type, filename, report, excel_download_url=excel_url, exit_criteria_eval=exit_criteria_eval)
 
         if email_sent:
             return jsonify({'success': True, 'message': 'ส่งอีเมลสำเร็จ'})
@@ -2080,6 +2097,504 @@ def handle_qa_groups():
         except Exception as e:
             logger.error(f"Error creating qa_group: {e}", exc_info=True)
             return jsonify({'error': str(e)}), 500
+
+
+# ========================================================
+# Exit Criteria Management & Evaluation API Endpoints
+# ========================================================
+
+def sync_exit_criteria_to_agent_skills(template_id):
+    """
+    Sync an Exit Criteria template into the agent_skills table as a Markdown skill (skill.md format).
+    """
+    from db_ingestion import get_db_connection
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT template_id, title, description, doc_type, is_active
+            FROM exit_criteria_templates WHERE template_id = %s;
+        """, (template_id,))
+        t = cur.fetchone()
+        if not t:
+            cur.close()
+            conn.close()
+            return False
+            
+        t_id, title, desc, doc_type, is_active = t
+        
+        cur.execute("""
+            SELECT item_code, category, question_text, target_metric, severity, is_mandatory, order_index
+            FROM exit_criteria_items WHERE template_id = %s ORDER BY order_index ASC, item_code ASC;
+        """, (template_id,))
+        items = cur.fetchall()
+        
+        md_text = f"# 📋 {title} (Skill.md)\n\n"
+        md_text += f"> **Description:** {desc or 'Exit Criteria Gate Standards'}\n"
+        md_text += f"> **Target Document Type:** {doc_type}\n\n"
+        md_text += "## 🎯 Objective\n"
+        md_text += "Evaluate document content against the exit criteria checklist items prior to final sign-off.\n\n"
+        
+        current_cat = None
+        for item_code, category, question, metric, severity, is_mandatory, idx in items:
+            if category != current_cat:
+                current_cat = category
+                md_text += f"\n### {category}\n"
+            mand_str = "[Mandatory]" if is_mandatory else "[Optional]"
+            md_text += f"- **{item_code}** ({severity} | KPI: {metric or '100%'} | {mand_str}): {question}\n"
+            
+        md_text += "\n## 🚦 Final Gate Assessment Rules\n"
+        md_text += "1. **PASSED:** All relevant items evaluated as PASS.\n"
+        md_text += "2. **CONDITIONAL PASSED:** Pass all items in Category 1, 2, and 4; fail only minor formatting/typo items in Category 3.\n"
+        md_text += "3. **REJECTED:** Fail any item in Category 1 (Defect Resolution) or Category 2 (Content Accuracy).\n"
+
+        skill_name = f"[Exit Criteria] {title}"
+        cur.execute("SELECT skill_id FROM agent_skills WHERE skill_name = %s;", (skill_name,))
+        existing_skill = cur.fetchone()
+        
+        if existing_skill:
+            cur.execute("""
+                UPDATE agent_skills
+                SET skill_description = %s, markdown_instructions = %s, target_doc_type = %s, is_active = %s, version = version + 1
+                WHERE skill_id = %s;
+            """, (desc or f"Exit Criteria Standard Gate Checklist for {doc_type}", md_text, doc_type, is_active, existing_skill[0]))
+        else:
+            cur.execute("""
+                INSERT INTO agent_skills (skill_name, skill_description, markdown_instructions, target_doc_type, version, is_active, created_by)
+                VALUES (%s, %s, %s, %s, 1, %s, 'Exit Criteria System');
+            """, (skill_name, desc or f"Exit Criteria Standard Gate Checklist for {doc_type}", md_text, doc_type, is_active))
+            
+        conn.commit()
+        cur.close()
+        conn.close()
+        logger.info(f"Successfully synced Exit Criteria Template '{title}' to agent_skills!")
+        return True
+    except Exception as e:
+        logger.error(f"Error syncing Exit Criteria to agent_skills: {e}", exc_info=True)
+        if conn: conn.close()
+        return False
+
+
+def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', project_id = None):
+    """
+    Evaluates document text against Exit Criteria items using Gemini AI.
+    Returns evaluation summary, status, and itemized results.
+    """
+    from db_ingestion import get_db_connection
+    from ocr_engine import _get_gemini_client
+    import json
+    
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        
+        # Find matching template
+        query = "SELECT template_id, title FROM exit_criteria_templates WHERE is_active = TRUE"
+        params = []
+        if doc_type and doc_type != 'ALL':
+            query += " AND (doc_type = %s OR doc_type = 'ALL')"
+            params.append(doc_type)
+        query += " ORDER BY CASE WHEN doc_type = %s THEN 1 ELSE 2 END, created_at DESC LIMIT 1;"
+        if doc_type and doc_type != 'ALL':
+            params.append(doc_type)
+            
+        cur.execute(query, params)
+        t_row = cur.fetchone()
+        
+        if not t_row:
+            cur.close()
+            conn.close()
+            return None
+            
+        template_id, template_title = t_row
+        
+        cur.execute("""
+            SELECT item_id, item_code, category, question_text, target_metric, severity, is_mandatory, order_index
+            FROM exit_criteria_items WHERE template_id = %s ORDER BY order_index ASC, item_code ASC;
+        """, (template_id,))
+        item_rows = cur.fetchall()
+        
+        if not item_rows:
+            cur.close()
+            conn.close()
+            return None
+
+        # Format prompt for Gemini AI Evaluation
+        checklist_formatted = ""
+        items_dict = {}
+        for row in item_rows:
+            item_id, item_code, category, question, metric, severity, mandatory, idx = row
+            items_dict[item_code] = {
+                'item_id': str(item_id),
+                'item_code': item_code,
+                'category': category,
+                'question_text': question,
+                'target_metric': metric or '100% (ผ่านบริบูรณ์)',
+                'severity': severity,
+                'is_mandatory': mandatory
+            }
+            mand_txt = "บังคับผ่าน" if mandatory else "ข้ามได้หากไม่เกี่ยว"
+            checklist_formatted += f"- ข้อ [{item_code}] หมวด {category} (ตัวชี้วัด/KPI: {metric or '100%'}, ความรุนแรง: {severity}, {mand_txt}): {question}\n"
+
+        prompt = f"""คุณคือ System Auditor และ Quality Gate Evaluator
+กรุณาประเมินเนื้อหาเอกสารต่อไปนี้เทียบกับรายการ Exit Criteria Checklist แต่ละข้อ:
+
+=== รายการข้อตรวจ (Exit Criteria Checklist) ===
+{checklist_formatted}
+
+=== เนื้อหาเอกสารที่ตรวจ ===
+{doc_text[:9000]}
+
+กรุณาประเมินข้อตรวจทุกข้อ โดยส่งคืนผลลัพธ์เป็น JSON Array เท่านั้น ห้ามมีข้อความอื่น
+แต่ละ Object ใน JSON Array มีโครงสร้างดังนี้:
+[
+  {{
+    "item_code": "1.1",
+    "status": "PASS" | "FAIL" | "NA",
+    "remarks": "เหตุผลสั้นๆ สรุปผลการตรวจหรือข้อสังเกต",
+    "evidence_text": "ข้อความอ้างอิงจากเอกสาร หรือส่วนที่พบปัญหา (ถ้ามี)"
+  }}
+]
+"""
+        client = _get_gemini_client()
+        gemini_model = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash')
+        fallback_models = [gemini_model, 'gemini-2.5-flash', 'gemini-2.5-flash-lite']
+        
+        eval_items_res = []
+        for model_name in fallback_models:
+            try:
+                res = client.models.generate_content(model=model_name, contents=prompt)
+                if res and res.text:
+                    clean_text = res.text.strip()
+                    if clean_text.startswith("```"):
+                        clean_text = re.sub(r'^```(?:json)?\s*', '', clean_text)
+                        clean_text = re.sub(r'\s*```$', '', clean_text)
+                    eval_items_res = json.loads(clean_text)
+                    break
+            except Exception as e:
+                logger.warning(f"Exit criteria AI eval attempt failed with {model_name}: {e}")
+                continue
+
+        # Map results and determine Final Gate Status
+        results_map = {item.get('item_code'): item for item in eval_items_res if isinstance(item, dict)}
+        
+        evaluated_items = []
+        passed_count = 0
+        failed_count = 0
+        na_count = 0
+        
+        has_cat1_2_fail = False
+        has_cat3_fail = False
+        
+        for item_code, item_info in items_dict.items():
+            ai_eval = results_map.get(item_code, {})
+            status = ai_eval.get('status', 'PASS').upper()
+            if status not in ['PASS', 'FAIL', 'NA']:
+                status = 'PASS'
+                
+            remarks = ai_eval.get('remarks', 'ตรวจสอบแล้วตรงตามเกณฑ์มาตรฐาน')
+            evidence = ai_eval.get('evidence_text', '')
+            
+            if status == 'PASS':
+                passed_count += 1
+            elif status == 'FAIL':
+                failed_count += 1
+                cat = item_info['category']
+                if 'Defect' in cat or 'Content' in cat or '1' in item_code or '2' in item_code:
+                    has_cat1_2_fail = True
+                else:
+                    has_cat3_fail = True
+            else:
+                na_count += 1
+                
+            evaluated_items.append({
+                'item_id': item_info['item_id'],
+                'item_code': item_code,
+                'category': item_info['category'],
+                'question_text': item_info['question_text'],
+                'target_metric': item_info['target_metric'],
+                'severity': item_info['severity'],
+                'is_mandatory': item_info['is_mandatory'],
+                'status': status,
+                'remarks': remarks,
+                'evidence_text': evidence
+            })
+
+        total_items = len(evaluated_items)
+        score_pct = round((passed_count / (total_items - na_count)) * 100, 2) if (total_items - na_count) > 0 else 100.0
+
+        # Determine Final Gate Assessment Rule
+        if failed_count == 0:
+            final_status = 'PASSED'
+            summary_remarks = 'เอกสารผ่านเกณฑ์มาตรฐาน Exit Criteria ครบถ้วนบริบูรณ์ 100%'
+        elif not has_cat1_2_fail:
+            final_status = 'CONDITIONAL_PASSED'
+            summary_remarks = 'เอกสารผ่านเกณฑ์สาระสำคัญ (หมวด 1, 2, 4) พบข้อสังเกตเล็กน้อยในหมวดจัดหน้า/คำผิด (หมวด 3) สามารถแก้ไขและส่ง Final Copy ได้เลย'
+        else:
+            final_status = 'REJECTED'
+            summary_remarks = 'เอกสารไม่ผ่านเกณฑ์ Exit Criteria สาระสำคัญ (หมวด 1 หรือ 2) ต้องแก้ไขและส่งกลับมาตรวจใหม่'
+
+        # Save evaluation log in DB
+        try:
+            cur.execute("""
+                INSERT INTO document_exit_evaluations (template_id, project_id, status, score_percentage, summary_remarks)
+                VALUES (%s, %s, %s, %s, %s) RETURNING evaluation_id;
+            """, (template_id, project_id, final_status, score_pct, summary_remarks))
+            eval_id = cur.fetchone()[0]
+            
+            for item in evaluated_items:
+                cur.execute("""
+                    INSERT INTO document_exit_evaluation_items (evaluation_id, item_id, item_code, target_metric, status, remarks, evidence_text)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s);
+                """, (eval_id, item['item_id'], item['item_code'], item['target_metric'], item['status'], item['remarks'], item['evidence_text']))
+        except Exception as log_err:
+            logger.error(f"Failed to log document_exit_evaluations: {log_err}")
+
+        cur.close()
+        conn.close()
+        
+        return {
+            'template_id': str(template_id),
+            'template_title': template_title,
+            'status': final_status,
+            'total_items': total_items,
+            'passed_items': passed_count,
+            'failed_items': failed_count,
+            'na_items': na_count,
+            'score_percentage': score_pct,
+            'summary_remarks': summary_remarks,
+            'items': evaluated_items
+        }
+    except Exception as e:
+        logger.error(f"Error evaluating exit criteria: {e}", exc_info=True)
+        if conn: conn.close()
+        return None
+
+@app.route('/api/exit-criteria/templates', methods=['GET', 'POST'])
+def handle_exit_criteria_templates():
+    from db_ingestion import get_db_connection
+    if request.method == 'GET':
+        try:
+            conn = get_db_connection()
+            cur = conn.cursor()
+            project_id = request.args.get('project_id')
+            doc_type = request.args.get('doc_type')
+            
+            query = """
+                SELECT t.template_id, t.project_id, t.title, t.description, t.doc_type, t.is_active, 
+                       t.created_at, t.updated_at, COUNT(i.item_id) as item_count,
+                       p.project_name, p.project_code
+                FROM exit_criteria_templates t
+                LEFT JOIN exit_criteria_items i ON t.template_id = i.template_id
+                LEFT JOIN projects p ON t.project_id = p.project_id
+                WHERE 1=1
+            """
+            params = []
+            if project_id:
+                query += " AND (t.project_id = %s OR t.project_id IS NULL)"
+                params.append(project_id)
+            if doc_type:
+                query += " AND (t.doc_type = %s OR t.doc_type = 'ALL')"
+                params.append(doc_type)
+                
+            query += " GROUP BY t.template_id, p.project_name, p.project_code ORDER BY t.created_at DESC;"
+            cur.execute(query, params)
+            rows = cur.fetchall()
+            
+            templates = []
+            for r in rows:
+                templates.append({
+                    'template_id': str(r[0]),
+                    'project_id': str(r[1]) if r[1] else None,
+                    'title': r[2],
+                    'description': r[3],
+                    'doc_type': r[4],
+                    'is_active': r[5],
+                    'created_at': str(r[6]) if r[6] else None,
+                    'updated_at': str(r[7]) if r[7] else None,
+                    'item_count': r[8],
+                    'project_name': r[9],
+                    'project_code': r[10]
+                })
+            cur.close()
+            conn.close()
+            return jsonify({'success': True, 'templates': templates})
+        except Exception as e:
+            logger.error(f"Error fetching exit criteria templates: {e}", exc_info=True)
+            return jsonify({'error': str(e)}), 500
+
+    elif request.method == 'POST':
+        try:
+            data = request.json or {}
+            title = data.get('title')
+            description = data.get('description', '')
+            doc_type = data.get('doc_type', 'ALL')
+            project_id = data.get('project_id') or None
+            items = data.get('items', [])
+            
+            if not title:
+                return jsonify({'error': 'Title is required'}), 400
+                
+            conn = get_db_connection()
+            conn.autocommit = False
+            cur = conn.cursor()
+            
+            cur.execute("""
+                INSERT INTO exit_criteria_templates (project_id, title, description, doc_type, is_active)
+                VALUES (%s, %s, %s, %s, TRUE)
+                RETURNING template_id;
+            """, (project_id, title, description, doc_type))
+            template_id = cur.fetchone()[0]
+            
+            for idx, item in enumerate(items, 1):
+                cur.execute("""
+                    INSERT INTO exit_criteria_items (template_id, item_code, category, question_text, target_metric, severity, is_mandatory, order_index)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s);
+                """, (
+                    template_id,
+                    item.get('item_code', f"{idx}"),
+                    item.get('category', 'General'),
+                    item.get('question_text', ''),
+                    item.get('target_metric', '100% (ผ่านบริบูรณ์)'),
+                    item.get('severity', 'Major'),
+                    item.get('is_mandatory', True),
+                    item.get('order_index', idx)
+                ))
+                
+            conn.commit()
+            cur.close()
+            conn.close()
+            
+            sync_exit_criteria_to_agent_skills(template_id)
+            return jsonify({'success': True, 'template_id': str(template_id), 'message': 'Template created successfully'})
+        except Exception as e:
+            logger.error(f"Error creating exit criteria template: {e}", exc_info=True)
+            return jsonify({'error': str(e)}), 500
+
+@app.route('/api/exit-criteria/templates/<template_id>', methods=['GET', 'PUT', 'DELETE'])
+def handle_single_exit_criteria_template(template_id):
+    from db_ingestion import get_db_connection
+    conn = get_db_connection()
+    
+    if request.method == 'GET':
+        try:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT template_id, project_id, title, description, doc_type, is_active, created_at, updated_at
+                FROM exit_criteria_templates WHERE template_id = %s;
+            """, (template_id,))
+            t = cur.fetchone()
+            if not t:
+                cur.close()
+                conn.close()
+                return jsonify({'error': 'Template not found'}), 404
+                
+            cur.execute("""
+                SELECT item_id, item_code, category, question_text, target_metric, severity, is_mandatory, order_index
+                FROM exit_criteria_items WHERE template_id = %s ORDER BY order_index ASC, item_code ASC;
+            """, (template_id,))
+            item_rows = cur.fetchall()
+            
+            items = []
+            for i in item_rows:
+                items.append({
+                    'item_id': str(i[0]),
+                    'item_code': i[1],
+                    'category': i[2],
+                    'question_text': i[3],
+                    'target_metric': i[4] or '100% (ผ่านบริบูรณ์)',
+                    'severity': i[5],
+                    'is_mandatory': i[6],
+                    'order_index': i[7]
+                })
+                
+            template = {
+                'template_id': str(t[0]),
+                'project_id': str(t[1]) if t[1] else None,
+                'title': t[2],
+                'description': t[3],
+                'doc_type': t[4],
+                'is_active': t[5],
+                'created_at': str(t[6]) if t[6] else None,
+                'updated_at': str(t[7]) if t[7] else None,
+                'items': items
+            }
+            cur.close()
+            conn.close()
+            return jsonify({'success': True, 'template': template})
+        except Exception as e:
+            logger.error(f"Error fetching template {template_id}: {e}", exc_info=True)
+            return jsonify({'error': str(e)}), 500
+
+    elif request.method == 'PUT':
+        try:
+            data = request.json or {}
+            title = data.get('title')
+            description = data.get('description', '')
+            doc_type = data.get('doc_type', 'ALL')
+            is_active = data.get('is_active', True)
+            items = data.get('items', [])
+            
+            conn.autocommit = False
+            cur = conn.cursor()
+            
+            cur.execute("""
+                UPDATE exit_criteria_templates
+                SET title = %s, description = %s, doc_type = %s, is_active = %s, updated_at = NOW()
+                WHERE template_id = %s;
+            """, (title, description, doc_type, is_active, template_id))
+            
+            # Replace items
+            cur.execute("DELETE FROM exit_criteria_items WHERE template_id = %s;", (template_id,))
+            
+            for idx, item in enumerate(items, 1):
+                cur.execute("""
+                    INSERT INTO exit_criteria_items (template_id, item_code, category, question_text, target_metric, severity, is_mandatory, order_index)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s);
+                """, (
+                    template_id,
+                    item.get('item_code', f"{idx}"),
+                    item.get('category', 'General'),
+                    item.get('question_text', ''),
+                    item.get('target_metric', '100% (ผ่านบริบูรณ์)'),
+                    item.get('severity', 'Major'),
+                    item.get('is_mandatory', True),
+                    item.get('order_index', idx)
+                ))
+                
+            conn.commit()
+            cur.close()
+            conn.close()
+            
+            sync_exit_criteria_to_agent_skills(template_id)
+            return jsonify({'success': True, 'message': 'Template updated successfully'})
+        except Exception as e:
+            logger.error(f"Error updating template {template_id}: {e}", exc_info=True)
+            return jsonify({'error': str(e)}), 500
+
+    elif request.method == 'DELETE':
+        try:
+            conn.autocommit = True
+            cur = conn.cursor()
+            cur.execute("DELETE FROM exit_criteria_templates WHERE template_id = %s;", (template_id,))
+            cur.close()
+            conn.close()
+            return jsonify({'success': True, 'message': 'Template deleted successfully'})
+        except Exception as e:
+            logger.error(f"Error deleting template {template_id}: {e}", exc_info=True)
+            return jsonify({'error': str(e)}), 500
+
+@app.route('/api/exit-criteria/reset-universal', methods=['POST'])
+def reset_universal_exit_criteria():
+    """Reset or re-seed the standard Universal Exit Criteria Checklist"""
+    try:
+        from add_exit_criteria_tables import add_exit_criteria_tables
+        add_exit_criteria_tables(force_reset=True)
+        return jsonify({'success': True, 'message': 'Universal Document Exit Criteria template reset/seeded successfully'})
+    except Exception as e:
+        logger.error(f"Error resetting universal exit criteria: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
 
 
 if __name__ == '__main__':
