@@ -1880,12 +1880,20 @@ def qa_consult_api():
                     except Exception as e:
                         logger.error(f"Failed to save QA transaction: {e}")
 
-                # 4. Evaluate Exit Criteria Checklist Gate
+                # 3b. Parse QA findings for Exit Criteria context and web display
+                from excel_report import parse_qa_report_with_ai as _parse_findings
+                qa_findings = []
+                try:
+                    qa_findings = _parse_findings(report, original_filename)
+                except Exception as pf_err:
+                    logger.error(f"Failed to parse QA findings: {pf_err}")
+
+                # 4. Evaluate Exit Criteria Checklist Gate (with QA findings context)
                 exit_criteria_eval = None
                 try:
                     yield f"data: {json.dumps({'type': 'progress', 'pct': 85, 'message': 'กำลังตรวจสอบเกณฑ์ Exit Criteria Review Gate...' })}\n\n"
                     doc_type_str = ', '.join(doc_type) if isinstance(doc_type, list) else doc_type
-                    exit_criteria_eval = evaluate_document_exit_criteria(extracted_text, doc_type=doc_type_str, project_id=project_id)
+                    exit_criteria_eval = evaluate_document_exit_criteria(extracted_text, doc_type=doc_type_str, project_id=project_id, qa_findings=qa_findings)
                 except Exception as eval_err:
                     logger.error(f"Failed to evaluate document exit criteria: {eval_err}")
 
@@ -1938,7 +1946,8 @@ def qa_consult_api():
                     'doc_type': ', '.join(doc_type) if isinstance(doc_type, list) else doc_type,
                     'filename': original_filename,
                     'excel_url': excel_download_url,
-                    'exit_criteria_eval': exit_criteria_eval
+                    'exit_criteria_eval': exit_criteria_eval,
+                    'qa_findings': qa_findings
                 }
                 
                 yield f"data: {json.dumps({'type': 'complete', 'result': result_payload })}\n\n"
@@ -2176,7 +2185,7 @@ def sync_exit_criteria_to_agent_skills(template_id):
         return False
 
 
-def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', project_id = None):
+def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', project_id = None, qa_findings: list = None):
     """
     Evaluates document text against Exit Criteria items using Gemini AI.
     Returns evaluation summary, status, and itemized results.
@@ -2237,14 +2246,42 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
             mand_txt = "บังคับผ่าน" if mandatory else "ข้ามได้หากไม่เกี่ยว"
             checklist_formatted += f"- ข้อ [{item_code}] หมวด {category} (ตัวชี้วัด/KPI: {metric or '100%'}, ความรุนแรง: {severity}, {mand_txt}): {question}\n"
 
+        # Build findings summary for prompt context
+        findings_summary = ""
+        if qa_findings:
+            high_critical = [f for f in qa_findings if f.get('severity','').lower() in ['critical','high']]
+            medium = [f for f in qa_findings if f.get('severity','').lower() == 'medium']
+            low_info = [f for f in qa_findings if f.get('severity','').lower() in ['low','info']]
+            findings_summary = f"""
+
+=== ผล QA Analysis Findings ที่พบในเอกสาร ===
+(ข้อมูลนี้คือผลจากการวิเคราะห์โดย AI — ให้นำมาประกอบการตัดสินใจ Exit Criteria ด้วย)
+- Critical/High Findings: {len(high_critical)} รายการ
+- Medium Findings: {len(medium)} รายการ  
+- Low/Info Findings: {len(low_info)} รายการ
+- รวมทั้งหมด: {len(qa_findings)} รายการ
+
+รายการ Critical/High ที่พบ:
+"""
+            for f in high_critical[:10]:  # limit to 10
+                findings_summary += f"  [{f.get('severity','')}] {f.get('issue','')} — ประเภท: {f.get('check_type','')}\n"
+            if medium:
+                findings_summary += f"\nรายการ Medium ที่พบ ({len(medium)} รายการ):\n"
+                for f in medium[:5]:
+                    findings_summary += f"  [Medium] {f.get('issue','')}\n"
+            findings_summary += """
+**หมายเหตุ:** ถ้ามี Critical/High Findings → ข้อตรวจที่เกี่ยวข้องควรเป็น FAIL
+ถ้ามีเพียง Medium/Low → ข้อตรวจที่เกี่ยวข้องอาจเป็น FAIL หรือ CONDITIONAL_PASS ขึ้นอยู่กับเนื้อหา
+"""
+
         prompt = f"""คุณคือ System Auditor และ Quality Gate Evaluator
 กรุณาประเมินเนื้อหาเอกสารต่อไปนี้เทียบกับรายการ Exit Criteria Checklist แต่ละข้อ:
 
 === รายการข้อตรวจ (Exit Criteria Checklist) ===
-{checklist_formatted}
+{checklist_formatted}{findings_summary}
 
 === เนื้อหาเอกสารที่ตรวจ ===
-{doc_text[:9000]}
+{doc_text[:7000]}
 
 กรุณาประเมินข้อตรวจทุกข้อ โดยส่งคืนผลลัพธ์เป็น JSON Array เท่านั้น ห้ามมีข้อความอื่น
 แต่ละ Object ใน JSON Array มีโครงสร้างดังนี้:
@@ -2614,6 +2651,15 @@ if __name__ == '__main__':
         init_qa_transactions()
     except Exception as e:
         logger.error(f"Failed to initialize DB tables: {e}")
+
+    # Initialize Exit Criteria tables & seed Universal template
+    logger.info("กำลังตรวจสอบและสร้างตาราง Exit Criteria...")
+    try:
+        from add_exit_criteria_tables import add_exit_criteria_tables
+        add_exit_criteria_tables()
+        logger.info("Exit Criteria tables ready.")
+    except Exception as e:
+        logger.error(f"Failed to initialize Exit Criteria tables: {e}")
     
     app.run(
         host='0.0.0.0',

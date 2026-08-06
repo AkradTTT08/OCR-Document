@@ -11,6 +11,7 @@
   import QAConsult from "./lib/QAConsult.svelte";
   import QAMember from "./lib/QAMember.svelte";
   import ExitCriteriaManager from "./lib/ExitCriteriaManager.svelte";
+  import TutorialOverlay from "./lib/TutorialOverlay.svelte";
   import { showLogin, authRole, authUser, authDisplayName, authAvatar, logout } from "./lib/authStore.js";
   import { globalSearchQuery, triggerGlobalSearch } from "./lib/globalStore.js";
   import { onMount } from "svelte";
@@ -79,6 +80,7 @@
 
   let showProfileMenu = false;
   let showMyProfileModal = false;
+  let showTutorial = false;
   let myProfileFormData = { display_name: '', password: '' };
   let showMyPassword = false;
   let myProfileAvatarFile = null;
@@ -302,6 +304,17 @@
       </nav>
 
       <div class="sidebar-footer">
+        <!-- Tutorial Button -->
+        <button class="btn-tutorial" on:click={() => (showTutorial = true)} title="เปิดคู่มือการใช้งาน">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+            <circle cx="12" cy="12" r="10"/>
+            <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+            <line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+          Tutorial
+          <span class="tutorial-badge">Guide</span>
+        </button>
+
         <button class="btn-logout" on:click={logout}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
           Logout
@@ -408,6 +421,11 @@
 
 <!-- Global Toast Notifications -->
 <Toast />
+
+<!-- Tutorial Overlay -->
+{#if showTutorial}
+  <TutorialOverlay userRole={$authRole} on:close={() => (showTutorial = false)} />
+{/if}
 
 {#if showMyProfileModal}
 <div class="modal-backdrop">
@@ -693,6 +711,53 @@
   .sidebar-footer {
     padding: 20px 16px;
     border-top: 1px solid var(--glass-border);
+  }
+
+  /* ── Tutorial Button ── */
+  .btn-tutorial {
+    display: flex; align-items: center; gap: 10px;
+    width: 100%; padding: 11px 12px;
+    background: rgba(99, 102, 241, 0.06);
+    border: 1px solid rgba(99, 102, 241, 0.18);
+    color: rgba(167, 139, 250, 0.85);
+    font-size: 14px; font-weight: 500; cursor: pointer;
+    border-radius: var(--radius-md); transition: all 0.3s;
+    margin-bottom: 8px;
+    position: relative;
+    overflow: hidden;
+  }
+  .btn-tutorial::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, rgba(99,102,241,0.08), rgba(168,85,247,0.08));
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+  .btn-tutorial:hover {
+    background: rgba(99, 102, 241, 0.12);
+    border-color: rgba(99, 102, 241, 0.35);
+    color: #a78bfa;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 14px rgba(99, 102, 241, 0.15);
+  }
+  .btn-tutorial:hover::before { opacity: 1; }
+  .tutorial-badge {
+    margin-left: auto;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    padding: 2px 7px;
+    background: rgba(99, 102, 241, 0.2);
+    border: 1px solid rgba(99, 102, 241, 0.3);
+    border-radius: 20px;
+    color: #818cf8;
+    font-family: 'Inter', var(--font-en), sans-serif;
+    animation: pulse-badge 2s ease-in-out infinite;
+  }
+  @keyframes pulse-badge {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.55; }
   }
 
   .btn-logout {

@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import CustomSelect from './CustomSelect.svelte';
+  import { toast } from './toastStore.js';
 
   // ── States ──
   let skills = [];
@@ -120,7 +121,7 @@
 
   async function saveSkill() {
     if (!form.skill_name.trim() || !form.markdown_instructions.trim()) {
-      alert('กรุณากรอก ชื่อ Skill และ เนื้อหา Markdown Instructions');
+      toast('กรุณากรอก ชื่อ Skill และ เนื้อหา Markdown Instructions', 'warning');
       return;
     }
 
@@ -138,17 +139,17 @@
       const data = await res.json();
 
       if (res.ok) {
-        alert(isNew ? 'สร้าง Skill ใหม่สำเร็จ' : 'อัปเดต Skill สำเร็จ');
+        toast(isNew ? 'สร้าง Skill ใหม่สำเร็จ' : 'อัปเดต Skill สำเร็จ', 'success');
         await fetchSkills();
         if (data.skill_id) {
           const created = skills.find(s => s.skill_id === data.skill_id);
           if (created) selectSkill(created);
         }
       } else {
-        alert(`ข้อผิดพลาด: ${data.error}`);
+        toast(`ข้อผิดพลาด: ${data.error}`, 'error');
       }
     } catch (e) {
-      alert(`เกิดข้อผิดพลาด: ${e.message}`);
+      toast(`เกิดข้อผิดพลาด: ${e.message}`, 'error');
     } finally {
       saving = false;
     }
@@ -164,16 +165,16 @@
       });
       const data = await res.json();
       if (res.ok) {
-        alert('ลบ Skill สำเร็จ');
+        toast('ลบ Skill สำเร็จ', 'success');
         activeSkill = null;
         await fetchSkills();
         if (skills.length > 0) selectSkill(skills[0]);
         else startCreateNew();
       } else {
-        alert(`ลบไม่สำเร็จ: ${data.error}`);
+        toast(`ลบไม่สำเร็จ: ${data.error}`, 'error');
       }
     } catch (e) {
-      alert(`เกิดข้อผิดพลาด: ${e.message}`);
+      toast(`เกิดข้อผิดพลาด: ${e.message}`, 'error');
     }
   }
 

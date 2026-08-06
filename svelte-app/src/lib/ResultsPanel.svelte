@@ -307,7 +307,11 @@
   let projects = [];
   $: projectSelectOptions = [
     { value: '', label: '-- เลือกโครงการ --', icon: '📁' },
-    ...(projects || []).map(p => ({ value: p.id, label: `${p.project_code || ''} - ${p.name || ''}`, icon: '📌' }))
+    ...(projects || []).map(p => ({ 
+      value: p.id || p.project_id, 
+      label: `${p.project_code || ''} - ${p.name || p.project_name || ''}`, 
+      icon: '📌' 
+    }))
   ];
 
   const categorySelectOptions = [
@@ -316,6 +320,7 @@
     { value: 'Requirements', label: 'Requirements', icon: '📋' },
     { value: 'Other', label: 'อื่นๆ (Other)', icon: '📁' }
   ];
+  let isSaving = false;
   let saveForm = {
     project_id: '',
     filename: '',
@@ -338,8 +343,9 @@
       if (res.ok) {
         const data = await res.json();
         projects = data.projects || [];
+        // Auto-select first project if none selected
         if (projects.length > 0 && !saveForm.project_id) {
-          saveForm.project_id = projects[0].id;
+          saveForm.project_id = projects[0].id || projects[0].project_id || '';
         }
       }
     } catch (e) {
@@ -728,7 +734,7 @@
 
 <!-- ── Save Modal ── -->
 {#if showSaveModal}
-  <div class="modal-backdrop" on:click={() => showSaveModal = false}>
+  <div class="modal-backdrop" on:click|self={() => showSaveModal = false}>
     <div class="modal-content" on:click|stopPropagation>
       <h3>บันทึกเอกสารเข้า Project</h3>
       
@@ -776,8 +782,16 @@
 
       <div class="modal-actions">
         <button class="btn-cancel" on:click={() => showSaveModal = false} disabled={isSaving}>ยกเลิก</button>
-        <button class="btn-save" on:click={saveToProject} disabled={isSaving || !saveForm.project_id || !saveForm.filename}>
-          {#if isSaving} กำลังบันทึก... {:else} บันทึก {/if}
+        <button 
+          class="btn-save" 
+          on:click={saveToProject} 
+          disabled={isSaving || !saveForm.project_id}
+        >
+          {#if isSaving}
+            <span class="save-spinner"></span> กำลังบันทึก...
+          {:else}
+            💾 บันทึก
+          {/if}
         </button>
       </div>
     </div>
@@ -1507,6 +1521,17 @@
     opacity: 0.5;
     cursor: not-allowed;
   }
+  .save-spinner {
+    display: inline-block;
+    width: 12px; height: 12px;
+    border: 2px solid rgba(255,255,255,0.3);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: spin-save 0.7s linear infinite;
+    vertical-align: middle;
+    margin-right: 4px;
+  }
+  @keyframes spin-save { to { transform: rotate(360deg); } }
 
   /* ── Confirm Modal ── */
   .confirm-modal {

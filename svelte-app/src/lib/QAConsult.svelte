@@ -2,6 +2,7 @@
   import { createEventDispatcher, onMount } from "svelte";
   import { fade } from "svelte/transition";
   import { toast } from "./toastStore.js";
+  import { authUser } from "./authStore.js";
   import { qaHistory, selectedHistory, loadQAHistoryFromDB, selectedProjectStore, qaSessionGroups, activeQAContext, loadQAGroupsFromDB } from "./qaHistoryStore.js";
   import GateResultModal from "./GateResultModal.svelte";
 
@@ -23,25 +24,40 @@
   }
 
   onMount(async () => {
+    // Load Skills (separate try/catch so failure won't block projects)
     try {
       const resSkills = await fetch("http://127.0.0.1:5000/api/skills");
       if (resSkills.ok) {
-        skills = (data.skills || []).filter(s => 
-          !s.skill_name?.startsWith('[Exit Criteria]') && 
+        const data = await resSkills.json();
+        skills = (data.skills || []).filter(s =>
+          !s.skill_name?.startsWith('[Exit Criteria]') &&
           !s.skill_name?.includes('Exit Criteria')
         );
       }
-      
-      // Load global doc types initially
-      await loadDocTypes();
-      
+    } catch (err) {
+      console.error("Failed to load skills:", err);
+    }
+
+    // Load Doc Types
+    try { await loadDocTypes(); } catch (err) { console.error("Failed to load doc types:", err); }
+
+    // Load Projects — must always run independently
+    try {
       const resProjects = await fetch("http://127.0.0.1:5000/api/projects");
       if (resProjects.ok) {
         const pData = await resProjects.json();
         projects = pData.projects || [];
+      } else {
+        console.error("Projects API error:", resProjects.status);
       }
     } catch (err) {
-      console.error("Failed to load setup data:", err);
+      console.error("Failed to load projects:", err);
+    }
+
+    // Auto-fill email from logged-in user
+    const currentUser = $authUser;
+    if (currentUser && currentUser.includes('@') && !emailList.includes(currentUser)) {
+      emailList = [currentUser];
     }
   });
 
@@ -538,7 +554,7 @@
             on:keydown={(e) => e.key === "Enter" && triggerFileInput()}
           >
             {#if file}
-              <div class="file-info" on:click|stopPropagation>
+              <div class="file-info" on:click|stopPropagation on:keydown|stopPropagation role="group">
                 <div class="file-icon">
                   <svg viewBox="0 0 24 24" fill="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
                 </div>
@@ -762,6 +778,59 @@
           </button>
         </div>
       </div>
+
+      <!-- QA Findings Report Card -->
+      {#if scanResult.qa_findings && scanResult.qa_findings.length > 0}
+        <div class="qa-findings-card glass-panel" style="margin-bottom: 24px; overflow-x: auto;">
+          <div class="gate-result-header" style="margin-bottom: 16px;">
+            <div class="gate-header-title">
+              <h3>📊 QA Audit Findings Report</h3>
+              <span class="template-badge">ประเด็นที่พบจากการวิเคราะห์</span>
+            </div>
+            <div class="gate-header-actions">
+              <span class="gate-status-pill status-info">
+                พบ {scanResult.qa_findings.length} รายการ
+              </span>
+            </div>
+          </div>
+
+          <div class="exit-checklist-table-wrapper">
+            <table class="exit-checklist-table">
+              <thead>
+                <tr>
+                  <th style="width: 50px;">ลำดับ</th>
+                  <th style="width: 150px;">ประเภทการตรวจ</th>
+                  <th>ประเด็นที่พบ (Issue)</th>
+                  <th style="width: 100px;">ความรุนแรง</th>
+                  <th>สิ่งที่ควรเป็น</th>
+                  <th>ข้อเสนอแนะ</th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each scanResult.qa_findings as finding, i}
+                  <tr class="row-status-{finding.severity === 'Critical' || finding.severity === 'High' ? 'fail' : finding.severity === 'Medium' ? 'na' : 'pass'}">
+                    <td class="item-code-cell" style="text-align: center;">{i + 1}</td>
+                    <td class="category-cell">{finding.check_type || '-'}</td>
+                    <td class="question-cell">
+                      <strong>{finding.issue || '-'}</strong>
+                      {#if finding.found_incorrect && finding.found_incorrect !== '-'}
+                        <div class="evidence-text" style="margin-top: 8px;">
+                          <span style="color: #f87171;">ข้อความในเอกสาร:</span> {finding.found_incorrect}
+                        </div>
+                      {/if}
+                    </td>
+                    <td class="severity-cell" style="text-align: center;">
+                      <span class="badge-sev badge-sev-{finding.severity.toLowerCase()}">{finding.severity}</span>
+                    </td>
+                    <td class="remarks-cell">{finding.correct_value || '-'}</td>
+                    <td class="remarks-cell">{finding.recommendation || '-'}</td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      {/if}
 
       <!-- Exit Criteria Review Gate Card -->
       {#if scanResult.exit_criteria_eval}
