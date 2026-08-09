@@ -79,6 +79,16 @@
       color: '#6366f1',
     },
     {
+      id: 'mcp_integration_admin',
+      title: '🤖 Claude Desktop Integration',
+      subtitle: 'ทำงานแบบ Fully Autonomous',
+      description: '<img src="data:image/svg+xml;utf8,%3Csvg%20width%3D%2224%22%20height%3D%2224%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%3E%3Cpath%20fill-rule%3D%22evenodd%22%20clip-rule%3D%22evenodd%22%20d%3D%22M11.996%2023.992c-6.623%200-11.992-5.369-11.992-11.992S5.373.008%2011.996.008c6.623%200%2011.992%205.369%2011.992%2011.992s-5.369%2011.992-11.992%2011.992zm-3.52-6.52c1.99%200%203.73-1.07%204.54-2.67l2.45%201.41a8%208%200%2001-14-4.21h2.82a5.18%205.18%200%20004.19%205.47zM12%204.18c-1.99%200-3.73%201.07-4.54%202.67l-2.45-1.41A8%208%200%200119.01%209.65h-2.82A5.18%205.18%200%200012%204.18z%22%20fill%3D%22%23D97757%22%2F%3E%3C%2Fsvg%3E" style="height:24px; border-radius:4px; vertical-align:middle; margin-right:8px;"/> **วิธีการใช้งาน (How to Use)**\n\n1️⃣ **ตั้งค่า Config:** เปิด `claude_desktop_config.json` เชื่อม MCP ทั้ง RAG Database และ Spectra QA Backend\n2️⃣ **สั่งงาน (Prompt):** สั่ง Claude ว่า *"ช่วยร่าง Requirement โครงการ X แล้วส่งตรวจ Exit Criteria ให้ผ่าน จากนั้นส่งอีเมลรายงาน"* \n3️⃣ **ระบบอัตโนมัติ (Auto-Loop):** นั่งรอ Claude ดึงข้อมูล RAG, ร่างเอกสาร, ตรวจสอบตัวเอง, แก้ไข Error, และยิงอีเมลแบบจบในคำสั่งเดียว!',
+      icon: '🤖',
+      target: null,
+      role: 'admin',
+      color: '#f43f5e',
+    },
+    {
       id: 'admin_done',
       title: '🎉 พร้อมใช้งานแล้ว!',
       subtitle: 'Admin Mode — All Systems Go',
@@ -140,6 +150,16 @@
       target: null,
       role: 'user',
       color: '#f59e0b',
+    },
+    {
+      id: 'mcp_integration_user',
+      title: '🤖 Claude Desktop Integration',
+      subtitle: 'ให้ AI ช่วยทำงานแบบอัตโนมัติ',
+      description: '<img src="data:image/svg+xml;utf8,%3Csvg%20width%3D%2224%22%20height%3D%2224%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%3E%3Cpath%20fill-rule%3D%22evenodd%22%20clip-rule%3D%22evenodd%22%20d%3D%22M11.996%2023.992c-6.623%200-11.992-5.369-11.992-11.992S5.373.008%2011.996.008c6.623%200%2011.992%205.369%2011.992%2011.992s-5.369%2011.992-11.992%2011.992zm-3.52-6.52c1.99%200%203.73-1.07%204.54-2.67l2.45%201.41a8%208%200%2001-14-4.21h2.82a5.18%205.18%200%20004.19%205.47zM12%204.18c-1.99%200-3.73%201.07-4.54%202.67l-2.45-1.41A8%208%200%200119.01%209.65h-2.82A5.18%205.18%200%200012%204.18z%22%20fill%3D%22%23D97757%22%2F%3E%3C%2Fsvg%3E" style="height:24px; border-radius:4px; vertical-align:middle; margin-right:8px;"/> **วิธีการใช้งาน (How to Use)**\n\n1️⃣ **ตรวจสอบ Tools:** เปิด Claude Desktop สังเกตไอคอน 🔨 (ค้อน) มุมขวาล่างว่าขึ้น Tools ครบถ้วน\n2️⃣ **สั่งงาน (Prompt):** พิมพ์สั่งงานปกติ เช่น *"ช่วยร่าง Requirement โครงการ HR อิงจากฐานข้อมูล และตรวจ Exit Criteria ก่อนส่งอีเมล"* \n3️⃣ **ระบบอัตโนมัติ:** Claude จะหมุนเรียกใช้ Tool เองทั้งหมด (ถ้าเอกสารผิด AI จะอ่าน Error แล้วแก้ตัวเอง) คุณแค่นั่งรอรับผลลัพธ์ผ่านแชทและอีเมลได้เลย!',
+      icon: '🤖',
+      target: null,
+      role: 'user',
+      color: '#f43f5e',
     },
     {
       id: 'user_done',

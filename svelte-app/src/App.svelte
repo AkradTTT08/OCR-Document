@@ -12,6 +12,7 @@
   import QAMember from "./lib/QAMember.svelte";
   import ExitCriteriaManager from "./lib/ExitCriteriaManager.svelte";
   import TutorialOverlay from "./lib/TutorialOverlay.svelte";
+  import LegalModal from "./lib/LegalModal.svelte";
   import { showLogin, authRole, authUser, authDisplayName, authAvatar, logout } from "./lib/authStore.js";
   import { globalSearchQuery, triggerGlobalSearch } from "./lib/globalStore.js";
   import { onMount } from "svelte";
@@ -81,6 +82,7 @@
   let showProfileMenu = false;
   let showMyProfileModal = false;
   let showTutorial = false;
+  let legalModalType = null;
   let myProfileFormData = { display_name: '', password: '' };
   let showMyPassword = false;
   let myProfileAvatarFile = null;
@@ -409,9 +411,9 @@
           &copy; 2026 Spectra QA v1.0.4. Powered by Prism AI.
         </div>
         <div class="footer-links">
-          <a href="#">Privacy Policy</a>
-          <a href="#">Terms of Service</a>
-          <a href="#">Security Architecture</a>
+          <a href="#" on:click|preventDefault={() => legalModalType = 'privacy'}>Privacy Policy</a>
+          <a href="#" on:click|preventDefault={() => legalModalType = 'terms'}>Terms of Service</a>
+          <a href="#" on:click|preventDefault={() => legalModalType = 'security'}>Security Architecture</a>
         </div>
       </footer>
     </main>
@@ -425,6 +427,11 @@
 <!-- Tutorial Overlay -->
 {#if showTutorial}
   <TutorialOverlay userRole={$authRole} on:close={() => (showTutorial = false)} />
+{/if}
+
+<!-- Legal Modal -->
+{#if legalModalType}
+  <LegalModal type={legalModalType} on:close={() => legalModalType = null} />
 {/if}
 
 {#if showMyProfileModal}

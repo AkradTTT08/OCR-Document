@@ -149,11 +149,15 @@
         <li><strong>Mac:</strong> <span class="code-inline">~/Library/Application Support/Claude/claude_desktop_config.json</span></li>
     </ul>
 
-    <h3>📌 โค้ดที่ต้องนำไปใส่</h3>
-    <p>ให้คุณเพิ่มโครงสร้าง JSON ด้านล่างนี้เข้าไป (ถ้ามีไฟล์อยู่แล้ว ให้เพิ่มแค่ object <span class="code-inline">spectra-qa-mcp</span> ไว้ใน <span class="code-inline">mcpServers</span>):</p>
+    <h3>📌 โค้ดที่ต้องนำไปใส่ (สำหรับเชื่อมต่อ 2 ระบบเข้าด้วยกัน)</h3>
+    <p>ระบบที่สมบูรณ์จะต้องเชื่อมต่อ MCP ทั้ง 2 ตัวควบคู่กัน (ตัว RAG เดิม และตัว QA ใหม่) ให้คุณเพิ่ม/แก้ไขโครงสร้าง JSON ด้านล่างนี้:</p>
     <div class="code-block">
 <pre>{
   "mcpServers": {
+    "qa-agent-server": {
+      "command": "docker",
+      "args": ["exec", "-i", "qa_agent_mcp", "python", "agent_mcp_server.py"]
+    },
     "spectra-qa-mcp": {
       "command": "python",
       "args": ["d:/OCR/backend/mcp_server.py"]
@@ -163,14 +167,54 @@
     </div>
 
     <div class="note">
-        <p><strong>หมายเหตุ:</strong> หากคุณใช้ Mac ให้เปลี่ยน <code>d:/OCR/backend/mcp_server.py</code> เป็นพาธจริงบนเครื่อง Mac และอาจต้องเปลี่ยน <code>python</code> เป็นพาธเต็มของ Virtual Environment เช่น <code>/path/to/venv/bin/python</code></p>
+        <p><strong>หมายเหตุ:</strong> <br>
+        1. <code>qa-agent-server</code> คือตัวจัดการ Database (RAG) ดั้งเดิม (อ้างอิงจากการรันใน Docker container ชื่อ qa_agent_mcp)<br>
+        2. <code>spectra-qa-mcp</code> คือตัวระบบประเมิน Exit Criteria และ OCR ที่เพิ่มเข้ามาใหม่<br>
+        หากคุณรันด้วยวิธีอื่น สามารถปรับแก้ <code>command</code> และ <code>args</code> ตามที่ใช้งานจริงได้เลยครับ</p>
     </div>
     <p>เมื่อบันทึกไฟล์เสร็จเรียบร้อย <strong>ให้ปิดโปรแกรม Claude Desktop อย่างสมบูรณ์แล้วเปิดขึ้นมาใหม่</strong> (Restart Claude Desktop)</p>
 
     <!-- Section 2 -->
     <h2>2. เครื่องมือ (Tools) ที่มีให้ใช้งานผ่าน MCP</h2>
-    <p>เมื่อเปิด Claude Desktop ขึ้นมาใหม่ สัญลักษณ์ "ค้อน" (Tools) จะปรากฏขึ้น ซึ่งบ่งบอกว่า Claude เชื่อมต่อกับ Backend สำเร็จแล้ว โดยจะมีเครื่องมือให้ใช้งานทั้งหมด 3 ตัว ดังนี้:</p>
+    <p>เมื่อเปิด Claude Desktop ขึ้นมาใหม่ สัญลักษณ์ "ค้อน" (Tools) จะปรากฏขึ้น ซึ่งบ่งบอกว่า Claude เชื่อมต่อกับ Backend สำเร็จแล้ว โดยจะมีเครื่องมือให้ใช้งานร่วมกันจากทั้ง 2 ฝั่ง (เปรียบเสมือนแขนซ้ายและแขนขวา) ดังนี้:</p>
 
+    <h3 style="color: var(--primary);">🗄️ แขนซ้าย: Database AIAgentQA (ตัว RAG ดั้งเดิม)</h3>
+    <p>เครื่องมือสำหรับการสืบค้นข้อมูลองค์กร ฐานข้อมูลโปรเจกต์ และดึง Context มาให้ AI อ่านก่อนร่างเอกสาร</p>
+    
+    <div class="tool-card">
+        <div class="tool-title">📋 1. list_projects / list_project_documents</div>
+        <ul>
+            <li><strong>หน้าที่:</strong> ใช้ดูรายชื่อโปรเจกต์ทั้งหมดที่กำลัง Active และดูรายการเอกสารที่เกี่ยวข้องในโปรเจกต์นั้นๆ</li>
+            <li><strong>เมื่อไหร่ที่ Claude จะใช้:</strong> เมื่อผู้ใช้สั่งงานเกี่ยวกับโปรเจกต์ใดโปรเจกต์หนึ่ง แต่ไม่แน่ใจรหัส (Project ID) หรืออยากรู้ว่าในโปรเจกต์นั้นมีเอกสารอ้างอิงอะไรบ้าง</li>
+        </ul>
+    </div>
+
+    <div class="tool-card">
+        <div class="tool-title">🧠 2. list_skills / get_skill</div>
+        <ul>
+            <li><strong>หน้าที่:</strong> ดึงคู่มือหรือคำสั่ง (Prompt/Markdown Instructions) สำหรับ AI Skill เฉพาะทาง</li>
+            <li><strong>เมื่อไหร่ที่ Claude จะใช้:</strong> เมื่อต้องสวมบทบาทเฉพาะ เช่น "เขียน Requirement" หรือ "เขียน Manual" Claude จะดึง Skill เหล่านี้มาเพื่อปรับพฤติกรรมการเขียนให้ตรงตามมาตรฐานบริษัท</li>
+        </ul>
+    </div>
+
+    <div class="tool-card">
+        <div class="tool-title">🔍 3. search_project_documents</div>
+        <ul>
+            <li><strong>หน้าที่:</strong> ทำ Vector Search (RAG) ค้นหาข้อมูลเชิงลึกในเนื้อหาเอกสารทั้งหมดของโปรเจกต์ (อิงจาก pgvector)</li>
+            <li><strong>เมื่อไหร่ที่ Claude จะใช้:</strong> เมื่อต้องการดึง Golden Data, สถิติ, หรือเนื้อหาที่เคยเขียนไว้ในเอกสารอื่นๆ ของโปรเจกต์มาใช้อ้างอิงในการร่างเอกสารใหม่</li>
+        </ul>
+    </div>
+
+    <div class="tool-card">
+        <div class="tool-title">📄 4. get_document_for_review / save_qa_evaluation</div>
+        <ul>
+            <li><strong>หน้าที่:</strong> ดึงเอกสารฉบับเต็มมาอ่าน และใช้บันทึกผลการประเมินลงฐานข้อมูล (Database Log)</li>
+            <li><strong>เมื่อไหร่ที่ Claude จะใช้:</strong> เพื่อดึง Context ฉบับเต็ม หรือบันทึกประวัติการประเมินเพื่อทำ Report ย้อนหลัง</li>
+        </ul>
+    </div>
+
+    <h3 style="color: var(--primary);">⚙️ แขนขวา: Spectra QA (ตัวประเมินและแจ้งเตือน)</h3>
+    <p>เครื่องมือสำหรับจัดการไฟล์, ตรวจสอบความถูกต้อง, และการสื่อสาร (Action Tools)</p>
     <div class="tool-card">
         <div class="tool-title">🔍 1. ocr_document (ดึงข้อมูลจากเอกสารรูปภาพ/PDF)</div>
         <ul>
@@ -223,7 +267,31 @@
         <li><strong>[Dispatch]</strong> Claude สั่งให้ยิงอีเมลผลลัพธ์ไปที่ ceo@test.com</li>
         <li><strong>[Finished]</strong> Claude ตอบกลับคุณหน้าจอแชทว่า <em>"เรียบร้อยครับ เอกสารผ่านการประเมินและผมส่งอีเมลให้แล้ว นี่คือตัวเอกสารฉบับไฟนอล..."</em></li>
     </ul>
-    <p style="text-align: center; margin-top: 40px; font-weight: bold; color: var(--primary);">ทั้งหมดนี้เกิดขึ้นด้วยการพิมพ์คำสั่งเพียงครั้งเดียวของคุณ!</p>
+
+    <!-- Section 5: Tutorial -->
+    <h2 style="display: flex; align-items: center; gap: 15px; margin-top: 50px;">
+        <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/c/c5/Claude_AI_logo.svg/1024px-Claude_AI_logo.svg.png" alt="Claude Logo" style="height: 40px; border-radius: 8px;">
+        Tutorial: วิธีการใช้งานสำหรับ User ทั่วไป
+    </h2>
+    <div class="tool-card" style="border-left: 5px solid var(--primary); background-color: #F8FAFC;">
+        <h3 style="margin-top: 0; color: var(--primary);">ขั้นตอนที่ 1: ตรวจสอบการเชื่อมต่อ (ค้อนคู่วิเศษ)</h3>
+        <p>เมื่อคุณเปิดโปรแกรม <strong>Claude Desktop</strong> สังเกตที่มุมล่างขวาของช่องพิมพ์ข้อความ (Chat box) จะต้องมีสัญลักษณ์ <strong>"รูปค้อน" (Tools)</strong> ปรากฏอยู่ หากคลิกดูจะพบเครื่องมือทั้งหมดที่เราเชื่อมต่อไว้ (เช่น list_projects, evaluate_spectra_qa)</p>
+        
+        <h3 style="margin-top: 20px; color: var(--primary);">ขั้นตอนที่ 2: เริ่มต้นออกคำสั่ง (Prompting)</h3>
+        <p>คุณไม่จำเป็นต้องกดใช้ Tool เอง! เพียงแค่พิมพ์สั่งงานด้วยภาษามนุษย์ปกติ แล้วบอกเงื่อนไขให้ครบถ้วน เช่น:</p>
+        <div class="prompt-box" style="background-color: #FFFFFF; border: 1px solid #E2E8F0;">
+            <em>"ช่วยร่างเอกสารแบบ Requirement สำหรับโปรเจกต์ 'ระบบ HR' ให้หน่อย โดยอ้างอิงข้อมูลจากโปรเจกต์ที่มีอยู่ในระบบ และเมื่อร่างเสร็จแล้ว ให้ตรวจ Exit Criteria ให้ผ่านทั้งหมด แล้วส่งอีเมลไปที่ admin@company.com"</em>
+        </div>
+
+        <h3 style="margin-top: 20px; color: var(--primary);">ขั้นตอนที่ 3: ปล่อยให้ AI ทำงาน (Autonomous Mode)</h3>
+        <p>หลังจากส่งคำสั่ง คุณจะเห็น Claude <strong>ขึ้นไอคอนหมุนๆ ว่ากำลังใช้งาน Tool</strong> (เช่น กำลัง <code>search_project_documents</code> หรือ <code>evaluate_spectra_qa</code>) โดยที่คุณไม่ต้องทำอะไรเลย:</p>
+        <ul>
+            <li>หากมีข้อมูลผิดพลาด Claude จะ <strong>"อ่าน Error"</strong> จากระบบ และแก้ไขเอกสารตัวเองแบบอัตโนมัติ</li>
+            <li>คุณสามารถนั่งจิบกาแฟรอจนกว่าข้อความสุดท้ายของ Claude จะเด้งขึ้นมาบอกว่า <em>"ส่งอีเมลสำเร็จแล้ว!"</em></li>
+        </ul>
+    </div>
+
+    <p style="text-align: center; margin-top: 40px; font-weight: bold; color: var(--primary); font-size: 1.2em;">ทั้งหมดนี้เกิดขึ้นด้วยการพิมพ์คำสั่งเพียงครั้งเดียวของคุณ!</p>
 </div>
 
 </body>

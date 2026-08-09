@@ -1,12 +1,14 @@
 <script>
     import { login } from './authStore.js';
     import { toast } from './toastStore.js';
+    import LegalModal from "./LegalModal.svelte";
 
     let email = localStorage.getItem('remembered_email') || '';
     let password = '';
     let showPassword = false;
     let remember = !!localStorage.getItem('remembered_email');
     let isLoading = false;
+    let legalModalType = null;
     
     // Generate random light particles for the background
     const particles = Array.from({ length: 40 }, (_, i) => ({
@@ -146,12 +148,16 @@
             
             <div class="form-footer">
                 &copy; {new Date().getFullYear()} Spectra QA System. All rights reserved. <br/>
-                <a href="#">Privacy Policy</a> &middot; <a href="#">Terms of Service</a>
+                <a href="#" on:click|preventDefault={() => legalModalType = 'privacy'}>Privacy Policy</a> &middot; <a href="#" on:click|preventDefault={() => legalModalType = 'terms'}>Terms of Service</a> &middot; <a href="#" on:click|preventDefault={() => legalModalType = 'security'}>Security Architecture</a>
             </div>
         </div>
 
     </div>
 </div>
+
+{#if legalModalType}
+  <LegalModal type={legalModalType} on:close={() => legalModalType = null} />
+{/if}
 
 <style>
     .login-wrapper {
