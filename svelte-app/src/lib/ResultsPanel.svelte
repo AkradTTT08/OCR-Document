@@ -772,7 +772,7 @@
         </select>
       </div>
 
-      <div class="form-group toggle-group">
+      <div class="form-group toggle-group" style="margin: 16px 0; background: rgba(255,255,255,0.05); padding: 12px; border-radius: 8px; display: flex; flex-direction: row; justify-content: space-between; align-items: center;">
         <span class="label-text">กำหนดเป็น Golden Data</span>
         <label class="toggle-wrap">
           <input type="checkbox" bind:checked={saveForm.is_golden_data}/>
@@ -1477,7 +1477,7 @@
   .toggle-wrap input { display: none; }
   .toggle-track {
     width: 36px; height: 20px; border-radius: 10px;
-    background: var(--surface2); border: 1px solid var(--border2);
+    background: #4b5563; border: 1px solid #6b7280;
     position: relative; transition: all 0.25s;
   }
   .toggle-wrap input:checked + .toggle-track {
@@ -1486,8 +1486,9 @@
   }
   .toggle-thumb {
     width: 14px; height: 14px; border-radius: 50%;
-    background: var(--text3); position: absolute; top: 2px; left: 2px;
+    background: #ffffff; position: absolute; top: 2px; left: 2px;
     transition: all 0.25s;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
   }
   .toggle-wrap input:checked + .toggle-track .toggle-thumb {
     transform: translateX(16px); background: #fff;

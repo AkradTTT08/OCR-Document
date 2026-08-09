@@ -36,6 +36,7 @@
     description: '',
     doc_type: 'ALL',
     is_active: true,
+    max_loops: 3,
     items: []
   };
 
@@ -108,6 +109,7 @@
           description: data.template.description || '',
           doc_type: data.template.doc_type || 'ALL',
           is_active: data.template.is_active !== undefined ? data.template.is_active : true,
+          max_loops: data.template.max_loops !== undefined ? data.template.max_loops : 3,
           items: data.template.items ? data.template.items.map(it => ({
             ...it,
             target_metric: it.target_metric || (
@@ -135,6 +137,7 @@
       description: 'เกณฑ์การตรวจสอบคุณภาพเอกสาร',
       doc_type: 'ALL',
       is_active: true,
+      max_loops: 3,
       items: [
         { item_code: '1.1', category: 'Defect & Comment Resolution', question_text: 'ข้อสั่งการ/Comment ระดับ Critical / High ในรอบก่อน ได้รับการแก้ไขเรียบร้อยแล้ว 100%', target_metric: '100% Closed (แก้ไขครบ 100%)', severity: 'Critical', is_mandatory: true, order_index: 1 },
         { item_code: '2.1', category: 'Content Accuracy & Completeness', question_text: 'ข้อมูล ตัวเลข สถิติ ข้อเท็จจริง และสูตรคำนวณ ตรวจสอบแล้วถูกต้องและมีแหล่งอ้างอิงน่าเชื่อถือ', target_metric: '100% Verified Accuracy (ถูกต้อง 100%)', severity: 'Critical', is_mandatory: true, order_index: 2 },
@@ -442,6 +445,11 @@
                 <span class="slider"></span>
                 <span class="toggle-label">{form.is_active ? 'เปิดใช้งาน (Active)' : 'ปิดใช้งาน (Inactive)'}</span>
               </label>
+            </div>
+
+            <div class="form-group">
+              <label for="form_max_loops">แก้ไขสูงสุด (Circuit Breaker):</label>
+              <input type="number" id="form_max_loops" bind:value={form.max_loops} min="1" max="10" class="form-control" title="จำนวนครั้งสูงสุดที่ให้ Agent วนลูปแก้ไข (ป้องกันลูปค้าง)" />
             </div>
 
             <div class="form-group span-2">

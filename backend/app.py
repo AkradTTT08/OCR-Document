@@ -1695,6 +1695,123 @@ def get_doc_types():
     finally:
         if conn: conn.close()
 
+@app.route('/api/mcp/submit_document', methods=['POST', 'OPTIONS'])
+def mcp_submit_document():
+    if request.method == 'OPTIONS':
+        return '', 200
+    
+    try:
+        data = request.json
+        if not data:
+            return jsonify({"status": "ERROR", "message": "Missing JSON body"}), 400
+            
+        doc_content = data.get('document_content')
+        doc_type = data.get('document_type', 'ALL')
+        skill_id_raw = data.get('ai_skill')
+        target_email = data.get('target_email')
+        session_id = data.get('session_id')
+        
+        if not doc_content:
+            return jsonify({"status": "ERROR", "message": "document_content is required"}), 400
+            
+        from db_ingestion import get_db_connection
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        # 1. Fetch Exit Criteria Template and max_loops
+        cur.execute("SELECT template_id, max_loops FROM exit_criteria_templates WHERE is_active = TRUE AND (doc_type = %s OR doc_type = 'ALL') ORDER BY CASE WHEN doc_type = %s THEN 1 ELSE 2 END, created_at DESC LIMIT 1;", (doc_type, doc_type))
+        template_row = cur.fetchone()
+        
+        if not template_row:
+            cur.close()
+            conn.close()
+            return jsonify({"status": "ERROR", "message": f"No active Exit Criteria Template found for document_type: {doc_type}"}), 404
+            
+        template_id, max_loops = template_row
+        max_loops = max_loops if max_loops else 3
+        
+        # 2. Track Session and Circuit Breaker
+        attempt_count = 1
+        is_new_session = True
+        
+        if session_id:
+            cur.execute("SELECT attempt_count FROM agent_evaluation_sessions WHERE session_id = %s", (session_id,))
+            session_row = cur.fetchone()
+            if session_row:
+                attempt_count = session_row[0] + 1
+                cur.execute("UPDATE agent_evaluation_sessions SET attempt_count = %s, updated_at = NOW() WHERE session_id = %s", (attempt_count, session_id))
+                is_new_session = False
+            else:
+                # Invalid session id provided, create new one
+                pass
+                
+        if is_new_session:
+            skill_uuid = None
+            if skill_id_raw:
+                try:
+                    import uuid
+                    uuid.UUID(skill_id_raw)
+                    skill_uuid = skill_id_raw
+                except:
+                    cur.execute("SELECT skill_id FROM agent_skills WHERE skill_name ILIKE %s LIMIT 1", (skill_id_raw,))
+                    row = cur.fetchone()
+                    if row: skill_uuid = row[0]
+            
+            cur.execute("""
+                INSERT INTO agent_evaluation_sessions (target_email, document_type, skill_id, attempt_count) 
+                VALUES (%s, %s, %s, %s) RETURNING session_id
+            """, (target_email, doc_type, skill_uuid, attempt_count))
+            session_id = str(cur.fetchone()[0])
+            
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+        # 3. Check Circuit Breaker hit
+        if attempt_count > max_loops:
+            return jsonify({
+                "status": "REJECTED",
+                "session_id": session_id,
+                "circuit_breaker_hit": True,
+                "failed_criteria": [],
+                "recommendation": f"Circuit breaker hit. Max loops ({max_loops}) exceeded. Please review the document manually."
+            }), 200
+            
+        # 4. Evaluate document against Exit Criteria
+        # In a real integrated flow, we might first run a general QA. We pass qa_findings=[] to skip for now.
+        eval_result = evaluate_document_exit_criteria(doc_content, doc_type=doc_type, qa_findings=[])
+        
+        if not eval_result:
+            return jsonify({"status": "ERROR", "message": "Evaluation failed internally."}), 500
+            
+        final_status = eval_result.get('status') # 'PASSED', 'CONDITIONAL_PASSED', 'REJECTED'
+        failed_criteria_list = []
+        
+        for item in eval_result.get('items', []):
+            if item.get('status') == 'FAIL':
+                failed_criteria_list.append(f"ข้อ {item.get('item_code')}: {item.get('question_text')} - {item.get('remarks')}")
+                
+        recommendation = eval_result.get('summary_remarks', '')
+        if final_status == 'REJECTED':
+            recommendation += "\nกรุณาแก้ไขเอกสารในจุดที่ไม่ผ่านเกณฑ์ และส่งเข้ามาตรวจใหม่"
+        
+        # Optionally trigger email notification if passed or circuit breaker hit. (Skipped simple logic to avoid spam, or implement here if needed)
+        
+        return jsonify({
+            "status": "PASS" if final_status in ['PASSED', 'CONDITIONAL_PASSED'] else "REJECTED",
+            "session_id": session_id,
+            "circuit_breaker_hit": False,
+            "failed_criteria": failed_criteria_list,
+            "recommendation": recommendation,
+            "attempt_count": attempt_count,
+            "max_loops": max_loops
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error in MCP submit_document: {e}", exc_info=True)
+        return jsonify({"status": "ERROR", "message": str(e)}), 500
+
+
 @app.route('/api/qa_consult', methods=['POST', 'OPTIONS'])
 def qa_consult_api():
     if request.method == 'OPTIONS':
@@ -2193,6 +2310,7 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
     from db_ingestion import get_db_connection
     from ocr_engine import _get_gemini_client
     import json
+    import re
     
     conn = get_db_connection()
     try:
@@ -2419,7 +2537,7 @@ def handle_exit_criteria_templates():
             doc_type = request.args.get('doc_type')
             
             query = """
-                SELECT t.template_id, t.project_id, t.title, t.description, t.doc_type, t.is_active, 
+                SELECT t.template_id, t.project_id, t.title, t.description, t.doc_type, t.is_active, t.max_loops,
                        t.created_at, t.updated_at, COUNT(i.item_id) as item_count,
                        p.project_name, p.project_code
                 FROM exit_criteria_templates t
@@ -2448,11 +2566,12 @@ def handle_exit_criteria_templates():
                     'description': r[3],
                     'doc_type': r[4],
                     'is_active': r[5],
-                    'created_at': str(r[6]) if r[6] else None,
-                    'updated_at': str(r[7]) if r[7] else None,
-                    'item_count': r[8],
-                    'project_name': r[9],
-                    'project_code': r[10]
+                    'max_loops': r[6],
+                    'created_at': str(r[7]) if r[7] else None,
+                    'updated_at': str(r[8]) if r[8] else None,
+                    'item_count': r[9],
+                    'project_name': r[10],
+                    'project_code': r[11]
                 })
             cur.close()
             conn.close()
@@ -2467,6 +2586,7 @@ def handle_exit_criteria_templates():
             title = data.get('title')
             description = data.get('description', '')
             doc_type = data.get('doc_type', 'ALL')
+            max_loops = data.get('max_loops', 3)
             project_id = data.get('project_id') or None
             items = data.get('items', [])
             
@@ -2478,10 +2598,10 @@ def handle_exit_criteria_templates():
             cur = conn.cursor()
             
             cur.execute("""
-                INSERT INTO exit_criteria_templates (project_id, title, description, doc_type, is_active)
-                VALUES (%s, %s, %s, %s, TRUE)
+                INSERT INTO exit_criteria_templates (project_id, title, description, doc_type, is_active, max_loops)
+                VALUES (%s, %s, %s, %s, TRUE, %s)
                 RETURNING template_id;
-            """, (project_id, title, description, doc_type))
+            """, (project_id, title, description, doc_type, max_loops))
             template_id = cur.fetchone()[0]
             
             for idx, item in enumerate(items, 1):
@@ -2518,7 +2638,7 @@ def handle_single_exit_criteria_template(template_id):
         try:
             cur = conn.cursor()
             cur.execute("""
-                SELECT template_id, project_id, title, description, doc_type, is_active, created_at, updated_at
+                SELECT template_id, project_id, title, description, doc_type, is_active, max_loops, created_at, updated_at
                 FROM exit_criteria_templates WHERE template_id = %s;
             """, (template_id,))
             t = cur.fetchone()
@@ -2553,8 +2673,9 @@ def handle_single_exit_criteria_template(template_id):
                 'description': t[3],
                 'doc_type': t[4],
                 'is_active': t[5],
-                'created_at': str(t[6]) if t[6] else None,
-                'updated_at': str(t[7]) if t[7] else None,
+                'max_loops': t[6],
+                'created_at': str(t[7]) if t[7] else None,
+                'updated_at': str(t[8]) if t[8] else None,
                 'items': items
             }
             cur.close()
@@ -2571,6 +2692,7 @@ def handle_single_exit_criteria_template(template_id):
             description = data.get('description', '')
             doc_type = data.get('doc_type', 'ALL')
             is_active = data.get('is_active', True)
+            max_loops = data.get('max_loops', 3)
             items = data.get('items', [])
             
             conn.autocommit = False
@@ -2578,9 +2700,9 @@ def handle_single_exit_criteria_template(template_id):
             
             cur.execute("""
                 UPDATE exit_criteria_templates
-                SET title = %s, description = %s, doc_type = %s, is_active = %s, updated_at = NOW()
+                SET title = %s, description = %s, doc_type = %s, is_active = %s, max_loops = %s, updated_at = NOW()
                 WHERE template_id = %s;
-            """, (title, description, doc_type, is_active, template_id))
+            """, (title, description, doc_type, is_active, max_loops, template_id))
             
             # Replace items
             cur.execute("DELETE FROM exit_criteria_items WHERE template_id = %s;", (template_id,))

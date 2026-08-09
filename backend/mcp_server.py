@@ -159,6 +159,80 @@ def ocr_document(source: str, lang: str = "tha+eng") -> str:
     except Exception as e:
         return f"Unexpected error during OCR processing: {str(e)}"
 
+@mcp.tool()
+def evaluate_spectra_qa(
+    document_content: str, 
+    document_type: str, 
+    target_email: str, 
+    ai_skill: str = None, 
+    session_id: str = None
+) -> str:
+    """
+    Evaluates a document's content against Spectra QA Exit Criteria and Rules.
+    
+    Args:
+        document_content: The full text/markdown content of the drafted document.
+        document_type: Category of the document (e.g. 'Requirement', 'Design', 'Manual', 'ALL').
+        target_email: The email address to send the final report to (used for tracking).
+        ai_skill: (Optional) The specific AI Skill or Skill ID to use for evaluation.
+        session_id: (Optional) The session ID from a previous evaluation attempt to track circuit breaker loops.
+        
+    Returns:
+        A JSON string containing the evaluation status (PASS/REJECTED), circuit_breaker_hit flag, failed criteria, and recommendation.
+    """
+    import json
+    url = "http://127.0.0.1:5000/api/mcp/submit_document"
+    payload = {
+        "document_content": document_content,
+        "document_type": document_type,
+        "target_email": target_email
+    }
+    
+    if ai_skill: payload["ai_skill"] = ai_skill
+    if session_id: payload["session_id"] = session_id
+        
+    try:
+        response = requests.post(url, json=payload, headers={'Content-Type': 'application/json'})
+        response.raise_for_status()
+        return json.dumps(response.json(), indent=2, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({
+            "status": "ERROR",
+            "message": f"Failed to connect to Spectra QA backend: {str(e)}"
+        })
+
+@mcp.tool()
+def send_email_report(to_email: str, subject: str, report_body: str) -> str:
+    """
+    Sends an email report containing the final evaluation or summary.
+    
+    Args:
+        to_email: The recipient's email address.
+        subject: The subject of the email (used as filename/docType context).
+        report_body: The main content of the email report.
+        
+    Returns:
+        A success or error message.
+    """
+    url = "http://127.0.0.1:5000/api/qa_send_email"
+    payload = {
+        "email": to_email,
+        "docType": "MCP Automated QA",
+        "filename": subject,
+        "report": report_body
+    }
+    
+    try:
+        response = requests.post(url, json=payload, headers={'Content-Type': 'application/json'})
+        response.raise_for_status()
+        res_data = response.json()
+        if res_data.get('success'):
+            return "Email sent successfully."
+        else:
+            return f"Failed to send email: {res_data.get('error', 'Unknown error')}"
+    except Exception as e:
+        return f"Failed to send email due to exception: {str(e)}"
+
 if __name__ == "__main__":
     # Start the FastMCP server
     mcp.run()

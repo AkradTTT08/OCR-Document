@@ -22,6 +22,7 @@ def add_exit_criteria_tables(force_reset=False):
                 description TEXT,
                 doc_type VARCHAR(50) DEFAULT 'ALL',
                 is_active BOOLEAN DEFAULT TRUE,
+                max_loops INTEGER DEFAULT 3,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
@@ -118,12 +119,13 @@ def add_exit_criteria_tables(force_reset=False):
         if not res:
             print("Seeding Universal Exit Criteria Template...")
             cur.execute("""
-                INSERT INTO exit_criteria_templates (title, description, doc_type, is_active)
+                INSERT INTO exit_criteria_templates (title, description, doc_type, is_active, max_loops)
                 VALUES (
                     'Universal Document Exit Criteria',
                     'เกณฑ์การผ่านมาตรฐานกลางสำหรับการตรวจเอกสารทุกประเภท (General Document Review Gate)',
                     'ALL',
-                    TRUE
+                    TRUE,
+                    3
                 )
                 RETURNING template_id;
             """)

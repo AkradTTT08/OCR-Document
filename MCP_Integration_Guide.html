@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>คู่มือการเชื่อมต่อ Spectra QA (MCP) เข้ากับ Claude Desktop</title>
+    <style>
+        :root {
+            --primary: #4F46E5;
+            --primary-light: #E0E7FF;
+            --text-main: #1F2937;
+            --text-muted: #4B5563;
+            --bg-main: #F9FAFB;
+            --bg-card: #FFFFFF;
+            --border-color: #E5E7EB;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-main);
+            color: var(--text-main);
+            line-height: 1.6;
+            margin: 0;
+            padding: 0;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 40px auto;
+            background: var(--bg-card);
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+
+        h1 {
+            color: var(--primary);
+            font-size: 2.2em;
+            text-align: center;
+            border-bottom: 2px solid var(--primary-light);
+            padding-bottom: 20px;
+            margin-bottom: 30px;
+        }
+
+        h2 {
+            color: var(--primary);
+            font-size: 1.5em;
+            margin-top: 40px;
+            border-left: 4px solid var(--primary);
+            padding-left: 15px;
+        }
+
+        h3 {
+            color: var(--text-main);
+            font-size: 1.2em;
+            margin-top: 25px;
+        }
+
+        p, li {
+            color: var(--text-muted);
+            font-size: 1.05em;
+        }
+
+        ul {
+            padding-left: 20px;
+        }
+
+        li {
+            margin-bottom: 10px;
+        }
+
+        .code-block {
+            background-color: #1E1E1E;
+            color: #D4D4D4;
+            padding: 20px;
+            border-radius: 8px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            overflow-x: auto;
+            margin: 20px 0;
+        }
+
+        .code-inline {
+            background-color: #F3F4F6;
+            color: #EF4444;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 0.9em;
+        }
+
+        .prompt-box {
+            background-color: var(--primary-light);
+            border-left: 4px solid var(--primary);
+            padding: 20px;
+            border-radius: 0 8px 8px 0;
+            margin: 20px 0;
+        }
+
+        .prompt-box p, .prompt-box li {
+            color: #3730A3;
+        }
+
+        .note {
+            background-color: #FEF3C7;
+            border-left: 4px solid #F59E0B;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 0 8px 8px 0;
+        }
+
+        .note p {
+            margin: 0;
+            color: #92400E;
+            font-size: 0.95em;
+        }
+
+        .tool-card {
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            background-color: #FAFAFA;
+        }
+
+        .tool-title {
+            font-weight: bold;
+            color: var(--primary);
+            font-size: 1.1em;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>คู่มือการเชื่อมต่อ Spectra QA (MCP) เข้ากับ Claude Desktop</h1>
+    <p style="text-align: center;">เอกสารฉบับนี้อธิบายวิธีการเชื่อมต่อ <strong>Spectra QA Server</strong> เข้ากับ <strong>Claude Desktop</strong> อย่างเป็นทางการ ผ่านมาตรฐาน Model Context Protocol (MCP) เพื่อให้ Claude สามารถดึงความสามารถของ Backend ของคุณไปใช้งานได้อัตโนมัติ</p>
+
+    <!-- Section 1 -->
+    <h2>1. การตั้งค่าฝั่ง Claude Desktop (Configuration)</h2>
+    <p>เพื่อให้ Claude Desktop รู้จักกับ MCP Server ของ Spectra QA คุณจำเป็นต้องเข้าไปแก้ไขไฟล์ตั้งค่า <span class="code-inline">claude_desktop_config.json</span></p>
+    
+    <h3>📌 ตำแหน่งของไฟล์ตั้งค่า</h3>
+    <ul>
+        <li><strong>Windows:</strong> <span class="code-inline">%APPDATA%\Claude\claude_desktop_config.json</span> <br><em>(สามารถเปิดผ่าน Run โดยกด Win + R แล้วพิมพ์ค่าดังกล่าว)</em></li>
+        <li><strong>Mac:</strong> <span class="code-inline">~/Library/Application Support/Claude/claude_desktop_config.json</span></li>
+    </ul>
+
+    <h3>📌 โค้ดที่ต้องนำไปใส่</h3>
+    <p>ให้คุณเพิ่มโครงสร้าง JSON ด้านล่างนี้เข้าไป (ถ้ามีไฟล์อยู่แล้ว ให้เพิ่มแค่ object <span class="code-inline">spectra-qa-mcp</span> ไว้ใน <span class="code-inline">mcpServers</span>):</p>
+    <div class="code-block">
+<pre>{
+  "mcpServers": {
+    "spectra-qa-mcp": {
+      "command": "python",
+      "args": ["d:/OCR/backend/mcp_server.py"]
+    }
+  }
+}</pre>
+    </div>
+
+    <div class="note">
+        <p><strong>หมายเหตุ:</strong> หากคุณใช้ Mac ให้เปลี่ยน <code>d:/OCR/backend/mcp_server.py</code> เป็นพาธจริงบนเครื่อง Mac และอาจต้องเปลี่ยน <code>python</code> เป็นพาธเต็มของ Virtual Environment เช่น <code>/path/to/venv/bin/python</code></p>
+    </div>
+    <p>เมื่อบันทึกไฟล์เสร็จเรียบร้อย <strong>ให้ปิดโปรแกรม Claude Desktop อย่างสมบูรณ์แล้วเปิดขึ้นมาใหม่</strong> (Restart Claude Desktop)</p>
+
+    <!-- Section 2 -->
+    <h2>2. เครื่องมือ (Tools) ที่มีให้ใช้งานผ่าน MCP</h2>
+    <p>เมื่อเปิด Claude Desktop ขึ้นมาใหม่ สัญลักษณ์ "ค้อน" (Tools) จะปรากฏขึ้น ซึ่งบ่งบอกว่า Claude เชื่อมต่อกับ Backend สำเร็จแล้ว โดยจะมีเครื่องมือให้ใช้งานทั้งหมด 3 ตัว ดังนี้:</p>
+
+    <div class="tool-card">
+        <div class="tool-title">🔍 1. ocr_document (ดึงข้อมูลจากเอกสารรูปภาพ/PDF)</div>
+        <ul>
+            <li><strong>หน้าที่:</strong> ใช้ดึง Text (Markdown) ออกมาจากไฟล์ PDF หรือรูปภาพ ไม่ว่าจะเป็นไฟล์บนเครื่อง (Local) หรือผ่าน URL (โดยมีการรองรับระบบ SSRF Protection)</li>
+            <li><strong>เมื่อไหร่ที่ Claude จะใช้:</strong> เมื่อคุณส่งรูปหรือลิงก์ PDF ให้ Claude และสั่งให้ "อ่านเอกสารนี้ให้หน่อย"</li>
+        </ul>
+    </div>
+
+    <div class="tool-card">
+        <div class="tool-title">🛡️ 2. evaluate_spectra_qa (ระบบ AI Agent QA Loop)</div>
+        <ul>
+            <li><strong>หน้าที่:</strong> นำเนื้อหาเอกสาร (Draft) ที่ Claude แต่งเสร็จ ส่งเข้าไปประเมินเทียบกับ Exit Criteria Checklist ของโปรเจกต์คุณ</li>
+            <li><strong>เมื่อไหร่ที่ Claude จะใช้:</strong> เมื่อ Claude ร่างเอกสารเสร็จ และต้องการตรวจสอบความถูกต้องว่าผ่านเกณฑ์ของ Spectra QA หรือไม่ หากตกเกณฑ์ ระบบจะบอกจุดผิดพลาด เพื่อให้ Claude นำไปแก้ไขเองอัตโนมัติ (รองรับระบบ Circuit Breaker ป้องกันการติดลูป)</li>
+        </ul>
+    </div>
+
+    <div class="tool-card">
+        <div class="tool-title">✉️ 3. send_email_report (ระบบส่งอีเมลอัตโนมัติ)</div>
+        <ul>
+            <li><strong>หน้าที่:</strong> สั่งให้ระบบ Backend ยิงอีเมลพร้อมแนบผลลัพธ์/รายงานไปยังอีเมลปลายทาง</li>
+            <li><strong>เมื่อไหร่ที่ Claude จะใช้:</strong> เมื่อเอกสารผ่านเกณฑ์ Exit Criteria แล้ว (APPROVED) Claude จะเรียกเครื่องมือนี้เพื่อทำการส่งอีเมลแจ้งเตือนคุณแบบจบกระบวนการ</li>
+        </ul>
+    </div>
+
+    <!-- Section 3 -->
+    <h2>3. วิธีการสั่งงานบน Claude (System Prompt & Usage)</h2>
+    <p>หลังจากเชื่อมต่อเสร็จแล้ว สิ่งสำคัญที่จะทำให้ระบบทำงานเป็น "Fully Autonomous" คือการเขียน Prompt ให้ Claude เข้าใจกระบวนการ (Workflow) คุณสามารถใช้ข้อความด้านล่างนี้ เป็น Prompt สั่งงานหรือตั้งเป็น System Prompt (Project Instructions) ได้เลย:</p>
+
+    <div class="prompt-box">
+        <strong>Role:</strong><br>
+        คุณคือ AI ผู้ช่วยอัจฉริยะ (Spectra QA Agent) ที่มีความสามารถในการอ่านเอกสาร เขียน/แก้ไขเอกสาร และตรวจสอบเกณฑ์คุณภาพ<br><br>
+        <strong>Workflow (บังคับให้ทำตามลำดับอย่างเคร่งครัด):</strong>
+        <ol>
+            <li>หากผู้ใช้แนบลิงก์ไฟล์หรือที่อยู่ไฟล์ ให้คุณใช้ Tool <span class="code-inline">ocr_document</span> เพื่อดึงข้อมูล Text ออกมาก่อน</li>
+            <li>สรุป/ร่างเอกสารตามคำสั่งของผู้ใช้ (เช่น ร่างเป็นประเภท 'Requirement' หรือ 'Manual')</li>
+            <li>เมื่อร่างเอกสารเสร็จแล้ว ห้ามเพิ่งส่งให้ผู้ใช้ดู ให้คุณเรียกใช้ Tool <span class="code-inline">evaluate_spectra_qa</span> โดยส่งเนื้อหาทั้งหมด (document_content) เข้าไปตรวจสอบ</li>
+            <li>หากผลการประเมินแจ้งว่า 'REJECTED' ให้คุณอ่าน <span class="code-inline">failed_criteria</span> ที่ระบบคืนมา แล้วทำการแก้ไขเอกสารให้ถูกต้อง จากนั้นส่งไปประเมินด้วย <span class="code-inline">evaluate_spectra_qa</span> อีกครั้ง (วนลูปจนกว่าจะผ่าน หรือจนกว่าระบบจะแจ้งเตือน Circuit Breaker Hit)</li>
+            <li>เมื่อได้รับผลการประเมินเป็น 'PASS' ให้คุณใช้ Tool <span class="code-inline">send_email_report</span> เพื่อส่งเนื้อหาที่สมบูรณ์และสรุปผลการผ่านเกณฑ์ไปที่อีเมลที่ผู้ใช้กำหนด</li>
+            <li>เมื่อเสร็จสิ้นกระบวนการทั้งหมด ค่อยพิมพ์แจ้งผู้ใช้ในช่องแชท พร้อมสรุปผล และพิมพ์เนื้อหาเอกสารฉบับไฟนอลออกมา</li>
+        </ol>
+    </div>
+
+    <!-- Section 4 -->
+    <h2>💡 สรุปขั้นตอนการทำงาน (The Execution Flow)</h2>
+    <p>หากคุณใช้ Prompt ด้านบน เมื่อคุณทัก Claude ว่า <strong>"ช่วยร่าง Requirement สำหรับระบบ Login ให้หน่อย และส่งเมลไปที่ ceo@test.com"</strong> สิ่งที่จะเกิดขึ้นคือ:</p>
+    <ul>
+        <li><strong>[Drafting]</strong> Claude แอบร่าง Requirement ให้คุณเงียบๆ</li>
+        <li><strong>[QA Loop]</strong> Claude ส่งที่ร่างไปหา Spectra QA ผ่าน MCP ระบบตีกลับมาว่า <em>"ไม่ผ่านเกณฑ์ข้อ 2 (ข้อมูลสถิติไม่ครบ)"</em> Claude ก็จะแอบแก้ข้อมูลแล้วส่งไปตรวจใหม่</li>
+        <li><strong>[Approved]</strong> เมื่อ Spectra QA ตอบกลับว่าสถานะคือ <span class="code-inline">PASS</span> (ผ่านเกณฑ์)</li>
+        <li><strong>[Dispatch]</strong> Claude สั่งให้ยิงอีเมลผลลัพธ์ไปที่ ceo@test.com</li>
+        <li><strong>[Finished]</strong> Claude ตอบกลับคุณหน้าจอแชทว่า <em>"เรียบร้อยครับ เอกสารผ่านการประเมินและผมส่งอีเมลให้แล้ว นี่คือตัวเอกสารฉบับไฟนอล..."</em></li>
+    </ul>
+    <p style="text-align: center; margin-top: 40px; font-weight: bold; color: var(--primary);">ทั้งหมดนี้เกิดขึ้นด้วยการพิมพ์คำสั่งเพียงครั้งเดียวของคุณ!</p>
+</div>
+
+</body>
+</html>

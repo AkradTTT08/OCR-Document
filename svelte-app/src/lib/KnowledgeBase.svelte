@@ -40,6 +40,76 @@
   let showProjectInfo = false;
   let viewingProject = null;
 
+  // ── Manual Doc Form State ──
+  let showAddManualView = false;
+  let isAddingManualDoc = false;
+  let manualDocForm = {
+    project_id: '',
+    filename: '',
+    doc_category: 'Reference',
+    doc_type: 'Markdown',
+    is_golden_data: false,
+    markdown_text: ''
+  };
+
+  const categorySelectOptions = [
+    { value: 'Reference', label: 'เอกสารอ้างอิง (Reference)', icon: '📚' },
+    { value: 'TestCase', label: 'TestCase', icon: '🧪' },
+    { value: 'Requirements', label: 'Requirements', icon: '📋' },
+    { value: 'Other', label: 'อื่นๆ (Other)', icon: '📁' }
+  ];
+
+  $: projectSelectOptions = [
+    { value: '', label: '-- เลือกโครงการ --', icon: '📁' },
+    ...projects.map(p => ({ 
+      value: p.id || p.project_id, 
+      label: `${p.project_code || ''} - ${p.name || p.project_name || ''}`, 
+      icon: '📌' 
+    }))
+  ];
+
+  function openAddManualDocModal() {
+    manualDocForm = {
+      project_id: selectedProject || (projects.length > 0 ? (projects[0].id || projects[0].project_id) : ''),
+      filename: '',
+      doc_category: 'Reference',
+      doc_type: 'Markdown',
+      is_golden_data: false,
+      markdown_text: ''
+    };
+    showAddManualView = true;
+    docDetail = null;
+    selectedDoc = null;
+    activeTab = 'browse';
+  }
+
+  async function saveManualDoc() {
+    if (!manualDocForm.project_id) return toast("กรุณาเลือกโครงการ", "warning");
+    if (!manualDocForm.filename.trim()) return toast("กรุณาระบุชื่อเอกสาร", "warning");
+    if (!manualDocForm.markdown_text.trim()) return toast("กรุณาระบุเนื้อหาเอกสาร", "warning");
+    
+    isAddingManualDoc = true;
+    try {
+      const res = await fetch(`${API}/kb/ingest`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(manualDocForm)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "เกิดข้อผิดพลาดในการบันทึก");
+      
+      toast(data.message || "เพิ่มเอกสารสำเร็จ", "success");
+      showAddManualView = false;
+      await loadDocuments(selectedProject);
+      await loadStats(); // Update stats
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      toast(`ข้อผิดพลาด: ${msg}`, "error");
+    } finally {
+      isAddingManualDoc = false;
+    }
+  }
+
   // ── Load on mount ──
   let isInitialLoading = true;
   onMount(async () => {
@@ -102,6 +172,7 @@
     selectedDoc = docId;
     docDetail = null;
     isEditingDoc = false;
+    showAddManualView = false;
     try {
       const r = await fetch(`${API}/kb/documents/${docId}`);
       const d = await r.json();
@@ -472,8 +543,13 @@
       </div>
 
       <!-- Document list -->
-      {#if documents.length > 0 || isLoadingDocs}
-        <div class="section-label">เอกสาร ({documents.length})</div>
+      {#if documents.length > 0 || isLoadingDocs || selectedProject}
+        <div class="section-label" style="display: flex; justify-content: space-between; align-items: center; margin-top: 24px;">
+          <span>เอกสาร ({documents.length})</span>
+          <button class="btn-icon-add" on:click={openAddManualDocModal} title="เพิ่มเอกสาร Manual">
+            + Manual Add
+          </button>
+        </div>
         <div class="doc-list">
           {#if isLoadingDocs}
             <div class="loading-pulse">กำลังโหลด...</div>
@@ -562,6 +638,61 @@
           {/each}
         </div>
       {/if}
+
+    {:else if showAddManualView}
+      <!-- Add Manual Document View -->
+      <div class="content-header">
+        <button class="btn-back" on:click={() => { showAddManualView = false; }}>← ยกเลิก</button>
+        <h2 class="content-title">เพิ่มเอกสารด้วยตัวเอง (Manual)</h2>
+      </div>
+      
+      <div class="doc-detail-wrap" style="padding-top: 10px;">
+        <div class="form-group">
+          <label>โครงการ (Project)</label>
+          <CustomSelect 
+            id="manual-project" 
+            bind:value={manualDocForm.project_id} 
+            options={projectSelectOptions} 
+            width="100%"
+          />
+        </div>
+        <div class="form-group" style="margin-top: 16px;">
+          <label for="m_filename">ชื่อเอกสาร (Title) <span class="req">*</span></label>
+          <input id="m_filename" type="text" class="form-input" placeholder="ระบุชื่อเอกสาร..." bind:value={manualDocForm.filename} />
+        </div>
+        
+        <div style="margin-top: 16px;">
+          <div class="form-group">
+            <label>หมวดหมู่เอกสาร</label>
+            <CustomSelect 
+              id="manual-category" 
+              bind:value={manualDocForm.doc_category} 
+              options={categorySelectOptions} 
+              width="100%"
+            />
+          </div>
+        </div>
+
+        <div class="form-group toggle-group" style="margin: 16px 0; background: rgba(255,255,255,0.05); padding: 12px; border-radius: 8px; display: flex; flex-direction: row; justify-content: space-between; align-items: center;">
+          <span class="label-text">กำหนดเป็น Golden Data (ข้อมูลอ้างอิง)</span>
+          <label class="toggle-wrap">
+            <input type="checkbox" bind:checked={manualDocForm.is_golden_data}/>
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </label>
+        </div>
+
+        <div class="form-group" style="margin-top: 16px;">
+          <label for="m_content">เนื้อหา (Markdown) <span class="req">*</span></label>
+          <textarea id="m_content" class="form-input" rows="15" placeholder="พิมพ์หรือวางเนื้อหาเอกสารที่นี่ (รองรับ Markdown)..." bind:value={manualDocForm.markdown_text} style="resize: vertical; font-family: monospace;"></textarea>
+        </div>
+        
+        <div style="margin-top: 24px; text-align: right;">
+          <button class="btn-cancel" on:click={() => showAddManualView = false} style="margin-right: 8px;">ยกเลิก</button>
+          <button class="btn-submit" on:click={saveManualDoc} disabled={isAddingManualDoc || !manualDocForm.filename.trim() || !manualDocForm.markdown_text.trim()}>
+            {isAddingManualDoc ? 'กำลังบันทึกและสร้าง Vector...' : '💾 บันทึกเอกสาร'}
+          </button>
+        </div>
+      </div>
 
     {:else if docDetail}
       <!-- Document detail -->
@@ -1126,7 +1257,35 @@
   color: var(--primary);
   font-weight: 600;
 }
-.loading-pulse { animation: pulse 1.5s ease infinite; color: var(--text3); font-size: 13px; }
+  .loading-pulse {
+    animation: pulse 1.5s infinite;
+    color: var(--text3);
+    font-size: 14px;
+    padding: 16px;
+    text-align: center;
+  }
+
+  /* Toggle Switch for Golden Data */
+  .toggle-wrap { display: flex; align-items: center; cursor: pointer; }
+  .toggle-wrap input { display: none; }
+  .toggle-track {
+    width: 36px; height: 20px; border-radius: 10px;
+    background: #4b5563; border: 1px solid #6b7280;
+    position: relative; transition: all 0.25s;
+  }
+  .toggle-wrap input:checked + .toggle-track {
+    background: var(--primary); border-color: var(--primary);
+    box-shadow: 0 0 8px var(--primary);
+  }
+  .toggle-thumb {
+    width: 14px; height: 14px; border-radius: 50%;
+    background: #ffffff; position: absolute; top: 2px; left: 2px;
+    transition: all 0.25s;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+  }
+  .toggle-wrap input:checked + .toggle-track .toggle-thumb {
+    transform: translateX(16px);
+  }
 @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
 .loading-spin {
   width: 36px; height: 36px;

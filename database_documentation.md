@@ -162,6 +162,7 @@ erDiagram
 | `description` | TEXT | - | คำอธิบายรายละเอียด |
 | `doc_type` | VARCHAR(50) | DEFAULT `'ALL'` | ประเภทเอกสารที่ใช้เกณฑ์นี้ |
 | `is_active` | BOOLEAN | DEFAULT `TRUE` | สถานะการใช้งาน |
+| `max_loops` | INTEGER | DEFAULT `3` | จำนวนครั้งสูงสุดที่ให้ Agent วนลูปแก้ไขงาน (Circuit Breaker) |
 | `created_at` | TIMESTAMP | DEFAULT NOW() | วันที่สร้าง |
 | `updated_at` | TIMESTAMP | DEFAULT NOW() | วันที่แก้ไข |
 
