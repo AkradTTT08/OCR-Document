@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cloudflare Tunnels & MCP Integration Guide</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --text-color: #e2e8f0;
+            --accent-primary: #3b82f6;
+            --accent-secondary: #8b5cf6;
+            --glass-bg: rgba(30, 41, 59, 0.6);
+            --glass-border: rgba(255, 255, 255, 0.1);
+            --code-bg: #0b1121;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            line-height: 1.6;
+            background-image: 
+                radial-gradient(at 0% 0%, rgba(59, 130, 246, 0.15) 0px, transparent 50%),
+                radial-gradient(at 100% 100%, rgba(139, 92, 246, 0.15) 0px, transparent 50%);
+            background-attachment: fixed;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 50px 20px;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 50px;
+            animation: fadeInDown 0.8s ease-out;
+        }
+
+        h1 {
+            font-size: 2.8rem;
+            background: linear-gradient(to right, var(--accent-primary), #6ee7b7);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 15px;
+            font-weight: 700;
+        }
+
+        .subtitle {
+            font-size: 1.1rem;
+            color: #94a3b8;
+        }
+
+        .card {
+            background: var(--glass-bg);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--glass-border);
+            border-radius: 16px;
+            padding: 35px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+            animation: fadeInUp 0.8s ease-out;
+            transition: transform 0.3s ease;
+        }
+        
+        .card:hover {
+            transform: translateY(-2px);
+            border-color: rgba(255,255,255,0.2);
+        }
+
+        h2 {
+            font-size: 1.5rem;
+            margin-bottom: 20px;
+            color: #fff;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            border-bottom: 1px solid var(--glass-border);
+            padding-bottom: 15px;
+        }
+
+        h3 {
+            font-size: 1.2rem;
+            margin: 25px 0 10px 0;
+            color: #e2e8f0;
+        }
+
+        p, li {
+            margin-bottom: 15px;
+            color: #cbd5e1;
+        }
+        
+        ul { margin-left: 20px; }
+
+        .step-badge {
+            background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+            color: white;
+            width: 32px;
+            height: 32px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 8px;
+            font-size: 1.1rem;
+            font-weight: bold;
+            box-shadow: 0 4px 10px rgba(59, 130, 246, 0.4);
+        }
+
+        pre {
+            background: var(--code-bg);
+            border: 1px solid rgba(255,255,255,0.05);
+            border-radius: 10px;
+            padding: 20px;
+            overflow-x: auto;
+            margin: 15px 0;
+            box-shadow: inset 0 2px 10px rgba(0,0,0,0.5);
+        }
+
+        code {
+            font-family: 'Fira Code', 'Consolas', monospace;
+            font-size: 0.9rem;
+            color: #93c5fd;
+        }
+        
+        .inline-code {
+            background: rgba(255,255,255,0.1);
+            padding: 3px 6px;
+            border-radius: 4px;
+            color: #fca5a5;
+            font-family: monospace;
+            font-size: 0.9em;
+        }
+
+        .flow-diagram {
+            background: rgba(0,0,0,0.3);
+            padding: 25px;
+            border-radius: 12px;
+            border: 1px solid var(--glass-border);
+            margin: 25px 0;
+            text-align: center;
+        }
+
+        .node {
+            display: inline-block;
+            background: var(--accent-primary);
+            padding: 10px 20px;
+            border-radius: 8px;
+            color: white;
+            font-weight: 600;
+            margin: 10px;
+        }
+        
+        .node.proxy { background: var(--accent-secondary); }
+        .node.cf { background: #f59e0b; }
+        .node.server { background: #10b981; }
+        
+        .arrow {
+            display: inline-block;
+            color: #94a3b8;
+            font-size: 1.5rem;
+            margin: 0 5px;
+            vertical-align: middle;
+        }
+
+        @keyframes fadeInUp {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes fadeInDown {
+            from { opacity: 0; transform: translateY(-20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .alert-info {
+            background: rgba(59, 130, 246, 0.1);
+            border-left: 4px solid var(--accent-primary);
+            padding: 20px;
+            border-radius: 0 8px 8px 0;
+            margin: 25px 0;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <header>
+        <h1>คู่มือเชื่อมต่อ MCP ผ่าน Cloudflare Tunnels</h1>
+        <div class="subtitle">ระบบเชื่อมต่อ Claude Desktop (Local) กับเซิร์ฟเวอร์ Spectra QA (Remote) อย่างปลอดภัย 100%</div>
+    </header>
+
+    <div class="card" style="animation-delay: 0.1s;">
+        <h2><span class="step-badge">#</span> สถาปัตยกรรมระบบ (Architecture)</h2>
+        <p>การใช้ Cloudflare Tunnels (SSE) ร่วมกับ Stdio Proxy จะช่วยสร้างท่อเข้ารหัสจากเครื่องเซิร์ฟเวอร์ ออกสู่อินเทอร์เน็ตโดย <strong>ไม่ต้อง Forward Port</strong> หรือมี <strong>Public IP</strong> เลย</p>
+        
+        <div class="flow-diagram">
+            <div class="node">Claude (Machine B)</div>
+            <span class="arrow">→</span>
+            <div class="node proxy">Proxy (mcp-proxy.js)</div>
+            <br><span class="arrow" style="transform: rotate(90deg); margin: 10px 0;">→</span><br>
+            <div class="node cf">Cloudflare Tunnel</div>
+            <br><span class="arrow" style="transform: rotate(90deg); margin: 10px 0;">→</span><br>
+            <div class="node server">Spectra QA (Machine A - Port 3000)</div>
+        </div>
+    </div>
+
+    <div class="card" style="animation-delay: 0.2s;">
+        <h2><span class="step-badge">1</span> ตั้งค่าฝั่งเซิร์ฟเวอร์ (Machine A)</h2>
+        <p>เครื่องที่รันระบบ Spectra QA (Host) จะต้องปล่อย API แบบ <strong>SSE (Server-Sent Events)</strong> รันไว้ที่พอร์ตภายใน เช่น <code>3000</code></p>
+        
+        <h3>การเปิด Cloudflare Tunnel</h3>
+        <p>ติดตั้งโปรแกรม <code>cloudflared</code> ในเครื่อง Machine A และรันคำสั่ง:</p>
+        <pre><code># สำหรับทดสอบ (Quick Tunnel)
+cloudflared tunnel --url http://localhost:3000
+
+# สำหรับใช้งานจริง (Persistent Tunnel)
+cloudflared login
+cloudflared tunnel create spectra-qa-mcp
+cloudflared tunnel route dns spectra-qa-mcp mcp.yourdomain.com
+cloudflared tunnel run spectra-qa-mcp</code></pre>
+        <p>หลังจากรัน คุณจะได้ URL มาใช้งาน เช่น <span class="inline-code">https://spectra-qa-test.trycloudflare.com</span></p>
+    </div>
+
+    <div class="card" style="animation-delay: 0.3s;">
+        <h2><span class="step-badge">2</span> ตั้งค่าฝั่งเครื่องส่วนตัว (Machine B)</h2>
+        <p>เครื่องที่ลง Claude Desktop ไว้ จะต้องใช้ "Proxy Script" เพื่อแปลงการคุยแบบ Stdio ให้เป็น SSE เพื่อส่งขึ้น Cloudflare</p>
+        
+        <h3>2.1 สร้างโปรเจกต์ Proxy</h3>
+        <pre><code>mkdir mcp-proxy
+cd mcp-proxy
+npm init -y
+npm install @modelcontextprotocol/sdk</code></pre>
+        <p>แก้ไขไฟล์ <span class="inline-code">package.json</span> โดยเพิ่ม <span class="inline-code">"type": "module"</span> ลงไป</p>
+
+        <h3>2.2 โค้ดสำหรับ <span class="inline-code">mcp-proxy.js</span></h3>
+        <pre><code>import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+
+// รับ URL จาก Config ของ Claude
+const tunnelUrl = process.argv[2] || "https://spectra-qa-test.trycloudflare.com/sse";
+
+async function main() {
+  console.error("Starting MCP proxy bridging stdio to:", tunnelUrl);
+
+  // 1. สร้าง Client เชื่อมต่อกับ Remote Server ผ่าน Cloudflare
+  const sseClient = new SSEClientTransport(new URL(tunnelUrl));
+  await sseClient.start();
+  console.error("✅ Connected to remote SSE server.");
+
+  // 2. สร้าง Server รับข้อมูลจาก Claude Desktop ทาง Stdio
+  const stdioServer = new StdioServerTransport();
+  await stdioServer.start();
+  console.error("✅ Stdio transport started for Claude Desktop.");
+
+  // 3. เชื่อมท่อ (Bridge) ส่งข้อมูลไป-มา
+  stdioServer.onmessage = (msg) => sseClient.send(msg).catch(console.error);
+  sseClient.onmessage = (msg) => stdioServer.send(msg).catch(console.error);
+
+  // 4. จัดการ Connection 
+  sseClient.onclose = () => process.exit(0);
+  stdioServer.onclose = () => process.exit(0);
+}
+
+main().catch(err => {
+  console.error("Fatal proxy error:", err);
+  process.exit(1);
+});</code></pre>
+    </div>
+
+    <div class="card" style="animation-delay: 0.4s;">
+        <h2><span class="step-badge">3</span> ตั้งค่า Claude Desktop</h2>
+        <p>นำ Proxy Script ที่สร้างเสร็จแล้วไปผูกกับ Claude Desktop โดยแก้ไฟล์ <code>claude_desktop_config.json</code></p>
+        <pre><code>{
+  "mcpServers": {
+    "spectra_qa_remote": {
+      "command": "node",
+      "args": [
+        "C:/path/to/your/mcp-proxy/mcp-proxy.js",
+        "https://spectra-qa-test.trycloudflare.com/sse"
+      ]
+    }
+  }
+}</code></pre>
+        
+        <div class="alert-info">
+            <strong>💡 ข้อสังเกต:</strong> อย่าลืมใส่ <code>/sse</code> ต่อท้าย URL ของ Cloudflare ด้วย (ขึ้นอยู่กับการเขียน API ฝั่งเซิร์ฟเวอร์ Machine A ว่าตั้ง Endpoint สำหรับ SSE ไว้ที่ Path ใด)
+        </div>
+    </div>
+
+</div>
+
+</body>
+</html>
