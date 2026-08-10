@@ -5,12 +5,15 @@
   import KnowledgeBase from "./lib/KnowledgeBase.svelte";
   import SkillManager from "./lib/SkillManager.svelte";
   import { qaHistory, selectedHistory, loadQAHistoryFromDB, selectedProjectStore, qaSessionGroups, activeQAContext, allGroups, loadQAGroupsFromDB } from "./lib/qaHistoryStore.js";
+  import { perfHistory, selectedPerfHistory, loadPerfHistory } from "./lib/perfHistoryStore.js";
   import Toast from "./lib/Toast.svelte";
   import Login from "./lib/Login.svelte";
   import ComingSoon from "./lib/ComingSoon.svelte";
   import QAConsult from "./lib/QAConsult.svelte";
   import QAMember from "./lib/QAMember.svelte";
   import ExitCriteriaManager from "./lib/ExitCriteriaManager.svelte";
+  import ApiCollectionAdmin from "./lib/ApiCollectionAdmin.svelte";
+  import QAPerformance from "./lib/QAPerformance.svelte";
   import TutorialOverlay from "./lib/TutorialOverlay.svelte";
   import LegalModal from "./lib/LegalModal.svelte";
   import { showLogin, authRole, authUser, authDisplayName, authAvatar, logout } from "./lib/authStore.js";
@@ -23,6 +26,7 @@
   onMount(async () => {
     loadQAHistoryFromDB();
     loadQAGroupsFromDB();
+    loadPerfHistory();
     // Load projects for sidebar group mapping
     try {
       const res = await fetch('http://127.0.0.1:5000/api/projects');
@@ -58,7 +62,7 @@
   let activeView = "ocr"; // 'ocr' | 'kb' | 'skills' | 'qa_consult'
 
   // Reactive statement to enforce default view based on role
-  $: if ($authRole === 'user' && activeView !== 'qa_consult') {
+  $: if ($authRole === 'user' && !['qa_consult', 'qa_performance'].includes(activeView)) {
     activeView = 'qa_consult';
   } else if ($authRole === 'admin' && activeView === 'qa_consult') {
     activeView = 'ocr';
@@ -248,13 +252,48 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M9 11l3 3L22 4"></path><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>
             Exit Criteria
           </button>
+          <button class="nav-item" class:active={activeView === "api_collection"} on:click={() => (activeView = "api_collection")}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
+            API Collections
+          </button>
+          <button class="nav-item" class:active={activeView === "qa_performance"} on:click={() => (activeView = "qa_performance")}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path></svg>
+            QA Performance
+          </button>
         {:else if $authRole === 'user'}
           <button class="nav-item" class:active={activeView === "qa_consult"} on:click={() => (activeView = "qa_consult")}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
             QA Consult
           </button>
-          {#if $selectedProjectStore}
-            <!-- Groups filtered by selected project -->
+          <button class="nav-item" class:active={activeView === "qa_performance"} on:click={() => (activeView = "qa_performance")}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path></svg>
+            QA Performance
+          </button>
+          {#if activeView === 'qa_performance'}
+            <!-- Performance History -->
+            {#if $perfHistory.length > 0}
+              <div class="history-section">
+                <div class="history-title">ประวัติ Performance (History)</div>
+                <div class="history-list">
+                  {#each $perfHistory.slice(0, 10) as item}
+                    <button class="history-item" on:click={() => { activeView = "qa_performance"; selectedPerfHistory.set(item); }}>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="flex-shrink: 0;"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path></svg>
+                      <div class="history-details">
+                        <span class="h-filename" style="color: #facc15;">{item.name}</span>
+                        <span class="h-project" style="color: #a78bfa;">
+                          [{item.project_code}] {item.scriptFileName || 'k6_performance_test.js'}
+                        </span>
+                        {#if item.date}
+                          <span class="h-date">{formatHistoryDate(item.date)}</span>
+                        {/if}
+                      </div>
+                    </button>
+                  {/each}
+                </div>
+              </div>
+            {/if}
+          {:else if $selectedProjectStore && activeView === 'qa_consult'}
+              <!-- Groups filtered by selected project -->
             {#if $allGroups.filter(g => g.project_id === ($selectedProjectStore.id || $selectedProjectStore.project_id)).length > 0}
               <div class="history-section">
                 <div class="history-title">กลุ่มการตรวจสอบ (Groups)</div>
@@ -378,7 +417,7 @@
       </header>
 
       <!-- Content Area -->
-      <div class="content-scroll" id="main-content" class:no-padding={activeView === 'kb' || activeView === 'ocr' || activeView === 'qa_consult' || activeView === 'qa_member'}>
+      <div class="content-scroll" id="main-content" class:no-padding={activeView === 'kb' || activeView === 'ocr' || activeView === 'qa_consult' || activeView === 'qa_member' || activeView === 'qa_performance'}>
         {#key activeView}
           <div class="view-wrapper" in:fade="{{ duration: 300, delay: 150 }}">
             {#if activeView === "ocr" && $authRole === "admin"}
@@ -398,8 +437,12 @@
               <QAMember />
             {:else if activeView === "exit_criteria" && $authRole === "admin"}
               <ExitCriteriaManager />
+            {:else if activeView === "api_collection" && $authRole === "admin"}
+              <ApiCollectionAdmin />
             {:else if activeView === "qa_consult" && $authRole === "user"}
               <QAConsult />
+            {:else if activeView === "qa_performance"}
+              <QAPerformance />
             {/if}
           </div>
         {/key}

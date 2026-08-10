@@ -234,5 +234,6 @@ def send_email_report(to_email: str, subject: str, report_body: str) -> str:
         return f"Failed to send email due to exception: {str(e)}"
 
 if __name__ == "__main__":
-    # Start the FastMCP server
-    mcp.run()
+    # Start the FastMCP server via SSE to allow remote connections (Cloudflare Tunnel)
+    logger.info("Starting MCP Server on SSE transport...")
+    mcp.run(transport='sse')
