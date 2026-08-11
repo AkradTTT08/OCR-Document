@@ -10,6 +10,7 @@
   let activePageIdx = 0;
   let viewMode = "errors"; // 'errors' | 'highlight' | 'text'
   let filterLang = "all"; // 'all' | 'thai' | 'english'
+  let tabsBarElement; // Reference for scrollable tabs
 
   // ── Derived ──
   $: pages = result?.pages ?? [];
@@ -386,6 +387,18 @@
       isSaving = false;
     }
   }
+
+  function scrollTabsToSelected() {
+    if (!tabsBarElement) return;
+    setTimeout(() => {
+      const activeTab = tabsBarElement.querySelector('.page-tab.active');
+      if (activeTab) {
+        const containerWidth = tabsBarElement.clientWidth;
+        const scrollLeft = activeTab.offsetLeft - (containerWidth / 2) + (activeTab.clientWidth / 2);
+        tabsBarElement.scrollTo({ left: scrollLeft, behavior: 'smooth' });
+      }
+    }, 50);
+  }
 </script>
 
 <!-- ── RIGHT PANEL ── -->
@@ -393,6 +406,17 @@
   <!-- ─── Empty / Processing State ─── -->
   {#if isProcessing}
     <div class="state-screen">
+      <div class="processing-logo-container">
+        <div class="logo-pulse-ring"></div>
+        <div class="logo-pulse-ring delay"></div>
+        <svg class="brand-logo-anim" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5 12 2"></polygon>
+          <line x1="12" y1="22" x2="12" y2="15.5"></line>
+          <polyline points="22 8.5 12 15.5 2 8.5"></polyline>
+          <polyline points="2 15.5 12 8.5 22 15.5"></polyline>
+          <line x1="12" y1="2" x2="12" y2="8.5"></line>
+        </svg>
+      </div>
       <div class="prog-wrap">
         <div class="prog-label">{progress.label}</div>
         <div class="prog-track">
@@ -517,19 +541,29 @@
     </div>
 
     <!-- ── Page tabs ── -->
-    <div class="page-tabs-bar">
-      {#each pages as p, i}
-        <button
-          class="page-tab"
-          class:active={activePageIdx === i}
-          on:click={() => (activePageIdx = i)}
-        >
-          <span>หน้า {p.page_number}</span>
-          {#if (p.spell_check?.summary?.error_count ?? 0) > 0}
-            <span class="err-badge">{p.spell_check.summary.error_count}</span>
-          {/if}
-        </button>
-      {/each}
+    <div class="page-tabs-wrapper">
+      <button class="nav-tab-btn" on:click={() => { activePageIdx = 0; scrollTabsToSelected(); }} disabled={activePageIdx === 0} title="ข้ามไปหน้าแรก">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 17l-5-5 5-5M18 17l-5-5 5-5"/></svg>
+      </button>
+      
+      <div class="page-tabs-bar" bind:this={tabsBarElement}>
+        {#each pages as p, i}
+          <button
+            class="page-tab"
+            class:active={activePageIdx === i}
+            on:click={() => { activePageIdx = i; scrollTabsToSelected(); }}
+          >
+            <span>หน้า {p.page_number}</span>
+            {#if (p.spell_check?.summary?.error_count ?? 0) > 0}
+              <span class="err-badge">{p.spell_check.summary.error_count}</span>
+            {/if}
+          </button>
+        {/each}
+      </div>
+
+      <button class="nav-tab-btn" on:click={() => { activePageIdx = pages.length - 1; scrollTabsToSelected(); }} disabled={activePageIdx === pages.length - 1} title="ข้ามไปหน้าสุดท้าย">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 17l5-5-5-5M6 17l5-5-5-5"/></svg>
+      </button>
     </div>
 
     <!-- ── View mode tabs + filter ── -->
@@ -900,6 +934,49 @@
     }
   }
 
+  /* ── Animated Logo ── */
+  .processing-logo-container {
+    position: relative;
+    width: 80px;
+    height: 80px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 20px;
+  }
+  .brand-logo-anim {
+    width: 50px;
+    height: 50px;
+    color: var(--primary2);
+    filter: drop-shadow(0 0 10px var(--primary));
+    animation: float 3s ease-in-out infinite, pulse-glow 2s infinite;
+    z-index: 2;
+  }
+  .logo-pulse-ring {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    border: 2px solid var(--primary);
+    border-radius: 50%;
+    animation: ripple 2s linear infinite;
+    opacity: 0;
+  }
+  .logo-pulse-ring.delay {
+    animation-delay: 1s;
+  }
+  @keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-10px); }
+  }
+  @keyframes pulse-glow {
+    0%, 100% { filter: drop-shadow(0 0 10px var(--primary)); }
+    50% { filter: drop-shadow(0 0 25px var(--accent)); color: var(--accent); }
+  }
+  @keyframes ripple {
+    0% { transform: scale(0.8); opacity: 0.8; }
+    100% { transform: scale(2); opacity: 0; }
+  }
+
   /* ── Header ── */
   .rp-header {
     display: flex;
@@ -995,13 +1072,53 @@
 
 
   /* ── Page tabs ── */
+  .page-tabs-wrapper {
+    display: flex;
+    align-items: center;
+    border-bottom: 1px solid var(--border);
+    background: transparent;
+  }
+  .nav-tab-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    padding: 10px 14px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+    flex-shrink: 0;
+  }
+  .nav-tab-btn:hover:not(:disabled) {
+    color: var(--primary2);
+    background: rgba(108, 142, 251, 0.1);
+  }
+  .nav-tab-btn:disabled {
+    opacity: 0.2;
+    cursor: not-allowed;
+  }
+  .nav-tab-btn svg {
+    width: 18px;
+    height: 18px;
+  }
   .page-tabs-bar {
     display: flex;
     gap: 6px;
-    padding: 10px 16px;
-    border-bottom: 1px solid var(--border);
+    padding: 10px 8px;
     overflow-x: auto;
-    flex-shrink: 0;
+    flex-shrink: 1;
+    scroll-behavior: smooth;
+  }
+  .page-tabs-bar::-webkit-scrollbar {
+    height: 4px;
+  }
+  .page-tabs-bar::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+  }
+  .page-tabs-bar::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
   }
   .page-tab {
     display: flex;

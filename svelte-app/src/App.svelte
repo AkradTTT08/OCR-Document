@@ -4,8 +4,9 @@
   import ResultsPanel from "./lib/ResultsPanel.svelte";
   import KnowledgeBase from "./lib/KnowledgeBase.svelte";
   import SkillManager from "./lib/SkillManager.svelte";
-  import { qaHistory, selectedHistory, loadQAHistoryFromDB, selectedProjectStore, qaSessionGroups, activeQAContext, allGroups, loadQAGroupsFromDB } from "./lib/qaHistoryStore.js";
+  import { qaHistory, selectedHistory, loadQAHistoryFromDB, selectedProjectStore, qaSessionGroups, activeQAContext, allGroups, loadQAGroupsFromDB, activeSidebarGroup } from "./lib/qaHistoryStore.js";
   import { perfHistory, selectedPerfHistory, loadPerfHistory } from "./lib/perfHistoryStore.js";
+  import ProjectManagement from './lib/ProjectManagement.svelte';
   import Toast from "./lib/Toast.svelte";
   import Login from "./lib/Login.svelte";
   import ComingSoon from "./lib/ComingSoon.svelte";
@@ -13,6 +14,7 @@
   import QAMember from "./lib/QAMember.svelte";
   import ExitCriteriaManager from "./lib/ExitCriteriaManager.svelte";
   import ApiCollectionAdmin from "./lib/ApiCollectionAdmin.svelte";
+  import ApiUsageDashboard from "./lib/ApiUsageDashboard.svelte";
   import QAPerformance from "./lib/QAPerformance.svelte";
   import TutorialOverlay from "./lib/TutorialOverlay.svelte";
   import LegalModal from "./lib/LegalModal.svelte";
@@ -37,7 +39,19 @@
     } catch(e) {
       console.error('Failed to load projects for sidebar:', e);
     }
+
+    // Health check polling
+    setInterval(async () => {
+      try {
+        const res = await fetch('http://127.0.0.1:5000/api/projects', { method: 'GET' });
+        systemReady = res.ok;
+      } catch (e) {
+        systemReady = false;
+      }
+    }, 10000);
   });
+
+  let systemReady = true;
 
   function handleGroupClick(group) {
     // Find the project for this group
@@ -45,14 +59,17 @@
     if (proj) {
       activeView = 'qa_consult';
       activeQAContext.set({ project: proj, group_name: group.group_name, group_type: group.group_type });
+      activeSidebarGroup.set({ project: proj, group_name: group.group_name, group_type: group.group_type });
     } else {
       // If project not found in list, still try to navigate
       activeView = 'qa_consult';
-      activeQAContext.set({ 
+      const ctx = { 
         project: { id: group.project_id, project_id: group.project_id, project_code: group.project_code || 'Unknown', name: group.project_code || 'Project' }, 
         group_name: group.group_name, 
         group_type: group.group_type 
-      });
+      };
+      activeQAContext.set(ctx);
+      activeSidebarGroup.set(ctx);
     }
   }
 
@@ -207,6 +224,26 @@
     }
     return unique;
   })();
+
+  $: filteredQAHistory = (() => {
+    const history = $qaHistory;
+    const project = $selectedProjectStore;
+    const context = $activeSidebarGroup;
+    
+    if (!project) return [];
+    const targetProject = project.id || project.project_id;
+    
+    return history.filter(h => {
+      if (h.project_id != targetProject) return false;
+      
+      if (context) {
+        const hGroup = String(h.group_name || 'General').trim().toLowerCase();
+        const ctxGroup = String(context.group_name || 'General').trim().toLowerCase();
+        return hGroup === ctxGroup;
+      }
+      return false; // hide all if no group selected
+    });
+  })();
 </script>
 
 <div class="app-wrapper">
@@ -236,6 +273,10 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z"/></svg>
             Scan OCR
           </button>
+          <button class="nav-item" class:active={activeView === "project_management"} on:click={() => (activeView = "project_management")}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
+            Project Management
+          </button>
           <button class="nav-item" class:active={activeView === "kb"} on:click={() => (activeView = "kb")}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"></path></svg>
             Knowledge Base
@@ -256,10 +297,11 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
             API Collections
           </button>
-          <button class="nav-item" class:active={activeView === "qa_performance"} on:click={() => (activeView = "qa_performance")}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path></svg>
-            QA Performance
+          <button class="nav-item" class:active={activeView === "api_usage"} on:click={() => (activeView = "api_usage")}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M3 3v18h18"/><path d="M18.7 8l-5.1 5.2-2.8-2.7L7 14.3"/></svg>
+            Token Usage
           </button>
+
         {:else if $authRole === 'user'}
           <button class="nav-item" class:active={activeView === "qa_consult"} on:click={() => (activeView = "qa_consult")}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
@@ -271,11 +313,11 @@
           </button>
           {#if activeView === 'qa_performance'}
             <!-- Performance History -->
-            {#if $perfHistory.length > 0}
+            {#if $selectedProjectStore && $perfHistory.filter(h => h.project_id === ($selectedProjectStore.id || $selectedProjectStore.project_id)).length > 0}
               <div class="history-section">
                 <div class="history-title">ประวัติ Performance (History)</div>
                 <div class="history-list">
-                  {#each $perfHistory.slice(0, 10) as item}
+                  {#each $perfHistory.filter(h => h.project_id === ($selectedProjectStore.id || $selectedProjectStore.project_id)).slice(0, 10) as item}
                     <button class="history-item" on:click={() => { activeView = "qa_performance"; selectedPerfHistory.set(item); }}>
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="flex-shrink: 0;"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path></svg>
                       <div class="history-details">
@@ -299,7 +341,7 @@
                 <div class="history-title">กลุ่มการตรวจสอบ (Groups)</div>
                 <div class="history-list">
                   {#each $allGroups.filter(g => g.project_id === ($selectedProjectStore.id || $selectedProjectStore.project_id)) as group}
-                    <button class="history-item group-item" on:click={() => handleGroupClick(group)}>
+                    <button class="history-item group-item" class:active={$activeSidebarGroup && $activeSidebarGroup.group_name === group.group_name} on:click={() => handleGroupClick(group)}>
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="flex-shrink: 0;">
                         <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
                       </svg>
@@ -318,26 +360,46 @@
               </div>
             {/if}
 
-            <!-- History filtered by selected project -->
-            {#if $qaHistory.filter(h => h.project_id === ($selectedProjectStore.id || $selectedProjectStore.project_id)).length > 0}
+            <!-- History filtered by selected group -->
+            {#if $activeSidebarGroup}
               <div class="history-section">
                 <div class="history-title">ประวัติการวิเคราะห์ (History)</div>
-                <div class="history-list">
-                  {#each $qaHistory.filter(h => h.project_id === ($selectedProjectStore.id || $selectedProjectStore.project_id)).slice(0, 10) as item}
-                    <button class="history-item" on:click={() => { activeView = "qa_consult"; selectedHistory.set(item); }}>
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path></svg>
-                      <div class="history-details">
-                        <span class="h-filename">{item.filename}</span>
-                        <span class="h-project" style="color: #a78bfa;">
-                          {#if item.group_type}[{item.group_type}] {/if}{item.group_name || 'General'}
-                        </span>
-                        {#if item.date}
-                          <span class="h-date">{formatHistoryDate(item.date)}</span>
-                        {/if}
-                      </div>
-                    </button>
-                  {/each}
-                </div>
+                {#if filteredQAHistory.length > 0}
+                  <div class="history-list">
+                    {#each filteredQAHistory.slice(0, 10) as item}
+                      <button class="history-item" class:is-processing={item.is_processing} on:click={() => { activeView = "qa_consult"; selectedHistory.set(item); }}>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path></svg>
+                        <div class="history-details">
+                          <span class="h-filename">{item.filename}</span>
+                          <span class="h-project" style="color: #a78bfa;">
+                            {#if item.group_type}[{item.group_type}] {/if}{item.group_name || 'General'}
+                          </span>
+                          {#if item.is_processing}
+                            <span class="h-status" style="color: #60a5fa; font-size: 11px; margin-top: 4px; display: flex; align-items: center; gap: 4px; animation: pulse 1.5s infinite;">
+                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="10" height="10" style="animation: spin 2s linear infinite;">
+                                <line x1="12" y1="2" x2="12" y2="6"></line>
+                                <line x1="12" y1="18" x2="12" y2="22"></line>
+                                <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line>
+                                <line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line>
+                                <line x1="2" y1="12" x2="6" y2="12"></line>
+                                <line x1="18" y1="12" x2="22" y2="12"></line>
+                                <line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line>
+                                <line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line>
+                              </svg>
+                              กำลังประมวลผล...
+                            </span>
+                          {:else if item.date}
+                            <span class="h-date">{formatHistoryDate(item.date)}</span>
+                          {/if}
+                        </div>
+                      </button>
+                    {/each}
+                  </div>
+                {:else}
+                  <div style="padding: 15px; text-align: center; color: #9ca3af; font-size: 13px; background: rgba(0,0,0,0.2); border-radius: 8px;">
+                    ไม่มีประวัติเอกสารในกลุ่มนี้
+                  </div>
+                {/if}
               </div>
             {/if}
           {/if}
@@ -381,8 +443,8 @@
           }}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 01-3.46 0"></path></svg>
           </button>
-          <div class="status-badge">
-            <span class="dot"></span> System Ready
+          <div class="status-badge" class:error={!systemReady}>
+            <span class="dot"></span> {systemReady ? 'System Ready' : 'System Unavailable'}
           </div>
           <!-- svelte-ignore a11y-click-events-have-key-events -->
           <div class="user-profile-container" style="position: relative;" on:click={() => showProfileMenu = !showProfileMenu}>
@@ -429,8 +491,10 @@
               {#if isProcessing || scanResult}
                 <ResultsPanel result={scanResult} {isProcessing} {progress} on:close={() => {scanResult = null; isProcessing = false;}} />
               {/if}
+            {:else if activeView === 'project_management'}
+              <ProjectManagement />
             {:else if activeView === "kb" && $authRole === "admin"}
-              <KnowledgeBase />
+              <KnowledgeBase mode="knowledge_base" />
             {:else if activeView === "skills" && $authRole === "admin"}
               <SkillManager />
             {:else if activeView === "qa_member" && $authRole === "admin"}
@@ -439,6 +503,8 @@
               <ExitCriteriaManager />
             {:else if activeView === "api_collection" && $authRole === "admin"}
               <ApiCollectionAdmin />
+            {:else if activeView === "api_usage" && $authRole === "admin"}
+              <ApiUsageDashboard />
             {:else if activeView === "qa_consult" && $authRole === "user"}
               <QAConsult />
             {:else if activeView === "qa_performance"}
@@ -637,10 +703,25 @@
 
   .sidebar-nav {
     flex: 1;
-    padding: 10px 16px;
+    padding: 10px 12px 10px 16px;
     display: flex;
     flex-direction: column;
     gap: 8px;
+    overflow-y: auto;
+  }
+  
+  .sidebar-nav::-webkit-scrollbar {
+    width: 4px;
+  }
+  .sidebar-nav::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .sidebar-nav::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+  }
+  .sidebar-nav::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
   }
 
   .nav-item {
@@ -731,6 +812,11 @@
   .history-item.group-item:hover {
     border-left-color: #8b5cf6;
     background: rgba(139, 92, 246, 0.08);
+  }
+  .history-item.group-item.active {
+    border-left-color: #a855f7;
+    background: rgba(168, 85, 247, 0.15);
+    color: #fff;
   }
   .history-item svg {
     margin-top: 2px;
@@ -910,10 +996,21 @@
     padding: 6px 12px; border-radius: 20px;
     font-size: 12px; font-weight: 500; color: var(--success);
     font-family: var(--font-en);
+    transition: all 0.3s ease;
+  }
+  .status-badge.error {
+    background: rgba(239, 68, 68, 0.1);
+    border-color: rgba(239, 68, 68, 0.2);
+    color: var(--danger, #ef4444);
   }
   .dot {
     width: 8px; height: 8px; background: var(--success); border-radius: 50%;
     box-shadow: 0 0 8px var(--success);
+    transition: all 0.3s ease;
+  }
+  .status-badge.error .dot {
+    background: var(--danger, #ef4444);
+    box-shadow: 0 0 8px rgba(239, 68, 68, 0.6);
   }
 
   .user-profile-container {
@@ -1073,6 +1170,23 @@
   .modal-title {
     font-size: 20px; font-weight: 600; margin-top: 0; margin-bottom: 24px;
     color: white; font-family: var(--font-th);
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+  .history-item.is-processing {
+    background: rgba(59, 130, 246, 0.05);
+    border-color: rgba(59, 130, 246, 0.3);
+  }
+  .history-item.is-processing:hover {
+    background: rgba(59, 130, 246, 0.1);
+    transform: none;
+    box-shadow: none;
   }
 
   /* Form & Avatar in Modal */

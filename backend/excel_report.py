@@ -55,25 +55,33 @@ def parse_qa_report_with_ai(report_text: str, filename: str) -> list[dict]:
 {report_text}
 """
 
-        fallback_models = [gemini_model, 'gemini-2.5-flash', 'gemini-2.5-flash-lite']
+        from ocr_engine import get_all_api_keys, _get_gemini_client
+        all_keys = get_all_api_keys()
+        raw_fallback_models = [gemini_model, 'gemini-3.1-pro', 'gemini-3.1-flash', 'gemini-2.5-flash', 'gemini-2.5-flash-lite']
+        seen = set()
+        fallback_models = [m for m in raw_fallback_models if not (m in seen or seen.add(m))]
         gemini_res = None
         
-        for current_model in fallback_models:
-            for attempt in range(2):
-                try:
-                    gemini_res = client.models.generate_content(
-                        model=current_model,
-                        contents=prompt,
-                    )
-                    break
-                except Exception as e:
-                    error_msg = str(e)
-                    if '429' in error_msg or 'RESOURCE_EXHAUSTED' in error_msg:
-                        import time
-                        time.sleep(5)
-                        continue
-                    else:
+        for k_idx in range(len(all_keys) if all_keys else 1):
+            client = _get_gemini_client(k_idx)
+            for current_model in fallback_models:
+                for attempt in range(2):
+                    try:
+                        gemini_res = client.models.generate_content(
+                            model=current_model,
+                            contents=prompt,
+                        )
                         break
+                    except Exception as e:
+                        error_msg = str(e)
+                        if '429' in error_msg or 'RESOURCE_EXHAUSTED' in error_msg or 'Quota' in error_msg:
+                            import time
+                            time.sleep(2)
+                            continue
+                        else:
+                            break
+                if gemini_res:
+                    break
             if gemini_res:
                 break
 

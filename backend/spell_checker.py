@@ -73,31 +73,57 @@ Return your result STRICTLY in JSON format as a list of errors:
 If there are no errors, return {{"errors": []}}.
 Do not include any <think> reasoning blocks in your final output, just output the raw JSON."""
 
-    model_name = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash-lite')
-    api_key = os.environ.get('GOOGLE_API_KEY', '')
-
+    model_name = os.environ.get('GEMINI_MODEL', 'gemini-3.1-flash')
+    
     ai_errors = []
-    if not api_key:
-        logger.error("GOOGLE_API_KEY is missing! Cannot run spellcheck.")
-        return _empty_spell_check(text)
-
     try:
-        from google import genai
+        from ocr_engine import get_all_api_keys, _get_gemini_client
+        keys = get_all_api_keys()
+        if not keys:
+            logger.error("GOOGLE_API_KEY is missing! Cannot run spellcheck.")
+            return _empty_spell_check(text)
+
         from google.genai import types
         
-        client = genai.Client(api_key=api_key)
-        logger.info(f"Calling Gemini ({model_name}) for spellcheck...")
+        raw_fallback_models = [model_name, 'gemini-3.1-pro', 'gemini-3.1-flash', 'gemini-2.5-flash', 'gemini-2.5-flash-lite']
+        seen = set()
+        fallback_models = [m for m in raw_fallback_models if not (m in seen or seen.add(m))]
         
-        response = client.models.generate_content(
-            model=model_name,
-            contents=f"Check this text for errors:\n\n{text}",
-            config=types.GenerateContentConfig(
-                system_instruction=system_prompt,
-                temperature=0.0,
-                response_mime_type="application/json",
-            )
-        )
-        
+        response = None
+        for key_idx in range(len(keys)):
+            client = _get_gemini_client(key_idx)
+            for current_model in fallback_models:
+                try:
+                    logger.info(f"Calling Gemini [Key #{key_idx+1}] ({current_model}) for spellcheck...")
+                    response = client.models.generate_content(
+                        model=current_model,
+                        contents=f"Check this text for errors:\n\n{text}",
+                        config=types.GenerateContentConfig(
+                            system_instruction=system_prompt,
+                            temperature=0.0,
+                            response_mime_type="application/json",
+                        )
+                    )
+                    if response and response.text:
+                        break
+                except Exception as model_err:
+                    logger.warning(f"Gemini Spellcheck error with Key #{key_idx+1} {current_model}: {model_err}")
+                    continue
+            if response and response.text:
+                break
+
+        if not response or not response.text:
+            logger.warning("All Gemini models failed for spellcheck. Returning empty check.")
+            return _empty_spell_check(text)
+
+        if hasattr(response, 'usage_metadata'):
+            try:
+                from db_ingestion import log_api_usage
+                used_model = getattr(response, 'model_version', None) or 'gemini-3.1-flash'
+                log_api_usage("Spell_Check", used_model, response.usage_metadata)
+            except Exception as usage_err:
+                logger.error(f"Failed to log API usage: {usage_err}")
+
         content = response.text or ""
         
         # Clean potential markdown wrapping just in case

@@ -82,8 +82,8 @@ def get_projects():
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT project_id, project_name, project_code, description, status, created_at "
-            "FROM projects ORDER BY project_id DESC;"
+            "SELECT p.project_id, p.project_name, p.project_code, p.description, p.status, p.created_at, COUNT(d.id) as doc_count "
+            "FROM projects p LEFT JOIN kb_documents d ON p.project_id = d.project_id GROUP BY p.project_id ORDER BY p.project_id DESC;"
         )
         projects = [
             {
@@ -92,7 +92,8 @@ def get_projects():
                 "project_code": row[2],
                 "description": row[3],
                 "status": row[4],
-                "created_at": row[5].isoformat() if row[5] else None
+                "created_at": row[5].isoformat() if row[5] else None,
+                "doc_count": int(row[6]) if row[6] else 0
             }
             for row in cursor.fetchall()
         ]
@@ -143,6 +144,70 @@ def add_project(name: str = None, project_code: str = None, project_name: str = 
     except Exception as e:
         if conn: conn.rollback()
         logger.error(f"Error adding project: {e}", exc_info=True)
+        raise
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+
+def update_project(project_id: str, name: str = None, project_name: str = None, project_code: str = None, description: str = None, status: str = None):
+    """Update an existing project in the knowledge base."""
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Use name if project_name is not provided
+        p_name = project_name or name
+        
+        update_fields = []
+        params = []
+        if p_name is not None:
+            update_fields.append("name = %s")
+            update_fields.append("project_name = %s")
+            params.extend([p_name, p_name])
+        if project_code is not None:
+            update_fields.append("project_code = %s")
+            params.append(project_code)
+        if description is not None:
+            update_fields.append("description = %s")
+            params.append(description)
+        if status is not None:
+            update_fields.append("status = %s")
+            params.append(status)
+            
+        if not update_fields:
+            return None
+            
+        update_fields.append("updated_at = CURRENT_TIMESTAMP")
+        
+        params.append(project_id)
+        
+        query = f"UPDATE projects SET {', '.join(update_fields)} WHERE project_id = %s::uuid RETURNING project_id, project_code, name, description, status, created_at, updated_at;"
+        cursor.execute(query, params)
+        row = cursor.fetchone()
+        
+        if not row:
+            raise Exception("ไม่พบโครงการที่ต้องการอัปเดต")
+            
+        conn.commit()
+        return {
+            'id': str(row[0]),
+            'project_id': str(row[0]),
+            'project_code': row[1],
+            'name': row[2],
+            'project_name': row[2],
+            'description': row[3],
+            'status': row[4],
+            'created_at': row[5].isoformat() if row[5] else None,
+            'updated_at': row[6].isoformat() if row[6] else None
+        }
+    except psycopg2.errors.UniqueViolation:
+        if conn: conn.rollback()
+        raise Exception(f"Project Code '{project_code}' ซ้ำกับโครงการที่มีอยู่แล้ว")
+    except Exception as e:
+        if conn: conn.rollback()
+        logger.error(f"Error updating project: {e}", exc_info=True)
         raise
     finally:
         if cursor: cursor.close()
@@ -420,6 +485,16 @@ def init_qa_transactions():
         except Exception:
             pass
             
+        try:
+            cursor.execute("ALTER TABLE qa_transactions ADD COLUMN qa_findings JSONB;")
+        except Exception:
+            pass
+            
+        try:
+            cursor.execute("ALTER TABLE qa_transactions ADD COLUMN exit_criteria_eval JSONB;")
+        except Exception:
+            pass
+            
         logger.info("Checked/Created qa_transactions table.")
     except Exception as e:
         logger.error(f"Error initializing qa_transactions table: {e}", exc_info=True)
@@ -427,8 +502,9 @@ def init_qa_transactions():
         if cursor: cursor.close()
         if conn: conn.close()
 
-def save_qa_transaction(project_id, group_name, group_type, filename, doc_type, extracted_text, qa_report, total_pages=None, email=None):
+def save_qa_transaction(project_id, group_name, group_type, filename, doc_type, extracted_text, qa_report, total_pages=None, email=None, qa_findings=None, exit_criteria_eval=None):
     """Saves a QA consult transaction to the database."""
+    import json
     conn = None
     cursor = None
     try:
@@ -438,11 +514,15 @@ def save_qa_transaction(project_id, group_name, group_type, filename, doc_type, 
             
         conn = get_db_connection()
         cursor = conn.cursor()
+        
+        qf_json = json.dumps(qa_findings) if qa_findings is not None else None
+        ece_json = json.dumps(exit_criteria_eval) if exit_criteria_eval is not None else None
+        
         cursor.execute("""
-            INSERT INTO qa_transactions (project_id, group_name, group_type, filename, doc_type, extracted_text, qa_report, total_pages, email)
-            VALUES (%s::uuid, %s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO qa_transactions (project_id, group_name, group_type, filename, doc_type, extracted_text, qa_report, total_pages, email, qa_findings, exit_criteria_eval)
+            VALUES (%s::uuid, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)
             RETURNING transaction_id
-        """, (project_id, group_name, group_type, filename, doc_type, extracted_text, qa_report, total_pages, email))
+        """, (project_id, group_name, group_type, filename, doc_type, extracted_text, qa_report, total_pages, email, qf_json, ece_json))
         transaction_id = cursor.fetchone()[0]
         conn.commit()
         logger.info(f"Saved QA transaction for {filename} in project {project_id}.")
@@ -450,6 +530,33 @@ def save_qa_transaction(project_id, group_name, group_type, filename, doc_type, 
     except Exception as e:
         if conn: conn.rollback()
         logger.error(f"Error saving QA transaction: {e}", exc_info=True)
+        return False
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+
+def update_qa_transaction_results(transaction_id, qa_findings, exit_criteria_eval):
+    """Updates the JSON columns of an existing QA transaction."""
+    import json
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        qf_json = json.dumps(qa_findings) if qa_findings is not None else None
+        ece_json = json.dumps(exit_criteria_eval) if exit_criteria_eval is not None else None
+        
+        cursor.execute("""
+            UPDATE qa_transactions
+            SET qa_findings = %s::jsonb, exit_criteria_eval = %s::jsonb
+            WHERE transaction_id = %s::uuid
+        """, (qf_json, ece_json, transaction_id))
+        conn.commit()
+        return True
+    except Exception as e:
+        if conn: conn.rollback()
+        logger.error(f"Error updating QA transaction results: {e}", exc_info=True)
         return False
     finally:
         if cursor: cursor.close()
@@ -576,6 +683,512 @@ def get_qa_groups(project_id=None):
     except Exception as e:
         logger.error(f"Error retrieving QA groups: {e}", exc_info=True)
         return []
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+
+def init_qa_transactions():
+    """Initializes the qa_transactions table in the database."""
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        conn.autocommit = True
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS qa_transactions (
+                transaction_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                project_id UUID REFERENCES projects(project_id) ON DELETE CASCADE,
+                group_name VARCHAR(255) NOT NULL,
+                group_type VARCHAR(100) NOT NULL,
+                filename VARCHAR(255),
+                doc_type VARCHAR(100),
+                extracted_text TEXT,
+                qa_report TEXT,
+                total_pages INTEGER,
+                email VARCHAR(255),
+                qa_findings JSONB,
+                exit_criteria_eval JSONB,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        
+        try:
+            cursor.execute("ALTER TABLE qa_transactions ADD COLUMN qa_findings JSONB;")
+        except Exception:
+            pass
+            
+        try:
+            cursor.execute("ALTER TABLE qa_transactions ADD COLUMN exit_criteria_eval JSONB;")
+        except Exception:
+            pass
+            
+        logger.info("Checked/Created qa_transactions table.")
+    except Exception as e:
+        logger.error(f"Error initializing qa_transactions table: {e}", exc_info=True)
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+
+def init_api_usage_logs():
+    """Initializes the api_usage_logs table for tracking Gemini token usage."""
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        conn.autocommit = True
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS api_usage_logs (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                endpoint VARCHAR(255) NOT NULL,
+                model_name VARCHAR(255) NOT NULL,
+                prompt_tokens INTEGER DEFAULT 0,
+                completion_tokens INTEGER DEFAULT 0,
+                total_tokens INTEGER DEFAULT 0,
+                estimated_cost_usd NUMERIC(10, 6) DEFAULT 0,
+                filename VARCHAR(255),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        
+        try:
+            cursor.execute("ALTER TABLE api_usage_logs ADD COLUMN filename VARCHAR(255);")
+        except Exception:
+            pass
+            
+        logger.info("Checked/Created api_usage_logs table.")
+    except Exception as e:
+        logger.error(f"Error initializing api_usage_logs table: {e}", exc_info=True)
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+
+def save_qa_transaction(project_id, group_name, group_type, filename, doc_type, extracted_text, qa_report, total_pages=None, email=None, qa_findings=None, exit_criteria_eval=None):
+    """Saves a QA consult transaction to the database."""
+    import json
+    conn = None
+    cursor = None
+    try:
+        if not project_id:
+            logger.warning("No project_id provided, skipping saving QA transaction.")
+            return False
+            
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        qf_json = json.dumps(qa_findings) if qa_findings is not None else None
+        ece_json = json.dumps(exit_criteria_eval) if exit_criteria_eval is not None else None
+        
+        cursor.execute("""
+            INSERT INTO qa_transactions (project_id, group_name, group_type, filename, doc_type, extracted_text, qa_report, total_pages, email, qa_findings, exit_criteria_eval)
+            VALUES (%s::uuid, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)
+            RETURNING transaction_id
+        """, (project_id, group_name, group_type, filename, doc_type, extracted_text, qa_report, total_pages, email, qf_json, ece_json))
+        transaction_id = cursor.fetchone()[0]
+        conn.commit()
+        logger.info(f"Saved QA transaction for {filename} in project {project_id}.")
+        return str(transaction_id)
+    except Exception as e:
+        if conn: conn.rollback()
+        logger.error(f"Error saving QA transaction: {e}", exc_info=True)
+        return False
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+
+def update_qa_transaction_results(transaction_id, qa_findings, exit_criteria_eval):
+    """Updates the JSON columns of an existing QA transaction."""
+    import json
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        qf_json = json.dumps(qa_findings) if qa_findings is not None else None
+        ece_json = json.dumps(exit_criteria_eval) if exit_criteria_eval is not None else None
+        
+        cursor.execute("""
+            UPDATE qa_transactions
+            SET qa_findings = %s::jsonb, exit_criteria_eval = %s::jsonb
+            WHERE transaction_id = %s::uuid
+        """, (qf_json, ece_json, transaction_id))
+        conn.commit()
+        return True
+    except Exception as e:
+        if conn: conn.rollback()
+        logger.error(f"Error updating QA transaction results: {e}", exc_info=True)
+        return False
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+
+def get_latest_qa_transaction(project_id, filename):
+    """Retrieves the latest QA transaction for a given project and filename."""
+    conn = None
+    cursor = None
+    try:
+        if not project_id:
+            return None
+            
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT extracted_text, qa_report, created_at
+            FROM qa_transactions
+            WHERE project_id = %s::uuid AND filename = %s
+            ORDER BY created_at DESC
+            LIMIT 1
+        """, (project_id, filename))
+        row = cursor.fetchone()
+        if row:
+            return {
+                'extracted_text': row[0],
+                'qa_report': row[1],
+                'created_at': row[2].isoformat() if row[2] else None
+            }
+        return None
+    except Exception as e:
+        logger.error(f"Error retrieving latest QA transaction: {e}", exc_info=True)
+        return None
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+
+def init_qa_groups_table():
+    """Initializes the qa_groups table in the database."""
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        conn.autocommit = True
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS qa_groups (
+                group_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                project_id UUID REFERENCES projects(project_id) ON DELETE CASCADE,
+                group_name VARCHAR(255) NOT NULL,
+                group_type VARCHAR(100) NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(project_id, group_name)
+            );
+        """)
+        logger.info("Checked/Created qa_groups table.")
+    except Exception as e:
+        logger.error(f"Error initializing qa_groups table: {e}", exc_info=True)
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+
+def save_qa_group(project_id, group_name, group_type):
+    """Saves a QA group to the database."""
+    conn = None
+    cursor = None
+    try:
+        if not project_id or not group_name:
+            return False, "project_id and group_name are required"
+            
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        # Insert or ignore (using ON CONFLICT DO NOTHING)
+        cursor.execute("""
+            INSERT INTO qa_groups (project_id, group_name, group_type)
+            VALUES (%s::uuid, %s, %s)
+            ON CONFLICT (project_id, group_name) DO NOTHING
+            RETURNING group_id
+        """, (project_id, group_name, group_type))
+        conn.commit()
+        return True, "Group saved"
+    except Exception as e:
+        if conn: conn.rollback()
+        logger.error(f"Error saving QA group: {e}", exc_info=True)
+        return False, str(e)
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+
+def get_qa_groups(project_id=None):
+    """Retrieves all QA groups, optionally filtered by project."""
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        sql = """
+            SELECT g.group_id, g.project_id, g.group_name, g.group_type, g.created_at, p.project_code
+            FROM qa_groups g
+            LEFT JOIN projects p ON g.project_id = p.project_id
+        """
+        params = []
+        if project_id:
+            sql += " WHERE g.project_id = %s::uuid"
+            params.append(project_id)
+            
+        sql += " ORDER BY g.created_at DESC"
+        
+        cursor.execute(sql, params)
+        rows = cursor.fetchall()
+        groups = []
+        for r in rows:
+            groups.append({
+                'group_id': str(r[0]),
+                'project_id': str(r[1]),
+                'group_name': r[2],
+                'group_type': r[3],
+                'created_at': r[4].isoformat() if r[4] else None,
+                'project_code': r[5] or 'Unknown'
+            })
+        return groups
+    except Exception as e:
+        logger.error(f"Error retrieving QA groups: {e}", exc_info=True)
+        return []
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+
+def init_api_usage_logs():
+    """Initializes the api_usage_logs table for tracking Gemini token usage."""
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        conn.autocommit = True
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS api_usage_logs (
+                log_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                endpoint_name VARCHAR(100),
+                model_name VARCHAR(100),
+                filename VARCHAR(255),
+                prompt_tokens INT DEFAULT 0,
+                completion_tokens INT DEFAULT 0,
+                total_tokens INT DEFAULT 0,
+                estimated_cost_usd DECIMAL(10, 6) DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        
+        # Add filename column if it doesn't exist (for existing databases)
+        try:
+            cursor.execute("ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS filename VARCHAR(255);")
+        except Exception:
+            pass
+        logger.info("Checked/Created api_usage_logs table.")
+    except Exception as e:
+        logger.error(f"Error initializing api_usage_logs table: {e}", exc_info=True)
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+
+def log_api_usage(endpoint_name, model_name, usage_metadata, filename=None):
+    """Logs API token usage and calculates estimated cost."""
+    if not usage_metadata:
+        return
+        
+    prompt_tokens = getattr(usage_metadata, 'prompt_token_count', 0)
+    completion_tokens = getattr(usage_metadata, 'candidates_token_count', 0)
+    total_tokens = getattr(usage_metadata, 'total_token_count', 0)
+    
+    # Simple cost estimation (approximate Gemini 3.1 Pro/Flash pricing in USD)
+    cost_usd = 0.0
+    if 'pro' in model_name.lower():
+        cost_usd = (prompt_tokens / 1_000_000 * 1.25) + (completion_tokens / 1_000_000 * 3.75)
+    elif 'flash' in model_name.lower():
+        cost_usd = (prompt_tokens / 1_000_000 * 0.075) + (completion_tokens / 1_000_000 * 0.30)
+
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO api_usage_logs (endpoint_name, model_name, filename, prompt_tokens, completion_tokens, total_tokens, estimated_cost_usd)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """, (endpoint_name, model_name, filename, prompt_tokens, completion_tokens, total_tokens, cost_usd))
+        conn.commit()
+    except Exception as e:
+        if conn: conn.rollback()
+        logger.error(f"Error logging API usage: {e}", exc_info=True)
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+
+def get_api_usage_stats(time_filter='all'):
+    """Retrieves aggregated API usage statistics with optional time filtering."""
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Build WHERE clause based on time filter
+        where_clause = ""
+        if time_filter == 'daily':
+            where_clause = "WHERE created_at >= CURRENT_DATE"
+        elif time_filter == 'monthly':
+            where_clause = "WHERE created_at >= date_trunc('month', CURRENT_DATE)"
+        elif time_filter == 'yearly':
+            where_clause = "WHERE created_at >= date_trunc('year', CURRENT_DATE)"
+            
+        stats = {}
+        
+        # Total cost and tokens
+        cursor.execute(f"SELECT SUM(total_tokens), SUM(estimated_cost_usd) FROM api_usage_logs {where_clause}")
+        row = cursor.fetchone()
+        stats['total_tokens'] = row[0] or 0
+        stats['total_cost_usd'] = float(row[1] or 0)
+        
+        # Usage by model
+        cursor.execute(f"SELECT model_name, COUNT(*), SUM(total_tokens), SUM(estimated_cost_usd) FROM api_usage_logs {where_clause} GROUP BY model_name")
+        stats['by_model'] = [
+            {'model': r[0], 'requests': r[1], 'tokens': r[2], 'cost_usd': float(r[3] or 0)}
+            for r in cursor.fetchall()
+        ]
+        
+        # Usage by endpoint
+        cursor.execute(f"SELECT endpoint_name, COUNT(*), SUM(total_tokens), SUM(estimated_cost_usd) FROM api_usage_logs {where_clause} GROUP BY endpoint_name")
+        stats['by_endpoint'] = [
+            {'endpoint': r[0], 'requests': r[1], 'tokens': r[2], 'cost_usd': float(r[3] or 0)}
+            for r in cursor.fetchall()
+        ]
+        
+        # Document History (recent scans)
+        cursor.execute(f"""
+            SELECT filename, endpoint_name, model_name, total_tokens, estimated_cost_usd, created_at 
+            FROM api_usage_logs 
+            {where_clause} 
+            ORDER BY created_at DESC 
+            LIMIT 100
+        """)
+        stats['document_history'] = [
+            {
+                'filename': r[0] or 'Unknown Document',
+                'endpoint': r[1],
+                'model': r[2],
+                'tokens': r[3],
+                'cost_usd': float(r[4] or 0),
+                'date': r[5].isoformat() if r[5] else None
+            }
+            for r in cursor.fetchall()
+        ]
+        
+        # Chart Data (Grouped by time interval)
+        if time_filter == 'yearly':
+            date_trunc_expr = "date_trunc('month', created_at)"
+        elif time_filter == 'monthly':
+            date_trunc_expr = "date_trunc('day', created_at)"
+        elif time_filter == 'daily':
+            date_trunc_expr = "date_trunc('hour', created_at)"
+        else:
+            date_trunc_expr = "date_trunc('day', created_at)" # default to daily groups
+            
+        cursor.execute(f"""
+            SELECT {date_trunc_expr} as time_group, SUM(total_tokens), SUM(estimated_cost_usd)
+            FROM api_usage_logs
+            {where_clause}
+            GROUP BY time_group
+            ORDER BY time_group ASC
+        """)
+        stats['chart_data'] = [
+            {
+                'time_group': r[0].isoformat() if r[0] else None,
+                'tokens': r[1],
+                'cost_usd': float(r[2] or 0)
+            }
+            for r in cursor.fetchall()
+        ]
+        
+        cursor.execute(f"""
+            SELECT {date_trunc_expr} as time_group, model_name, SUM(prompt_tokens), SUM(completion_tokens), COUNT(*)
+            FROM api_usage_logs
+            {where_clause}
+            GROUP BY time_group, model_name
+            ORDER BY time_group ASC
+        """)
+        stats['model_chart_data'] = [
+            {
+                'time_group': r[0].isoformat() if r[0] else None,
+                'model_name': r[1],
+                'prompt_tokens': r[2],
+                'completion_tokens': r[3],
+                'requests': r[4]
+            }
+            for r in cursor.fetchall()
+        ]
+        
+        return stats
+    except Exception as e:
+        logger.error(f"Error getting API usage stats: {e}", exc_info=True)
+        return {}
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+
+def init_billing_credit():
+    """Initializes the billing_credit table."""
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        conn.autocommit = True
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS billing_credit (
+                id SERIAL PRIMARY KEY,
+                total_credit_thb DECIMAL(12, 2) DEFAULT 0.00,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        
+        # Insert initial row if empty
+        cursor.execute("SELECT COUNT(*) FROM billing_credit")
+        if cursor.fetchone()[0] == 0:
+            cursor.execute("INSERT INTO billing_credit (total_credit_thb) VALUES (0.00)")
+            
+        logger.info("Checked/Created billing_credit table.")
+    except Exception as e:
+        logger.error(f"Error initializing billing_credit table: {e}", exc_info=True)
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+
+def get_billing_credit():
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT total_credit_thb FROM billing_credit ORDER BY id DESC LIMIT 1")
+        row = cursor.fetchone()
+        return float(row[0]) if row else 0.0
+    except Exception as e:
+        logger.error(f"Error getting billing credit: {e}", exc_info=True)
+        return 0.0
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+
+def update_billing_credit(new_amount):
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        conn.autocommit = True
+        cursor = conn.cursor()
+        cursor.execute("UPDATE billing_credit SET total_credit_thb = %s, updated_at = CURRENT_TIMESTAMP WHERE id = (SELECT id FROM billing_credit ORDER BY id DESC LIMIT 1)", (new_amount,))
+        if cursor.rowcount == 0:
+            cursor.execute("INSERT INTO billing_credit (total_credit_thb) VALUES (%s)", (new_amount,))
+        return True
+    except Exception as e:
+        logger.error(f"Error updating billing credit: {e}", exc_info=True)
+        return False
     finally:
         if cursor: cursor.close()
         if conn: conn.close()

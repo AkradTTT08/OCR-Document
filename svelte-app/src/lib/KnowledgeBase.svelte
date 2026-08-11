@@ -1,4 +1,5 @@
 <script>
+  export let mode = 'knowledge_base'; // 'knowledge_base' or 'project_management'
   import { onMount } from 'svelte';
   import { toast } from './toastStore.js';
   import { globalSearchQuery, triggerGlobalSearch } from './globalStore.js';
@@ -29,6 +30,8 @@
   // ── New Project Form State ──
   let showAddProject = false;
   let isAddingProject = false;
+  let isEditMode = false;
+  let editingProjectId = null;
   let newProject = {
     project_code: '',
     project_name: '',
@@ -355,6 +358,25 @@
     loadDocuments(selectedProject);
   }
 
+  function openAddProject() {
+    isEditMode = false;
+    editingProjectId = null;
+    newProject = { project_code: '', project_name: '', description: '', status: 'Active' };
+    showAddProject = true;
+  }
+
+  function openEditProject(p) {
+    isEditMode = true;
+    editingProjectId = p.id;
+    newProject = {
+      project_code: p.project_code || '',
+      project_name: p.name || p.project_name || '',
+      description: p.description || '',
+      status: p.status || 'Active'
+    };
+    showAddProject = true;
+  }
+
   async function createProject() {
     if (!newProject.project_name.trim()) {
       toast('กรุณาระบุชื่อโครงการ', 'error');
@@ -362,25 +384,28 @@
     }
     isAddingProject = true;
     try {
-      const r = await fetch(`${API}/projects`, {
-        method: 'POST',
+      const endpoint = isEditMode ? `${API}/projects/${editingProjectId}` : `${API}/projects`;
+      const method = isEditMode ? 'PUT' : 'POST';
+      
+      const r = await fetch(endpoint, {
+        method: method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newProject)
       });
       const d = await r.json();
-      console.log('Create project response:', d);
+      console.log('Project save response:', d);
       if (d.success) {
-        toast('สร้างโครงการสำเร็จ', 'success');
+        toast(isEditMode ? 'อัปเดตโครงการสำเร็จ' : 'สร้างโครงการสำเร็จ', 'success');
         showAddProject = false;
         newProject = { project_code: '', project_name: '', description: '', status: 'Active' };
         await Promise.all([loadStats(), loadProjects()]);
         selectProject(d.project);
       } else {
-        console.error('Create project error:', d.error);
-        toast(d.error || 'สร้างโครงการไม่สำเร็จ', 'error');
+        console.error('Project save error:', d.error);
+        toast(d.error || (isEditMode ? 'อัปเดตโครงการไม่สำเร็จ' : 'สร้างโครงการไม่สำเร็จ'), 'error');
       }
     } catch (e) {
-      console.error('Create project network error:', e);
+      console.error('Project save network error:', e);
       toast('เกิดข้อผิดพลาดในการเชื่อมต่อ: ' + e.message, 'error');
     }
     isAddingProject = false;
@@ -503,18 +528,22 @@
       <button class="tab-btn" class:active={activeTab==='browse'} on:click={() => activeTab='browse'}>
         🗂 เรียกดู
       </button>
+      {#if mode === 'knowledge_base'}
       <button class="tab-btn" class:active={activeTab==='search'} on:click={() => activeTab='search'}>
         🔍 ค้นหา Vector
       </button>
+      {/if}
     </div>
 
     {#if activeTab === 'browse'}
       <!-- Project list -->
       <div class="section-label" style="display: flex; justify-content: space-between; align-items: center;">
         <span>โครงการ</span>
-        <button class="btn-icon-add" on:click={() => showAddProject = true} title="เพิ่มโครงการใหม่">
+        {#if mode === 'project_management'}
+        <button class="btn-icon-add" on:click={openAddProject} title="เพิ่มโครงการใหม่">
           + เพิ่ม
         </button>
+        {/if}
       </div>
       <div class="project-list">
         <div class="project-item" class:active={selectedProject === null}>
@@ -531,9 +560,12 @@
             </button>
             <div class="project-actions">
               <button class="btn-view-proj" on:click|stopPropagation={() => openProjectInfo(p)} title="ดูรายละเอียดโครงการ">ℹ️</button>
+              {#if mode === 'project_management'}
+              <button class="btn-edit-proj" style="background:transparent; border:none; cursor:pointer;" on:click|stopPropagation={() => openEditProject(p)} title="แก้ไขโครงการ">✏️</button>
               <button class="btn-del-proj" on:click|stopPropagation={() => confirmDeleteProject(p)} title="ลบโครงการ">
                 <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
               </button>
+              {/if}
             </div>
           </div>
         {/each}
@@ -546,9 +578,11 @@
       {#if documents.length > 0 || isLoadingDocs || selectedProject}
         <div class="section-label" style="display: flex; justify-content: space-between; align-items: center; margin-top: 24px;">
           <span>เอกสาร ({documents.length})</span>
+          {#if mode === 'knowledge_base'}
           <button class="btn-icon-add" on:click={openAddManualDocModal} title="เพิ่มเอกสาร Manual">
             + Manual Add
           </button>
+          {/if}
         </div>
         <div class="doc-list">
           {#if isLoadingDocs}
@@ -574,9 +608,11 @@
                     </span>
                   </div>
                 </button>
+                {#if mode === 'knowledge_base'}
                 <button class="btn-del" title="ลบเอกสาร" on:click={() => confirmDeleteDoc(doc.id)}>
                   <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                 </button>
+                {/if}
               </div>
             {/each}
           {/if}
@@ -724,6 +760,7 @@
             >
               👁️ พรีวิว (Preview)
             </button>
+            {#if mode === 'knowledge_base'}
             <button 
               class="tab-btn {isEditingDoc ? 'active' : ''}" 
               style="padding: 6px 16px; border-radius: 6px; border: none; background: {isEditingDoc ? 'var(--primary)' : 'transparent'}; color: {isEditingDoc ? '#fff' : 'var(--text2)'}; cursor: pointer; font-size: 14px; transition: all 0.2s;"
@@ -731,6 +768,7 @@
             >
               ✎ แก้ไขเนื้อหา (Markdown)
             </button>
+            {/if}
           </div>
 
           {#if !isEditingDoc}
@@ -810,14 +848,14 @@
     {/if}
   </main>
 
-  <!-- ── Add Project Modal ── -->
+  <!-- ── Add/Edit Project Modal ── -->
   {#if showAddProject}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="modal-backdrop" on:click={() => showAddProject = false} on:keydown={(e) => e.key === 'Escape' && (showAddProject = false)} role="presentation">
       <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="modal-content" on:click|stopPropagation on:keydown|stopPropagation role="dialog" aria-modal="true" aria-label="เพิ่มโครงการใหม่">
+      <div class="modal-content" on:click|stopPropagation on:keydown|stopPropagation role="dialog" aria-modal="true" aria-label={isEditMode ? "แก้ไขโครงการ" : "เพิ่มโครงการใหม่"}>
         <div class="modal-header">
-          <h3>เพิ่มโครงการใหม่</h3>
+          <h3>{isEditMode ? "แก้ไขโครงการ" : "เพิ่มโครงการใหม่"}</h3>
           <button class="btn-close" on:click={() => showAddProject = false}>✕</button>
         </div>
         <div class="modal-body">
@@ -846,7 +884,7 @@
         <div class="modal-footer">
           <button class="btn-cancel" on:click={() => showAddProject = false}>ยกเลิก</button>
           <button class="btn-submit" on:click={createProject} disabled={isAddingProject || !newProject.project_name.trim()}>
-            {isAddingProject ? 'กำลังสร้าง...' : 'สร้างโครงการ'}
+            {isAddingProject ? 'กำลังบันทึก...' : (isEditMode ? 'บันทึกการแก้ไข' : 'สร้างโครงการ')}
           </button>
         </div>
       </div>

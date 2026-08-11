@@ -5,6 +5,7 @@ export const selectedHistory = writable(null);
 export const selectedProjectStore = writable(null);
 export const qaSessionGroups = writable([]);
 export const activeQAContext = writable(null);
+export const activeSidebarGroup = writable(null);
 export const qaDbGroups = writable([]);
 
 /**

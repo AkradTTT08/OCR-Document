@@ -79,28 +79,49 @@
     const item = $selectedHistory;
     selectedHistory.set(null); // Clear it so it doesn't re-trigger
 
-    const baseName = item.filename ? item.filename.replace(/\.[^/.]+$/, "") : "";
-    const safeName = baseName.replace(/[^\w\-.]/g, '_');
-    const computedExcelUrl = `http://127.0.0.1:5000/api/qa_report/download/QA_Report_${safeName}_${item.id}.xlsx`;
+    if (item.is_processing) {
+      scanGroupName = item.group_name || 'General';
+      scanGroupType = item.group_type || '';
+      isGroupNameSet = true;
+      
+      const p = projects.find(p => p.id === item.project_id || p.project_id === item.project_id);
+      if (p) {
+        selectedProjectStore.set(p);
+      }
+      
+      // If the component was remounted, re-enable the processing UI
+      if (!isProcessing) {
+        isProcessing = true;
+        scanResult = null;
+        processStatus = "กำลังวิเคราะห์ข้อมูลเบื้องหลัง...";
+        progressPct = 50;
+      }
+    } else {
+      const baseName = item.filename ? item.filename.replace(/\.[^/.]+$/, "") : "";
+      const safeName = baseName.replace(/[^\w\-.]/g, '_');
+      const computedExcelUrl = `http://127.0.0.1:5000/api/qa_report/download/QA_Report_${safeName}_${item.id}.xlsx`;
 
-    scanResult = {
-      status: 'success',
-      report: item.report,
-      email: item.email || email, // If email is in DB, use it, otherwise use current
-      total_pages: item.total_pages,
-      doc_type: item.docType,
-      filename: item.filename,
-      emailSent: false,
-      excel_url: computedExcelUrl
-    };
+      scanResult = {
+        status: 'success',
+        report: item.report,
+        email: item.email || email, // If email is in DB, use it, otherwise use current
+        total_pages: item.total_pages,
+        doc_type: item.docType,
+        filename: item.filename,
+        emailSent: false,
+        excel_url: computedExcelUrl,
+        qa_findings: item.qa_findings,
+        exit_criteria_eval: item.exit_criteria_eval
+      };
 
-    scanGroupName = item.group_name || 'General';
-    scanGroupType = item.group_type || '';
-    isGroupNameSet = true;
+      scanGroupName = item.group_name || 'General';
+      scanGroupType = item.group_type || '';
+      isGroupNameSet = true;
 
-    const p = projects.find(p => p.id === item.project_id || p.project_id === item.project_id);
-    if (p) {
-      selectedProjectStore.set(p);
+      const p = projects.find(p => p.id === item.project_id || p.project_id === item.project_id);
+      if (p) {
+        selectedProjectStore.set(p);
+      }
     }
   }
 
@@ -280,6 +301,17 @@
     progressPct = 10;
     processStatus = "กำลังอัปโหลดเอกสารและเริ่มประมวลผล...";
 
+    const pendingItem = {
+      id: 'pending-' + Date.now(),
+      filename: file.name,
+      group_name: scanGroupName.trim() || 'General',
+      group_type: scanGroupType,
+      project_id: selectedProjectObj.id || selectedProjectObj.project_id,
+      date: new Date().toISOString(),
+      is_processing: true
+    };
+    qaHistory.update(h => [pendingItem, ...h]);
+
     const formData = new FormData();
     formData.append("file", file);
     formData.append("doc_type", JSON.stringify(selectedDocTypes));
@@ -336,6 +368,9 @@
             } else if (data.type === "complete") {
               progressPct = 100;
               scanResult = data.result;
+              isProcessing = false;
+              qaHistory.update(h => h.filter(item => item.id !== pendingItem.id));
+              await loadQAHistoryFromDB();
               if (scanResult && scanResult.exit_criteria_eval) {
                 gateResultData = scanResult.exit_criteria_eval;
                 showGateModal = true;
@@ -352,6 +387,8 @@
       const msg = err instanceof Error ? err.message : String(err);
       toast(`เกิดข้อผิดพลาด: ${msg}`, "error");
       isProcessing = false;
+    } finally {
+      qaHistory.update(h => h.filter(item => item.id !== pendingItem.id));
     }
   }
 
@@ -366,11 +403,12 @@
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          email,
-          docType: selectedDocTypes.join(", "),
+          email: scanResult.email || email,
+          docType: scanResult.doc_type || selectedDocTypes.join(", ") || 'General Document',
           filename: scanResult.filename,
           report: scanResult.report,
-          excel_url: scanResult.excel_url || ''
+          excel_url: scanResult.excel_url || '',
+          exit_criteria_eval: scanResult.exit_criteria_eval || null
         })
       });
 

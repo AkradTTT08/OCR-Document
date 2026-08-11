@@ -191,40 +191,36 @@
 
 <div class="container">
     <header>
-        <h1>คู่มือเชื่อมต่อ MCP ผ่าน Cloudflare Tunnels</h1>
-        <div class="subtitle">ระบบเชื่อมต่อ Claude Desktop (Local) กับเซิร์ฟเวอร์ Spectra QA (Remote) อย่างปลอดภัย 100%</div>
+        <h1>คู่มือเชื่อมต่อ MCP ผ่าน Ngrok Tunnels</h1>
+        <div class="subtitle">ระบบเชื่อมต่อ Claude Desktop (Local) กับเซิร์ฟเวอร์ Spectra QA (Remote) อย่างเสถียรและปลอดภัย</div>
     </header>
 
     <div class="card" style="animation-delay: 0.1s;">
         <h2><span class="step-badge">#</span> สถาปัตยกรรมระบบ (Architecture)</h2>
-        <p>การใช้ Cloudflare Tunnels (SSE) ร่วมกับ Stdio Proxy จะช่วยสร้างท่อเข้ารหัสจากเครื่องเซิร์ฟเวอร์ ออกสู่อินเทอร์เน็ตโดย <strong>ไม่ต้อง Forward Port</strong> หรือมี <strong>Public IP</strong> เลย</p>
+        <p>การใช้ Ngrok Tunnels (SSE) ร่วมกับ Stdio Proxy จะช่วยสร้างท่อเข้ารหัสจากเครื่องเซิร์ฟเวอร์ ออกสู่อินเทอร์เน็ตโดย <strong>ไม่ต้อง Forward Port</strong> หรือมี <strong>Public IP</strong> เลย อีกทั้งยังหมดปัญหาเรื่องการอม Buffer (SSE Buffering) ที่มักพบใน Cloudflare</p>
         
         <div class="flow-diagram">
             <div class="node">Claude (Machine B)</div>
             <span class="arrow">→</span>
             <div class="node proxy">Proxy (mcp-proxy.js)</div>
             <br><span class="arrow" style="transform: rotate(90deg); margin: 10px 0;">→</span><br>
-            <div class="node cf">Cloudflare Tunnel</div>
+            <div class="node cf">Ngrok Tunnel</div>
             <br><span class="arrow" style="transform: rotate(90deg); margin: 10px 0;">→</span><br>
-            <div class="node server">Spectra QA (Machine A - Port 3000)</div>
+            <div class="node server">Spectra QA (Machine A - Port 8000)</div>
         </div>
     </div>
 
     <div class="card" style="animation-delay: 0.2s;">
         <h2><span class="step-badge">1</span> ตั้งค่าฝั่งเซิร์ฟเวอร์ (Machine A)</h2>
-        <p>เครื่องที่รันระบบ Spectra QA (Host) จะต้องปล่อย API แบบ <strong>SSE (Server-Sent Events)</strong> รันไว้ที่พอร์ตภายใน เช่น <code>3000</code></p>
+        <p>เครื่องที่รันระบบ Spectra QA (Host) จะต้องปล่อย API แบบ <strong>SSE (Server-Sent Events)</strong> รันไว้ที่พอร์ตภายใน เช่น <code>8000</code></p>
         
-        <h3>การเปิด Cloudflare Tunnel</h3>
-        <p>ติดตั้งโปรแกรม <code>cloudflared</code> ในเครื่อง Machine A และรันคำสั่ง:</p>
-        <pre><code># สำหรับทดสอบ (Quick Tunnel)
-cloudflared tunnel --url http://localhost:3000
-
-# สำหรับใช้งานจริง (Persistent Tunnel)
-cloudflared login
-cloudflared tunnel create spectra-qa-mcp
-cloudflared tunnel route dns spectra-qa-mcp mcp.yourdomain.com
-cloudflared tunnel run spectra-qa-mcp</code></pre>
-        <p>หลังจากรัน คุณจะได้ URL มาใช้งาน เช่น <span class="inline-code">https://spectra-qa-test.trycloudflare.com</span></p>
+        <h3>การเปิด Ngrok Tunnel</h3>
+        <p>ติดตั้งโปรแกรม <code>ngrok</code> ในเครื่อง Machine A และรันคำสั่งยืนยันตัวตน (ทำเพียงครั้งแรกครั้งเดียว):</p>
+        <pre><code>ngrok config add-authtoken &lt;YOUR_AUTH_TOKEN&gt;</code></pre>
+        
+        <p>จากนั้น รันคำสั่งเปิดอุโมงค์เชื่อมต่อกับพอร์ต 8000:</p>
+        <pre><code>ngrok http 8000</code></pre>
+        <p>หลังจากรัน คุณจะได้ URL มาใช้งาน เช่น <span class="inline-code">https://xxxx-xxxx.ngrok-free.app</span></p>
     </div>
 
     <div class="card" style="animation-delay: 0.3s;">
@@ -236,19 +232,27 @@ cloudflared tunnel run spectra-qa-mcp</code></pre>
 cd mcp-proxy
 npm init -y
 npm install @modelcontextprotocol/sdk</code></pre>
-        <p>แก้ไขไฟล์ <span class="inline-code">package.json</span> โดยเพิ่ม <span class="inline-code">"type": "module"</span> ลงไป</p>
+        <p>แก้ไขไฟล์ <span class="inline-code">package.json</span> ที่เพิ่งสร้างขึ้น โดยเพิ่มบรรทัด <span class="inline-code">"type": "module"</span> ลงไป ตัวอย่างเช่น:</p>
+        <pre><code>{
+  "name": "mcp-proxy",
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  }
+}</code></pre>
 
         <h3>2.2 โค้ดสำหรับ <span class="inline-code">mcp-proxy.js</span></h3>
         <pre><code>import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
 // รับ URL จาก Config ของ Claude
-const tunnelUrl = process.argv[2] || "https://spectra-qa-test.trycloudflare.com/sse";
+const tunnelUrl = process.argv[2] || "https://xxxx-xxxx.ngrok-free.app/sse";
 
 async function main() {
   console.error("Starting MCP proxy bridging stdio to:", tunnelUrl);
 
-  // 1. สร้าง Client เชื่อมต่อกับ Remote Server ผ่าน Cloudflare
+  // 1. สร้าง Client เชื่อมต่อกับ Remote Server ผ่าน Ngrok
   const sseClient = new SSEClientTransport(new URL(tunnelUrl));
   await sseClient.start();
   console.error("✅ Connected to remote SSE server.");
@@ -282,14 +286,14 @@ main().catch(err => {
       "command": "node",
       "args": [
         "C:/path/to/your/mcp-proxy/mcp-proxy.js",
-        "https://spectra-qa-test.trycloudflare.com/sse"
+        "https://xxxx-xxxx.ngrok-free.app/sse"
       ]
     }
   }
 }</code></pre>
         
         <div class="alert-info">
-            <strong>💡 ข้อสังเกต:</strong> อย่าลืมใส่ <code>/sse</code> ต่อท้าย URL ของ Cloudflare ด้วย (ขึ้นอยู่กับการเขียน API ฝั่งเซิร์ฟเวอร์ Machine A ว่าตั้ง Endpoint สำหรับ SSE ไว้ที่ Path ใด)
+            <strong>💡 ข้อสังเกต:</strong> อย่าลืมใส่ <code>/sse</code> ต่อท้าย URL ของ Ngrok ด้วยนะครับ (เพื่อให้ชี้ไปยัง Endpoint สำหรับ Server-Sent Events อย่างถูกต้อง)
         </div>
     </div>
 

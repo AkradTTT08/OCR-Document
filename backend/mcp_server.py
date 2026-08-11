@@ -17,7 +17,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("mcp_ocr_server")
 
 # สร้าง MCP Server
-mcp = FastMCP("Thai OCR Server")
+mcp = FastMCP("Thai OCR Server", host="0.0.0.0")
 
 import socket
 import ipaddress
@@ -234,6 +234,48 @@ def send_email_report(to_email: str, subject: str, report_body: str) -> str:
         return f"Failed to send email due to exception: {str(e)}"
 
 if __name__ == "__main__":
-    # Start the FastMCP server via SSE to allow remote connections (Cloudflare Tunnel)
     logger.info("Starting MCP Server on SSE transport...")
-    mcp.run(transport='sse')
+        
+    import uvicorn
+    app = mcp.sse_app()
+
+    # ASGI Middleware to log outgoing response chunks and force Cloudflare flush
+    async def logging_middleware(scope, receive, send):
+        has_sent_padding = False
+        
+        if scope["type"] == "http":
+            logger.info(f">>> Incoming Request: {scope['method']} {scope['path']}")
+
+        async def logging_send(message):
+            nonlocal has_sent_padding
+            
+            if message["type"] == "http.response.start":
+                # Inject Cache-Control: no-transform to PREVENT Cloudflare buffering/compression
+                headers = message.get("headers", [])
+                new_headers = []
+                for k, v in headers:
+                    if k.lower() == b"cache-control":
+                        v = v + b", no-transform"
+                    new_headers.append((k, v))
+                # If cache-control wasn't present, add it
+                if not any(k.lower() == b"cache-control" for k, v in headers):
+                    new_headers.append((b"cache-control", b"no-cache, no-transform"))
+                message["headers"] = new_headers
+                
+                logger.info(f"<<< Response Start ({scope.get('path')}): {message['status']} {new_headers}")
+            elif message["type"] == "http.response.body":
+                body = message.get("body", b"")
+                logger.info(f"<<< Response Body Chunk ({scope.get('path')}): {body[:200]}...")
+                
+                # Cloudflare Tunnel might buffer up to 8KB. 
+                # We inject a 8KB comment to force it to flush the stream immediately!
+                if not has_sent_padding and scope.get("path") == "/sse":
+                    padding = b": " + (b"x" * 8192) + b"\n\n"
+                    message["body"] = padding + body
+                    has_sent_padding = True
+                    logger.info("Injected 8KB padding to defeat Cloudflare buffering.")
+                    
+            await send(message)
+        await app(scope, receive, logging_send)
+
+    uvicorn.run(logging_middleware, host="0.0.0.0", port=8000, proxy_headers=True, forwarded_allow_ips="*")

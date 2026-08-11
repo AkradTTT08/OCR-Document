@@ -551,6 +551,35 @@ def create_project():
         logger.error(f"Error creating project: {e}", exc_info=True)
         return jsonify({'error': f'สร้างโครงการไม่สำเร็จ: {str(e)}'}), 500
 
+@app.route('/api/projects/<string:project_id>', methods=['PUT'])
+def update_project_api(project_id):
+    """Update a project"""
+    data = request.get_json()
+    if not data:
+        return jsonify({'error': 'ไม่มีข้อมูลสำหรับอัปเดต'}), 400
+        
+    try:
+        from db_ingestion import update_project
+        p_name = data.get('project_name') or data.get('name')
+        p_code = data.get('project_code')
+        desc = data.get('description')
+        status = data.get('status')
+        
+        if p_code is not None and not str(p_code).strip():
+            p_code = None
+            
+        project = update_project(
+            project_id=project_id,
+            name=p_name,
+            project_code=p_code,
+            description=desc,
+            status=status
+        )
+        return jsonify({'success': True, 'project': project, 'message': 'อัปเดตโครงการเรียบร้อยแล้ว'})
+    except Exception as e:
+        logger.error(f"Error updating project {project_id}: {e}", exc_info=True)
+        return jsonify({'error': f'อัปเดตไม่สำเร็จ: {str(e)}'}), 500
+
 @app.route('/api/projects/<string:project_id>', methods=['DELETE'])
 def delete_project_api(project_id):
     """Delete a project"""
@@ -1795,8 +1824,16 @@ def mcp_submit_document():
         if final_status == 'REJECTED':
             recommendation += "\nกรุณาแก้ไขเอกสารในจุดที่ไม่ผ่านเกณฑ์ และส่งเข้ามาตรวจใหม่"
         
-        # Optionally trigger email notification if passed or circuit breaker hit. (Skipped simple logic to avoid spam, or implement here if needed)
-        
+        # Trigger email notification
+        if target_email:
+            try:
+                from email_service import send_qa_report
+                report_content = f"Final Status: {final_status}\n\nRemarks: {recommendation}\n\nFailed Items:\n"
+                for i, fail in enumerate(failed_criteria_list, 1):
+                    report_content += f"{i}. {fail}\n"
+                send_qa_report(target_email, doc_type, "MCP_Automated_Evaluation", report_content, exit_criteria_eval=eval_result)
+            except Exception as email_err:
+                logger.error(f"Failed to send email inside mcp_submit_document: {email_err}")
         return jsonify({
             "status": "PASS" if final_status in ['PASSED', 'CONDITIONAL_PASSED'] else "REJECTED",
             "session_id": session_id,
@@ -1910,10 +1947,11 @@ def qa_consult_api():
                 yield f"data: {json.dumps({'type': 'progress', 'pct': 70, 'message': 'กำลังใช้ AI วิเคราะห์และเปรียบเทียบข้อมูล...' })}\n\n"
                 
                 # 3. Analyze with Gemini
-                from ocr_engine import _get_gemini_client
+                # 3. Analyze with Gemini
+                from ocr_engine import _get_gemini_client, get_all_api_keys
                 import os
-                client = _get_gemini_client()
-                gemini_model = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash')
+                all_keys = get_all_api_keys()
+                gemini_model = os.environ.get('GEMINI_MODEL', 'gemini-3.1-pro')
                 
                 prev_report_context = ""
                 if prev_transaction:
@@ -1951,43 +1989,72 @@ def qa_consult_api():
 {instruction}
 """
                 
-                fallback_models = [gemini_model, 'gemini-2.5-flash', 'gemini-2.5-flash-lite']
+                raw_fallback_models = [gemini_model, 'gemini-3.1-flash', 'gemini-2.5-flash', 'gemini-2.5-flash-lite']
+                seen = set()
+                fallback_models = [m for m in raw_fallback_models if not (m in seen or seen.add(m))]
                 gemini_res = None
                 last_err = None
                 
-                for current_model in fallback_models:
-                    success = False
-                    for attempt in range(3):
-                        try:
-                            logger.info(f"QA Consult: Calling Gemini API with model: {current_model} (Attempt {attempt+1})")
-                            gemini_res = client.models.generate_content(
-                                model=current_model,
-                                contents=prompt,
-                            )
-                            success = True
-                            break
-                        except Exception as e:
-                            last_err = e
-                            error_msg = str(e)
-                            if '429' in error_msg or 'Quota' in error_msg or 'RESOURCE_EXHAUSTED' in error_msg:
-                                if attempt < 2:
-                                    logger.warning(f"Rate limit exceeded (429) for {current_model}. Retrying in 10s...")
-                                    import time
-                                    time.sleep(10)
-                                    continue
-                                else:
-                                    logger.warning(f"Rate limit exhausted for {current_model}. Switching to fallback.")
-                                    break
-                            else:
-                                logger.error(f"Error with model {current_model}: {error_msg}")
+                for k_idx in range(len(all_keys) if all_keys else 1):
+                    client = _get_gemini_client(k_idx)
+                    for current_model in fallback_models:
+                        success = False
+                        for attempt in range(2):
+                            try:
+                                logger.info(f"QA Consult: Calling Gemini API [Key #{k_idx+1}] model: {current_model} (Attempt {attempt+1})")
+                                gemini_res = client.models.generate_content(
+                                    model=current_model,
+                                    contents=prompt,
+                                )
+                                success = True
                                 break
-                    if success:
+                            except Exception as e:
+                                last_err = e
+                                error_msg = str(e)
+                                if '404' in error_msg or 'NOT_FOUND' in error_msg or 'not found' in error_msg.lower():
+                                    logger.warning(f"Model {current_model} not found (404). Switching to fallback.")
+                                    break
+                                elif '503' in error_msg or 'UNAVAILABLE' in error_msg:
+                                    logger.warning(f"Model {current_model} overloaded (503). Switching to fallback.")
+                                    break
+                                elif '429' in error_msg or 'Quota' in error_msg or 'RESOURCE_EXHAUSTED' in error_msg:
+                                    if attempt < 1:
+                                        delay = (attempt + 1) * 2
+                                        logger.warning(f"Rate limit exceeded (429) for Key #{k_idx+1} {current_model}. Retrying in {delay}s...")
+                                        import time
+                                        time.sleep(delay)
+                                        continue
+                                    else:
+                                        logger.warning(f"Rate limit exhausted for Key #{k_idx+1} {current_model}. Switching model/key.")
+                                        break
+                                else:
+                                    logger.error(f"Error with Key #{k_idx+1} {current_model}: {error_msg}")
+                                    break
+                        if success:
+                            break
+                    if gemini_res:
                         break
                         
                 if not gemini_res:
-                    raise Exception(f"Failed to generate QA report: {str(last_err)}")
+                    err_txt = str(last_err)
+                    if '429' in err_txt or 'RESOURCE_EXHAUSTED' in err_txt or 'Quota' in err_txt:
+                        user_err = "โควต้า Gemini API (429 Rate Limit) เต็มชั่วคราว กรุณารอสักครู่ (ประมาณ 30-60 วินาที) แล้วกดสแกนใหม่อีกครั้ง"
+                    else:
+                        user_err = f"ไม่สามารถสร้างรายงาน QA ได้: {err_txt}"
+                    logger.error(f"QA Consult failed for all models: {last_err}")
+                    yield f"data: {json.dumps({'type': 'error', 'message': user_err})}\n\n"
+                    return
                 
                 report = gemini_res.text
+                
+                # Log API usage
+                if hasattr(gemini_res, 'usage_metadata'):
+                    try:
+                        from db_ingestion import log_api_usage
+                        used_model = getattr(gemini_res, 'model_version', None) or 'gemini-3.1-pro'
+                        log_api_usage("QA_Consult", used_model, gemini_res.usage_metadata, filename=original_filename)
+                    except Exception as usage_err:
+                        logger.error(f"Failed to log API usage: {usage_err}")
                 
                 # Save transaction
                 transaction_id = None
@@ -2051,6 +2118,14 @@ def qa_consult_api():
                     logger.info(f"Excel report generated: {excel_path}")
                 except Exception as excel_err:
                     logger.error(f"Failed to generate Excel report: {excel_err}")
+
+                # Update the transaction in DB with the parsed results
+                if transaction_id:
+                    try:
+                        from db_ingestion import update_qa_transaction_results
+                        update_qa_transaction_results(transaction_id, qa_findings, exit_criteria_eval)
+                    except Exception as update_err:
+                        logger.error(f"Failed to update transaction results: {update_err}")
 
                 yield f"data: {json.dumps({'type': 'progress', 'pct': 100, 'message': 'ประมวลผลเสร็จสมบูรณ์ เตรียมแสดงรายงาน...' })}\n\n"
                 
@@ -2164,7 +2239,7 @@ def get_qa_transactions():
         limit = request.args.get('limit', 20, type=int)
         
         cursor.execute("""
-            SELECT t.transaction_id, t.project_id, t.group_name, t.group_type, t.filename, t.doc_type, t.qa_report, t.created_at, p.project_code, t.total_pages, t.email
+            SELECT t.transaction_id, t.project_id, t.group_name, t.group_type, t.filename, t.doc_type, t.qa_report, t.created_at, p.project_code, t.total_pages, t.email, t.qa_findings, t.exit_criteria_eval
             FROM qa_transactions t
             LEFT JOIN projects p ON t.project_id = p.project_id
             ORDER BY t.created_at DESC
@@ -2185,7 +2260,9 @@ def get_qa_transactions():
                 'date': r[7].isoformat() if r[7] else None,
                 'project_code': r[8] or 'Unknown',
                 'total_pages': r[9] if len(r) > 9 else None,
-                'email': r[10] if len(r) > 10 else None
+                'email': r[10] if len(r) > 10 else None,
+                'qa_findings': r[11] if len(r) > 11 else None,
+                'exit_criteria_eval': r[12] if len(r) > 12 else None
             })
             
         cursor.close()
@@ -2347,6 +2424,15 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
             conn.close()
             return None
 
+        # Fetch relevant AI skills for this doc_type
+        skill_context = ""
+        cur.execute("SELECT skill_name, markdown_instructions FROM agent_skills WHERE is_active = TRUE AND (target_doc_type = %s OR target_doc_type = 'ALL') AND skill_name NOT ILIKE %s;", (doc_type, '%Exit Criteria%'))
+        active_skills = cur.fetchall()
+        if active_skills:
+            skill_context = "\n=== แนวทางวิเคราะห์เฉพาะด้าน (AI Skills & Knowledge) ===\n"
+            for s_name, s_inst in active_skills:
+                skill_context += f"[{s_name}]:\n{s_inst}\n\n"
+
         # Format prompt for Gemini AI Evaluation
         checklist_formatted = ""
         items_dict = {}
@@ -2393,8 +2479,8 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
 """
 
         prompt = f"""คุณคือ System Auditor และ Quality Gate Evaluator
-กรุณาประเมินเนื้อหาเอกสารต่อไปนี้เทียบกับรายการ Exit Criteria Checklist แต่ละข้อ:
-
+กรุณาประเมินเนื้อหาเอกสารประเภท "{doc_type}" ต่อไปนี้เทียบกับรายการ Exit Criteria Checklist แต่ละข้อ:
+{skill_context}
 === รายการข้อตรวจ (Exit Criteria Checklist) ===
 {checklist_formatted}{findings_summary}
 
@@ -2413,8 +2499,8 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
 ]
 """
         client = _get_gemini_client()
-        gemini_model = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash')
-        fallback_models = [gemini_model, 'gemini-2.5-flash', 'gemini-2.5-flash-lite']
+        gemini_model = os.environ.get('GEMINI_MODEL', 'gemini-3.1-pro')
+        fallback_models = [gemini_model, 'gemini-3.1-flash', 'gemini-2.5-flash', 'gemini-2.5-flash-lite']
         
         eval_items_res = []
         for model_name in fallback_models:
@@ -2426,6 +2512,15 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
                         clean_text = re.sub(r'^```(?:json)?\s*', '', clean_text)
                         clean_text = re.sub(r'\s*```$', '', clean_text)
                     eval_items_res = json.loads(clean_text)
+                    
+                    if hasattr(res, 'usage_metadata'):
+                        try:
+                            from db_ingestion import log_api_usage
+                            used_model = getattr(res, 'model_version', None) or model_name
+                            log_api_usage("Exit_Criteria", used_model, res.usage_metadata)
+                        except Exception as usage_err:
+                            logger.error(f"Failed to log API usage: {usage_err}")
+                    
                     break
             except Exception as e:
                 logger.warning(f"Exit criteria AI eval attempt failed with {model_name}: {e}")
@@ -2754,6 +2849,34 @@ def reset_universal_exit_criteria():
     except Exception as e:
         logger.error(f"Error resetting universal exit criteria: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
+@app.route('/api/admin/usage', methods=['GET'])
+def admin_usage_stats():
+    try:
+        from db_ingestion import get_api_usage_stats
+        time_filter = request.args.get('time_filter', 'all')
+        stats = get_api_usage_stats(time_filter=time_filter)
+        return jsonify({'success': True, 'stats': stats})
+    except Exception as e:
+        logger.error(f"Error fetching usage stats: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/admin/credit', methods=['GET', 'POST'])
+def admin_billing_credit():
+    try:
+        from db_ingestion import get_billing_credit, update_billing_credit
+        if request.method == 'GET':
+            credit = get_billing_credit()
+            return jsonify({'success': True, 'credit_thb': credit})
+        elif request.method == 'POST':
+            data = request.json
+            new_amount = float(data.get('credit_thb', 0.0))
+            if update_billing_credit(new_amount):
+                return jsonify({'success': True, 'message': 'Credit updated successfully', 'credit_thb': new_amount})
+            else:
+                return jsonify({'success': False, 'error': 'Failed to update credit'}), 500
+    except Exception as e:
+        logger.error(f"Error handling billing credit: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 if __name__ == '__main__':
@@ -2769,8 +2892,10 @@ if __name__ == '__main__':
     # Initialize QA transactions table
     logger.info("กำลังเริ่มต้นตาราง DB ที่จำเป็น...")
     try:
-        from db_ingestion import init_qa_transactions
+        from db_ingestion import init_qa_transactions, init_api_usage_logs, init_billing_credit
         init_qa_transactions()
+        init_api_usage_logs()
+        init_billing_credit()
     except Exception as e:
         logger.error(f"Failed to initialize DB tables: {e}")
 

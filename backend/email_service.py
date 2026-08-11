@@ -9,24 +9,23 @@ from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
-# Load environment variables
-env_path = os.path.join(os.path.dirname(__file__), '.env')
-load_dotenv(env_path)
-
-# Fallback to root .env if not found
-if not os.environ.get('GMAIL_USER'):
-    root_env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')
-    load_dotenv(root_env_path)
-
-GMAIL_USER = os.environ.get('GMAIL_USER')
-GMAIL_APP_PASSWORD = os.environ.get('GMAIL_APP_PASSWORD')
-
 def send_qa_report(recipient_email: str, doc_type: str, filename: str, report_content: str, excel_download_url: str = '', exit_criteria_eval: dict = None) -> bool:
     """
     Sends a QA Consult report via Gmail SMTP.
     Optionally includes an Excel report download link and Exit Criteria Gate evaluation.
     """
-    if not GMAIL_USER or not GMAIL_APP_PASSWORD:
+    # Load environment variables dynamically
+    env_path = os.path.join(os.path.dirname(__file__), '.env')
+    load_dotenv(env_path, override=True)
+    
+    if not os.environ.get('GMAIL_USER'):
+        root_env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')
+        load_dotenv(root_env_path, override=True)
+
+    gmail_user = os.environ.get('GMAIL_USER')
+    gmail_app_password = os.environ.get('GMAIL_APP_PASSWORD')
+
+    if not gmail_user or not gmail_app_password:
         logger.error("GMAIL_USER or GMAIL_APP_PASSWORD not set in .env")
         return False
         
@@ -36,7 +35,7 @@ def send_qa_report(recipient_email: str, doc_type: str, filename: str, report_co
 
     try:
         msg = MIMEMultipart()
-        msg['From'] = GMAIL_USER
+        msg['From'] = gmail_user
         msg['To'] = recipient_email
         msg['Subject'] = f"Spectra QA: รายงานผลการตรวจสอบเอกสาร {filename} ({doc_type})"
 
@@ -166,9 +165,9 @@ def send_qa_report(recipient_email: str, doc_type: str, filename: str, report_co
         logger.info(f"Connecting to SMTP server to send email to {to_list}...")
         server = smtplib.SMTP('smtp.gmail.com', 587)
         server.starttls()
-        server.login(GMAIL_USER, GMAIL_APP_PASSWORD)
+        server.login(gmail_user, gmail_app_password)
         text = msg.as_string()
-        server.sendmail(GMAIL_USER, to_list, text)
+        server.sendmail(gmail_user, to_list, text)
         server.quit()
         
         logger.info(f"Successfully sent QA report to {to_list}")

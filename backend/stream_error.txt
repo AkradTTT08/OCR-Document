@@ -1,0 +1,25 @@
+Error: ไม่สามารถแปลง PDF ได้: object of type 'NoneType' has no len()
+Traceback:
+Traceback (most recent call last):
+  File "D:\OCR-Github\OCR-Document\backend\ocr_engine.py", line 416, in ocr_pdf_bytes_generator
+    images = convert_from_bytes(
+             ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ASUS\AppData\Local\Programs\Python\Python312\Lib\site-packages\pdf2image\pdf2image.py", line 359, in convert_from_bytes
+    return convert_from_path(
+           ^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ASUS\AppData\Local\Programs\Python\Python312\Lib\site-packages\pdf2image\pdf2image.py", line 269, in convert_from_path
+    images += parse_buffer_func(data)
+              ^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ASUS\AppData\Local\Programs\Python\Python312\Lib\site-packages\pdf2image\parsers.py", line 24, in parse_buffer_to_ppm
+    while index < len(data):
+                  ^^^^^^^^^
+TypeError: object of type 'NoneType' has no len()
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "D:\OCR-Github\OCR-Document\backend\app.py", line 840, in generate
+    })
+  File "D:\OCR-Github\OCR-Document\backend\ocr_engine.py", line 422, in ocr_pdf_bytes_generator
+    raise RuntimeError(f"ไม่สามารถแปลง PDF ได้: {str(e)}")
+RuntimeError: ไม่สามารถแปลง PDF ได้: object of type 'NoneType' has no len()
