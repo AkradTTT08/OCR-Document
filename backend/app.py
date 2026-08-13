@@ -616,7 +616,7 @@ def ocr():
 
     try:
         pdf_bytes = file.read()
-        pages = ocr_pdf_bytes(pdf_bytes, dpi=dpi, lang=lang)
+        pages = ocr_pdf_bytes(pdf_bytes, dpi=dpi, lang=lang, filename=secure_filename(file.filename))
         
         return jsonify({
             'success': True,
@@ -710,10 +710,7 @@ def process():
     include_suggestions = request.args.get('include_suggestions', 'true').lower() == 'true'
     project_id = request.form.get('project_id')
     if project_id:
-        try:
-            project_id = int(project_id)
-        except ValueError:
-            project_id = None
+        project_id = str(project_id)
 
 
     try:
@@ -866,7 +863,7 @@ def process_stream():
             pages = []
             page_count = 0
             # OCR และ Spell Check ทีละหน้า (Streaming)
-            for page, img in ocr_pdf_bytes_generator(pdf_bytes, dpi=dpi, lang=lang):
+            for page, img in ocr_pdf_bytes_generator(pdf_bytes, dpi=dpi, lang=lang, filename=filename):
                 page_num = page['page_number']
                 total_pages = page.get('total_pages', total_pages)
                 page_count += 1
@@ -1064,7 +1061,7 @@ def kb_documents():
     ดูเอกสารทั้งหมดใน DB (optionally filtered by project_id)
     Query: ?project_id=<id>&limit=50&offset=0
     """
-    project_id = request.args.get('project_id', type=int)
+    project_id = request.args.get('project_id', type=str)
     limit = request.args.get('limit', 50, type=int)
     offset = request.args.get('offset', 0, type=int)
 
@@ -1076,7 +1073,7 @@ def kb_documents():
         if project_id:
             cursor.execute(
                 "SELECT doc_id, original_filename, project_id, doc_category, doc_type, status, created_at, is_golden_data "
-                "FROM documents WHERE project_id = %s ORDER BY doc_id DESC LIMIT %s OFFSET %s;",
+                "FROM documents WHERE project_id = %s::uuid ORDER BY doc_id DESC LIMIT %s OFFSET %s;",
                 (project_id, limit, offset)
             )
         else:
@@ -1106,7 +1103,7 @@ def kb_documents():
             })
 
         if project_id:
-            cursor.execute("SELECT COUNT(*) FROM documents WHERE project_id = %s;", (project_id,))
+            cursor.execute("SELECT COUNT(*) FROM documents WHERE project_id = %s::uuid;", (project_id,))
         else:
             cursor.execute("SELECT COUNT(*) FROM documents;")
         total = cursor.fetchone()[0]
@@ -1170,7 +1167,7 @@ def kb_document_detail(doc_id):
 
         # Fetch chunks
         cursor.execute(
-            "SELECT chunk_id, chunk_text FROM document_chunks WHERE doc_id = %s ORDER BY chunk_id ASC;",
+            "SELECT chunk_id, chunk_text FROM document_chunks WHERE doc_id = %s ORDER BY ctid ASC;",
             (doc_id,)
         )
         chunks = [{'id': r[0], 'text': r[1]} for r in cursor.fetchall()]
@@ -1191,7 +1188,7 @@ def kb_search():
     Query: ?q=<text>&project_id=<id>&top_k=5
     """
     query_text = request.args.get('q', '').strip()
-    project_id = request.args.get('project_id', type=int)
+    project_id = request.args.get('project_id', type=str)
     top_k = request.args.get('top_k', 5, type=int)
 
     if not query_text:
@@ -1212,7 +1209,7 @@ def kb_search():
                        d.original_filename AS doc_name
                 FROM document_chunks dc
                 JOIN documents d ON d.doc_id = dc.doc_id
-                WHERE d.project_id = %s
+                WHERE d.project_id = %s::uuid
                 ORDER BY distance ASC
                 LIMIT %s;
             """, (query_vec, project_id, top_k))
@@ -2879,6 +2876,30 @@ def admin_billing_credit():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/api/ocr_history', methods=['GET', 'POST'])
+def handle_ocr_history():
+    from db_ingestion import get_ocr_history, save_ocr_history
+    if request.method == 'GET':
+        rows = get_ocr_history()
+        return jsonify(rows)
+    elif request.method == 'POST':
+        data = request.json
+        filename = data.get('filename', 'Unknown Document')
+        result_json = data.get('result_json', {})
+        result = save_ocr_history(filename, result_json)
+        if result:
+            return jsonify(result)
+        return jsonify({'error': 'Failed to save'}), 500
+
+@app.route('/api/ocr_history/<history_id>', methods=['DELETE'])
+def handle_ocr_history_delete(history_id):
+    from db_ingestion import delete_ocr_history
+    success = delete_ocr_history(history_id)
+    if success:
+        return jsonify({'success': True})
+    return jsonify({'error': 'Failed to delete'}), 500
+
+
 if __name__ == '__main__':
     logger.info("=" * 50)
     logger.info(f"Thai OCR Spell Check System (v{VERSION})")
@@ -2892,10 +2913,11 @@ if __name__ == '__main__':
     # Initialize QA transactions table
     logger.info("กำลังเริ่มต้นตาราง DB ที่จำเป็น...")
     try:
-        from db_ingestion import init_qa_transactions, init_api_usage_logs, init_billing_credit
+        from db_ingestion import init_qa_transactions, init_api_usage_logs, init_billing_credit, init_ocr_history
         init_qa_transactions()
         init_api_usage_logs()
         init_billing_credit()
+        init_ocr_history()
     except Exception as e:
         logger.error(f"Failed to initialize DB tables: {e}")
 

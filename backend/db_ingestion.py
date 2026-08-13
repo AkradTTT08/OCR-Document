@@ -82,8 +82,8 @@ def get_projects():
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT p.project_id, p.project_name, p.project_code, p.description, p.status, p.created_at, COUNT(d.id) as doc_count "
-            "FROM projects p LEFT JOIN kb_documents d ON p.project_id = d.project_id GROUP BY p.project_id ORDER BY p.project_id DESC;"
+            "SELECT p.project_id, p.project_name, p.project_code, p.description, p.status, p.created_at, COUNT(d.doc_id) as doc_count "
+            "FROM projects p LEFT JOIN documents d ON p.project_id = d.project_id GROUP BY p.project_id ORDER BY p.project_id DESC;"
         )
         projects = [
             {
@@ -997,9 +997,13 @@ def log_api_usage(endpoint_name, model_name, usage_metadata, filename=None):
     
     # Simple cost estimation (approximate Gemini 3.1 Pro/Flash pricing in USD)
     cost_usd = 0.0
-    if 'pro' in model_name.lower():
+    model_lower = model_name.lower()
+    
+    # 2.5-flash is currently billed at the Pro tier in Google Cloud
+    if 'pro' in model_lower or ('2.5-flash' in model_lower and 'lite' not in model_lower):
         cost_usd = (prompt_tokens / 1_000_000 * 1.25) + (completion_tokens / 1_000_000 * 3.75)
-    elif 'flash' in model_name.lower():
+    # Flash Lite or 1.5 Flash
+    elif 'flash' in model_lower:
         cost_usd = (prompt_tokens / 1_000_000 * 0.075) + (completion_tokens / 1_000_000 * 0.30)
 
     conn = None
@@ -1058,22 +1062,30 @@ def get_api_usage_stats(time_filter='all'):
             for r in cursor.fetchall()
         ]
         
-        # Document History (recent scans)
+        # Document History (Grouped by Document and Day)
         cursor.execute(f"""
-            SELECT filename, endpoint_name, model_name, total_tokens, estimated_cost_usd, created_at 
+            SELECT 
+                filename, 
+                MAX(created_at) as latest_date,
+                STRING_AGG(DISTINCT endpoint_name, ', ') as endpoints,
+                STRING_AGG(DISTINCT model_name, ', ') as models,
+                SUM(total_tokens) as total_tokens,
+                SUM(estimated_cost_usd) as total_cost,
+                date_trunc('day', created_at) as scan_day
             FROM api_usage_logs 
             {where_clause} 
-            ORDER BY created_at DESC 
+            GROUP BY filename, scan_day
+            ORDER BY latest_date DESC 
             LIMIT 100
         """)
         stats['document_history'] = [
             {
                 'filename': r[0] or 'Unknown Document',
-                'endpoint': r[1],
-                'model': r[2],
-                'tokens': r[3],
-                'cost_usd': float(r[4] or 0),
-                'date': r[5].isoformat() if r[5] else None
+                'date': r[1].isoformat() if r[1] else None,
+                'endpoint': r[2],
+                'model': r[3],
+                'tokens': r[4],
+                'cost_usd': float(r[5] or 0)
             }
             for r in cursor.fetchall()
         ]
@@ -1188,6 +1200,103 @@ def update_billing_credit(new_amount):
         return True
     except Exception as e:
         logger.error(f"Error updating billing credit: {e}", exc_info=True)
+        return False
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+
+def init_ocr_history():
+    """Initializes the ocr_history table for tracking simple OCR scans."""
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        conn.autocommit = True
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS ocr_history (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                filename VARCHAR(255),
+                result_json JSONB,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        logger.info("Checked/Created ocr_history table.")
+    except Exception as e:
+        logger.error(f"Error initializing ocr_history table: {e}", exc_info=True)
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+
+def save_ocr_history(filename, result_json):
+    """Saves a simple OCR scan history."""
+    import json
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        rj = json.dumps(result_json) if result_json is not None else None
+        
+        cursor.execute("""
+            INSERT INTO ocr_history (filename, result_json)
+            VALUES (%s, %s::jsonb)
+            RETURNING id, created_at
+        """, (filename, rj))
+        
+        row = cursor.fetchone()
+        conn.commit()
+        return {'id': str(row[0]), 'created_at': row[1].isoformat()} if row else None
+    except Exception as e:
+        if conn: conn.rollback()
+        logger.error(f"Error saving ocr history: {e}", exc_info=True)
+        return None
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+
+def get_ocr_history():
+    """Retrieves top 50 recent OCR scans."""
+    conn = None
+    cursor = None
+    try:
+        from psycopg2.extras import RealDictCursor
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("""
+            SELECT id, filename, result_json, created_at
+            FROM ocr_history
+            ORDER BY created_at DESC
+            LIMIT 50
+        """)
+        rows = cursor.fetchall()
+        for row in rows:
+            if 'id' in row: row['id'] = str(row['id'])
+            if 'created_at' in row and row['created_at']:
+                row['created_at'] = row['created_at'].isoformat()
+        return rows
+    except Exception as e:
+        logger.error(f"Error fetching ocr history: {e}", exc_info=True)
+        return []
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+
+def delete_ocr_history(history_id):
+    """Deletes an OCR scan history."""
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM ocr_history WHERE id = %s::uuid", (history_id,))
+        conn.commit()
+        return True
+    except Exception as e:
+        if conn: conn.rollback()
+        logger.error(f"Error deleting ocr history: {e}", exc_info=True)
         return False
     finally:
         if cursor: cursor.close()

@@ -6,6 +6,7 @@
   import SkillManager from "./lib/SkillManager.svelte";
   import { qaHistory, selectedHistory, loadQAHistoryFromDB, selectedProjectStore, qaSessionGroups, activeQAContext, allGroups, loadQAGroupsFromDB, activeSidebarGroup } from "./lib/qaHistoryStore.js";
   import { perfHistory, selectedPerfHistory, loadPerfHistory } from "./lib/perfHistoryStore.js";
+  import { ocrHistory, loadOCRHistory, saveOCRResult, deleteOCRHistory } from "./lib/ocrHistoryStore.js";
   import ProjectManagement from './lib/ProjectManagement.svelte';
   import Toast from "./lib/Toast.svelte";
   import Login from "./lib/Login.svelte";
@@ -29,6 +30,7 @@
     loadQAHistoryFromDB();
     loadQAGroupsFromDB();
     loadPerfHistory();
+    loadOCRHistory();
     // Load projects for sidebar group mapping
     try {
       const res = await fetch('http://127.0.0.1:5000/api/projects');
@@ -85,8 +87,11 @@
     activeView = 'ocr';
   }
 
-  function handleResult(event) {
+  async function handleResult(event) {
     scanResult = event.detail;
+    if (scanResult && !scanResult.id) {
+        await saveOCRResult(scanResult);
+    }
   }
   function handleProcessing(event) {
     isProcessing = event.detail.active;
@@ -269,10 +274,37 @@
 
       <nav class="sidebar-nav">
         {#if $authRole === 'admin'}
-          <button class="nav-item" class:active={activeView === "ocr"} on:click={() => (activeView = "ocr")}>
+          <button class="nav-item" class:active={activeView === "ocr" && !scanResult} on:click={() => { activeView = "ocr"; scanResult = null; }}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z"/></svg>
             Scan OCR
           </button>
+          
+          {#if activeView === 'ocr'}
+            <div class="history-section" style="margin-top: 4px; padding-top: 8px;">
+              <div class="history-title">ประวัติการสแกนล่าสุด</div>
+              {#if $ocrHistory.length > 0}
+                <div class="history-list">
+                  {#each $ocrHistory.slice(0, 15) as item}
+                    <button class="history-item" class:active={scanResult && scanResult.id === item.id} on:click={() => { scanResult = item; }}>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="flex-shrink: 0;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path></svg>
+                      <div class="history-details" style="flex: 1;">
+                        <span class="h-filename" style="color: #60a5fa;">{item.filename || 'Unknown Document'}</span>
+                        <span class="h-project">{formatHistoryDate(item.date)}</span>
+                      </div>
+                      <div style="padding: 4px; border-radius: 4px; color: #ef4444; background: rgba(239, 68, 68, 0.1); cursor: pointer;" on:click|stopPropagation={() => deleteOCRHistory(item.id)} title="ลบประวัติ">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M18 6L6 18M6 6l12 12"></path></svg>
+                      </div>
+                    </button>
+                  {/each}
+                </div>
+              {:else}
+                <div style="padding: 15px; text-align: center; color: #9ca3af; font-size: 13px; background: rgba(0,0,0,0.2); border-radius: 8px;">
+                    ยังไม่มีประวัติการสแกน
+                </div>
+              {/if}
+            </div>
+          {/if}
+          
           <button class="nav-item" class:active={activeView === "project_management"} on:click={() => (activeView = "project_management")}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
             Project Management

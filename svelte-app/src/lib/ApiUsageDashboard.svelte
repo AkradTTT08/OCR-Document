@@ -219,6 +219,7 @@
                                     <th>API Requests</th>
                                     <th>Tokens Used</th>
                                     <th>Est. Cost (USD)</th>
+                                    <th>Est. Cost (THB)</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -230,6 +231,7 @@
                                         <td>{formatNumber(item.requests)}</td>
                                         <td>{formatNumber(item.tokens)}</td>
                                         <td class="cost-cell">${formatCurrency(item.cost_usd)}</td>
+                                        <td class="cost-cell-thb">฿{formatCurrencyTHB(item.cost_usd)}</td>
                                     </tr>
                                 {/each}
                             </tbody>
@@ -251,6 +253,7 @@
                                     <th>API Requests</th>
                                     <th>Tokens Used</th>
                                     <th>Est. Cost (USD)</th>
+                                    <th>Est. Cost (THB)</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -262,6 +265,7 @@
                                         <td>{formatNumber(item.requests)}</td>
                                         <td>{formatNumber(item.tokens)}</td>
                                         <td class="cost-cell">${formatCurrency(item.cost_usd)}</td>
+                                        <td class="cost-cell-thb">฿{formatCurrencyTHB(item.cost_usd)}</td>
                                     </tr>
                                 {/each}
                             </tbody>
@@ -290,6 +294,7 @@
                                     <th>โมเดล (Model)</th>
                                     <th>Tokens Used</th>
                                     <th>Est. Cost (USD)</th>
+                                    <th>Est. Cost (THB)</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -301,6 +306,7 @@
                                         <td><span class="badge model-badge">{doc.model}</span></td>
                                         <td>{formatNumber(doc.tokens)}</td>
                                         <td class="cost-cell">${formatCurrency(doc.cost_usd)}</td>
+                                        <td class="cost-cell-thb">฿{formatCurrencyTHB(doc.cost_usd)}</td>
                                     </tr>
                                 {/each}
                             </tbody>
@@ -577,6 +583,12 @@
         font-family: var(--font-en);
         font-weight: 600;
         color: #34d399;
+    }
+    
+    .cost-cell-thb {
+        font-family: var(--font-en);
+        font-weight: 600;
+        color: #fbbf24;
     }
     
     .badge {

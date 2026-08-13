@@ -384,8 +384,10 @@
                     <span class="status-badge" class:active={p.status === 'Active'}>{p.status || 'Active'}</span>
                   </td>
                   <td class="actions-cell" on:click|stopPropagation>
-                    <button class="btn-icon edit" on:click={() => openEditProject(p)} title="แก้ไข">✏️</button>
-                    <button class="btn-icon delete" on:click={() => confirmDeleteProject(p)} title="ลบ">🗑️</button>
+                    <div class="actions-wrapper">
+                      <button class="btn-icon edit" on:click={() => openEditProject(p)} title="แก้ไข">✏️</button>
+                      <button class="btn-icon delete" on:click={() => confirmDeleteProject(p)} title="ลบ">🗑️</button>
+                    </div>
                   </td>
                 </tr>
                 {#if expandedProjectId === p.id}
@@ -718,7 +720,7 @@
     color: #4ade80;
   }
 
-  .actions-cell {
+  .actions-wrapper {
     display: flex;
     gap: 8px;
   }
@@ -767,7 +769,6 @@
 
   .expanded-content {
     padding: 12px 20px 12px 70px;
-    border-bottom: 1px solid var(--pm-border);
   }
 
   .sub-doc-list {
