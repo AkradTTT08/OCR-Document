@@ -120,17 +120,25 @@ def get_all_api_keys() -> list[str]:
     return keys if keys else []
 
 
+_gemini_clients_cache = {}
+
 def _get_gemini_client(key_index: int = 0):
     """
     สร้าง Gemini client จาก google-genai SDK (ตัวใหม่) รองรับการเลือก Key Index
+    และถูกแคชไว้เพื่อป้องกันปัญหา Client ถูกปิด (Closed) ระหว่างทำ Streaming
     """
+    global _gemini_clients_cache
     try:
         from google import genai
         keys = get_all_api_keys()
         if not keys:
             raise ValueError("ไม่พบ GOOGLE_API_KEY ใน environment variables กรุณาตั้งค่าใน .env")
         idx = key_index % len(keys)
-        return genai.Client(api_key=keys[idx])
+        
+        if idx not in _gemini_clients_cache:
+            _gemini_clients_cache[idx] = genai.Client(api_key=keys[idx])
+            
+        return _gemini_clients_cache[idx]
     except ImportError:
         raise ImportError(
             "ไม่พบ library 'google-genai' กรุณารัน: pip install google-genai"

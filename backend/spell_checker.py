@@ -55,23 +55,29 @@ def spellcheck_text(text: str, include_suggestions: bool = True) -> Dict[str, An
     custom_instruction = f"Special vocabulary to treat as CORRECT: {custom_words}." if custom_words else ""
 
     # System prompt สำหรับ AI Proofreader
-    system_prompt = f"""You are a professional Thai and English proofreader. 
-Your task is to detect spelling errors, grammatical mistakes, and context errors (e.g., ตากลม, สำรับ vs สำหรับ, their vs there).
-Ignore markdown symbols, code, formulas, or standalone numbers.
-{custom_instruction}
+    system_prompt = f"""You are an expert Thai and English linguist and proofreader.
+Your task is to detect spelling errors, typographical errors, grammatical mistakes, and context-based semantic errors in the provided text.
+Pay special attention to common Thai context errors (e.g., สำรับ vs สำหรับ, คะ vs ค่ะ, อนุญาติ vs อนุญาต, สังเกตุ vs สังเกต, กฏหมาย vs กฎหมาย) and English homophones (e.g., their/there).
 
-Return your result STRICTLY in JSON format as a list of errors:
+CRITICAL RULES:
+1. ONLY report actual errors. Do not report valid names, technical terms, or stylistic choices as errors.
+2. Ignore markdown symbols, code blocks, URLs, mathematical formulas, and standalone numbers.
+3. {custom_instruction}
+4. When suggesting corrections, ensure they fit perfectly into the surrounding context.
+5. The "token" MUST be the EXACT misspelled substring as it appears in the text.
+
+Return your result STRICTLY in JSON format matching this schema:
 {{
   "errors": [
     {{
-      "token": "The exactly misspelled word as it appears in text",
-      "suggestions": ["correct_word_1", "correct_word_2"],
-      "error_type": "misspelled" // or "semantic"
+      "token": "The exact misspelled word exactly as it appears in the text",
+      "suggestions": ["most_likely_correction", "alternative_correction"],
+      "error_type": "misspelled" // use "misspelled" for typos, "semantic" for context/grammar errors
     }}
   ]
 }}
 If there are no errors, return {{"errors": []}}.
-Do not include any <think> reasoning blocks in your final output, just output the raw JSON."""
+Do not include any <think> reasoning blocks, markdown formatting, or any extra text outside the JSON block. Return ONLY raw JSON."""
 
     model_name = os.environ.get('GEMINI_MODEL', 'gemini-3.1-flash')
     
@@ -140,92 +146,130 @@ Do not include any <think> reasoning blocks in your final output, just output th
         return _empty_spell_check(text)
 
     # Reconstruct tokens array & errors array for frontend compatibility
-    # Since we dropped PyThaiNLP, we approximate tokenization to build the full array
     newline_positions = _build_line_map(text)
     
-    # Split text into tokens (keeping whitespace separated)
-    tokens_raw = re.split(r'(\s+)', text)
-    
+    # 1. Filter valid errors that actually exist in the text
+    valid_errors = []
+    for err in ai_errors:
+        token = err.get("token", "")
+        if token and token in text:
+            valid_errors.append(err)
+
+    # 2. Find all occurrences of these valid error tokens in the text
+    intervals = []
+    for err in valid_errors:
+        token = err["token"]
+        start = 0
+        while True:
+            idx = text.find(token, start)
+            if idx == -1:
+                break
+            intervals.append((idx, idx + len(token), err))
+            start = idx + len(token)
+
+    # 3. Sort intervals by start index and resolve overlaps (keep longest)
+    intervals.sort(key=lambda x: (x[0], -x[1]))
+    non_overlapping = []
+    last_end = 0
+    for itv in intervals:
+        start, end, err = itv
+        if start >= last_end:
+            non_overlapping.append(itv)
+            last_end = end
+
+    # 4. Build the final tokens array
     result_tokens = []
     final_error_list = []
-    position = 0
+    
     thai_count = 0
     eng_count = 0
     thai_errors = 0
     eng_errors = 0
     semantic_errors = 0
+    current_idx = 0
 
-    # Create a quick lookup for AI errors
-    ai_error_map = {err.get("token"): err for err in ai_errors if "token" in err}
+    def _count_lang(chunk: str):
+        nonlocal thai_count, eng_count
+        for w in re.split(r'(\s+)', chunk):
+            if not w.strip(): continue
+            if THAI_CHAR_RE.search(w): thai_count += 1
+            elif ENG_WORD_RE.search(w): eng_count += 1
 
-    for token in tokens_raw:
-        if not token:
-            position += len(token)
-            continue
-
-        line_number = _get_line(position, newline_positions)
-
-        if not token.strip() or SKIP_RE.match(token):
-            result_tokens.append({
-                'token': token, 'lang': 'other',
-                'is_correct': True, 'suggestions': [],
-                'position': position, 'line_number': line_number,
-                'error_type': None
-            })
-            position += len(token)
-            continue
-
-        # Language Detection
-        if THAI_CHAR_RE.search(token):
+    for itv in non_overlapping:
+        start, end, err = itv
+        
+        # Add the text before the error as correct tokens (split by spaces)
+        if start > current_idx:
+            prefix = text[current_idx:start]
+            _count_lang(prefix)
+            prefix_tokens = re.split(r'(\s+)', prefix)
+            for pt in prefix_tokens:
+                if not pt: continue
+                lang = 'other'
+                if THAI_CHAR_RE.search(pt): lang = 'thai'
+                elif ENG_WORD_RE.search(pt): lang = 'english'
+                
+                result_tokens.append({
+                    'token': pt, 'lang': lang, 'is_correct': True,
+                    'suggestions': [], 'position': current_idx,
+                    'line_number': _get_line(current_idx, newline_positions),
+                    'error_type': None
+                })
+                current_idx += len(pt)
+                
+        # Add the error token
+        token_str = text[start:end]
+        error_type = err.get("error_type", "misspelled")
+        lang = 'other'
+        if THAI_CHAR_RE.search(token_str):
             lang = 'thai'
             thai_count += 1
-        elif ENG_WORD_RE.search(token):
+        elif ENG_WORD_RE.search(token_str):
             lang = 'english'
             eng_count += 1
-        else:
-            lang = 'other'
-
-        # Check if AI marked this token as an error
-        # Match exact token, or clean token
-        clean_token = token.strip('.,!?;:()[]{}""''')
-        matched_error = ai_error_map.get(token) or ai_error_map.get(clean_token)
-        
-        is_correct = True
-        error_type = None
-        suggestions = []
-
-        if matched_error:
-            is_correct = False
-            error_type = matched_error.get("error_type", "misspelled")
-            suggestions = matched_error.get("suggestions", [])
             
-            if error_type == "semantic":
-                semantic_errors += 1
-            else:
-                if lang == 'thai':
-                    thai_errors += 1
-                elif lang == 'english':
-                    eng_errors += 1
-
-            final_error_list.append({
-                'token': token,
-                'lang': lang,
-                'line_number': line_number,
-                'suggestions': suggestions if include_suggestions else [],
-                'position': position,
-                'error_type': error_type
-            })
-
+        if error_type == "semantic": semantic_errors += 1
+        else:
+            if lang == 'thai': thai_errors += 1
+            elif lang == 'english': eng_errors += 1
+            
+        suggestions = err.get("suggestions", [])
+        
         result_tokens.append({
-            'token': token,
-            'lang': lang,
-            'is_correct': is_correct,
+            'token': token_str, 'lang': lang, 'is_correct': False,
             'suggestions': suggestions if include_suggestions else [],
-            'position': position,
-            'line_number': line_number,
+            'position': start,
+            'line_number': _get_line(start, newline_positions),
             'error_type': error_type
         })
-        position += len(token)
+        
+        final_error_list.append({
+            'token': token_str, 'lang': lang,
+            'line_number': _get_line(start, newline_positions),
+            'suggestions': suggestions if include_suggestions else [],
+            'position': start,
+            'error_type': error_type
+        })
+        current_idx = end
+
+    # Add the remaining text after the last error
+    if current_idx < len(text):
+        suffix = text[current_idx:]
+        _count_lang(suffix)
+        suffix_tokens = re.split(r'(\s+)', suffix)
+        for pt in suffix_tokens:
+            if not pt: continue
+            lang = 'other'
+            if THAI_CHAR_RE.search(pt): lang = 'thai'
+            elif ENG_WORD_RE.search(pt): lang = 'english'
+            
+            result_tokens.append({
+                'token': pt, 'lang': lang, 'is_correct': True,
+                'suggestions': [], 'position': current_idx,
+                'line_number': _get_line(current_idx, newline_positions),
+                'error_type': None
+            })
+            current_idx += len(pt)
 
     total_checked = thai_count + eng_count
     total_errors = thai_errors + eng_errors + semantic_errors

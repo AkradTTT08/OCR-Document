@@ -2891,6 +2891,90 @@ def handle_ocr_history():
             return jsonify(result)
         return jsonify({'error': 'Failed to save'}), 500
 
+@app.route('/api/research/chat', methods=['POST'])
+def research_chat():
+    logger.info("Received request at /api/research/chat. Processing...")
+    data = request.get_json()
+    if not data or 'message' not in data:
+        return jsonify({'error': 'No message provided'}), 400
+        
+    project_id = data.get('project_id')
+    message = data.get('message')
+    history = data.get('history', [])
+    
+    try:
+        # 1. Retrieve context from DB
+        logger.info(f"Querying knowledge base for project {project_id}...")
+        from db_ingestion import search_knowledge_base
+        results = search_knowledge_base(message, top_k=30, project_id=project_id)
+        
+        logger.info(f"Found {len(results)} relevant chunks. Sending to Gemini...")
+        
+        # Group chunks by filename to avoid AI thinking they are separate documents
+        grouped_context = {}
+        for res in results:
+            fname = res.get('filename', 'Unknown')
+            if fname not in grouped_context:
+                grouped_context[fname] = []
+            grouped_context[fname].append(res.get('chunk_text', ''))
+            
+        context_str = ""
+        for fname, chunks in grouped_context.items():
+            context_str += f"--- Document Name: {fname} ---\n"
+            for idx, chunk in enumerate(chunks):
+                context_str += f"[Excerpt {idx+1}]: {chunk}\n\n"
+            
+        # 2. Build prompt for Gemini
+        system_prompt = (
+            "You are a QA Research AI Assistant for the 'Spectra QA' system. "
+            "Your job is to answer the user's questions based primarily on the provided document context below. "
+            "Note: The context may contain multiple excerpts from the SAME document. Do not state that there are multiple documents if they share the same filename. "
+            "If the context does not contain the answer, politely state that you cannot find the information in the uploaded project documents. "
+            "Reply in Thai language.\n\n"
+            f"=== DOCUMENT CONTEXT ===\n{context_str}\n========================\n"
+        )
+        
+        # 3. Call Gemini
+        from ocr_engine import _get_gemini_client, get_all_api_keys
+        from google.genai import types
+        keys = get_all_api_keys()
+        if not keys:
+             return jsonify({'error': 'API Key is missing'}), 500
+             
+        client = _get_gemini_client(0)
+        model_name = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash')
+        
+        # Construct chat contents
+        contents = []
+        for h in history:
+            role = "user" if h.get("role") == "user" else "model"
+            contents.append(types.Content(role=role, parts=[types.Part.from_text(text=h.get("content", ""))]))
+            
+        contents.append(types.Content(role="user", parts=[types.Part.from_text(text=message)]))
+        
+        response_stream = client.models.generate_content_stream(
+            model=model_name,
+            contents=contents,
+            config=types.GenerateContentConfig(
+                system_instruction=system_prompt,
+                temperature=0.3
+            )
+        )
+        
+        from flask import Response
+        def generate(active_client):
+            for chunk in response_stream:
+                if chunk.text:
+                    yield chunk.text
+            # explicitly keep active_client alive until the stream is done
+            _ = active_client
+                    
+        return Response(generate(client), mimetype='text/plain')
+            
+    except Exception as e:
+        logger.error(f"Research chat error: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 @app.route('/api/ocr_history/<history_id>', methods=['DELETE'])
 def handle_ocr_history_delete(history_id):
     from db_ingestion import delete_ocr_history
