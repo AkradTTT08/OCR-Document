@@ -234,6 +234,7 @@
   }
 </script>
 
+<div class="qa-automate-wrapper">
 <div class="qa-automate-container">
 {#if !$selectedProjectStore}
   <ProjectSelection 
@@ -561,10 +562,18 @@
   </div>
   {/if}
 </div>
+</div>
 
 <style>
+  .qa-automate-wrapper {
+    width: 100%;
+    height: 100%;
+    overflow-y: auto;
+  }
+
   .qa-automate-container {
     max-width: 1200px;
+    width: 100%;
     margin: 0 auto;
     padding: 30px;
     display: flex;
