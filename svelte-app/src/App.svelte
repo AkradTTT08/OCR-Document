@@ -18,6 +18,7 @@
   import ApiUsageDashboard from "./lib/ApiUsageDashboard.svelte";
   import QAPerformance from "./lib/QAPerformance.svelte";
   import QAResearch from "./lib/QAResearch.svelte";
+  import QATestAutomation from "./lib/QATestAutomation.svelte";
   import TutorialOverlay from "./lib/TutorialOverlay.svelte";
   import LegalModal from "./lib/LegalModal.svelte";
   import { showLogin, authRole, authUser, authDisplayName, authAvatar, logout } from "./lib/authStore.js";
@@ -82,7 +83,7 @@
   let activeView = "ocr"; // 'ocr' | 'kb' | 'skills' | 'qa_consult'
 
   // Reactive statement to enforce default view based on role
-  $: if ($authRole === 'user' && !['qa_consult', 'qa_performance', 'qa_research'].includes(activeView)) {
+  $: if ($authRole === 'user' && !['qa_consult', 'qa_performance', 'qa_research', 'qa_automate'].includes(activeView)) {
     activeView = 'qa_consult';
   } else if ($authRole === 'admin' && activeView === 'qa_consult') {
     activeView = 'ocr';
@@ -348,6 +349,10 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line><path d="M11 7v4l3 3"></path></svg>
             QA Research
           </button>
+          <button class="nav-item" class:active={activeView === "qa_automate"} on:click={() => (activeView = "qa_automate")}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M12 2v20m-7-7h14m-14-6h14"></path><path d="M2 12h20"></path></svg>
+            QA Test Automation
+          </button>
           {#if activeView === 'qa_performance'}
             <!-- Performance History -->
             {#if $selectedProjectStore && $perfHistory.filter(h => h.project_id === ($selectedProjectStore.id || $selectedProjectStore.project_id)).length > 0}
@@ -516,7 +521,7 @@
       </header>
 
       <!-- Content Area -->
-      <div class="content-scroll" id="main-content" class:no-padding={['kb', 'ocr', 'qa_consult', 'qa_member', 'qa_performance', 'qa_research'].includes(activeView)}>
+      <div class="content-scroll" id="main-content" class:no-padding={['kb', 'ocr', 'qa_consult', 'qa_member', 'qa_performance', 'qa_research', 'qa_automate'].includes(activeView)}>
         {#key activeView}
           <div class="view-wrapper" in:fade="{{ duration: 300, delay: 150 }}">
             {#if activeView === "ocr" && $authRole === "admin"}
@@ -548,6 +553,8 @@
               <QAPerformance />
             {:else if activeView === "qa_research"}
               <QAResearch />
+            {:else if activeView === "qa_automate"}
+              <QATestAutomation />
             {/if}
           </div>
         {/key}

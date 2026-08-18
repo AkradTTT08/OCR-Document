@@ -233,6 +233,122 @@ def send_email_report(to_email: str, subject: str, report_body: str) -> str:
     except Exception as e:
         return f"Failed to send email due to exception: {str(e)}"
 
+# ==========================================
+# QA Test Automation Agents (Phase 2 - 5)
+# ==========================================
+
+@mcp.tool()
+def qa_agent_explore_web(url: str) -> str:
+    """
+    Agent 2: Explores a web page to extract its DOM and interactive elements.
+    
+    Args:
+        url: The web URL to explore.
+        
+    Returns:
+        JSON string containing the exploration result and the saved web_state_file.
+    """
+    api_url = "http://127.0.0.1:5000/api/agent/explore"
+    try:
+        response = requests.post(api_url, json={"url": url})
+        response.raise_for_status()
+        return json.dumps(response.json(), indent=2, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+@mcp.tool()
+def qa_agent_gap_analysis(project_id: str, web_state_file: str) -> str:
+    """
+    Agent 3: Compares structured requirements with live web state to find gaps.
+    
+    Args:
+        project_id: Project UUID from DB.
+        web_state_file: The filename returned by qa_agent_explore_web.
+        
+    Returns:
+        JSON string with the Gap Analysis Report.
+    """
+    api_url = "http://127.0.0.1:5000/api/agent/align"
+    try:
+        response = requests.post(api_url, json={"project_id": project_id, "web_state_file": web_state_file})
+        response.raise_for_status()
+        return json.dumps(response.json(), indent=2, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+@mcp.tool()
+def qa_agent_generate_test(project_id: str, web_state_file: str, gap_analysis_json: str) -> str:
+    """
+    Agent 4: Generates a Playwright TS test script in POM pattern.
+    
+    Args:
+        project_id: Project UUID.
+        web_state_file: Web state file name.
+        gap_analysis_json: The alignment_report JSON string from Agent 3.
+        
+    Returns:
+        JSON string containing the generated code and saved test file name.
+    """
+    import json
+    api_url = "http://127.0.0.1:5000/api/agent/generate-test"
+    try:
+        gap_analysis = json.loads(gap_analysis_json) if gap_analysis_json else {}
+        payload = {
+            "project_id": project_id,
+            "web_state_file": web_state_file,
+            "gap_analysis": gap_analysis
+        }
+        response = requests.post(api_url, json=payload)
+        response.raise_for_status()
+        return json.dumps(response.json(), indent=2, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+@mcp.tool()
+def qa_agent_run_test(file_name: str) -> str:
+    """
+    Agent 5 (Runner): Executes a generated Playwright test script.
+    
+    Args:
+        file_name: The name of the test script (e.g. generated_test_123.spec.ts).
+        
+    Returns:
+        JSON string containing success status and console output.
+    """
+    api_url = "http://127.0.0.1:5000/api/agent/run-test"
+    try:
+        response = requests.post(api_url, json={"file_name": file_name})
+        response.raise_for_status()
+        return json.dumps(response.json(), indent=2, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+@mcp.tool()
+def qa_agent_heal_test(file_name: str, test_output: str, original_code: str) -> str:
+    """
+    Agent 5 (Healer): Analyzes test failure and auto-fixes the code.
+    
+    Args:
+        file_name: Test script file name.
+        test_output: The error log output from qa_agent_run_test.
+        original_code: The original source code of the test.
+        
+    Returns:
+        JSON string containing the healed code and fix explanation.
+    """
+    api_url = "http://127.0.0.1:5000/api/agent/heal-test"
+    try:
+        payload = {
+            "file_name": file_name,
+            "test_output": test_output,
+            "original_code": original_code
+        }
+        response = requests.post(api_url, json=payload)
+        response.raise_for_status()
+        return json.dumps(response.json(), indent=2, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
 if __name__ == "__main__":
     logger.info("Starting MCP Server on SSE transport...")
         

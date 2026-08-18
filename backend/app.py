@@ -2983,6 +2983,236 @@ def handle_ocr_history_delete(history_id):
         return jsonify({'success': True})
     return jsonify({'error': 'Failed to delete'}), 500
 
+@app.route('/api/requirements/extract', methods=['POST'])
+def extract_requirements():
+    try:
+        from agent_1_ingestion import extract_requirements_from_text
+        data = request.json
+        project_id = data.get('project_id')
+        doc_id = data.get('doc_id')
+        text = data.get('text')
+        
+        if not project_id or not doc_id or not text:
+            return jsonify({'error': 'Missing project_id, doc_id, or text'}), 400
+            
+        success, msg = extract_requirements_from_text(text, project_id, doc_id)
+        if success:
+            return jsonify({'success': True, 'message': msg})
+        return jsonify({'error': msg}), 500
+    except Exception as e:
+        logger.error(f"Error extracting requirements: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/requirements', methods=['GET'])
+def get_requirements():
+    project_id = request.args.get('project_id', type=str)
+    try:
+        from db_ingestion import get_db_connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        if project_id:
+            cursor.execute("""
+                SELECT req_id, req_code, title, description, actors, preconditions, steps, expected_results, ui_elements, api_endpoints, status, created_at, doc_id
+                FROM structured_requirements
+                WHERE project_id = %s::uuid
+                ORDER BY created_at DESC;
+            """, (project_id,))
+        else:
+            cursor.execute("""
+                SELECT req_id, req_code, title, description, actors, preconditions, steps, expected_results, ui_elements, api_endpoints, status, created_at, doc_id
+                FROM structured_requirements
+                ORDER BY created_at DESC;
+            """)
+            
+        rows = cursor.fetchall()
+        reqs = []
+        for row in rows:
+            reqs.append({
+                'req_id': str(row[0]),
+                'req_code': row[1],
+                'title': row[2],
+                'description': row[3],
+                'actors': row[4],
+                'preconditions': row[5],
+                'steps': row[6],
+                'expected_results': row[7],
+                'ui_elements': row[8],
+                'api_endpoints': row[9],
+                'status': row[10],
+                'created_at': row[11].isoformat() if row[11] else None,
+                'doc_id': row[12]
+            })
+            
+        cursor.close()
+        conn.close()
+        return jsonify({'success': True, 'requirements': reqs})
+    except Exception as e:
+        logger.error(f"Error fetching requirements: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+# ========================
+# Phase 2: Web Exploration API
+# ========================
+@app.route('/api/agent/explore', methods=['POST'])
+def explore_web():
+    data = request.json
+    url = data.get('url')
+    
+    if not url:
+        return jsonify({'error': 'Missing URL'}), 400
+        
+    try:
+        import asyncio
+        from agent_2_web_explorer import explore_and_capture
+        # Generate a unique file name
+        import uuid
+        output_file = f"web_state_{uuid.uuid4().hex[:8]}.json"
+        
+        # Run async playwright inside sync flask route
+        success, result = asyncio.run(explore_and_capture(url, output_file))
+        
+        if success:
+            return jsonify({'success': True, 'web_state': result, 'file_saved': output_file})
+        else:
+            return jsonify({'error': result}), 500
+            
+    except Exception as e:
+        logger.error(f"Error in web exploration: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+# ========================
+# Phase 3: Semantic Alignment & Gap Analysis API
+# ========================
+@app.route('/api/agent/align', methods=['POST'])
+def align_requirements_and_web():
+    data = request.json
+    project_id = data.get('project_id')
+    web_state_file = data.get('web_state_file')
+    
+    if not project_id or not web_state_file:
+        return jsonify({'error': 'Missing project_id or web_state_file'}), 400
+        
+    try:
+        from agent_3_alignment import run_alignment_analysis
+        success, result = run_alignment_analysis(project_id, web_state_file)
+        
+        if success:
+            return jsonify({'success': True, 'alignment_report': result})
+        else:
+            return jsonify({'error': result}), 500
+            
+    except Exception as e:
+        logger.error(f"Error in alignment analysis: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+# ========================
+# Phase 3.2: Agent 4 Test Generator API
+# ========================
+@app.route('/api/agent/generate-test', methods=['POST'])
+def generate_test_script():
+    data = request.json
+    project_id = data.get('project_id')
+    web_state_file = data.get('web_state_file')
+    gap_analysis_data = data.get('gap_analysis', {})
+    
+    if not project_id:
+        return jsonify({'error': 'Missing project_id'}), 400
+        
+    try:
+        from agent_4_test_generator import generate_playwright_script
+        success, result = generate_playwright_script(project_id, gap_analysis_data, web_state_file)
+        
+        if success:
+            return jsonify({'success': True, 'test_script': result})
+        else:
+            return jsonify({'error': result}), 500
+            
+    except Exception as e:
+        logger.error(f"Error in test generation: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+# ========================
+# Phase 4: Test Execution & Self-Healing (Agent 5)
+# ========================
+@app.route('/api/agent/run-test', methods=['POST'])
+def run_test():
+    data = request.json
+    filename = data.get('file_name')
+    
+    if not filename:
+        return jsonify({'error': 'Missing file_name'}), 400
+        
+    try:
+        from agent_5_test_runner import run_playwright_test
+        success, output = run_playwright_test(filename)
+        
+        return jsonify({
+            'success': success,
+            'output': output
+        })
+            
+    except Exception as e:
+        logger.error(f"Error executing test: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/agent/heal-test', methods=['POST'])
+def heal_test():
+    data = request.json
+    filename = data.get('file_name')
+    test_output = data.get('test_output')
+    original_code = data.get('original_code')
+    
+    if not filename or not test_output or not original_code:
+        return jsonify({'error': 'Missing required fields for self-healing'}), 400
+        
+    try:
+        from agent_5_test_runner import run_self_healing
+        success, result = run_self_healing(filename, test_output, original_code)
+        
+        if success:
+            return jsonify({'success': True, 'healing_result': result})
+        else:
+            return jsonify({'error': result}), 500
+            
+    except Exception as e:
+        logger.error(f"Error in self-healing: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/agent/download-tests/<project_id>', methods=['GET'])
+def download_test_scripts(project_id):
+    """
+    Downloads all generated test scripts for a project as a ZIP file.
+    """
+    import zipfile
+    import io
+    
+    try:
+        project_tests_dir = os.path.join(os.getcwd(), "tests", project_id)
+        if not os.path.exists(project_tests_dir):
+            return jsonify({'error': 'No test scripts found for this project.'}), 404
+            
+        memory_file = io.BytesIO()
+        with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for root, dirs, files in os.walk(project_tests_dir):
+                for file in files:
+                    if file.endswith('.ts'):
+                        file_path = os.path.join(root, file)
+                        # Archive path relative to project dir
+                        archive_path = os.path.relpath(file_path, project_tests_dir)
+                        zf.write(file_path, archive_path)
+        
+        memory_file.seek(0)
+        return send_file(
+            memory_file,
+            download_name=f"test_automation_{project_id}.zip",
+            as_attachment=True,
+            mimetype='application/zip'
+        )
+    except Exception as e:
+        logger.error(f"Error downloading tests: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
 
 if __name__ == '__main__':
     logger.info("=" * 50)
@@ -3002,6 +3232,12 @@ if __name__ == '__main__':
         init_api_usage_logs()
         init_billing_credit()
         init_ocr_history()
+        
+        try:
+            from agent_1_ingestion import init_requirements_table
+            init_requirements_table()
+        except Exception as err:
+            logger.error(f"Failed to initialize requirements table: {err}")
     except Exception as e:
         logger.error(f"Failed to initialize DB tables: {e}")
 

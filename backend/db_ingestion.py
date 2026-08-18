@@ -42,6 +42,16 @@ def get_auth_db_connection():
         password=os.environ.get("AUTH_DB_PASS", "postgres")
     )
 
+def get_ocr_db_connection():
+    """Establish a connection to the OCR PostgreSQL database."""
+    return psycopg2.connect(
+        host=os.environ.get("DB_HOST", "localhost"),
+        port=os.environ.get("DB_PORT", "5432"),
+        dbname=os.environ.get("OCR_DB_NAME", "qa_agent_db"),
+        user=os.environ.get("DB_USER", "qa_admin"),
+        password=os.environ.get("DB_PASS", "qa_password")
+    )
+
 def chunk_markdown(text: str, chunk_size: int = 1500, overlap: int = 200) -> list[str]:
     """
     Splits markdown text into smaller chunks based on paragraphs or line breaks.
@@ -305,6 +315,29 @@ def ingest_markdown_document(filename: str, markdown_text: str, project_id: int 
 
         conn.commit()
         logger.info(f"Successfully ingested '{filename}' (doc_id: {document_id}) with {len(chunks)} chunks.")
+        
+        # --- Trigger Agent 1 Requirement Extraction in background ---
+        try:
+            import threading
+            from agent_1_ingestion import extract_requirements_from_text
+            def background_extraction(text, pid, did):
+                try:
+                    success, msg = extract_requirements_from_text(text, pid, did)
+                    if not success:
+                        logger.error(f"Background extraction failed for doc {did}: {msg}")
+                    else:
+                        logger.info(f"Background extraction complete for doc {did}: {msg}")
+                except Exception as ex:
+                    logger.error(f"Background extraction exception for doc {did}: {ex}")
+
+            # Run in a background thread so it doesn't block the OCR/Upload response
+            t = threading.Thread(target=background_extraction, args=(markdown_text, str(effective_project_id), document_id))
+            t.daemon = True
+            t.start()
+        except Exception as e:
+            logger.error(f"Failed to start Agent 1 extraction thread: {e}")
+        # -----------------------------------------------------------
+
         return True, str(document_id)
 
     except Exception as e:
@@ -736,7 +769,7 @@ def init_api_usage_logs():
     conn = None
     cursor = None
     try:
-        conn = get_db_connection()
+        conn = get_ocr_db_connection()
         conn.autocommit = True
         cursor = conn.cursor()
         
@@ -956,7 +989,7 @@ def init_api_usage_logs():
     conn = None
     cursor = None
     try:
-        conn = get_db_connection()
+        conn = get_ocr_db_connection()
         conn.autocommit = True
         cursor = conn.cursor()
         
@@ -1009,7 +1042,7 @@ def log_api_usage(endpoint_name, model_name, usage_metadata, filename=None):
     conn = None
     cursor = None
     try:
-        conn = get_db_connection()
+        conn = get_ocr_db_connection()
         cursor = conn.cursor()
         cursor.execute("""
             INSERT INTO api_usage_logs (endpoint_name, model_name, filename, prompt_tokens, completion_tokens, total_tokens, estimated_cost_usd)
@@ -1028,7 +1061,7 @@ def get_api_usage_stats(time_filter='all'):
     conn = None
     cursor = None
     try:
-        conn = get_db_connection()
+        conn = get_ocr_db_connection()
         cursor = conn.cursor()
         
         # Build WHERE clause based on time filter
@@ -1147,7 +1180,7 @@ def init_billing_credit():
     conn = None
     cursor = None
     try:
-        conn = get_db_connection()
+        conn = get_ocr_db_connection()
         conn.autocommit = True
         cursor = conn.cursor()
         
@@ -1175,7 +1208,7 @@ def get_billing_credit():
     conn = None
     cursor = None
     try:
-        conn = get_db_connection()
+        conn = get_ocr_db_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT total_credit_thb FROM billing_credit ORDER BY id DESC LIMIT 1")
         row = cursor.fetchone()
@@ -1191,7 +1224,7 @@ def update_billing_credit(new_amount):
     conn = None
     cursor = None
     try:
-        conn = get_db_connection()
+        conn = get_ocr_db_connection()
         conn.autocommit = True
         cursor = conn.cursor()
         cursor.execute("UPDATE billing_credit SET total_credit_thb = %s, updated_at = CURRENT_TIMESTAMP WHERE id = (SELECT id FROM billing_credit ORDER BY id DESC LIMIT 1)", (new_amount,))
@@ -1210,7 +1243,7 @@ def init_ocr_history():
     conn = None
     cursor = None
     try:
-        conn = get_db_connection()
+        conn = get_ocr_db_connection()
         conn.autocommit = True
         cursor = conn.cursor()
         
@@ -1235,7 +1268,7 @@ def save_ocr_history(filename, result_json):
     conn = None
     cursor = None
     try:
-        conn = get_db_connection()
+        conn = get_ocr_db_connection()
         cursor = conn.cursor()
         
         rj = json.dumps(result_json) if result_json is not None else None
@@ -1263,7 +1296,7 @@ def get_ocr_history():
     cursor = None
     try:
         from psycopg2.extras import RealDictCursor
-        conn = get_db_connection()
+        conn = get_ocr_db_connection()
         cursor = conn.cursor(cursor_factory=RealDictCursor)
         cursor.execute("""
             SELECT id, filename, result_json, created_at
@@ -1289,7 +1322,7 @@ def delete_ocr_history(history_id):
     conn = None
     cursor = None
     try:
-        conn = get_db_connection()
+        conn = get_ocr_db_connection()
         cursor = conn.cursor()
         cursor.execute("DELETE FROM ocr_history WHERE id = %s::uuid", (history_id,))
         conn.commit()
