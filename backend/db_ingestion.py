@@ -791,8 +791,21 @@ def init_api_usage_logs():
             cursor.execute("ALTER TABLE api_usage_logs ADD COLUMN filename VARCHAR(255);")
         except Exception:
             pass
-            
-        logger.info("Checked/Created api_usage_logs table.")
+            # Create QA Generated Documents Table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS qa_generated_documents (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                project_id UUID REFERENCES projects(id) ON DELETE CASCADE,
+                doc_name VARCHAR(255),
+                doc_type VARCHAR(255),
+                skill_id INTEGER,
+                status VARCHAR(50) DEFAULT 'Generating',
+                file_url VARCHAR(255),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        
+        logger.info("Database schemas checked/created successfully.")
     except Exception as e:
         logger.error(f"Error initializing api_usage_logs table: {e}", exc_info=True)
     finally:

@@ -3058,6 +3058,9 @@ def get_requirements():
 def explore_web():
     data = request.json
     url = data.get('url')
+    project_id = data.get('project_id')
+    username = data.get('username')
+    password = data.get('password')
     
     if not url:
         return jsonify({'error': 'Missing URL'}), 400
@@ -3070,7 +3073,7 @@ def explore_web():
         output_file = f"web_state_{uuid.uuid4().hex[:8]}.json"
         
         # Run async playwright inside sync flask route
-        success, result = asyncio.run(explore_and_capture(url, output_file))
+        success, result = asyncio.run(explore_and_capture(url, project_id, username, password, output_file))
         
         if success:
             return jsonify({'success': True, 'web_state': result, 'file_saved': output_file})
@@ -3155,6 +3158,116 @@ def run_test():
     except Exception as e:
         logger.error(f"Error executing test: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
+
+# ========================
+# Agent 6: QA Document Creator API
+# ========================
+@app.route('/api/agent/create_document', methods=['POST'])
+def create_document():
+    data = request.json
+    project_id = data.get('project_id')
+    doc_type = data.get('doc_type')
+    doc_name = data.get('doc_name')
+    skill_id = data.get('skill_id')
+    reference_document_id = data.get('reference_document_id')
+    
+    if not all([project_id, doc_type, doc_name, skill_id]):
+        return jsonify({'error': 'Missing required fields (project_id, doc_type, doc_name, skill_id)'}), 400
+        
+    try:
+        from db_ingestion import get_db_connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Insert initial record
+        cursor.execute("""
+            INSERT INTO qa_generated_documents (project_id, doc_name, doc_type, skill_id, status)
+            VALUES (%s::uuid, %s, %s, %s, 'Generating')
+            RETURNING id
+        """, (project_id, doc_name, doc_type, skill_id))
+        gen_id = cursor.fetchone()[0]
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        # Run generation in background
+        from agent_6_doc_creator import create_qa_document_async
+        import threading
+        thread = threading.Thread(target=create_qa_document_async, args=(gen_id, project_id, doc_type, doc_name, skill_id, reference_document_id))
+        thread.daemon = True
+        thread.start()
+        
+        return jsonify({'success': True, 'id': str(gen_id), 'status': 'Generating'})
+            
+    except Exception as e:
+        logger.error(f"Error starting document creation: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/agent/generated_documents', methods=['GET'])
+def get_generated_documents():
+    project_id = request.args.get('project_id')
+    if not project_id:
+        return jsonify({'error': 'project_id is required'}), 400
+        
+    try:
+        from db_ingestion import get_db_connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT q.id, q.doc_name, q.doc_type, s.skill_name, q.status, q.file_url, q.created_at
+            FROM qa_generated_documents q
+            LEFT JOIN skills s ON q.skill_id = s.id
+            WHERE q.project_id = %s::uuid
+            ORDER BY q.created_at DESC
+        """, (project_id,))
+        
+        rows = cursor.fetchall()
+        docs = []
+        for row in rows:
+            docs.append({
+                'id': str(row[0]),
+                'doc_name': row[1],
+                'doc_type': row[2],
+                'skill_name': row[3] or 'Unknown Skill',
+                'status': row[4],
+                'file_url': row[5],
+                'created_at': row[6].isoformat() if row[6] else None
+            })
+            
+        cursor.close()
+        conn.close()
+        return jsonify({'success': True, 'documents': docs})
+        
+    except Exception as e:
+        logger.error(f"Error fetching generated documents: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/agent/download_generated_document/<string:doc_id>', methods=['GET'])
+def download_generated_document(doc_id):
+    try:
+        from db_ingestion import get_db_connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT file_url FROM qa_generated_documents WHERE id = %s::uuid", (doc_id,))
+        row = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        
+        if not row or not row[0]:
+            return jsonify({'error': 'File not found'}), 404
+            
+        file_path = row[0]
+        if not os.path.exists(file_path):
+            return jsonify({'error': 'File does not exist on disk'}), 404
+            
+        return send_file(file_path, as_attachment=True)
+        
+    except Exception as e:
+        logger.error(f"Error downloading generated document: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
 
 @app.route('/api/agent/heal-test', methods=['POST'])
 def heal_test():

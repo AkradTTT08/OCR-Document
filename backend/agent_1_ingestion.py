@@ -19,7 +19,7 @@ def init_requirements_table():
             CREATE TABLE IF NOT EXISTS structured_requirements (
                 req_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 project_id UUID REFERENCES projects(project_id) ON DELETE CASCADE,
-                doc_id INTEGER REFERENCES documents(doc_id) ON DELETE CASCADE,
+                doc_id UUID REFERENCES documents(doc_id) ON DELETE CASCADE,
                 req_code VARCHAR(100),
                 title VARCHAR(255),
                 description TEXT,

@@ -50,9 +50,18 @@
   
   // Phase 2: Web Exploration state
   let exploreUrl = "";
+  let exploreUsername = "";
+  let explorePassword = "";
   let isExploring = false;
   let exploreResult = null;
   let exploreError = null;
+
+  $: elementCounts = exploreResult?.interactive_elements ? {
+    buttons: exploreResult.interactive_elements.filter(e => e.tag === 'button' || e.type === 'submit' || e.type === 'button').length,
+    inputs: exploreResult.interactive_elements.filter(e => e.tag === 'input' || e.tag === 'textarea' || e.tag === 'select').length,
+    links: exploreResult.interactive_elements.filter(e => e.tag === 'a').length,
+    others: exploreResult.interactive_elements.filter(e => !['button', 'input', 'textarea', 'select', 'a'].includes(e.tag) && e.type !== 'submit' && e.type !== 'button').length
+  } : null;
   
   async function startExploration() {
     isExploring = true;
@@ -60,17 +69,26 @@
     exploreError = null;
     
     try {
+      const pid = $selectedProjectStore?.id || $selectedProjectStore?.project_id;
       const res = await fetch('http://127.0.0.1:5000/api/agent/explore', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: exploreUrl })
+        body: JSON.stringify({ 
+          url: exploreUrl,
+          project_id: pid,
+          username: exploreUsername,
+          password: explorePassword
+        })
       });
       const data = await res.json();
       if (res.ok && data.success) {
         exploreResult = {
           title: data.web_state?.title || 'Unknown Title',
           interactive_elements: data.web_state?.interactive_elements || [],
-          file_saved: data.file_saved
+          file_saved: data.file_saved,
+          total_crawled_pages: data.web_state?.total_crawled_pages || 1,
+          total_elements_all: data.web_state?.total_interactive_elements_across_pages || 0,
+          ai_analysis: data.web_state?.ai_analysis
         };
       } else {
         exploreError = data.error || 'Failed to explore URL';
@@ -353,23 +371,99 @@
     </div>
     <p class="desc-text">ให้ AI Agent ทดลองเข้าถึงหน้าเว็บจริง (URL) เพื่อจำลองการใช้งานและดึงโครงสร้าง (DOM/Accessibility) มาเปรียบเทียบกับ Requirement ด้านบน</p>
     
-    <div class="explore-form">
-      <input type="text" bind:value={exploreUrl} placeholder="https://example.com/login" class="url-input" />
-      <button class="btn-primary" on:click={startExploration} disabled={isExploring || !exploreUrl}>
+    <div class="explore-form" style="flex-direction: column;">
+      <div style="display: flex; gap: 10px; width: 100%;">
+        <input type="text" bind:value={exploreUrl} placeholder="Target URL (e.g., https://example.com/login)" class="url-input" style="flex: 2;" />
+        <input type="text" bind:value={exploreUsername} placeholder="Username (Optional)" class="url-input" style="flex: 1;" />
+        <input type="password" bind:value={explorePassword} placeholder="Password (Optional)" class="url-input" style="flex: 1;" />
+      </div>
+      <button class="btn-primary" on:click={startExploration} disabled={isExploring || !exploreUrl} style="margin-top: 12px; width: 100%;">
         {#if isExploring}
-          <div class="spinner-small"></div> Exploring...
+          <div class="spinner-small"></div> สแกนระบบและใช้ AI วิเคราะห์ (Deep Exploration)...
         {:else}
-          Start Web Exploration
+          Start Deep Web Exploration & Analysis
         {/if}
       </button>
     </div>
 
     {#if exploreResult}
       <div class="explore-result" transition:slide>
-        <h4>Exploration Complete!</h4>
-        <p><strong>Page Title:</strong> {exploreResult.title}</p>
-        <p><strong>Interactive Elements Found:</strong> {exploreResult.interactive_elements?.length || 0}</p>
-        <p class="success-msg">Data saved to: {exploreResult.file_saved || 'web_state.json'}</p>
+        <div class="result-header">
+          <div class="status-title">
+            <span class="check-icon">✓</span>
+            <h4>สำรวจโครงสร้างหน้าเว็บสำเร็จ (Web Exploration Complete)</h4>
+          </div>
+          <span class="saved-tag">💾 ไฟล์โครงสร้าง: {exploreResult.file_saved || 'web_state.json'}</span>
+        </div>
+
+        <p class="summary-explain">
+          💡 AI Agent ได้จำลองการเข้าถึงหน้าเว็บจริง และสแกนพบ <strong>{exploreResult.interactive_elements?.length || 0} จุดที่ตอบสนองได้</strong> (เช่น ปุ่มกด, ช่องกรอกข้อมูล, ลิงก์) เพื่อเตรียมนำไปเปรียบเทียบหาจุดต่างกับ Requirement ใน Phase 3
+        </p>
+
+        <div class="metrics-grid">
+          <div class="metric-card">
+            <span class="metric-label">🌐 จำนวนหน้าที่สแกนได้</span>
+            <span class="metric-value">{exploreResult.total_crawled_pages || 1} หน้า</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">🎯 Interactive Elements (รวม)</span>
+            <span class="metric-value highlight-green">{exploreResult.total_elements_all || exploreResult.interactive_elements?.length || 0} จุด</span>
+          </div>
+        </div>
+
+        {#if exploreResult.ai_analysis}
+          <div class="ai-analysis-panel" style="margin-top: 20px; padding: 15px; background: rgba(30, 41, 59, 0.7); border-radius: 8px; border: 1px solid rgba(147, 197, 253, 0.2);">
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 15px;">
+              <span style="font-size: 1.2rem;">🧠</span>
+              <h4 style="margin: 0; color: #93c5fd; font-size: 1.1rem;">AI Semantic Analysis (วิเคราะห์ระบบ)</h4>
+            </div>
+            
+            <div style="margin-bottom: 15px;">
+              <strong style="color: #cbd5e1; display: block; margin-bottom: 5px;">ภาพรวมระบบ (System Overview):</strong>
+              <p style="margin: 0; color: #e2e8f0; font-size: 0.95rem; line-height: 1.5;">{exploreResult.ai_analysis.system_overview}</p>
+            </div>
+            
+            {#if exploreResult.ai_analysis.identified_menus && exploreResult.ai_analysis.identified_menus.length > 0}
+              <div style="margin-bottom: 15px;">
+                <strong style="color: #cbd5e1; display: block; margin-bottom: 8px;">เมนูและฟังก์ชันการใช้งานที่พบ (Identified Menus):</strong>
+                <ul style="margin: 0; padding-left: 20px; color: #e2e8f0; font-size: 0.95rem; line-height: 1.6;">
+                  {#each exploreResult.ai_analysis.identified_menus as menu}
+                    <li style="margin-bottom: 8px;">
+                      <strong style="color: #38bdf8;">{menu.menu_name}</strong>: {menu.purpose}
+                      {#if menu.related_req_code}
+                        <span style="display: inline-block; background: rgba(56, 189, 248, 0.2); color: #7dd3fc; padding: 2px 6px; border-radius: 4px; font-size: 0.8rem; margin-left: 8px;">
+                          อ้างอิง: {menu.related_req_code}
+                        </span>
+                      {/if}
+                    </li>
+                  {/each}
+                </ul>
+              </div>
+            {/if}
+            
+            <div>
+              <strong style="color: #cbd5e1; display: block; margin-bottom: 5px;">สรุปผลการเปรียบเทียบ (Analysis Summary):</strong>
+              <p style="margin: 0; color: #e2e8f0; font-size: 0.95rem; line-height: 1.5;">{exploreResult.ai_analysis.analysis_summary}</p>
+            </div>
+          </div>
+        {/if}
+
+        {#if exploreResult.interactive_elements && exploreResult.interactive_elements.length > 0}
+          <div class="elements-preview">
+            <div class="preview-title">ตัวอย่างองค์ประกอบที่ตรวจพบ (Detected UI Elements):</div>
+            <div class="elements-tags">
+              {#each exploreResult.interactive_elements.slice(0, 10) as el}
+                <span class="element-chip tag-{el.tag}">
+                  <span class="chip-tag">&lt;{el.tag}&gt;</span>
+                  {el.text || el.name || el.id || 'unnamed'}
+                </span>
+              {/each}
+              {#if exploreResult.interactive_elements.length > 10}
+                <span class="element-chip more-chip">+{exploreResult.interactive_elements.length - 10} รายการเพิ่มเติม...</span>
+              {/if}
+            </div>
+          </div>
+        {/if}
       </div>
     {/if}
     {#if exploreError}
@@ -887,29 +981,148 @@
   .explore-result {
     margin-top: 24px;
     padding: 20px;
-    background: rgba(16, 185, 129, 0.05);
-    border: 1px solid rgba(16, 185, 129, 0.2);
+    background: rgba(16, 185, 129, 0.04);
+    border: 1px solid rgba(16, 185, 129, 0.25);
     border-radius: 12px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+  }
+  
+  .result-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 12px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid rgba(16, 185, 129, 0.15);
+  }
+
+  .status-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .check-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    background: #10b981;
+    color: #042f2e;
+    font-weight: bold;
+    border-radius: 50%;
+    font-size: 14px;
   }
   
   .explore-result h4 {
     color: #34d399;
-    margin: 0 0 12px 0;
+    margin: 0;
     font-size: 16px;
+    font-weight: 600;
   }
-  
-  .explore-result p {
-    color: #cbd5e1;
-    margin: 4px 0;
-    font-size: 14px;
-  }
-  
-  .success-msg {
-    color: #a78bfa !important;
-    margin-top: 12px !important;
+
+  .saved-tag {
     font-family: monospace;
-    font-size: 13px !important;
+    font-size: 12px;
+    color: #a78bfa;
+    background: rgba(167, 139, 250, 0.1);
+    border: 1px solid rgba(167, 139, 250, 0.2);
+    padding: 4px 10px;
+    border-radius: 6px;
   }
+
+  .summary-explain {
+    color: #94a3b8;
+    font-size: 13.5px;
+    line-height: 1.5;
+    margin: 0 0 16px 0;
+    background: rgba(255, 255, 255, 0.02);
+    padding: 10px 14px;
+    border-radius: 8px;
+    border-left: 3px solid #10b981;
+  }
+
+  .summary-explain strong {
+    color: #38bdf8;
+  }
+
+  .metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+
+  .metric-card {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 10px;
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .metric-label {
+    font-size: 12px;
+    color: #94a3b8;
+    font-weight: 500;
+  }
+
+  .metric-value {
+    font-size: 15px;
+    font-weight: 600;
+    color: #f8fafc;
+  }
+
+  .highlight-green { color: #34d399; }
+  .highlight-blue { color: #38bdf8; }
+  .highlight-purple { color: #c084fc; }
+
+  .elements-preview {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px dashed rgba(255, 255, 255, 0.1);
+  }
+
+  .preview-title {
+    font-size: 12.5px;
+    color: #cbd5e1;
+    margin-bottom: 8px;
+    font-weight: 500;
+  }
+
+  .elements-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .element-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #e2e8f0;
+  }
+
+  .chip-tag {
+    font-family: monospace;
+    font-size: 11px;
+    opacity: 0.75;
+  }
+
+  .tag-button { border-color: rgba(52, 211, 153, 0.4); background: rgba(52, 211, 153, 0.1); color: #6ee7b7; }
+  .tag-input { border-color: rgba(56, 189, 248, 0.4); background: rgba(56, 189, 248, 0.1); color: #7dd3fc; }
+  .tag-a { border-color: rgba(192, 132, 252, 0.4); background: rgba(192, 132, 252, 0.1); color: #e9d5ff; }
+  .more-chip { opacity: 0.7; font-style: italic; }
   
   .explore-error {
     margin-top: 24px;

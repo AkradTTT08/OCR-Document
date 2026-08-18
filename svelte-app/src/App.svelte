@@ -19,6 +19,7 @@
   import QAPerformance from "./lib/QAPerformance.svelte";
   import QAResearch from "./lib/QAResearch.svelte";
   import QATestAutomation from "./lib/QATestAutomation.svelte";
+  import QADocumentCreation from "./lib/QADocumentCreation.svelte";
   import TutorialOverlay from "./lib/TutorialOverlay.svelte";
   import LegalModal from "./lib/LegalModal.svelte";
   import { showLogin, authRole, authUser, authDisplayName, authAvatar, logout } from "./lib/authStore.js";
@@ -83,7 +84,7 @@
   let activeView = "ocr"; // 'ocr' | 'kb' | 'skills' | 'qa_consult'
 
   // Reactive statement to enforce default view based on role
-  $: if ($authRole === 'user' && !['qa_consult', 'qa_performance', 'qa_research', 'qa_automate'].includes(activeView)) {
+  $: if ($authRole === 'user' && !['qa_consult', 'qa_performance', 'qa_research', 'qa_automate', 'qa_doc_creation'].includes(activeView)) {
     activeView = 'qa_consult';
   } else if ($authRole === 'admin' && activeView === 'qa_consult') {
     activeView = 'ocr';
@@ -353,6 +354,10 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M12 2v20m-7-7h14m-14-6h14"></path><path d="M2 12h20"></path></svg>
             QA Test Automation
           </button>
+          <button class="nav-item" class:active={activeView === "qa_doc_creation"} on:click={() => (activeView = "qa_doc_creation")}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+            QA Document Creation
+          </button>
           {#if activeView === 'qa_performance'}
             <!-- Performance History -->
             {#if $selectedProjectStore && $perfHistory.filter(h => h.project_id === ($selectedProjectStore.id || $selectedProjectStore.project_id)).length > 0}
@@ -555,6 +560,8 @@
               <QAResearch />
             {:else if activeView === "qa_automate"}
               <QATestAutomation />
+            {:else if activeView === "qa_doc_creation"}
+              <QADocumentCreation />
             {/if}
           </div>
         {/key}

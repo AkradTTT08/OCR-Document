@@ -1,0 +1,60 @@
+{
+  "url": "https://pmrp-ttt.com/SignIn",
+  "title": "PMRP",
+  "interactive_elements": [
+    {
+      "tag": "input",
+      "text": "Enter your username",
+      "id": null,
+      "name": null,
+      "type": "text",
+      "href": null,
+      "className": "input_signIn"
+    },
+    {
+      "tag": "input",
+      "text": "Enter your password",
+      "id": null,
+      "name": null,
+      "type": "password",
+      "href": null,
+      "className": "input_signIn"
+    },
+    {
+      "tag": "input",
+      "text": "on",
+      "id": "checkbox_remember",
+      "name": null,
+      "type": "checkbox",
+      "href": null,
+      "className": "checkbox_remember_signIn"
+    },
+    {
+      "tag": "a",
+      "text": "Forget Password?",
+      "id": null,
+      "name": null,
+      "type": null,
+      "href": "https://pmrp-ttt.com/SignIn",
+      "className": "link_forget_password_signIn remove_tap_highlight_mobile"
+    },
+    {
+      "tag": "button",
+      "text": "Sign in",
+      "id": null,
+      "name": null,
+      "type": "button",
+      "href": null,
+      "className": "button_signIn remove_tap_highlight_mobile"
+    },
+    {
+      "tag": "a",
+      "text": "Register",
+      "id": null,
+      "name": null,
+      "type": null,
+      "href": "https://pmrp-ttt.com/SignIn",
+      "className": "link_register_signIn remove_tap_highlight_mobile"
+    }
+  ]
+}
