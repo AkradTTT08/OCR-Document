@@ -106,8 +106,8 @@
 .modal-backdrop {
   position: fixed;
   top: 0; left: 0; right: 0; bottom: 0;
-  background: rgba(0, 0, 0, 0.6);
-  backdrop-filter: blur(4px);
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(8px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -115,12 +115,13 @@
   padding: 20px;
 }
 .modal-content {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  background: rgba(24, 24, 27, 0.98);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 16px;
   width: 100%;
   max-width: 400px;
-  box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+  box-shadow: 0 20px 40px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.05) inset;
   animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
   overflow: hidden;
 }
@@ -134,8 +135,8 @@
   align-items: center;
   justify-content: space-between;
   padding: 16px 20px;
-  border-bottom: 1px solid var(--border);
-  background: rgba(255,255,255,0.02);
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.03);
 }
 .modal-title {
   font-size: 16px;
@@ -146,36 +147,77 @@
   gap: 8px;
 }
 .btn-close {
-  background: none; border: none; color: var(--text3);
-  font-size: 14px; cursor: pointer; padding: 4px;
-  transition: color 0.2s;
+  background: rgba(255,255,255,0.05); 
+  border: 1px solid transparent; 
+  color: #aaa;
+  font-size: 14px; 
+  cursor: pointer; 
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
 }
-.btn-close:hover { color: #fff; }
+.btn-close:hover { 
+  background: rgba(255,255,255,0.1); 
+  color: #fff; 
+}
 
-.dict-body { padding: 20px; }
-.stat-row { display: flex; gap: 8px; margin-bottom: 16px; }
-.ds { flex: 1; background: var(--surface2); border: 1px solid var(--border2); border-radius: 12px; padding: 12px; text-align: center; }
-.dv { font-size: 24px; font-weight: 700; font-family: var(--font-en); }
-.dl { font-size: 12px; color: var(--text3); margin-top: 4px; }
+.dict-body { padding: 24px; }
+.stat-row { display: flex; gap: 8px; margin-bottom: 24px; }
+.ds { 
+  flex: 1; 
+  background: rgba(255,255,255,0.04); 
+  border: 1px solid rgba(255,255,255,0.08); 
+  border-radius: 12px; 
+  padding: 16px; 
+  text-align: center;
+  box-shadow: inset 0 2px 10px rgba(0,0,0,0.2);
+}
+.dv { font-size: 32px; font-weight: 700; font-family: var(--font-en); text-shadow: 0 2px 10px rgba(16, 185, 129, 0.3); }
+.dl { font-size: 13px; color: #aaa; margin-top: 6px; }
 
-.add-row { display: flex; gap: 8px; }
+.add-row { display: flex; gap: 10px; }
 .add-row input {
-  flex: 1; background: var(--bg3); border: 1px solid var(--border2);
-  color: var(--text); font-family: var(--font-th); font-size: 14px;
-  border-radius: 8px; padding: 10px 14px; outline: none;
-  transition: border-color 0.2s;
+  flex: 1; 
+  background: rgba(0,0,0,0.4); 
+  border: 1px solid rgba(255,255,255,0.12);
+  color: #fff; 
+  font-family: var(--font-th); 
+  font-size: 14px;
+  border-radius: 10px; 
+  padding: 12px 16px; 
+  outline: none;
+  transition: all 0.2s;
+  box-shadow: inset 0 2px 4px rgba(0,0,0,0.2);
 }
-.add-row input:focus { border-color: var(--primary); }
-.add-row input::placeholder { color: var(--text3); }
+.add-row input:focus { 
+  border-color: #8b5cf6; 
+  background: rgba(0,0,0,0.6);
+  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.25), inset 0 2px 4px rgba(0,0,0,0.2);
+}
+.add-row input::placeholder { color: #666; }
 .btn-add {
-  background: var(--gradient-main);
-  border: none; color: #fff; font-family: var(--font-th); font-size: 14px;
-  font-weight: 600; padding: 10px 20px; border-radius: 8px;
-  cursor: pointer; white-space: nowrap;
-  box-shadow: 0 4px 12px var(--primary-glow);
-  transition: transform 0.2s;
+  background: linear-gradient(135deg, #a855f7, #6366f1);
+  border: none; 
+  color: #fff; 
+  font-family: var(--font-th); 
+  font-size: 14px;
+  font-weight: 600; 
+  padding: 0 24px; 
+  border-radius: 10px;
+  cursor: pointer; 
+  white-space: nowrap;
+  box-shadow: 0 4px 15px rgba(139, 92, 246, 0.4);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
-.btn-add:hover { transform: translateY(-2px); }
+.btn-add:hover { 
+  transform: translateY(-2px); 
+  box-shadow: 0 6px 20px rgba(139, 92, 246, 0.6);
+  filter: brightness(1.1);
+}
 
 .dots { display: flex; justify-content: center; gap: 5px; padding: 20px; }
 .dots span {

@@ -38,6 +38,7 @@ from format_checker import (
     save_format_rules,
     check_format_rules
 )
+from orchestrator.pipeline import run_document_pipeline
 logger = logging.getLogger(__name__)
 
 # สร้าง Flask app
@@ -644,22 +645,24 @@ def spellcheck():
     words_map = data.get('words', [])
 
     try:
-        spell_result = spellcheck_text(text, include_suggestions=include_suggestions)
-        errors = spell_result.get('errors', [])
+        # Run Multi-Agent Document Pipeline
+        pipeline_state = run_document_pipeline(text)
         
-        # ตรวจสอบรูปแบบ (Format Rules) และเพิ่มเข้าลิสต์ข้อผิดพลาด
-        try:
-            format_errors = check_format_rules(text)
-            errors.extend(format_errors)
-        except Exception as fmt_err:
-            logger.error(f"Format check error in api/spellcheck: {fmt_err}")
+        # Combine errors
+        errors = pipeline_state.spell_errors + pipeline_state.format_errors
             
         # จับคู่กล่องข้อความ
         if words_map:
             enrich_errors_with_boxes(errors, words_map)
             
-        # อัปเดตข้อมูลสรุป
-        spell_result['errors'] = errors
+        # Reconstruct result format for frontend compatibility
+        spell_result = {
+            'tokens': pipeline_state.tokens,
+            'errors': errors,
+            'summary': pipeline_state.summary,
+            'final_review': pipeline_state.final_review_summary
+        }
+        
         summary = spell_result.get('summary', {})
         if summary:
             format_count = sum(1 for e in errors if e.get('error_type') == 'format')
@@ -1943,12 +1946,9 @@ def qa_consult_api():
 
                 yield f"data: {json.dumps({'type': 'progress', 'pct': 70, 'message': 'กำลังใช้ AI วิเคราะห์และเปรียบเทียบข้อมูล...' })}\n\n"
                 
-                # 3. Analyze with Gemini
-                # 3. Analyze with Gemini
-                from ocr_engine import _get_gemini_client, get_all_api_keys
-                import os
-                all_keys = get_all_api_keys()
-                gemini_model = os.environ.get('GEMINI_MODEL', 'gemini-3.1-pro')
+                # 3. Analyze with Multi-Agent Pipeline
+                from backend.orchestrator.state import QAState
+                from backend.orchestrator.pipeline import run_qa_consult
                 
                 prev_report_context = ""
                 if prev_transaction:
@@ -1969,89 +1969,28 @@ def qa_consult_api():
                 else:
                     instruction += "4. ข้อเสนอแนะแนวทางแก้ไข (Recommendations)\n"
 
-                skill_section = f"--- คำสั่งพิเศษเพิ่มเติมจาก AI Skill ---\n{skill_instructions}\n" if skill_instructions else ""
-                prompt = f"""คุณคือผู้เชี่ยวชาญด้านระบบสารสนเทศ และ System QA (Quality Assurance)
-หน้าที่ของคุณคือตรวจสอบและเปรียบเทียบความถูกต้องของ 'เอกสารที่อัปโหลด' กับ 'ข้อมูลมาตรฐาน' ที่มีอยู่ในฐานข้อมูล (Knowledge Base ของโครงการ {project_name})
-
-ประเภทของเอกสารที่กำลังตรวจสอบ: {', '.join(doc_type) if isinstance(doc_type, list) else doc_type}
-
-{skill_section}
-
-=== ข้อมูลมาตรฐานจากฐานข้อมูล {project_name} ===
-{kb_context if kb_context else 'ไม่พบข้อมูลที่ตรงกันเป๊ะในระบบ (โปรดประเมินจากความรู้ทั่วไปหรือโครงสร้างเอกสาร)'}
-{prev_report_context}
-=== เอกสารที่ผู้ใช้อัปโหลด ===
-{extracted_text[:8000]}
-
-{instruction}
-"""
+                qa_state = QAState(
+                    project_id=project_id or "",
+                    project_name=project_name,
+                    doc_type=', '.join(doc_type) if isinstance(doc_type, list) else doc_type,
+                    skill_instructions=skill_instructions or "",
+                    kb_context=kb_context or "",
+                    prev_report_context=prev_report_context,
+                    original_text=extracted_text[:8000],
+                    instruction=instruction
+                )
                 
-                raw_fallback_models = [gemini_model, 'gemini-3.1-flash', 'gemini-2.5-flash', 'gemini-2.5-flash-lite']
-                seen = set()
-                fallback_models = [m for m in raw_fallback_models if not (m in seen or seen.add(m))]
-                gemini_res = None
-                last_err = None
+                qa_state = run_qa_consult(qa_state)
                 
-                for k_idx in range(len(all_keys) if all_keys else 1):
-                    client = _get_gemini_client(k_idx)
-                    for current_model in fallback_models:
-                        success = False
-                        for attempt in range(2):
-                            try:
-                                logger.info(f"QA Consult: Calling Gemini API [Key #{k_idx+1}] model: {current_model} (Attempt {attempt+1})")
-                                gemini_res = client.models.generate_content(
-                                    model=current_model,
-                                    contents=prompt,
-                                )
-                                success = True
-                                break
-                            except Exception as e:
-                                last_err = e
-                                error_msg = str(e)
-                                if '404' in error_msg or 'NOT_FOUND' in error_msg or 'not found' in error_msg.lower():
-                                    logger.warning(f"Model {current_model} not found (404). Switching to fallback.")
-                                    break
-                                elif '503' in error_msg or 'UNAVAILABLE' in error_msg:
-                                    logger.warning(f"Model {current_model} overloaded (503). Switching to fallback.")
-                                    break
-                                elif '429' in error_msg or 'Quota' in error_msg or 'RESOURCE_EXHAUSTED' in error_msg:
-                                    if attempt < 1:
-                                        delay = (attempt + 1) * 2
-                                        logger.warning(f"Rate limit exceeded (429) for Key #{k_idx+1} {current_model}. Retrying in {delay}s...")
-                                        import time
-                                        time.sleep(delay)
-                                        continue
-                                    else:
-                                        logger.warning(f"Rate limit exhausted for Key #{k_idx+1} {current_model}. Switching model/key.")
-                                        break
-                                else:
-                                    logger.error(f"Error with Key #{k_idx+1} {current_model}: {error_msg}")
-                                    break
-                        if success:
-                            break
-                    if gemini_res:
-                        break
-                        
-                if not gemini_res:
-                    err_txt = str(last_err)
-                    if '429' in err_txt or 'RESOURCE_EXHAUSTED' in err_txt or 'Quota' in err_txt:
+                if qa_state.status == "failed":
+                    user_err = f"ไม่สามารถสร้างรายงาน QA ได้: {qa_state.error}"
+                    if '429' in str(qa_state.error) or 'RESOURCE_EXHAUSTED' in str(qa_state.error):
                         user_err = "โควต้า Gemini API (429 Rate Limit) เต็มชั่วคราว กรุณารอสักครู่ (ประมาณ 30-60 วินาที) แล้วกดสแกนใหม่อีกครั้ง"
-                    else:
-                        user_err = f"ไม่สามารถสร้างรายงาน QA ได้: {err_txt}"
-                    logger.error(f"QA Consult failed for all models: {last_err}")
+                    logger.error(f"QA Consult Agent failed: {qa_state.error}")
                     yield f"data: {json.dumps({'type': 'error', 'message': user_err})}\n\n"
                     return
                 
-                report = gemini_res.text
-                
-                # Log API usage
-                if hasattr(gemini_res, 'usage_metadata'):
-                    try:
-                        from db_ingestion import log_api_usage
-                        used_model = getattr(gemini_res, 'model_version', None) or 'gemini-3.1-pro'
-                        log_api_usage("QA_Consult", used_model, gemini_res.usage_metadata, filename=original_filename)
-                    except Exception as usage_err:
-                        logger.error(f"Failed to log API usage: {usage_err}")
+                report = qa_state.report
                 
                 # Save transaction
                 transaction_id = None
@@ -2924,52 +2863,31 @@ def research_chat():
             for idx, chunk in enumerate(chunks):
                 context_str += f"[Excerpt {idx+1}]: {chunk}\n\n"
             
-        # 2. Build prompt for Gemini
-        system_prompt = (
-            "You are a QA Research AI Assistant for the 'Spectra QA' system. "
-            "Your job is to answer the user's questions based primarily on the provided document context below. "
-            "Note: The context may contain multiple excerpts from the SAME document. Do not state that there are multiple documents if they share the same filename. "
-            "If the context does not contain the answer, politely state that you cannot find the information in the uploaded project documents. "
-            "Reply in Thai language.\n\n"
-            f"=== DOCUMENT CONTEXT ===\n{context_str}\n========================\n"
-        )
+        # 2. Analyze with Multi-Agent Pipeline
+        from backend.orchestrator.state import QAState
+        from backend.orchestrator.pipeline import run_qa_research
         
-        # 3. Call Gemini
-        from ocr_engine import _get_gemini_client, get_all_api_keys
-        from google.genai import types
-        keys = get_all_api_keys()
-        if not keys:
-             return jsonify({'error': 'API Key is missing'}), 500
-             
-        client = _get_gemini_client(0)
-        model_name = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash')
-        
-        # Construct chat contents
-        contents = []
+        # Serialize history into text format
+        history_text = ""
         for h in history:
-            role = "user" if h.get("role") == "user" else "model"
-            contents.append(types.Content(role=role, parts=[types.Part.from_text(text=h.get("content", ""))]))
-            
-        contents.append(types.Content(role="user", parts=[types.Part.from_text(text=message)]))
+            role = "User" if h.get("role") == "user" else "Assistant"
+            history_text += f"{role}: {h.get('content', '')}\n"
         
-        response_stream = client.models.generate_content_stream(
-            model=model_name,
-            contents=contents,
-            config=types.GenerateContentConfig(
-                system_instruction=system_prompt,
-                temperature=0.3
-            )
+        qa_state = QAState(
+            project_id=project_id,
+            kb_context=context_str,
+            instruction=message,
+            original_text=history_text # Used as history placeholder
         )
         
+        qa_state = run_qa_research(qa_state)
+        
+        if qa_state.status == "failed":
+            logger.error(f"QA Research Agent failed: {qa_state.error}")
+            return jsonify({'success': False, 'error': qa_state.error}), 500
+            
         from flask import Response
-        def generate(active_client):
-            for chunk in response_stream:
-                if chunk.text:
-                    yield chunk.text
-            # explicitly keep active_client alive until the stream is done
-            _ = active_client
-                    
-        return Response(generate(client), mimetype='text/plain')
+        return Response(qa_state.report, mimetype='text/plain')
             
     except Exception as e:
         logger.error(f"Research chat error: {e}", exc_info=True)
@@ -3002,6 +2920,93 @@ def extract_requirements():
     except Exception as e:
         logger.error(f"Error extracting requirements: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
+
+def _fetch_github_code(repo_url: str) -> str:
+    import tempfile
+    import subprocess
+    import os
+    if not repo_url.startswith("https://github.com/"):
+        raise ValueError("Invalid GitHub URL. Must start with https://github.com/")
+        
+    combined_code = []
+    total_chars = 0
+    max_chars = 150000
+    allowed_extensions = {'.py', '.js', '.ts', '.jsx', '.tsx', '.java', '.go', '.php', '.c', '.cpp', '.cs', '.rb', '.html', '.css'}
+    
+    with tempfile.TemporaryDirectory() as tmpdir:
+        result = subprocess.run(['git', 'clone', '--depth', '1', repo_url, tmpdir], capture_output=True, text=True)
+        if result.returncode != 0:
+            raise Exception(f"Failed to clone repository: {result.stderr}")
+            
+        for root, dirs, files in os.walk(tmpdir):
+            if '.git' in dirs:
+                dirs.remove('.git')
+                
+            for file in files:
+                ext = os.path.splitext(file)[1].lower()
+                if ext in allowed_extensions:
+                    filepath = os.path.join(root, file)
+                    relpath = os.path.relpath(filepath, tmpdir)
+                    try:
+                        with open(filepath, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                            
+                        file_header = f"\n\n--- FILE: {relpath} ---\n"
+                        combined_code.append(file_header + content)
+                        total_chars += len(content)
+                        
+                        if total_chars > max_chars:
+                            combined_code.append("\n\n[WARNING: Repository size exceeded safe limits. Truncated.]")
+                            return "".join(combined_code)[:max_chars + 1000]
+                    except Exception:
+                        pass
+                        
+    if not combined_code:
+        raise ValueError("No valid source code files found in the repository.")
+        
+    return "".join(combined_code)
+
+@app.route('/api/qa/security/scan', methods=['POST'])
+def api_qa_security_scan():
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No JSON payload provided'}), 400
+            
+        language = data.get('language', 'auto')
+        
+        if 'github_url' in data and data['github_url']:
+            try:
+                source_code = _fetch_github_code(data['github_url'])
+                language = 'auto (GitHub Repo)'
+            except Exception as github_err:
+                return jsonify({'error': str(github_err)}), 400
+        elif 'source_code' in data and data['source_code']:
+            source_code = data['source_code']
+        else:
+            return jsonify({'error': 'Missing source_code or github_url'}), 400
+        
+        standard = data.get('standard', 'OWASP Top 10 (2021)')
+        
+        from orchestrator.state import QASecurityState
+        from orchestrator.pipeline import run_qa_security
+        
+        state = QASecurityState(source_code=source_code, language=language, standard=standard)
+        state = run_qa_security(state)
+        
+        if state.status == "failed":
+            return jsonify({'error': state.error}), 500
+            
+        return jsonify({
+            'success': True,
+            'report': state.report,
+            'vulnerabilities_found': state.vulnerability_count
+        })
+        
+    except Exception as e:
+        logger.error(f"QA Security Scan error: {e}")
+        return jsonify({'error': str(e)}), 500
+
 
 @app.route('/api/requirements', methods=['GET'])
 def get_requirements():
@@ -3351,6 +3356,12 @@ if __name__ == '__main__':
             init_requirements_table()
         except Exception as err:
             logger.error(f"Failed to initialize requirements table: {err}")
+            
+        try:
+            from add_agent_sessions_table import create_agent_sessions_table
+            create_agent_sessions_table()
+        except Exception as err:
+            logger.error(f"Failed to initialize agent sessions table: {err}")
     except Exception as e:
         logger.error(f"Failed to initialize DB tables: {e}")
 

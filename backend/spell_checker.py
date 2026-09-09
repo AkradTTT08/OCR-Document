@@ -52,7 +52,7 @@ def spellcheck_text(text: str, include_suggestions: bool = True) -> Dict[str, An
         return _empty_spell_check(text)
 
     custom_words = _get_custom_words()
-    custom_instruction = f"Special vocabulary to treat as CORRECT: {custom_words}." if custom_words else ""
+    custom_instruction = f"Special vocabulary to treat as CORRECT (DO NOT MARK THESE AS ERRORS): {custom_words}." if custom_words else ""
 
     # System prompt สำหรับ AI Proofreader
     system_prompt = f"""You are an expert Thai and English linguist and proofreader.
@@ -60,7 +60,7 @@ Your task is to detect spelling errors, typographical errors, grammatical mistak
 Pay special attention to common Thai context errors (e.g., สำรับ vs สำหรับ, คะ vs ค่ะ, อนุญาติ vs อนุญาต, สังเกตุ vs สังเกต, กฏหมาย vs กฎหมาย) and English homophones (e.g., their/there).
 
 CRITICAL RULES:
-1. ONLY report actual errors. Do not report valid names, technical terms, or stylistic choices as errors.
+1. ONLY report actual errors. Do not report valid names, technical terms, or stylistic choices as errors. Be highly conservative; if in doubt, do not mark it as an error.
 2. Ignore markdown symbols, code blocks, URLs, mathematical formulas, and standalone numbers.
 3. {custom_instruction}
 4. When suggesting corrections, ensure they fit perfectly into the surrounding context.
@@ -150,10 +150,15 @@ Do not include any <think> reasoning blocks, markdown formatting, or any extra t
     
     # 1. Filter valid errors that actually exist in the text
     valid_errors = []
+    
+    # Create a set of custom words for fast lookup
+    custom_words_set = {w.strip().lower() for w in custom_words.split(',')} if custom_words else set()
+
     for err in ai_errors:
         token = err.get("token", "")
         if token and token in text:
-            valid_errors.append(err)
+            if token.lower().strip() not in custom_words_set:
+                valid_errors.append(err)
 
     # 2. Find all occurrences of these valid error tokens in the text
     intervals = []

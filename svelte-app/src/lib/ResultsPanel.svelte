@@ -1413,6 +1413,14 @@
     font-weight: bold;
     margin: 12px 0;
   }
+  .rendered-html :global(ol),
+  .rendered-html :global(ul) {
+    padding-left: 28px;
+    margin: 8px 0;
+  }
+  .rendered-html :global(li) {
+    margin-bottom: 4px;
+  }
 
   /* ── Preview View ── */
   .content-scroll.is-preview {

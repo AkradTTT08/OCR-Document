@@ -18,8 +18,10 @@
   import ApiUsageDashboard from "./lib/ApiUsageDashboard.svelte";
   import QAPerformance from "./lib/QAPerformance.svelte";
   import QAResearch from "./lib/QAResearch.svelte";
+  import QASecurity from "./lib/QASecurity.svelte";
   import QATestAutomation from "./lib/QATestAutomation.svelte";
   import QADocumentCreation from "./lib/QADocumentCreation.svelte";
+  import MasterAgentUI from "./lib/MasterAgentUI.svelte";
   import TutorialOverlay from "./lib/TutorialOverlay.svelte";
   import LegalModal from "./lib/LegalModal.svelte";
   import { showLogin, authRole, authUser, authDisplayName, authAvatar, logout } from "./lib/authStore.js";
@@ -84,7 +86,7 @@
   let activeView = "ocr"; // 'ocr' | 'kb' | 'skills' | 'qa_consult'
 
   // Reactive statement to enforce default view based on role
-  $: if ($authRole === 'user' && !['qa_consult', 'qa_performance', 'qa_research', 'qa_automate', 'qa_doc_creation'].includes(activeView)) {
+  $: if ($authRole === 'user' && !['qa_consult', 'qa_performance', 'qa_research', 'qa_security', 'qa_automate', 'qa_doc_creation'].includes(activeView)) {
     activeView = 'qa_consult';
   } else if ($authRole === 'admin' && activeView === 'qa_consult') {
     activeView = 'ocr';
@@ -350,6 +352,10 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line><path d="M11 7v4l3 3"></path></svg>
             QA Research
           </button>
+          <button class="nav-item" class:active={activeView === "qa_security"} on:click={() => (activeView = "qa_security")}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+            QA Security
+          </button>
           <button class="nav-item" class:active={activeView === "qa_automate"} on:click={() => (activeView = "qa_automate")}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M12 2v20m-7-7h14m-14-6h14"></path><path d="M2 12h20"></path></svg>
             QA Test Automation
@@ -357,6 +363,13 @@
           <button class="nav-item" class:active={activeView === "qa_doc_creation"} on:click={() => (activeView = "qa_doc_creation")}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
             QA Document Creation
+          </button>
+          
+          <div style="height: 1px; background: var(--glass-border); margin: 8px 0;"></div>
+          
+          <button class="nav-item" style="color: #c084fc;" class:active={activeView === "master_agent"} on:click={() => (activeView = "master_agent")}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M12 2a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h6z"></path><path d="M22 10v6a2 2 0 0 1-2 2h-6l-4 4v-4H6a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+            Master Agent 🤖
           </button>
           {#if activeView === 'qa_performance'}
             <!-- Performance History -->
@@ -526,7 +539,7 @@
       </header>
 
       <!-- Content Area -->
-      <div class="content-scroll" id="main-content" class:no-padding={['kb', 'ocr', 'qa_consult', 'qa_member', 'qa_performance', 'qa_research', 'qa_automate'].includes(activeView)}>
+      <div class="content-scroll" id="main-content" class:no-padding={['kb', 'ocr', 'qa_consult', 'qa_member', 'qa_performance', 'qa_research', 'qa_automate', 'master_agent'].includes(activeView)}>
         {#key activeView}
           <div class="view-wrapper" in:fade="{{ duration: 300, delay: 150 }}">
             {#if activeView === "ocr" && $authRole === "admin"}
@@ -558,10 +571,14 @@
               <QAPerformance />
             {:else if activeView === "qa_research"}
               <QAResearch />
+            {:else if activeView === "qa_security"}
+              <QASecurity />
             {:else if activeView === "qa_automate"}
               <QATestAutomation />
             {:else if activeView === "qa_doc_creation"}
               <QADocumentCreation />
+            {:else if activeView === "master_agent"}
+              <MasterAgentUI />
             {/if}
           </div>
         {/key}

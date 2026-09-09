@@ -173,9 +173,8 @@ def update_project(project_id: str, name: str = None, project_name: str = None, 
         update_fields = []
         params = []
         if p_name is not None:
-            update_fields.append("name = %s")
             update_fields.append("project_name = %s")
-            params.extend([p_name, p_name])
+            params.append(p_name)
         if project_code is not None:
             update_fields.append("project_code = %s")
             params.append(project_code)
@@ -189,11 +188,9 @@ def update_project(project_id: str, name: str = None, project_name: str = None, 
         if not update_fields:
             return None
             
-        update_fields.append("updated_at = CURRENT_TIMESTAMP")
-        
         params.append(project_id)
         
-        query = f"UPDATE projects SET {', '.join(update_fields)} WHERE project_id = %s::uuid RETURNING project_id, project_code, name, description, status, created_at, updated_at;"
+        query = f"UPDATE projects SET {', '.join(update_fields)} WHERE project_id = %s::uuid RETURNING project_id, project_code, project_name, description, status, created_at;"
         cursor.execute(query, params)
         row = cursor.fetchone()
         
@@ -209,8 +206,7 @@ def update_project(project_id: str, name: str = None, project_name: str = None, 
             'project_name': row[2],
             'description': row[3],
             'status': row[4],
-            'created_at': row[5].isoformat() if row[5] else None,
-            'updated_at': row[6].isoformat() if row[6] else None
+            'created_at': row[5].isoformat() if row[5] else None
         }
     except psycopg2.errors.UniqueViolation:
         if conn: conn.rollback()

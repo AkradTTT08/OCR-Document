@@ -234,6 +234,42 @@ def send_email_report(to_email: str, subject: str, report_body: str) -> str:
         return f"Failed to send email due to exception: {str(e)}"
 
 # ==========================================
+# Automated QA Agents (Consult, Security, Research)
+# ==========================================
+
+@mcp.tool()
+def qa_security_scan(source_code: str, language: str = "auto", standard: str = "OWASP Top 10 (2021)") -> str:
+    """
+    Scans the provided source code or github URL for security vulnerabilities.
+    """
+    from orchestrator.master_agent import qa_security_scan as ma_qa_security_scan
+    return ma_qa_security_scan(source_code, language, standard)
+
+@mcp.tool()
+def qa_consult(project_id: str, instruction: str) -> str:
+    """
+    Consults the QA system to review documents or generate QA insights for a specific project.
+    """
+    from orchestrator.master_agent import qa_consult as ma_qa_consult
+    return ma_qa_consult(project_id, instruction)
+
+@mcp.tool()
+def qa_research(project_id: str, question: str) -> str:
+    """
+    Asks the QA Research assistant a question about a specific project to retrieve knowledge or summarize documents.
+    """
+    from orchestrator.master_agent import qa_research as ma_qa_research
+    return ma_qa_research(project_id, question)
+
+@mcp.tool()
+def get_projects() -> str:
+    """
+    Retrieves the list of all available projects and their project_ids.
+    """
+    from orchestrator.master_agent import get_projects as ma_get_projects
+    return ma_get_projects()
+
+# ==========================================
 # QA Test Automation Agents (Phase 2 - 5)
 # ==========================================
 
