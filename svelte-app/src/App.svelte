@@ -22,6 +22,7 @@
   import QATestAutomation from "./lib/QATestAutomation.svelte";
   import QADocumentCreation from "./lib/QADocumentCreation.svelte";
   import MasterAgentUI from "./lib/MasterAgentUI.svelte";
+  import WorkflowBuilder from "./lib/WorkflowBuilder.svelte";
   import TutorialOverlay from "./lib/TutorialOverlay.svelte";
   import LegalModal from "./lib/LegalModal.svelte";
   import { showLogin, authRole, authUser, authDisplayName, authAvatar, logout } from "./lib/authStore.js";
@@ -371,6 +372,11 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M12 2a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h6z"></path><path d="M22 10v6a2 2 0 0 1-2 2h-6l-4 4v-4H6a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
             Master Agent 🤖
           </button>
+          
+          <button class="nav-item" style="color: #34d399;" class:active={activeView === "workflow_builder"} on:click={() => (activeView = "workflow_builder")}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line></svg>
+            AI Workflow Builder 🔗
+          </button>
           {#if activeView === 'qa_performance'}
             <!-- Performance History -->
             {#if $selectedProjectStore && $perfHistory.filter(h => h.project_id === ($selectedProjectStore.id || $selectedProjectStore.project_id)).length > 0}
@@ -539,7 +545,7 @@
       </header>
 
       <!-- Content Area -->
-      <div class="content-scroll" id="main-content" class:no-padding={['kb', 'ocr', 'qa_consult', 'qa_member', 'qa_performance', 'qa_research', 'qa_automate', 'master_agent'].includes(activeView)}>
+      <div class="content-scroll" id="main-content" class:no-padding={['kb', 'ocr', 'qa_consult', 'qa_member', 'qa_performance', 'qa_research', 'qa_automate', 'master_agent', 'workflow_builder'].includes(activeView)}>
         {#key activeView}
           <div class="view-wrapper" in:fade="{{ duration: 300, delay: 150 }}">
             {#if activeView === "ocr" && $authRole === "admin"}
@@ -579,6 +585,8 @@
               <QADocumentCreation />
             {:else if activeView === "master_agent"}
               <MasterAgentUI />
+            {:else if activeView === "workflow_builder"}
+              <WorkflowBuilder />
             {/if}
           </div>
         {/key}

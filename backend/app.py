@@ -3332,6 +3332,73 @@ def download_test_scripts(project_id):
         return jsonify({'error': str(e)}), 500
 
 
+# ==========================================
+# Master Agent & Workflow Builder Endpoints
+# ==========================================
+
+@app.route('/api/qa/master', methods=['POST'])
+def api_qa_master():
+    try:
+        data = request.get_json()
+        if not data or 'messages' not in data:
+            return jsonify({'error': 'messages field is required'}), 400
+        
+        messages = data['messages']
+        from orchestrator.master_agent import MasterAgent
+        response_text = MasterAgent.run(messages)
+        
+        return jsonify({'success': True, 'response': response_text})
+    except Exception as e:
+        logger.error(f"Error in api_qa_master: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/workflow/execute', methods=['POST'])
+def api_workflow_execute():
+    try:
+        data = request.get_json()
+        if not data or 'nodes' not in data or 'edges' not in data:
+            return jsonify({'error': 'Invalid workflow graph'}), 400
+        
+        from orchestrator.workflow_engine import run_workflow
+        result = run_workflow(data['nodes'], data['edges'])
+        
+        return jsonify({'success': True, 'result': result})
+    except Exception as e:
+        logger.error(f"Error in workflow execute: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/workflows', methods=['GET', 'POST'])
+def api_workflows():
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({'error': 'Database connection failed'}), 500
+    try:
+        cursor = conn.cursor()
+        if request.method == 'GET':
+            cursor.execute("SELECT id, name, description, nodes, edges FROM workflows ORDER BY updated_at DESC")
+            workflows = [{"id": str(r[0]), "name": r[1], "description": r[2], "nodes": r[3], "edges": r[4]} for r in cursor.fetchall()]
+            return jsonify({'success': True, 'workflows': workflows})
+        elif request.method == 'POST':
+            d = request.get_json()
+            cursor.execute(
+                "INSERT INTO workflows (name, description, nodes, edges) VALUES (%s, %s, %s, %s) RETURNING id",
+                (d.get('name', 'Untitled'), d.get('description', ''), json.dumps(d.get('nodes', [])), json.dumps(d.get('edges', [])))
+            )
+            wf_id = cursor.fetchone()[0]
+            conn.commit()
+            return jsonify({'success': True, 'id': str(wf_id)})
+    except Exception as e:
+        logger.error(f"Error in api_workflows: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+    finally:
+        try:
+            cursor.close()
+            conn.close()
+        except: pass
+
+
 if __name__ == '__main__':
     logger.info("=" * 50)
     logger.info(f"Thai OCR Spell Check System (v{VERSION})")
