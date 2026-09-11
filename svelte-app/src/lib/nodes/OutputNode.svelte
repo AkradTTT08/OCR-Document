@@ -1,17 +1,26 @@
 <script>
-  import { Handle, Position } from '@xyflow/svelte';
+  import { Handle, Position, useSvelteFlow } from '@xyflow/svelte';
+  export let id;
   export let data;
+
+  const { deleteElements } = useSvelteFlow();
+
+  function deleteNode() {
+    deleteElements({ nodes: [{ id }] });
+  }
 </script>
 
 <div class="custom-node output-node">
-  <Handle type="target" position={Position.Left} />
+  <Handle type="target" position={Position.Left} isConnectable={true} />
   <div class="node-header">
     <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path></svg>
     <span>Final Output</span>
+    <button class="delete-btn" on:click|stopPropagation={deleteNode} title="ลบ Card นี้">✕</button>
   </div>
   <div class="node-content">
     <div class="label-text">{data.label || 'Result will be shown here'}</div>
   </div>
+  <Handle type="source" position={Position.Right} isConnectable={true} />
 </div>
 
 <style>
@@ -23,6 +32,7 @@
     width: 200px;
     color: white;
     font-family: sans-serif;
+    position: relative;
   }
   .node-header {
     display: flex;
@@ -32,6 +42,21 @@
     font-size: 12px;
     margin-bottom: 10px;
     color: #60a5fa;
+  }
+  .delete-btn {
+    margin-left: auto;
+    background: transparent;
+    border: none;
+    color: #ef4444;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: bold;
+    padding: 0 4px;
+    border-radius: 4px;
+    transition: background 0.2s;
+  }
+  .delete-btn:hover {
+    background: rgba(239, 68, 68, 0.2);
   }
   .label-text {
     font-size: 12px;

@@ -3371,26 +3371,64 @@ def api_workflow_execute():
 
 @app.route('/api/workflows', methods=['GET', 'POST'])
 def api_workflows():
+    from db_ingestion import get_db_connection
     conn = get_db_connection()
     if not conn:
         return jsonify({'error': 'Database connection failed'}), 500
     try:
         cursor = conn.cursor()
         if request.method == 'GET':
-            cursor.execute("SELECT id, name, description, nodes, edges FROM workflows ORDER BY updated_at DESC")
-            workflows = [{"id": str(r[0]), "name": r[1], "description": r[2], "nodes": r[3], "edges": r[4]} for r in cursor.fetchall()]
+            project_id = request.args.get('project_id')
+            if project_id:
+                cursor.execute("SELECT id, name, description, nodes, edges, updated_at FROM workflows WHERE project_id = %s ORDER BY updated_at DESC", (project_id,))
+            else:
+                cursor.execute("SELECT id, name, description, nodes, edges, updated_at FROM workflows ORDER BY updated_at DESC")
+            workflows = [{"id": str(r[0]), "name": r[1], "description": r[2], "nodes": r[3], "edges": r[4], "updated_at": r[5].isoformat() if r[5] else None} for r in cursor.fetchall()]
             return jsonify({'success': True, 'workflows': workflows})
         elif request.method == 'POST':
             d = request.get_json()
             cursor.execute(
-                "INSERT INTO workflows (name, description, nodes, edges) VALUES (%s, %s, %s, %s) RETURNING id",
-                (d.get('name', 'Untitled'), d.get('description', ''), json.dumps(d.get('nodes', [])), json.dumps(d.get('edges', [])))
+                "INSERT INTO workflows (name, description, nodes, edges, project_id) VALUES (%s, %s, %s, %s, %s) RETURNING id",
+                (d.get('name', 'Untitled'), d.get('description', ''), json.dumps(d.get('nodes', [])), json.dumps(d.get('edges', [])), d.get('project_id'))
             )
             wf_id = cursor.fetchone()[0]
             conn.commit()
             return jsonify({'success': True, 'id': str(wf_id)})
     except Exception as e:
         logger.error(f"Error in api_workflows: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+    finally:
+        try:
+            cursor.close()
+            conn.close()
+        except: pass
+
+@app.route('/api/workflows/<wf_id>', methods=['PUT', 'DELETE'])
+def api_workflows_detail(wf_id):
+    from db_ingestion import get_db_connection
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({'error': 'Database connection failed'}), 500
+    try:
+        cursor = conn.cursor()
+        if request.method == 'PUT':
+            d = request.get_json()
+            cursor.execute(
+                "UPDATE workflows SET name = %s, description = %s, nodes = %s, edges = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s RETURNING id",
+                (d.get('name', 'Untitled'), d.get('description', ''), json.dumps(d.get('nodes', [])), json.dumps(d.get('edges', [])), wf_id)
+            )
+            if cursor.rowcount == 0:
+                return jsonify({'error': 'Workflow not found'}), 404
+            conn.commit()
+            return jsonify({'success': True, 'id': wf_id})
+        elif request.method == 'DELETE':
+            cursor.execute("DELETE FROM workflows WHERE id = %s", (wf_id,))
+            if cursor.rowcount == 0:
+                return jsonify({'error': 'Workflow not found'}), 404
+            conn.commit()
+            return jsonify({'success': True})
+    except Exception as e:
+        logger.error(f"Error in api_workflows_detail: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
     finally:
         try:

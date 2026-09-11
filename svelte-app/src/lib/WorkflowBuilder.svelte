@@ -1,7 +1,11 @@
 <script>
   import { onMount, tick } from 'svelte';
-  import { SvelteFlow, Controls, Background, MiniMap } from '@xyflow/svelte';
+  import { SvelteFlow, Controls, Background, MiniMap, addEdge } from '@xyflow/svelte';
   import '@xyflow/svelte/dist/style.css';
+  import { toast } from './toastStore.js';
+  import { selectedProjectStore } from './qaHistoryStore.js';
+  import ProjectSelection from './ProjectSelection.svelte';
+  import PipelineSelection from './PipelineSelection.svelte';
   
   import AgentNode from './nodes/AgentNode.svelte';
   import DebateLoopNode from './nodes/DebateLoopNode.svelte';
@@ -15,10 +19,15 @@
     output: OutputNode
   };
 
+  let projects = [];
+  $: selectedProjectObj = $selectedProjectStore;
+
   let nodes = [];
   let edges = [];
   
   let workflowName = "Untitled Workflow";
+  let currentStep = 'project'; // 'project', 'pipeline', 'canvas'
+  let currentWorkflowId = null;
   
   // Chat logs from execution
   let chatLogs = [];
@@ -28,17 +37,69 @@
   
   let chatScrollEl;
 
-  onMount(() => {
+  onMount(async () => {
+    try {
+      const resProjects = await fetch("http://127.0.0.1:5000/api/projects");
+      if (resProjects.ok) {
+        const pData = await resProjects.json();
+        projects = pData.projects || [];
+      }
+    } catch (err) {
+      console.error("Failed to load projects:", err);
+    }
+
+    if (selectedProjectObj) {
+      currentStep = 'pipeline';
+    }
+  });
+
+  function selectProject(p) {
+    selectedProjectStore.set(p);
+    currentStep = 'pipeline';
+  }
+
+  function resetProject() {
+    selectedProjectStore.set(null);
+    currentStep = 'project';
+  }
+
+  function backToPipeline() {
+    currentStep = 'pipeline';
+    currentWorkflowId = null;
+  }
+
+  function selectPipeline(pl) {
+    currentWorkflowId = pl.id;
+    workflowName = pl.name || "Untitled Workflow";
+    try {
+      nodes = typeof pl.nodes === 'string' ? JSON.parse(pl.nodes) : (pl.nodes || []);
+      edges = typeof pl.edges === 'string' ? JSON.parse(pl.edges) : (pl.edges || []);
+    } catch(e) {
+      nodes = pl.nodes || [];
+      edges = pl.edges || [];
+    }
+    currentStep = 'canvas';
+  }
+
+  function createNewPipeline() {
+    currentWorkflowId = null;
+    workflowName = "Untitled Workflow";
+    const pId = selectedProjectObj?.id || selectedProjectObj?.project_id || '';
     nodes = [
       { id: 'start_1', type: 'input', position: { x: 60, y: 200 }, data: { text: "คำแนะนำสำหรับสร้างเอกสาร..." } },
-      { id: 'debate_1', type: 'debate', position: { x: 380, y: 180 }, data: { generator: 'qa_doc_create', critic: 'qa_consult', max_loops: 2, project_id: '' } },
+      { id: 'debate_1', type: 'debate', position: { x: 380, y: 180 }, data: { generator: 'qa_doc_create', critic: 'qa_consult', max_loops: 2, project_id: pId } },
       { id: 'out_1', type: 'output', position: { x: 740, y: 200 }, data: { label: 'ผลลัพธ์สุดท้าย' } },
     ];
     edges = [
       { id: 'e1-2', source: 'start_1', target: 'debate_1' },
       { id: 'e2-3', source: 'debate_1', target: 'out_1' },
     ];
-  });
+    currentStep = 'canvas';
+  }
+
+  function handleConnect(connection) {
+    edges = addEdge(connection, edges);
+  }
 
   // Scroll chat to bottom when new messages arrive
   $: if (chatLogs.length && chatScrollEl) {
@@ -92,8 +153,9 @@
   };
   
   function getDefaultDataForType(type) {
-    if (type === 'agent') return { agent_type: 'qa_consult', project_id: '' };
-    if (type === 'debate') return { generator: 'qa_doc_create', critic: 'qa_consult', max_loops: 2, project_id: '' };
+    const pId = selectedProjectObj?.id || selectedProjectObj?.project_id || '';
+    if (type === 'agent') return { agent_type: 'qa_consult', project_id: pId };
+    if (type === 'debate') return { generator: 'qa_doc_create', critic: 'qa_consult', max_loops: 2, project_id: pId };
     if (type === 'input') return { text: '' };
     if (type === 'output') return { label: 'Final Result' };
     return {};
@@ -104,10 +166,19 @@
     showChat = true;
     chatLogs = [{ speaker: '🔧 System', message: 'กำลังเตรียมรัน Pipeline...', type: 'system' }];
     finalOutput = "";
+
+    const pId = selectedProjectObj?.id || selectedProjectObj?.project_id || '';
     
     try {
       const payload = {
-        nodes: nodes.map(n => ({ id: n.id, type: n.type, data: n.data })),
+        nodes: nodes.map(n => ({
+          id: n.id,
+          type: n.type,
+          data: {
+            ...n.data,
+            project_id: n.data.project_id || pId
+          }
+        })),
         edges: edges.map(e => ({ source: e.source, target: e.target }))
       };
       
@@ -130,150 +201,272 @@
   }
   
   async function saveWorkflow() {
+    const pId = selectedProjectObj?.id || selectedProjectObj?.project_id || '';
     try {
       const payload = {
         name: workflowName,
+        project_id: pId,
         nodes: nodes.map(n => ({ id: n.id, type: n.type, data: n.data, position: n.position })),
         edges: edges.map(e => ({ source: e.source, target: e.target }))
       };
-      const res = await fetch('http://127.0.0.1:5000/api/workflows', {
-        method: 'POST',
+      let url = 'http://127.0.0.1:5000/api/workflows';
+      let method = 'POST';
+      if (currentWorkflowId) {
+        url = `http://127.0.0.1:5000/api/workflows/${currentWorkflowId}`;
+        method = 'PUT';
+      }
+      const res = await fetch(url, {
+        method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
       if (!res.ok) throw new Error('Save failed');
-      alert('Workflow saved!');
+      const data = await res.json();
+      if (data.id) {
+        currentWorkflowId = data.id;
+      }
+      toast('Workflow saved successfully!', 'success');
     } catch(e) {
-      alert(e.message);
+      toast(`บันทึกไม่สำเร็จ: ${e.message}`, 'error');
     }
   }
 </script>
 
-<div class="workflow-container">
-  <!-- Left Node Palette -->
-  <aside class="node-palette">
-    <div class="palette-header">
-      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line></svg>
-      AI Workflow Builder
+<div class="workflow-outer-wrapper">
+  {#if currentStep === 'project' || !selectedProjectObj}
+    <div class="project-selection-wrapper">
+      <ProjectSelection 
+        {projects} 
+        on:select={(e) => selectProject(e.detail)} 
+      />
     </div>
-
-    <div class="palette-section-title">ลาก Node ลงบน Canvas</div>
-    
-    <div class="palette-nodes">
-      <div class="palette-node type-input" draggable="true" on:dragstart={(e) => onDragStart(e, 'input')}>
-        <span class="node-icon">📥</span>
-        <div>
-          <div class="node-label">Input</div>
-          <div class="node-desc">จุดเริ่มต้น / ข้อมูลนำเข้า</div>
-        </div>
-      </div>
-      <div class="palette-node type-agent" draggable="true" on:dragstart={(e) => onDragStart(e, 'agent')}>
-        <span class="node-icon">🤖</span>
-        <div>
-          <div class="node-label">AI Agent</div>
-          <div class="node-desc">Agent เดี่ยว ทำงาน 1 ครั้ง</div>
-        </div>
-      </div>
-      <div class="palette-node type-debate" draggable="true" on:dragstart={(e) => onDragStart(e, 'debate')}>
-        <span class="node-icon">🔄</span>
-        <div>
-          <div class="node-label">Debate Loop</div>
-          <div class="node-desc">2 AI คุยกันวนจนสมบูรณ์</div>
-        </div>
-      </div>
-      <div class="palette-node type-output" draggable="true" on:dragstart={(e) => onDragStart(e, 'output')}>
-        <span class="node-icon">📤</span>
-        <div>
-          <div class="node-label">Output</div>
-          <div class="node-desc">ผลลัพธ์สุดท้าย</div>
-        </div>
+  {:else if currentStep === 'pipeline'}
+    <div class="top-nav">
+      <button class="btn-back" on:click={resetProject}>
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+          <path fill-rule="evenodd" d="M11.354 1.646a.5.5 0 0 1 0 .708L5.707 8l5.647 5.646a.5.5 0 0 1-.708.708l-6-6a.5.5 0 0 1 0-.708l6-6a.5.5 0 0 1 .708 0z"/>
+        </svg>
+        เปลี่ยนโครงการ
+      </button>
+      <div class="active-project-badge">
+        โครงการปัจจุบัน: <strong>{selectedProjectObj.project_code || selectedProjectObj.name}</strong>
       </div>
     </div>
+    <div class="pipeline-selection-wrapper" style="padding: 40px; max-width: 1200px; margin: 0 auto; width: 100%;">
+      <PipelineSelection 
+        projectId={selectedProjectObj?.id || selectedProjectObj?.project_id}
+        on:select={(e) => selectPipeline(e.detail)}
+        on:create={createNewPipeline}
+      />
+    </div>
+  {:else if currentStep === 'canvas'}
+    <div class="top-nav">
+      <button class="btn-back" on:click={backToPipeline}>
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+          <path fill-rule="evenodd" d="M11.354 1.646a.5.5 0 0 1 0 .708L5.707 8l5.647 5.646a.5.5 0 0 1-.708.708l-6-6a.5.5 0 0 1 0-.708l6-6a.5.5 0 0 1 .708 0z"/>
+        </svg>
+        กลับไปเลือก Pipeline
+      </button>
+      <div class="active-project-badge">
+        โครงการปัจจุบัน: <strong>{selectedProjectObj.project_code || selectedProjectObj.name}</strong>
+      </div>
+    </div>
 
-    <div class="palette-controls">
-      <input type="text" bind:value={workflowName} class="wf-name-input" placeholder="ชื่อ Workflow" />
-      <button class="btn btn-save" on:click={saveWorkflow}>💾 บันทึก</button>
-      <button class="btn btn-run" on:click={executeWorkflow} disabled={isExecuting}>
-        {#if isExecuting}
-          <span class="spinner"></span> กำลังรัน...
-        {:else}
-          🚀 รัน Pipeline
+    <div class="workflow-container">
+      <!-- Left Node Palette -->
+      <aside class="node-palette">
+        <div class="palette-header">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line></svg>
+          AI Workflow Builder
+        </div>
+
+        <div class="palette-section-title">ลาก Node ลงบน Canvas</div>
+        
+        <div class="palette-nodes">
+          <div class="palette-node type-input" draggable="true" on:dragstart={(e) => onDragStart(e, 'input')}>
+            <span class="node-icon">📥</span>
+            <div>
+              <div class="node-label">Input</div>
+              <div class="node-desc">จุดเริ่มต้น / ข้อมูลนำเข้า</div>
+            </div>
+          </div>
+          <div class="palette-node type-agent" draggable="true" on:dragstart={(e) => onDragStart(e, 'agent')}>
+            <span class="node-icon">🤖</span>
+            <div>
+              <div class="node-label">AI Agent</div>
+              <div class="node-desc">Agent เดี่ยว ทำงาน 1 ครั้ง</div>
+            </div>
+          </div>
+          <div class="palette-node type-debate" draggable="true" on:dragstart={(e) => onDragStart(e, 'debate')}>
+            <span class="node-icon">🔄</span>
+            <div>
+              <div class="node-label">Debate Loop</div>
+              <div class="node-desc">2 AI คุยกันวนจนสมบูรณ์</div>
+            </div>
+          </div>
+          <div class="palette-node type-output" draggable="true" on:dragstart={(e) => onDragStart(e, 'output')}>
+            <span class="node-icon">📤</span>
+            <div>
+              <div class="node-label">Output</div>
+              <div class="node-desc">ผลลัพธ์สุดท้าย</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="palette-controls">
+          <input type="text" bind:value={workflowName} class="wf-name-input" placeholder="ชื่อ Workflow" />
+          <button class="btn btn-save" on:click={saveWorkflow}>💾 บันทึก</button>
+          <button class="btn btn-run" on:click={executeWorkflow} disabled={isExecuting}>
+            {#if isExecuting}
+              <span class="spinner"></span> กำลังรัน...
+            {:else}
+              🚀 รัน Pipeline
+            {/if}
+          </button>
+        </div>
+      </aside>
+
+      <!-- Canvas -->
+      <!-- svelte-ignore a11y-no-static-element-interactions -->
+      <div class="canvas-area" on:drop={onDrop} on:dragover={onDragOver}>
+        <SvelteFlow 
+          bind:nodes 
+          bind:edges 
+          {nodeTypes} 
+          fitView 
+          onconnect={handleConnect}
+          on:connect={(e) => handleConnect(e.detail)}
+        >
+          <Background gap={20} size={1} color="#1f2937" />
+          <Controls />
+          <MiniMap nodeColor="#6366f1" maskColor="rgba(0,0,0,0.6)" />
+        </SvelteFlow>
+      </div>
+
+      <!-- Chat Log Panel -->
+      {#if showChat}
+        <div class="chat-panel">
+          <div class="chat-header">
+            <div class="chat-title">
+              <span>💬 AI Agent Conversation</span>
+              {#if isExecuting}<span class="live-badge">● LIVE</span>{/if}
+            </div>
+            <button class="close-btn" on:click={() => showChat = false}>✕</button>
+          </div>
+
+          <div class="chat-messages" bind:this={chatScrollEl}>
+            {#each chatLogs as log}
+              {@const style = getSpeakerStyle(log.speaker)}
+              {@const bubbleClass = getBubbleClass(log)}
+              
+              {#if log.type === 'system'}
+                <div class="system-msg">{log.message}</div>
+              {:else}
+                <div class="chat-row {style.side === 'right' ? 'row-right' : 'row-left'}">
+                  <!-- Avatar -->
+                  <div class="avatar" style="background: {style.bg}; color: {style.color}">
+                    {log.speaker.slice(0, 2)}
+                  </div>
+                  <div class="bubble-wrap {style.side === 'right' ? 'wrap-right' : 'wrap-left'}">
+                    <div class="bubble-name" style="color: {style.color}">{log.speaker}</div>
+                    <div class="bubble {bubbleClass}" style="border-color: {style.color}33">
+                      {log.message}
+                    </div>
+                  </div>
+                </div>
+              {/if}
+            {/each}
+
+            {#if isExecuting}
+              <div class="typing-indicator">
+                <span></span><span></span><span></span>
+                <span class="typing-text">กำลังประมวลผล...</span>
+              </div>
+            {/if}
+          </div>
+
+          {#if finalOutput && !isExecuting}
+            <div class="final-output-bar">
+              <span class="final-label">🎯 ผลลัพธ์พร้อมแล้ว</span>
+              <button class="copy-btn" on:click={() => navigator.clipboard.writeText(finalOutput)}>📋 Copy</button>
+            </div>
+          {/if}
+        </div>
+      {/if}
+
+      <!-- Toggle chat button -->
+      <button class="chat-toggle-btn" on:click={() => showChat = !showChat}>
+        💬
+        {#if chatLogs.length > 0}
+          <span class="badge">{chatLogs.length}</span>
         {/if}
       </button>
     </div>
-  </aside>
-
-  <!-- Canvas -->
-  <!-- svelte-ignore a11y-no-static-element-interactions -->
-  <div class="canvas-area" on:drop={onDrop} on:dragover={onDragOver}>
-    <SvelteFlow bind:nodes bind:edges {nodeTypes} fitView>
-      <Background gap={20} size={1} color="#1f2937" />
-      <Controls />
-      <MiniMap nodeColor="#6366f1" maskColor="rgba(0,0,0,0.6)" />
-    </SvelteFlow>
-  </div>
-
-  <!-- Chat Log Panel -->
-  {#if showChat}
-    <div class="chat-panel">
-      <div class="chat-header">
-        <div class="chat-title">
-          <span>💬 AI Agent Conversation</span>
-          {#if isExecuting}<span class="live-badge">● LIVE</span>{/if}
-        </div>
-        <button class="close-btn" on:click={() => showChat = false}>✕</button>
-      </div>
-
-      <div class="chat-messages" bind:this={chatScrollEl}>
-        {#each chatLogs as log}
-          {@const style = getSpeakerStyle(log.speaker)}
-          {@const bubbleClass = getBubbleClass(log)}
-          
-          {#if log.type === 'system'}
-            <div class="system-msg">{log.message}</div>
-          {:else}
-            <div class="chat-row {style.side === 'right' ? 'row-right' : 'row-left'}">
-              <!-- Avatar -->
-              <div class="avatar" style="background: {style.bg}; color: {style.color}">
-                {log.speaker.slice(0, 2)}
-              </div>
-              <div class="bubble-wrap {style.side === 'right' ? 'wrap-right' : 'wrap-left'}">
-                <div class="bubble-name" style="color: {style.color}">{log.speaker}</div>
-                <div class="bubble {bubbleClass}" style="border-color: {style.color}33">
-                  {log.message}
-                </div>
-              </div>
-            </div>
-          {/if}
-        {/each}
-
-        {#if isExecuting}
-          <div class="typing-indicator">
-            <span></span><span></span><span></span>
-            <span class="typing-text">กำลังประมวลผล...</span>
-          </div>
-        {/if}
-      </div>
-
-      {#if finalOutput && !isExecuting}
-        <div class="final-output-bar">
-          <span class="final-label">🎯 ผลลัพธ์พร้อมแล้ว</span>
-          <button class="copy-btn" on:click={() => navigator.clipboard.writeText(finalOutput)}>📋 Copy</button>
-        </div>
-      {/if}
-    </div>
   {/if}
-
-  <!-- Toggle chat button -->
-  <button class="chat-toggle-btn" on:click={() => showChat = !showChat}>
-    💬
-    {#if chatLogs.length > 0}
-      <span class="badge">{chatLogs.length}</span>
-    {/if}
-  </button>
 </div>
 
 <style>
+  :global(.svelte-flow__node) {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+  }
+  .workflow-outer-wrapper {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+  }
+
+  .top-nav {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 16px;
+    background: rgba(15, 20, 32, 0.8);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  }
+
+  .btn-back {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--glass-border);
+    color: var(--text-muted);
+    padding: 6px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: all 0.2s;
+  }
+  .btn-back:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text-main);
+  }
+
+  .active-project-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(99, 102, 241, 0.15);
+    border: 1px solid rgba(99, 102, 241, 0.3);
+    color: #a5b4fc;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+  }
+
+  .project-selection-wrapper {
+    padding: 32px 40px;
+    width: 100%;
+    height: 100%;
+    overflow-y: auto;
+    box-sizing: border-box;
+  }
+
   :global(.svelte-flow__background) { background: #0c0e16 !important; }
   :global(.svelte-flow__controls button) {
     background: #1f2937 !important;
@@ -288,7 +481,7 @@
 
   .workflow-container {
     display: flex;
-    height: 100%;
+    flex: 1;
     width: 100%;
     position: relative;
     overflow: hidden;
