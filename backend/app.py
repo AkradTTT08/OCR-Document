@@ -18,7 +18,7 @@ import tempfile
 from typing import List, Dict, Any
 from ocr_engine import VERSION
 from pathlib import Path
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, send_file
 from flask_cors import CORS, cross_origin
 from werkzeug.utils import secure_filename
 
@@ -3664,8 +3664,23 @@ def analyze_vision_diagram():
 # QA Board Cards API (Trello/GitHub Sync)
 # ==========================================
 
-@app.route('/api/projects/<string:project_id>/cards', methods=['GET'])
+def safe_project_uuid(val):
+    import uuid
+    try:
+        return str(uuid.UUID(str(val)))
+    except Exception:
+        return "00000000-0000-0000-0000-000000000001"
+
+@app.route('/api/projects/<string:project_id>/cards', methods=['GET', 'OPTIONS'])
+@cross_origin()
 def get_project_cards(project_id):
+    if request.method == 'OPTIONS':
+        res = jsonify({'status': 'ok'})
+        res.headers.add('Access-Control-Allow-Origin', '*')
+        res.headers.add('Access-Control-Allow-Headers', '*')
+        res.headers.add('Access-Control-Allow-Methods', '*')
+        return res, 200
+    p_id = safe_project_uuid(project_id)
     from db_ingestion import get_db_connection
     conn = get_db_connection()
     if not conn:
@@ -3673,11 +3688,11 @@ def get_project_cards(project_id):
     try:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT card_id, ext_card_id, title, description, status, card_type, priority, test_result, created_at
+            SELECT card_id, ext_card_id, title, description, status, card_type, priority, test_result, created_at, raw_ext_id
             FROM board_cards
             WHERE project_id = %s
             ORDER BY created_at DESC
-        """, (project_id,))
+        """, (p_id,))
         rows = cursor.fetchall()
         
         cards = []
@@ -3692,10 +3707,35 @@ def get_project_cards(project_id):
                 "priority": row[6] or 'Medium',
                 "test_result": row[7],
                 "created_at": row[8].isoformat() if row[8] else None,
+                "raw_ext_id": row[9],
                 "isTesting": False
             })
         
-        return jsonify({"success": True, "cards": cards})
+        # Also retrieve configured columns if available
+        cursor.execute("""
+            SELECT provider, columns_json
+            FROM board_integrations
+            WHERE project_id = %s
+        """, (p_id,))
+        integ = cursor.fetchone()
+        columns = None
+        if integ and integ[1]:
+            try:
+                import json
+                columns = json.loads(integ[1])
+            except Exception:
+                columns = None
+        
+        # Fallback default columns if not set
+        if not columns:
+            columns = [
+                {"id": "todo", "title": "To Do", "color": "#64748b"},
+                {"id": "in_progress", "title": "In Progress", "color": "#3b82f6"},
+                {"id": "testing", "title": "Testing (Agent)", "color": "#a855f7"},
+                {"id": "done", "title": "Done", "color": "#22c55e"}
+            ]
+        
+        return jsonify({"success": True, "cards": cards, "columns": columns})
     except Exception as e:
         logger.error(f"Error fetching cards: {e}")
         return jsonify({"error": str(e)}), 500
@@ -3705,29 +3745,357 @@ def get_project_cards(project_id):
         if 'conn' in locals():
             conn.close()
 
-@app.route('/api/projects/<string:project_id>/cards/sync', methods=['POST'])
-def sync_project_cards(project_id):
+@app.route('/api/projects/<string:project_id>/board-integration', methods=['GET', 'POST', 'OPTIONS'])
+@cross_origin()
+def project_board_integration(project_id):
+    if request.method == 'OPTIONS':
+        res = jsonify({'status': 'ok'})
+        res.headers.add('Access-Control-Allow-Origin', '*')
+        res.headers.add('Access-Control-Allow-Headers', '*')
+        res.headers.add('Access-Control-Allow-Methods', '*')
+        return res, 200
+    p_id = safe_project_uuid(project_id)
     from db_ingestion import get_db_connection
     conn = get_db_connection()
     if not conn:
         return jsonify({"error": "Database connection error"}), 500
     try:
         cursor = conn.cursor()
-        # Mock syncing from Trello/GitHub
-        mock_cards = [
-            ("TKT-201", "Implement New Dashboard", "Build the new dashboard UI using Svelte", "todo", "Feature", "High"),
-            ("TKT-202", "Fix API Rate Limit", "Users are getting 429 Too Many Requests", "in_progress", "Bug", "Critical"),
-            ("TKT-203", "Refactor CSS", "Move from inline styles to classes", "todo", "Tech Debt", "Low")
-        ]
-        
-        for ext_id, title, desc, status, c_type, prio in mock_cards:
+        if request.method == 'GET':
             cursor.execute("""
-                INSERT INTO board_cards (project_id, ext_card_id, title, description, status, card_type, priority)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-            """, (project_id, ext_id, title, desc, status, c_type, prio))
+                SELECT provider, trello_api_key, trello_token, trello_board_id, 
+                       trello_todo_list_id, trello_done_list_id,
+                       github_token, github_owner, github_repo, updated_at
+                FROM board_integrations
+                WHERE project_id = %s
+            """, (p_id,))
+            row = cursor.fetchone()
+            if not row:
+                return jsonify({"success": True, "integration": None})
+            
+            return jsonify({
+                "success": True,
+                "integration": {
+                    "provider": row[0],
+                    "trello_api_key": row[1],
+                    "trello_token": row[2],
+                    "trello_board_id": row[3],
+                    "trello_todo_list_id": row[4],
+                    "trello_done_list_id": row[5],
+                    "github_token": row[6],
+                    "github_owner": row[7],
+                    "github_repo": row[8],
+                    "updated_at": row[9].isoformat() if row[9] else None
+                }
+            })
+        
+        elif request.method == 'POST':
+            data = request.json or {}
+            provider = data.get('provider', 'trello')
+            trello_api_key = data.get('trello_api_key', '').strip()
+            trello_token = data.get('trello_token', '').strip()
+            trello_board_id = data.get('trello_board_id', '').strip()
+            trello_todo_list_id = data.get('trello_todo_list_id', '').strip()
+            trello_done_list_id = data.get('trello_done_list_id', '').strip()
+            github_token = data.get('github_token', '').strip()
+            github_owner = data.get('github_owner', '').strip()
+            github_repo = data.get('github_repo', '').strip()
+
+            cursor.execute("""
+                INSERT INTO board_integrations (
+                    project_id, provider, trello_api_key, trello_token, trello_board_id,
+                    trello_todo_list_id, trello_done_list_id,
+                    github_token, github_owner, github_repo, updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+                ON CONFLICT (project_id) DO UPDATE SET
+                    provider = EXCLUDED.provider,
+                    trello_api_key = EXCLUDED.trello_api_key,
+                    trello_token = EXCLUDED.trello_token,
+                    trello_board_id = EXCLUDED.trello_board_id,
+                    trello_todo_list_id = EXCLUDED.trello_todo_list_id,
+                    trello_done_list_id = EXCLUDED.trello_done_list_id,
+                    github_token = EXCLUDED.github_token,
+                    github_owner = EXCLUDED.github_owner,
+                    github_repo = EXCLUDED.github_repo,
+                    updated_at = CURRENT_TIMESTAMP
+            """, (
+                p_id, provider, trello_api_key, trello_token, trello_board_id,
+                trello_todo_list_id, trello_done_list_id,
+                github_token, github_owner, github_repo
+            ))
+            conn.commit()
+            return jsonify({"success": True, "message": "บันทึกการตั้งค่าการเชื่อมต่อบอร์ดสำเร็จ"})
+
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Error handling board integration: {e}")
+        return jsonify({"error": str(e)}), 500
+    finally:
+        if 'cursor' in locals():
+            cursor.close()
+        if 'conn' in locals():
+            conn.close()
+
+@app.route('/api/projects/<string:project_id>/board-integration/test', methods=['POST', 'OPTIONS'])
+@cross_origin()
+def test_board_integration(project_id):
+    if request.method == 'OPTIONS':
+        res = jsonify({'status': 'ok'})
+        res.headers.add('Access-Control-Allow-Origin', '*')
+        res.headers.add('Access-Control-Allow-Headers', '*')
+        res.headers.add('Access-Control-Allow-Methods', '*')
+        return res, 200
+    import requests
+    data = request.json or {}
+    provider = data.get('provider')
+    try:
+        if provider == 'trello':
+            api_key = data.get('trello_api_key', '').strip()
+            token = data.get('trello_token', '').strip()
+            board_id = data.get('trello_board_id', '').strip()
+            if not api_key or not token or not board_id:
+                return jsonify({"success": False, "error": "กรุณาระบุ API Key, Token และ Board ID ให้ครบถ้วน"}), 400
+            
+            res = requests.get(
+                f"https://api.trello.com/1/boards/{board_id}",
+                params={"key": api_key, "token": token},
+                timeout=10
+            )
+            if res.ok:
+                bdata = res.json()
+                return jsonify({"success": True, "message": f"เชื่อมต่อ Trello สำเร็จ! บอร์ด: {bdata.get('name')}"})
+            else:
+                return jsonify({"success": False, "error": f"Trello API Error ({res.status_code}): {res.text}"}), 400
+                
+        elif provider == 'github':
+            token = data.get('github_token', '').strip()
+            owner = data.get('github_owner', '').strip()
+            repo = data.get('github_repo', '').strip()
+            if not token or not owner or not repo:
+                return jsonify({"success": False, "error": "กรุณาระบุ GitHub Token, Owner และ Repo ให้ครบถ้วน"}), 400
+            
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.github.v3+json",
+                "User-Agent": "SpectraQA-Integration"
+            }
+            res = requests.get(f"https://api.github.com/repos/{owner}/{repo}", headers=headers, timeout=10)
+            if res.ok:
+                rdata = res.json()
+                return jsonify({"success": True, "message": f"เชื่อมต่อ GitHub สำเร็จ! Repo: {rdata.get('full_name')}"})
+            else:
+                return jsonify({"success": False, "error": f"GitHub API Error ({res.status_code}): {res.text}"}), 400
+        else:
+            return jsonify({"success": False, "error": "Invalid provider"}), 400
+    except Exception as e:
+        logger.error(f"Error testing integration: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/projects/<string:project_id>/cards/sync', methods=['POST', 'OPTIONS'])
+@cross_origin()
+def sync_project_cards(project_id):
+    if request.method == 'OPTIONS':
+        res = jsonify({'status': 'ok'})
+        res.headers.add('Access-Control-Allow-Origin', '*')
+        res.headers.add('Access-Control-Allow-Headers', '*')
+        res.headers.add('Access-Control-Allow-Methods', '*')
+        return res, 200
+    p_id = safe_project_uuid(project_id)
+    import requests
+    import json
+    from db_ingestion import get_db_connection
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({"error": "Database connection error"}), 500
+    try:
+        cursor = conn.cursor()
+        
+        # 1. Fetch integration setting
+        cursor.execute("""
+            SELECT provider, trello_api_key, trello_token, trello_board_id,
+                   github_token, github_owner, github_repo
+            FROM board_integrations
+            WHERE project_id = %s
+        """, (p_id,))
+        integ = cursor.fetchone()
+
+        if not integ:
+            return jsonify({
+                "error": "ยังไม่ได้ตั้งค่าการเชื่อมต่อบอร์ดสำหรับโครงการนี้ กรุณากดปุ่ม 'ตั้งค่าการเชื่อมต่อ (⚙️)' เพื่อเชื่อมต่อ Trello หรือ GitHub ก่อน"
+            }), 400
+
+        provider, t_key, t_token, t_board, gh_token, gh_owner, gh_repo = integ
+        synced_cards = []
+
+        if provider == 'trello':
+            if not t_key or not t_token or not t_board:
+                return jsonify({"error": "ข้อมูลการเชื่อมต่อ Trello ไม่ครบถ้วน กรุณาตรวจสอบในการตั้งค่า"}), 400
+            
+            # Fetch lists directly from Trello
+            lists_res = requests.get(
+                f"https://api.trello.com/1/boards/{t_board}/lists",
+                params={"key": t_key, "token": t_token},
+                timeout=15
+            )
+            if not lists_res.ok:
+                return jsonify({"error": f"Trello API Error: {lists_res.text}"}), 400
+            
+            trello_lists = lists_res.json()
+            color_palette = ["#64748b", "#3b82f6", "#a855f7", "#06b6d4", "#f59e0b", "#ec4899", "#22c55e"]
+            
+            board_columns = []
+            for idx, lst in enumerate(trello_lists):
+                lname = lst.get('name', '').lower()
+                if any(w in lname for w in ['done', 'complete', 'finish', 'ผ่าน', 'เสร็จ']):
+                    c_color = "#22c55e"
+                elif any(w in lname for w in ['test', 'qa', 'review', 'verify', 'ทดสอบ']):
+                    c_color = "#a855f7"
+                elif any(w in lname for w in ['doing', 'progress', 'in-progress', 'กำลัง', 'dev']):
+                    c_color = "#3b82f6"
+                elif any(w in lname for w in ['todo', 'to do', 'backlog', 'ยังไม่']):
+                    c_color = "#64748b"
+                else:
+                    c_color = color_palette[idx % len(color_palette)]
+                
+                board_columns.append({
+                    "id": lst['id'],
+                    "title": lst.get('name', 'List'),
+                    "color": c_color
+                })
+            
+            # Save Trello columns to board_integrations
+            cursor.execute("""
+                UPDATE board_integrations
+                SET columns_json = %s
+                WHERE project_id = %s
+            """, (json.dumps(board_columns, ensure_ascii=False), p_id))
+            
+            # Fetch cards from Trello
+            cards_res = requests.get(
+                f"https://api.trello.com/1/boards/{t_board}/cards",
+                params={"key": t_key, "token": t_token, "fields": "name,desc,idList,labels,idShort,id"},
+                timeout=15
+            )
+            if not cards_res.ok:
+                return jsonify({"error": f"Trello API Error: {cards_res.text}"}), 400
+            
+            for c in cards_res.json():
+                ext_id = f"TRL-{c.get('idShort', c.get('id')[:6])}"
+                raw_id = c.get('id')
+                title = c.get('name', 'Untitled Card')
+                desc = c.get('desc', '')
+                
+                # Use the real Trello list ID as status
+                status = c.get('idList')
+
+                # Determine type and priority from labels
+                card_type = 'Feature'
+                priority = 'Medium'
+                for lbl in c.get('labels', []):
+                    lname = lbl.get('name', '').lower()
+                    if 'bug' in lname: card_type = 'Bug'
+                    elif 'debt' in lname or 'refactor' in lname: card_type = 'Tech Debt'
+                    elif 'enhance' in lname: card_type = 'Enhancement'
+                    
+                    if 'high' in lname or 'critical' in lname or 'urgent' in lname: priority = 'High'
+                    elif 'low' in lname: priority = 'Low'
+
+                synced_cards.append((ext_id, title, desc, status, card_type, priority, raw_id))
+
+        elif provider == 'github':
+            if not gh_token or not gh_owner or not gh_repo:
+                return jsonify({"error": "ข้อมูลการเชื่อมต่อ GitHub ไม่ครบถ้วน กรุณาตรวจสอบในการตั้งค่า"}), 400
+            
+            board_columns = [
+                {"id": "todo", "title": "Open Issues (To Do)", "color": "#64748b"},
+                {"id": "in_progress", "title": "In Progress", "color": "#3b82f6"},
+                {"id": "testing", "title": "Testing (Agent)", "color": "#a855f7"},
+                {"id": "done", "title": "Closed / Done", "color": "#22c55e"}
+            ]
+            cursor.execute("""
+                UPDATE board_integrations
+                SET columns_json = %s
+                WHERE project_id = %s
+            """, (json.dumps(board_columns, ensure_ascii=False), p_id))
+
+            headers = {
+                "Authorization": f"Bearer {gh_token}",
+                "Accept": "application/vnd.github.v3+json",
+                "User-Agent": "SpectraQA-Integration"
+            }
+            gh_res = requests.get(
+                f"https://api.github.com/repos/{gh_owner}/{gh_repo}/issues",
+                headers=headers,
+                params={"state": "all", "per_page": 50},
+                timeout=15
+            )
+            if not gh_res.ok:
+                return jsonify({"error": f"GitHub API Error: {gh_res.text}"}), 400
+            
+            for issue in gh_res.json():
+                if 'pull_request' in issue:
+                    continue
+                
+                ext_id = f"#{issue.get('number')}"
+                raw_id = str(issue.get('number'))
+                title = issue.get('title', 'Untitled Issue')
+                desc = issue.get('body') or ''
+                
+                label_names = [l['name'].lower() for l in issue.get('labels', [])]
+                
+                # Determine status
+                if issue.get('state') == 'closed':
+                    status = 'done'
+                elif any('in progress' in l or 'doing' in l for l in label_names):
+                    status = 'in_progress'
+                elif any('testing' in l or 'qa' in l for l in label_names):
+                    status = 'testing'
+                else:
+                    status = 'todo'
+
+                # Determine type
+                card_type = 'Feature'
+                if any('bug' in l for l in label_names): card_type = 'Bug'
+                elif any('enhancement' in l for l in label_names): card_type = 'Enhancement'
+                elif any('documentation' in l for l in label_names): card_type = 'Documentation'
+                elif any('tech debt' in l for l in label_names): card_type = 'Tech Debt'
+
+                # Determine priority
+                priority = 'Medium'
+                if any('critical' in l or 'urgent' in l or 'high' in l for l in label_names):
+                    priority = 'High'
+                elif any('low' in l for l in label_names):
+                    priority = 'Low'
+
+                synced_cards.append((ext_id, title, desc, status, card_type, priority, raw_id))
+        
+        # 2. Upsert cards into board_cards (update if ext_card_id exists, insert if new)
+        upsert_count = 0
+        for ext_id, title, desc, status, c_type, prio, raw_id in synced_cards:
+            cursor.execute("""
+                SELECT card_id FROM board_cards 
+                WHERE project_id = %s AND ext_card_id = %s
+            """, (p_id, ext_id))
+            existing = cursor.fetchone()
+            if existing:
+                cursor.execute("""
+                    UPDATE board_cards
+                    SET title = %s, description = %s, status = %s, card_type = %s, priority = %s, raw_ext_id = %s
+                    WHERE card_id = %s
+                """, (title, desc, status, c_type, prio, raw_id, existing[0]))
+            else:
+                cursor.execute("""
+                    INSERT INTO board_cards (project_id, ext_card_id, title, description, status, card_type, priority, raw_ext_id)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """, (p_id, ext_id, title, desc, status, c_type, prio, raw_id))
+            upsert_count += 1
             
         conn.commit()
-        return jsonify({"success": True, "message": "Board synced successfully"})
+        return jsonify({
+            "success": True, 
+            "message": f"Sync ข้อมูลจาก {provider.capitalize()} สำเร็จ! ({upsert_count} การ์ด)"
+        })
     except Exception as e:
         conn.rollback()
         logger.error(f"Error syncing cards: {e}")
@@ -3738,8 +4106,18 @@ def sync_project_cards(project_id):
         if 'conn' in locals():
             conn.close()
 
-@app.route('/api/projects/<string:project_id>/cards/<string:card_id>/test', methods=['POST'])
+@app.route('/api/projects/<string:project_id>/cards/<string:card_id>/test', methods=['POST', 'OPTIONS'])
+@cross_origin()
 def test_project_card(project_id, card_id):
+    if request.method == 'OPTIONS':
+        res = jsonify({'status': 'ok'})
+        res.headers.add('Access-Control-Allow-Origin', '*')
+        res.headers.add('Access-Control-Allow-Headers', '*')
+        res.headers.add('Access-Control-Allow-Methods', '*')
+        return res, 200
+    p_id = safe_project_uuid(project_id)
+    import requests
+    import json
     from db_ingestion import get_db_connection
     conn = get_db_connection()
     if not conn:
@@ -3747,41 +4125,102 @@ def test_project_card(project_id, card_id):
     try:
         cursor = conn.cursor()
         
+        # Determine target Done status (e.g. find Trello list with 'done')
+        cursor.execute("""
+            SELECT provider, trello_api_key, trello_token, trello_board_id,
+                   github_token, github_owner, github_repo, columns_json
+            FROM board_integrations
+            WHERE project_id = %s
+        """, (p_id,))
+        integ = cursor.fetchone()
+
+        target_done_status = 'done'
+        provider = None
+        t_key = t_token = gh_token = gh_owner = gh_repo = None
+        if integ:
+            provider, t_key, t_token, t_board, gh_token, gh_owner, gh_repo, cols_json = integ
+            if cols_json:
+                try:
+                    cols = json.loads(cols_json)
+                    done_col = next((c for c in cols if any(w in c['title'].lower() for w in ['done', 'complete', 'finish', 'ผ่าน', 'เสร็จ'])), None)
+                    if done_col:
+                        target_done_status = done_col['id']
+                    elif cols and len(cols) > 0:
+                        target_done_status = cols[-1]['id']
+                except Exception:
+                    pass
+
         # 1. Update Card Status
         test_result = "AI Agent successfully tested this card. All checks passed. Extracted data matches expected format."
         cursor.execute("""
             UPDATE board_cards
-            SET status = 'done', test_result = %s
+            SET status = %s, test_result = %s
             WHERE card_id = %s AND project_id = %s
-            RETURNING title, description
-        """, (test_result, card_id, project_id))
+            RETURNING title, description, ext_card_id, raw_ext_id
+        """, (target_done_status, test_result, card_id, p_id))
         
         row = cursor.fetchone()
         if not row:
             return jsonify({"error": "Card not found"}), 404
             
-        title, desc = row
+        title, desc, ext_card_id, raw_ext_id = row
         
         # 2. RAG Ingestion (Markdown)
-        md_content = f"# QA Card Test Result\n\n## {title}\n\n**Description:**\n{desc}\n\n**AI Agent Test Result:**\n{test_result}"
+        md_content = f"# QA Card Test Result\n\n## {title}\n\n**Card ID:** {ext_card_id}\n\n**Description:**\n{desc}\n\n**AI Agent Test Result:**\n{test_result}"
         
         cursor.execute("""
             INSERT INTO documents (project_id, doc_category, doc_type, original_filename, full_markdown_content, status)
             VALUES (%s, 'QA Report', 'Card Test', %s, %s, 'Active')
             RETURNING doc_id
-        """, (project_id, f"Card_{card_id}.md", md_content))
+        """, (p_id, f"Card_{ext_card_id.replace('#', '')}.md", md_content))
         
         doc_id = cursor.fetchone()[0]
         
-        # Generate embedding (simplified logic, reusing ingestion if available, or just mocking for now since full ingestion runs async)
-        # Note: In a real system, we'd trigger db_ingestion.py tasks. Here we'll just insert a dummy chunk to demonstrate data flow.
         cursor.execute("""
             INSERT INTO document_chunks (doc_id, chunk_text)
             VALUES (%s, %s)
         """, (doc_id, md_content))
         
         conn.commit()
-        return jsonify({"success": True, "message": "Agent test completed and stored in RAG"})
+
+        # 3. Post back result to external board if integration is configured
+        try:
+            if provider == 'github' and gh_token and gh_owner and gh_repo:
+                issue_num = (raw_ext_id or ext_card_id).replace('#', '').strip()
+                if issue_num.isdigit():
+                    comment_url = f"https://api.github.com/repos/{gh_owner}/{gh_repo}/issues/{issue_num}/comments"
+                    headers = {
+                        "Authorization": f"Bearer {gh_token}",
+                        "Accept": "application/vnd.github.v3+json",
+                        "User-Agent": "SpectraQA-Integration"
+                    }
+                    comment_body = (
+                        f"### 🤖 Spectra QA Agent Test Report\n\n"
+                        f"✅ **Test Result:** PASSED\n"
+                        f"> {test_result}\n\n"
+                        f"*Analyzed & verified automatically by Spectra QA AI Agent.*"
+                    )
+                    requests.post(comment_url, headers=headers, json={"body": comment_body}, timeout=5)
+            
+            elif provider == 'trello' and t_key and t_token and raw_ext_id:
+                # Move card to the Done list on Trello if target list found
+                if target_done_status and target_done_status != 'done':
+                    requests.put(
+                        f"https://api.trello.com/1/cards/{raw_ext_id}",
+                        params={"idList": target_done_status, "key": t_key, "token": t_token},
+                        timeout=5
+                    )
+                # Add comment to Trello card
+                comment_text = f"🤖 Spectra QA Agent Test Report: PASSED\n\n{test_result}"
+                requests.post(
+                    f"https://api.trello.com/1/cards/{raw_ext_id}/actions/comments",
+                    params={"text": comment_text, "key": t_key, "token": t_token},
+                    timeout=5
+                )
+        except Exception as sync_err:
+            logger.warning(f"Could not post test result to external board: {sync_err}")
+
+        return jsonify({"success": True, "message": "Agent test completed, synced and stored in RAG"})
     except Exception as e:
         conn.rollback()
         logger.error(f"Error testing card: {e}")

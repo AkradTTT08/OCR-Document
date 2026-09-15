@@ -94,9 +94,9 @@
   let activeView = "ocr"; // 'ocr' | 'kb' | 'skills' | 'qa_consult'
 
   // Reactive statement to enforce default view based on role
-  $: if ($authRole === 'user' && !['qa_consult', 'qa_performance', 'qa_research', 'qa_security', 'qa_automate', 'qa_doc_creation', 'master_agent', 'workflow_builder'].includes(activeView)) {
+  $: if ($authRole === 'user' && !['qa_consult', 'qa_performance', 'qa_research', 'qa_security', 'qa_automate', 'qa_doc_creation', 'qa_board', 'master_agent', 'workflow_builder'].includes(activeView)) {
     activeView = 'qa_consult';
-  } else if ($authRole === 'admin' && ['qa_consult', 'qa_performance', 'qa_research', 'qa_security', 'qa_automate', 'qa_doc_creation', 'master_agent', 'workflow_builder'].includes(activeView)) {
+  } else if ($authRole === 'admin' && ['qa_consult', 'qa_performance', 'qa_research', 'qa_security', 'qa_automate', 'qa_doc_creation', 'qa_board', 'master_agent', 'workflow_builder'].includes(activeView)) {
     activeView = 'project_management';
   }
 
