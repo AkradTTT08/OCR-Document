@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Spectra QA Sniffer</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+    html, body {
+      width: 480px;
+      height: 560px;
+      background: #0f172a;
+      color: #f8fafc;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      overflow: hidden;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      padding-bottom: 12px;
+      margin-bottom: 12px;
+    }
+    .title {
+      font-size: 15px;
+      font-weight: 700;
+      background: linear-gradient(135deg, #ffffff 0%, #c084fc 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .badge {
+      font-size: 10px;
+      background: rgba(139, 92, 246, 0.2);
+      color: #c084fc;
+      padding: 2px 8px;
+      border-radius: 12px;
+      border: 1px solid rgba(139, 92, 246, 0.4);
+    }
+    .controls {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .btn {
+      flex: 1;
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: all 0.2s;
+    }
+    .btn-record { background: #ef4444; color: white; }
+    .btn-record.recording { background: #22c55e; }
+    .btn-clear { background: rgba(255, 255, 255, 0.05); color: #cbd5e1; border: 1px solid rgba(255, 255, 255, 0.1); }
+    .btn-sync { background: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%); color: white; width: 100%; margin-top: 10px; }
+    
+    .api-list {
+      flex: 1;
+      overflow-y: auto;
+      background: rgba(0, 0, 0, 0.3);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 8px;
+      padding: 6px;
+    }
+    .api-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+      padding: 8px 10px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      cursor: pointer;
+      border-radius: 6px;
+      transition: background 0.15s;
+    }
+    .api-item:hover {
+      background: rgba(139, 92, 246, 0.12);
+    }
+    .method {
+      font-weight: 700;
+      padding: 2px 5px;
+      border-radius: 4px;
+      font-size: 9px;
+    }
+    .method.GET { background: rgba(59, 130, 246, 0.2); color: #60a5fa; }
+    .method.POST { background: rgba(34, 197, 94, 0.2); color: #4ade80; }
+    .method.PUT { background: rgba(234, 179, 8, 0.2); color: #facc15; }
+    .method.DELETE { background: rgba(239, 68, 68, 0.2); color: #fca5a5; }
+    .method.OPTIONS { background: rgba(148, 163, 184, 0.2); color: #94a3b8; }
+    .url {
+      flex: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-family: monospace;
+      color: #e2e8f0;
+    }
+    .status { font-weight: 600; font-size: 10px; padding: 2px 6px; border-radius: 4px; }
+    .status.ok { color: #4ade80; background: rgba(34, 197, 94, 0.1); }
+    .status.err { color: #f87171; background: rgba(239, 68, 68, 0.15); }
+
+    .empty-text {
+      text-align: center;
+      color: #64748b;
+      font-size: 12px;
+      margin-top: 80px;
+    }
+    .footer-settings {
+      margin-top: 10px;
+      font-size: 11px;
+      color: #94a3b8;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    input[type="text"] {
+      background: rgba(0,0,0,0.4);
+      border: 1px solid rgba(255,255,255,0.1);
+      color: white;
+      padding: 6px 10px;
+      border-radius: 6px;
+      width: 100%;
+      font-size: 11px;
+    }
+
+    /* Inspector Drawer Panel */
+    .inspector-panel {
+      position: absolute;
+      inset: 0;
+      background: #0f172a;
+      z-index: 10;
+      display: flex;
+      flex-direction: column;
+      padding: 16px;
+      transform: translateX(100%);
+      transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .inspector-panel.open {
+      transform: translateX(0);
+    }
+    .insp-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+    }
+    .btn-back-insp {
+      background: rgba(255,255,255,0.08);
+      border: none;
+      color: white;
+      padding: 4px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 11px;
+    }
+    .insp-tabs {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+    .insp-tab-btn {
+      flex: 1;
+      padding: 6px 8px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      border: 1px solid rgba(255,255,255,0.1);
+      background: transparent;
+      color: #94a3b8;
+      cursor: pointer;
+    }
+    .insp-tab-btn.active {
+      background: rgba(139, 92, 246, 0.2);
+      border-color: rgba(139, 92, 246, 0.4);
+      color: white;
+    }
+    .insp-body {
+      flex: 1;
+      background: rgba(0,0,0,0.5);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 8px;
+      padding: 10px;
+      overflow-y: auto;
+      font-family: monospace;
+      font-size: 11px;
+      color: #cbd5e1;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .insp-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .btn-action-copy {
+      flex: 1;
+      padding: 8px;
+      font-size: 11px;
+      font-weight: 600;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      transition: all 0.2s;
+    }
+    .btn-copy-curl { background: linear-gradient(135deg, #a855f7 0%, #7c3aed 100%); color: white; }
+    .btn-copy-resp { background: rgba(59, 130, 246, 0.2); border: 1px solid rgba(59, 130, 246, 0.4); color: #60a5fa; }
+
+    /* Custom Glassmorphic Alert Modal Overlay */
+    .modal-backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(10, 15, 30, 0.82);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.25s ease-in-out;
+    }
+    .modal-backdrop.show {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .modal-card {
+      width: 86%;
+      background: linear-gradient(145deg, rgba(30, 41, 59, 0.95), rgba(15, 23, 42, 0.98));
+      border: 1px solid rgba(139, 92, 246, 0.35);
+      border-radius: 16px;
+      padding: 22px 18px;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.7), 0 0 25px rgba(139, 92, 246, 0.25);
+      text-align: center;
+      transform: scale(0.88) translateY(12px);
+      transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+    .modal-backdrop.show .modal-card {
+      transform: scale(1) translateY(0);
+    }
+    .modal-icon-badge {
+      width: 48px;
+      height: 48px;
+      margin: 0 auto 12px auto;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+      transition: all 0.3s ease;
+    }
+    .modal-icon-badge.error {
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid rgba(239, 68, 68, 0.4);
+      box-shadow: 0 0 16px rgba(239, 68, 68, 0.3);
+    }
+    .modal-icon-badge.success {
+      background: rgba(34, 197, 94, 0.15);
+      border: 1px solid rgba(34, 197, 94, 0.4);
+      box-shadow: 0 0 16px rgba(34, 197, 94, 0.3);
+    }
+    .modal-icon-badge.info {
+      background: rgba(59, 130, 246, 0.15);
+      border: 1px solid rgba(59, 130, 246, 0.4);
+      box-shadow: 0 0 16px rgba(59, 130, 246, 0.3);
+    }
+    .modal-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: #f8fafc;
+      margin-bottom: 8px;
+    }
+    .modal-message {
+      font-size: 11.5px;
+      color: #cbd5e1;
+      line-height: 1.5;
+      margin-bottom: 18px;
+      word-break: break-word;
+      background: rgba(0, 0, 0, 0.35);
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      max-height: 120px;
+      overflow-y: auto;
+      text-align: center;
+    }
+    .modal-footer {
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+    }
+    .btn-modal-close {
+      width: 100%;
+      padding: 9px 16px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 700;
+      border: none;
+      cursor: pointer;
+      background: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%);
+      color: white;
+      box-shadow: 0 4px 14px rgba(139, 92, 246, 0.4);
+      transition: all 0.2s ease;
+    }
+    .btn-modal-close:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 18px rgba(139, 92, 246, 0.6);
+    }
+  </style>
+</head>
+<body>
+  <!-- Main View -->
+  <div class="header">
+    <div style="display: flex; align-items: center; gap: 8px;">
+      <img src="icon48.png" width="24" height="24" style="border-radius: 6px;" alt="Spectra QA Logo" />
+      <span class="title">Spectra QA Sniffer</span>
+    </div>
+    <span class="badge" id="count-badge">0 APIs</span>
+  </div>
+
+  <div class="controls">
+    <button class="btn btn-record" id="toggle-record-btn">
+      <span id="record-icon">🔴</span> <span id="record-text">เริ่มบันทึก Network</span>
+    </button>
+    <button class="btn btn-clear" id="clear-btn">ล้างรายการ</button>
+  </div>
+
+  <div class="api-list" id="api-list-container">
+    <div class="empty-text">กดปุ่ม "เริ่มบันทึก Network"<br>และทดลองกดเล่นหน้าเว็บเพื่อแกะ API</div>
+  </div>
+
+  <div class="footer-settings">
+    <div style="display: flex; gap: 4px; flex-direction: column;">
+      <label for="project-select" style="font-size: 10.5px; color: #cbd5e1; font-weight: 600;">📁 เลือกระบุ Project ปลายทาง:</label>
+      <select id="project-select" style="background: rgba(15, 23, 42, 0.9); border: 1px solid rgba(139, 92, 246, 0.4); color: #c084fc; padding: 6px 8px; border-radius: 6px; font-size: 11px; outline: none; cursor: pointer;">
+        <option value="1">TIFFA Cargo Import System (Default)</option>
+      </select>
+    </div>
+    <div style="margin-top: 4px;">Target Backend Host:</div>
+    <input type="text" id="backend-url-input" value="http://localhost:5000" placeholder="http://localhost:5000" />
+    <button class="btn btn-sync" id="sync-btn">📥 Sync เข้าสู่ Spectra QA Repository</button>
+  </div>
+
+  <!-- Inspector Drawer (DevTools Network Inspector Style) -->
+  <div class="inspector-panel" id="inspector-panel">
+    <div class="insp-header">
+      <button class="btn-back-insp" id="insp-back-btn">← ย้อนกลับ</button>
+      <span id="insp-title" style="font-size: 11px; font-weight: bold; color: #c084fc;">Network Inspector</span>
+    </div>
+
+    <div class="insp-tabs">
+      <button class="insp-tab-btn active" id="tab-resp-btn">📄 Response Body</button>
+      <button class="insp-tab-btn" id="tab-curl-btn">🐚 cURL (bash)</button>
+    </div>
+
+    <div class="insp-body" id="insp-body-content">
+      Select an API request to view details.
+    </div>
+
+    <div class="insp-actions">
+      <button class="btn-action-copy btn-copy-curl" id="btn-copy-curl">🐚 Copy cURL (bash)</button>
+      <button class="btn-action-copy btn-copy-resp" id="btn-copy-resp">📋 Copy Response</button>
+    </div>
+  </div>
+
+  <!-- Custom Cyberpunk Glassmorphic Alert Modal -->
+  <div class="modal-backdrop" id="custom-modal">
+    <div class="modal-card">
+      <div class="modal-icon-badge error" id="modal-icon-badge">
+        <span id="modal-icon-symbol">❌</span>
+      </div>
+      <h3 class="modal-title" id="modal-title">เกิดข้อผิดพลาด</h3>
+      <div class="modal-message" id="modal-message">รายละเอียดข้อผิดพลาด...</div>
+      <div class="modal-footer">
+        <button class="btn-modal-close" id="modal-close-btn">ตกลง</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

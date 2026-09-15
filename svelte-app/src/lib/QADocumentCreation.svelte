@@ -344,7 +344,11 @@
     gap: 20px;
     height: 100%;
     overflow-y: auto;
-    padding: 10px;
+    padding: 20px 24px;
+    max-width: 100%;
+    margin: 0;
+    width: 100%;
+    box-sizing: border-box;
   }
   
   .glass-panel {

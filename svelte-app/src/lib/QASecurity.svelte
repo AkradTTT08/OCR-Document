@@ -242,6 +242,11 @@
     flex-direction: column;
     gap: 24px;
     height: 100%;
+    padding: 20px 24px;
+    box-sizing: border-box;
+    max-width: 100%;
+    margin: 0;
+    width: 100%;
     animation: fadeIn 0.4s ease-out;
   }
 

@@ -55,6 +55,35 @@
     markdown_text: ''
   };
 
+  // --- AI Feedback & Vision AI State ---
+  let feedbackRating = 5;
+  let feedbackCorrection = "";
+  let visionImageFile = null;
+  let visionImagePreview = null;
+  let visionDiagramType = "wireframe";
+  let isAnalyzingVision = false;
+  let visionResult = null;
+
+  async function submitAIFeedback() {
+    try {
+      const res = await fetch("http://127.0.0.1:5000/api/kb/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          rating: feedbackRating,
+          correction: feedbackCorrection,
+          context_id: docDetail ? docDetail.document.id : "general"
+        })
+      });
+      if (res.ok) {
+        toast("🧠 บันทึก AI Feedback & Self-Learning Memory เรียบร้อยแล้ว!", "success");
+        feedbackCorrection = "";
+      }
+    } catch (e) {
+      toast("เกิดข้อผิดพลาดในการบันทึก AI Feedback", "error");
+    }
+  }
+
   const categorySelectOptions = [
     { value: 'Reference', label: 'เอกสารอ้างอิง (Reference)', icon: '📚' },
     { value: 'TestCase', label: 'TestCase', icon: '🧪' },
@@ -802,6 +831,43 @@
                 {@html parseMarkdownToHtml(docDetail.document.content)}
               </div>
             {/if}
+
+            <!-- 🧠 AI Feedback Loop & Memory Tuning Widget -->
+            <div class="ai-feedback-box" style="margin-top: 24px; padding: 18px 20px; background: rgba(139, 92, 246, 0.08); border: 1px solid rgba(139, 92, 246, 0.3); border-radius: 12px;">
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px;">
+                <span style="font-size: 20px;">🧠</span>
+                <div>
+                  <div style="font-size: 14px; font-weight: 700; color: #f3e8ff;">AI Feedback & Self-Learning Memory Tuning</div>
+                  <div style="font-size: 12px; color: #94a3b8;">ให้คะแนนหรือระบุข้อเสนอแนะในการปรับปรุงบริบทเพื่อเทรน AI Agent ประจำโปรเจกต์</div>
+                </div>
+              </div>
+              
+              <div style="display: flex; gap: 12px; align-items: center; margin-bottom: 12px;">
+                <span style="font-size: 12px; color: #cbd5e1;">ให้คะแนนความแม่นยำ:</span>
+                <div class="star-rating" style="display: flex; gap: 4px; cursor: pointer;">
+                  {#each [1,2,3,4,5] as star}
+                    <span 
+                      style="font-size: 18px; color: {star <= feedbackRating ? '#facc15' : '#475569'}; transition: color 0.2s;"
+                      on:click={() => feedbackRating = star}
+                    >★</span>
+                  {/each}
+                </div>
+              </div>
+
+              <textarea 
+                bind:value={feedbackCorrection} 
+                placeholder="ระบุข้อความแก้ไขเพิ่มเติมหรือข้อมูลเฉพาะองค์กร (เพื่อส่งกลับไปปรับปรุง Prompt & Context Memory ของ RAG)..." 
+                style="width: 100%; height: 70px; background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.12); border-radius: 8px; color: white; padding: 10px 12px; font-size: 12px; resize: vertical; margin-bottom: 10px;"
+              ></textarea>
+
+              <button 
+                type="button"
+                style="background: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%); color: white; border: none; padding: 8px 16px; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;"
+                on:click={submitAIFeedback}
+              >
+                <span>✨</span> ส่งคะแนน & บันทึก Self-Learning Memory
+              </button>
+            </div>
           {:else}
             <!-- Edit Mode -->
             <div style="margin-bottom: 12px; display: flex; justify-content: flex-end; gap: 8px;">

@@ -21,14 +21,21 @@
   import QASecurity from "./lib/QASecurity.svelte";
   import QATestAutomation from "./lib/QATestAutomation.svelte";
   import QADocumentCreation from "./lib/QADocumentCreation.svelte";
+  import QABoardCard from "./lib/QABoardCard.svelte";
   import MasterAgentUI from "./lib/MasterAgentUI.svelte";
   import WorkflowBuilder from "./lib/WorkflowBuilder.svelte";
   import TutorialOverlay from "./lib/TutorialOverlay.svelte";
   import LegalModal from "./lib/LegalModal.svelte";
+  import NotificationDropdown from "./lib/NotificationDropdown.svelte";
+  import NotificationConfigModal from "./lib/NotificationConfigModal.svelte";
+  import { unreadCount } from "./lib/notificationStore.js";
   import { showLogin, authRole, authUser, authDisplayName, authAvatar, logout } from "./lib/authStore.js";
   import { globalSearchQuery, triggerGlobalSearch } from "./lib/globalStore.js";
   import { onMount } from "svelte";
   import { toast } from "./lib/toastStore.js";
+
+  let showNotifications = false;
+  let showNotificationConfigModal = false;
 
   let sidebarProjects = [];
 
@@ -89,8 +96,8 @@
   // Reactive statement to enforce default view based on role
   $: if ($authRole === 'user' && !['qa_consult', 'qa_performance', 'qa_research', 'qa_security', 'qa_automate', 'qa_doc_creation', 'master_agent', 'workflow_builder'].includes(activeView)) {
     activeView = 'qa_consult';
-  } else if ($authRole === 'admin' && activeView === 'qa_consult') {
-    activeView = 'ocr';
+  } else if ($authRole === 'admin' && ['qa_consult', 'qa_performance', 'qa_research', 'qa_security', 'qa_automate', 'qa_doc_creation', 'master_agent', 'workflow_builder'].includes(activeView)) {
+    activeView = 'project_management';
   }
 
   async function handleResult(event) {
@@ -115,10 +122,20 @@
   let showMyProfileModal = false;
   let showTutorial = false;
   let legalModalType = null;
-  let myProfileFormData = { display_name: '', password: '' };
+  let myProfileFormData = { 
+    display_name: '', 
+    password: '',
+    phone: '',
+    department: '',
+    github_url: '',
+    linkedin_url: '',
+    line_id: ''
+  };
   let showMyPassword = false;
   let myProfileAvatarFile = null;
   let myProfileAvatarPreview = null;
+  let isDragOverAvatar = false;
+  let activeProfileTab = 'general';
   
   function getUserIdFromToken() {
       const token = localStorage.getItem('jwt_token');
@@ -131,16 +148,73 @@
       } catch(e) { return null; }
   }
   
-  function openMyProfileModal() {
+  async function openMyProfileModal() {
       showProfileMenu = false;
       let currentDisplayName = localStorage.getItem('auth_display_name') || localStorage.getItem('auth_user');
       let currentAvatar = localStorage.getItem('auth_avatar_path');
-      myProfileFormData = { display_name: currentDisplayName, password: '' };
+      myProfileFormData = { 
+        display_name: currentDisplayName, 
+        password: '',
+        phone: '',
+        department: '',
+        github_url: '',
+        linkedin_url: '',
+        line_id: ''
+      };
       myProfileAvatarFile = null;
       myProfileAvatarPreview = currentAvatar ? `http://localhost:5000${currentAvatar}` : null;
+      activeProfileTab = 'general';
+
+      const userId = getUserIdFromToken();
+      if (userId) {
+        try {
+          const token = localStorage.getItem('jwt_token');
+          const res = await fetch(`http://localhost:5000/api/users/${userId}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data.user) {
+              myProfileFormData.display_name = data.user.display_name || currentDisplayName;
+              myProfileFormData.phone = data.user.phone || '';
+              myProfileFormData.department = data.user.department || '';
+              myProfileFormData.github_url = data.user.github_url || '';
+              myProfileFormData.linkedin_url = data.user.linkedin_url || '';
+              myProfileFormData.line_id = data.user.line_id || '';
+              if (data.user.avatar_path) {
+                myProfileAvatarPreview = `http://localhost:5000${data.user.avatar_path}`;
+              }
+            }
+          }
+        } catch (e) {
+          console.error('Failed to load user detail', e);
+        }
+      }
+
       showMyProfileModal = true;
   }
   
+  function removeMyAvatar() {
+      myProfileAvatarFile = null;
+      myProfileAvatarPreview = null;
+      toast('ลบรูปภาพโปรไฟล์เรียบร้อยแล้ว', 'info');
+  }
+
+  function handleAvatarDrop(e) {
+      e.preventDefault();
+      isDragOverAvatar = false;
+      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]) {
+          const file = e.dataTransfer.files[0];
+          if (file.type.startsWith('image/')) {
+              myProfileAvatarFile = file;
+              myProfileAvatarPreview = URL.createObjectURL(file);
+              toast('เลือกรูปภาพสำเร็จแล้ว', 'success');
+          } else {
+              toast('กรุณาเลือกไฟล์รูปภาพเท่านั้น', 'warning');
+          }
+      }
+  }
+
   async function saveMyProfile() {
       const userId = getUserIdFromToken();
       if (!userId) {
@@ -179,8 +253,8 @@
               if (newAvatarPath) {
                   localStorage.setItem('auth_avatar_path', newAvatarPath);
               }
-              toast('Profile updated successfully!', 'success');
-              setTimeout(() => { window.location.reload(); }, 1000);
+              toast('บันทึกข้อมูลส่วนตัวเรียบร้อยแล้ว!', 'success');
+              setTimeout(() => { window.location.reload(); }, 800);
           } else {
               toast(data.error || 'Failed to update profile', 'error');
           }
@@ -340,18 +414,6 @@
             Token Usage
           </button>
 
-          <div style="height: 1px; background: var(--glass-border); margin: 8px 0;"></div>
-
-          <button class="nav-item" style="color: #c084fc;" class:active={activeView === "master_agent"} on:click={() => (activeView = "master_agent")}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M12 2a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h6z"></path><path d="M22 10v6a2 2 0 0 1-2 2h-6l-4 4v-4H6a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
-            Master Agent 🤖
-          </button>
-
-          <button class="nav-item" style="color: #34d399;" class:active={activeView === "workflow_builder"} on:click={() => (activeView = "workflow_builder")}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line></svg>
-            AI Workflow Builder 🔗
-          </button>
-
         {:else if $authRole === 'user'}
           <button class="nav-item" class:active={activeView === "qa_consult"} on:click={() => (activeView = "qa_consult")}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
@@ -376,6 +438,10 @@
           <button class="nav-item" class:active={activeView === "qa_doc_creation"} on:click={() => (activeView = "qa_doc_creation")}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
             QA Document Creation
+          </button>
+          <button class="nav-item" class:active={activeView === "qa_board"} on:click={() => (activeView = "qa_board")}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="9" y1="3" x2="9" y2="21"></line><line x1="15" y1="3" x2="15" y2="21"></line></svg>
+            QA Board Card
           </button>
           
           <div style="height: 1px; background: var(--glass-border); margin: 8px 0;"></div>
@@ -513,14 +579,24 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
             <input type="text" bind:value={$globalSearchQuery} on:keydown={onGlobalSearchKey} placeholder="ค้นหาเอกสารหรือวิเคราะห์..." />
           </div>
-          <button class="icon-btn" on:click={() => {
-            if ($globalSearchQuery.trim()) {
-              activeView = 'kb';
-              triggerGlobalSearch.set(true);
-            }
-          }}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 01-3.46 0"></path></svg>
-          </button>
+          <div style="position: relative;">
+            <button class="icon-btn" on:click={() => showNotifications = !showNotifications} title="การแจ้งเตือน">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 01-3.46 0"></path></svg>
+              {#if $unreadCount > 0}
+                <span class="noti-badge-count">{$unreadCount}</span>
+              {/if}
+            </button>
+
+            {#if showNotifications}
+              <NotificationDropdown 
+                on:close={() => showNotifications = false}
+                on:navigate={(e) => {
+                  activeView = e.detail.view;
+                  showNotifications = false;
+                }}
+              />
+            {/if}
+          </div>
           <div class="status-badge" class:error={!systemReady}>
             <span class="dot"></span> {systemReady ? 'System Ready' : 'System Unavailable'}
           </div>
@@ -546,6 +622,10 @@
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
                   Profile
                 </button>
+                <button class="dropdown-item" on:click|stopPropagation={() => { showProfileMenu = false; showNotificationConfigModal = true; }}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
+                  CI/CD Webhooks Config
+                </button>
                 <button class="dropdown-item logout-btn" on:click|stopPropagation={doLogout}>
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
                   Logout
@@ -557,7 +637,7 @@
       </header>
 
       <!-- Content Area -->
-      <div class="content-scroll" id="main-content" class:no-padding={['kb', 'ocr', 'qa_consult', 'qa_member', 'qa_performance', 'qa_research', 'qa_automate', 'master_agent', 'workflow_builder'].includes(activeView)}>
+      <div class="content-scroll" id="main-content" class:no-padding={['kb', 'ocr', 'qa_consult', 'qa_member', 'qa_performance', 'qa_research', 'qa_automate', 'qa_board', 'master_agent', 'workflow_builder'].includes(activeView)}>
         {#key activeView}
           <div class="view-wrapper" in:fade="{{ duration: 300, delay: 150 }}">
             {#if activeView === "ocr" && $authRole === "admin"}
@@ -595,6 +675,8 @@
               <QATestAutomation />
             {:else if activeView === "qa_doc_creation"}
               <QADocumentCreation />
+            {:else if activeView === "qa_board"}
+              <QABoardCard />
             {:else if activeView === "master_agent"}
               <MasterAgentUI />
             {:else if activeView === "workflow_builder"}
@@ -633,57 +715,166 @@
   <LegalModal type={legalModalType} on:close={() => legalModalType = null} />
 {/if}
 
+<!-- Notification Config Modal -->
+<NotificationConfigModal bind:showModal={showNotificationConfigModal} />
+
 {#if showMyProfileModal}
-<div class="modal-backdrop">
-    <div class="modal-content glass-card">
-        <button class="close-btn" on:click={() => showMyProfileModal = false}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+<div class="modal-backdrop" transition:fade={{ duration: 200 }}>
+    <div class="modal-content profile-modal-card glass-panel" in:scale={{ start: 0.9, duration: 250 }}>
+        <button class="close-btn" on:click={() => showMyProfileModal = false} title="ปิด (Esc)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="18" height="18"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
         </button>
         
-        <h2 class="modal-title">แก้ไขข้อมูลส่วนตัว</h2>
-        
-        <div class="avatar-upload-container">
-            <div class="avatar-preview">
+        <div class="profile-modal-header">
+            <h2 class="modal-title">👤 แก้ไขข้อมูลส่วนตัว & โปรไฟล์</h2>
+            <p class="modal-subtitle">จัดการข้อมูลส่วนตัว รูปภาพโปรไฟล์ ช่องทางติดต่อ และการเข้าถึงของบัญชี</p>
+        </div>
+
+        <!-- Avatar Upload Area -->
+        <div class="avatar-hero-container">
+            <!-- svelte-ignore a11y-click-events-have-key-events -->
+            <div 
+              class="avatar-hero-circle" 
+              class:drag-over={isDragOverAvatar}
+              on:dragover|preventDefault={() => isDragOverAvatar = true}
+              on:dragleave|preventDefault={() => isDragOverAvatar = false}
+              on:drop|preventDefault={handleAvatarDrop}
+              on:click={() => document.getElementById('my_profile_avatar_input').click()}
+              title="คลิกเพื่อเปลี่ยนรูป หรือลากวางไฟล์รูปภาพตรงนี้"
+            >
                 {#if myProfileAvatarPreview}
-                    <img src={myProfileAvatarPreview} alt="Preview" />
+                    <img src={myProfileAvatarPreview} alt="Preview Avatar" />
                 {:else}
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+                    <div class="avatar-fallback-text">
+                        {$authDisplayName ? $authDisplayName.charAt(0).toUpperCase() : ($authUser ? $authUser.charAt(0).toUpperCase() : 'A')}
+                    </div>
+                {/if}
+                
+                <div class="avatar-hover-overlay">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
+                    <span>เปลี่ยนรูปภาพ</span>
+                </div>
+                <div class="camera-badge" title="อัปโหลดรูปภาพ">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
+                </div>
+            </div>
+
+            <input 
+              type="file" 
+              id="my_profile_avatar_input" 
+              accept="image/*" 
+              style="display: none;" 
+              on:change={(e) => {
+                  const file = e.target.files[0];
+                  if (file) {
+                      myProfileAvatarFile = file;
+                      myProfileAvatarPreview = URL.createObjectURL(file);
+                      toast('เลือกรูปภาพใหม่สำเร็จ', 'success');
+                  }
+              }} 
+            />
+
+            <div class="avatar-controls">
+                <button class="btn-avatar-action upload" type="button" on:click={() => document.getElementById('my_profile_avatar_input').click()}>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                    อัปโหลดรูปภาพใหม่
+                </button>
+
+                {#if myProfileAvatarPreview}
+                    <button class="btn-avatar-action remove" type="button" on:click={removeMyAvatar}>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                        ลบรูปโปรไฟล์
+                    </button>
                 {/if}
             </div>
-            <div class="upload-btn-wrapper">
-                <button class="btn-secondary btn-sm" type="button">เปลี่ยนรูปโปรไฟล์</button>
-                <input type="file" accept="image/*" on:change={(e) => {
-                    const file = e.target.files[0];
-                    if (file) {
-                        myProfileAvatarFile = file;
-                        myProfileAvatarPreview = URL.createObjectURL(file);
-                    }
-                }} />
-            </div>
+            <span class="drag-hint-text">รองรับไฟล์ JPG, PNG, WEBP (คลิกหรือลากวางรูปภาพ)</span>
         </div>
-        
-        <div class="form-group">
-            <label for="my_display_name">Display Name</label>
-            <input type="text" id="my_display_name" bind:value={myProfileFormData.display_name} placeholder="e.g. John Doe" />
+
+        <!-- Form Tab Switcher -->
+        <div class="profile-tabs-header">
+            <button class="ptab-btn" class:active={activeProfileTab === 'general'} on:click={() => activeProfileTab = 'general'}>
+                📌 ข้อมูลทั่วไป
+            </button>
+            <button class="ptab-btn" class:active={activeProfileTab === 'social'} on:click={() => activeProfileTab = 'social'}>
+                🌐 โซเชียล & ช่องทางติดต่อ
+            </button>
+            <button class="ptab-btn" class:active={activeProfileTab === 'security'} on:click={() => activeProfileTab = 'security'}>
+                🔒 รหัสผ่าน
+            </button>
         </div>
-        
-        <div class="form-group">
-            <label>Password (ปล่อยว่างหากไม่ต้องการเปลี่ยน)</label>
-            <div style="display: flex; gap: 8px; align-items: center; position: relative;">
-                <input type={showMyPassword ? "text" : "password"} bind:value={myProfileFormData.password} placeholder="••••••••" style="flex: 1; padding-right: 40px;" />
-                <button type="button" class="eye-btn" on:click={() => showMyPassword = !showMyPassword}>
-                    {#if showMyPassword}
-                        <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>
-                    {:else}
-                        <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
-                    {/if}
-                </button>
-            </div>
+
+        <!-- Form Body -->
+        <div class="profile-form-body">
+            {#if activeProfileTab === 'general'}
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="my_display_name">Display Name (ชื่อที่แสดงในระบบ)</label>
+                        <input type="text" id="my_display_name" bind:value={myProfileFormData.display_name} placeholder="เช่น John Doe" />
+                    </div>
+
+                    <div class="form-group">
+                        <label for="my_department">แผนก / ตำแหน่งงาน (Department / Position)</label>
+                        <input type="text" id="my_department" bind:value={myProfileFormData.department} placeholder="เช่น Senior QA Automation Lead" />
+                    </div>
+
+                    <div class="form-group">
+                        <label for="my_phone">เบอร์โทรศัพท์ (Phone Number)</label>
+                        <div class="input-with-icon">
+                            <span class="field-icon">📞</span>
+                            <input type="tel" id="my_phone" bind:value={myProfileFormData.phone} placeholder="081-234-5678" />
+                        </div>
+                    </div>
+                </div>
+
+            {:else if activeProfileTab === 'social'}
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="my_github">GitHub Profile URL</label>
+                        <div class="input-with-icon">
+                            <span class="field-icon">🐙</span>
+                            <input type="url" id="my_github" bind:value={myProfileFormData.github_url} placeholder="https://github.com/username" />
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="my_linkedin">LinkedIn Profile URL</label>
+                        <div class="input-with-icon">
+                            <span class="field-icon">💼</span>
+                            <input type="url" id="my_linkedin" bind:value={myProfileFormData.linkedin_url} placeholder="https://linkedin.com/in/username" />
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="my_line_id">Line ID / Telegram Contact</label>
+                        <div class="input-with-icon">
+                            <span class="field-icon">💬</span>
+                            <input type="text" id="my_line_id" bind:value={myProfileFormData.line_id} placeholder="@line_id / @telegram" />
+                        </div>
+                    </div>
+                </div>
+
+            {:else if activeProfileTab === 'security'}
+                <div class="form-group">
+                    <label>เปลี่ยนรหัสผ่านใหม่ (Password)</label>
+                    <div class="input-with-icon" style="position: relative;">
+                        <span class="field-icon">🔑</span>
+                        <input type={showMyPassword ? "text" : "password"} bind:value={myProfileFormData.password} placeholder="••••••••" style="flex: 1; padding-right: 44px;" />
+                        <button type="button" class="eye-btn" on:click={() => showMyPassword = !showMyPassword} title="ดูรหัสผ่าน">
+                            {#if showMyPassword}
+                                <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>
+                            {:else}
+                                <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                            {/if}
+                        </button>
+                    </div>
+                    <span class="field-hint">* ปล่อยว่างไว้หากไม่ต้องการเปลี่ยนรหัสผ่าน</span>
+                </div>
+            {/if}
         </div>
-        
+
         <div class="modal-actions">
             <button class="btn-secondary" on:click={() => showMyProfileModal = false}>ยกเลิก</button>
-            <button class="btn-primary" on:click={saveMyProfile}>บันทึกข้อมูล</button>
+            <button class="btn-primary" on:click={saveMyProfile}>บันทึกข้อมูลส่วนตัว</button>
         </div>
     </div>
 </div>
@@ -1073,10 +1264,24 @@
     border-color: var(--glass-border-light);
     transform: scale(1.05);
   }
-  .icon-btn::after {
-    content: ''; position: absolute; top: -1px; right: -1px;
-    width: 10px; height: 10px; background: var(--danger); border-radius: 50%;
+  .noti-badge-count {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    background: var(--danger, #f43f5e);
+    color: #ffffff;
+    font-size: 10px;
+    font-weight: 700;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 4px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     border: 2px solid var(--bg-dark);
+    box-shadow: 0 0 8px rgba(244, 63, 94, 0.6);
+    font-family: 'Inter', sans-serif;
   }
 
   .status-badge {
@@ -1324,4 +1529,240 @@
   }
   .btn-secondary:hover { background: rgba(255,255,255,0.1); }
   .btn-sm { padding: 6px 12px; font-size: 13px; }
+
+  /* ── Enhanced Profile Modal Styles ── */
+  .profile-modal-card {
+    max-width: 620px !important;
+    width: 95% !important;
+    padding: 28px 32px !important;
+    background: rgba(15, 23, 42, 0.95) !important;
+    backdrop-filter: blur(24px) !important;
+    border: 1px solid rgba(139, 92, 246, 0.25) !important;
+    box-shadow: 0 25px 60px rgba(0, 0, 0, 0.7), 0 0 30px rgba(139, 92, 246, 0.15) !important;
+    border-radius: 20px !important;
+  }
+  .profile-modal-header {
+    text-align: center;
+    margin-bottom: 20px;
+  }
+  .profile-modal-header .modal-title {
+    font-size: 22px;
+    font-weight: 700;
+    margin: 0 0 6px 0;
+    background: linear-gradient(135deg, #ffffff 0%, #c084fc 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .profile-modal-header .modal-subtitle {
+    font-size: 13px;
+    color: var(--text-muted);
+    margin: 0;
+  }
+
+  /* Avatar Hero Upload Section */
+  .avatar-hero-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 24px;
+    padding: 16px;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px dashed rgba(255, 255, 255, 0.12);
+    border-radius: 16px;
+    transition: all 0.3s ease;
+  }
+  .avatar-hero-container:hover {
+    border-color: rgba(139, 92, 246, 0.3);
+    background: rgba(139, 92, 246, 0.02);
+  }
+  .avatar-hero-circle {
+    position: relative;
+    width: 104px;
+    height: 104px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #1e1b4b 0%, #311b92 100%);
+    border: 3px solid #8b5cf6;
+    box-shadow: 0 8px 24px rgba(139, 92, 246, 0.3);
+    cursor: pointer;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .avatar-hero-circle:hover {
+    transform: scale(1.04);
+    box-shadow: 0 12px 32px rgba(139, 92, 246, 0.45);
+    border-color: #a78bfa;
+  }
+  .avatar-hero-circle.drag-over {
+    border-color: #3b82f6;
+    box-shadow: 0 0 25px rgba(59, 130, 246, 0.6);
+    transform: scale(1.06);
+  }
+  .avatar-hero-circle img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .avatar-fallback-text {
+    font-size: 40px;
+    font-weight: 800;
+    color: #f3e8ff;
+    text-shadow: 0 2px 10px rgba(0,0,0,0.5);
+  }
+  .avatar-hover-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.75);
+    backdrop-filter: blur(2px);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    color: #f3e8ff;
+    font-size: 11px;
+    font-weight: 600;
+    opacity: 0;
+    transition: opacity 0.25s ease;
+  }
+  .avatar-hero-circle:hover .avatar-hover-overlay {
+    opacity: 1;
+  }
+  .camera-badge {
+    position: absolute;
+    bottom: 2px;
+    right: 2px;
+    background: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%);
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    border: 2px solid #0f172a;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+    z-index: 2;
+    transition: transform 0.2s;
+  }
+  .avatar-hero-circle:hover .camera-badge {
+    transform: scale(1.1);
+  }
+  .avatar-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .btn-avatar-action {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 14px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-family: var(--font-th);
+  }
+  .btn-avatar-action.upload {
+    background: rgba(139, 92, 246, 0.15);
+    border: 1px solid rgba(139, 92, 246, 0.35);
+    color: #c084fc;
+  }
+  .btn-avatar-action.upload:hover {
+    background: rgba(139, 92, 246, 0.3);
+    border-color: rgba(139, 92, 246, 0.6);
+    color: #ffffff;
+    transform: translateY(-1px);
+  }
+  .btn-avatar-action.remove {
+    background: rgba(239, 68, 68, 0.12);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    color: #fca5a5;
+  }
+  .btn-avatar-action.remove:hover {
+    background: rgba(239, 68, 68, 0.25);
+    border-color: rgba(239, 68, 68, 0.5);
+    color: #ffffff;
+    transform: translateY(-1px);
+  }
+  .drag-hint-text {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: var(--font-th);
+  }
+
+  /* Profile Tabs Navigation */
+  .profile-tabs-header {
+    display: flex;
+    gap: 6px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    margin-bottom: 20px;
+    padding-bottom: 8px;
+  }
+  .ptab-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    padding: 8px 16px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    border-radius: 10px;
+    transition: all 0.2s ease;
+    font-family: var(--font-th);
+  }
+  .ptab-btn:hover {
+    color: white;
+    background: rgba(255, 255, 255, 0.05);
+  }
+  .ptab-btn.active {
+    color: white;
+    background: rgba(139, 92, 246, 0.2);
+    border: 1px solid rgba(139, 92, 246, 0.4);
+    font-weight: 600;
+    box-shadow: 0 4px 12px rgba(139, 92, 246, 0.15);
+  }
+
+  /* Form Layout & Icon Inputs */
+  .profile-form-body {
+    min-height: 200px;
+  }
+  .form-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+  .form-grid .form-group:first-child {
+    grid-column: 1 / -1;
+  }
+  .input-with-icon {
+    position: relative;
+    display: flex;
+    align-items: center;
+    width: 100%;
+  }
+  .field-icon {
+    position: absolute;
+    left: 14px;
+    font-size: 15px;
+    pointer-events: none;
+    z-index: 1;
+  }
+  .input-with-icon input {
+    padding-left: 42px !important;
+    width: 100%;
+  }
+  .field-hint {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 4px;
+    display: block;
+    font-family: var(--font-th);
+  }
 </style>
+

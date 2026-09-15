@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <rect width="100" height="100" rx="20" fill="#0f172a" />
+  
+  <!-- Light beam entering -->
+  <line x1="5" y1="70" x2="35" y2="55" stroke="#ffffff" stroke-width="6" stroke-opacity="0.9" stroke-linecap="round"/>
+  
+  <!-- Refracted beams (Spectrum) -->
+  <line x1="60" y1="50" x2="95" y2="25" stroke="#ef4444" stroke-width="6" stroke-linecap="round"/>
+  <line x1="60" y1="50" x2="95" y2="40" stroke="#f59e0b" stroke-width="6" stroke-linecap="round"/>
+  <line x1="60" y1="50" x2="95" y2="55" stroke="#10b981" stroke-width="6" stroke-linecap="round"/>
+  <line x1="60" y1="50" x2="95" y2="70" stroke="#3b82f6" stroke-width="6" stroke-linecap="round"/>
+  <line x1="60" y1="50" x2="95" y2="85" stroke="#8b5cf6" stroke-width="6" stroke-linecap="round"/>
+
+  <!-- Prism Triangle -->
+  <polygon points="50,25 25,75 75,75" fill="#e2e8f0" fill-opacity="0.25" stroke="#ffffff" stroke-width="3" stroke-linejoin="round"/>
+</svg>
