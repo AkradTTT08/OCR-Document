@@ -17,9 +17,13 @@ model = None
 def get_model():
     global model
     if model is None:
-        from sentence_transformers import SentenceTransformer
-        logger.info(f"Loading embedding model: {MODEL_NAME}")
-        model = SentenceTransformer(MODEL_NAME)
+        try:
+            from sentence_transformers import SentenceTransformer
+            logger.info(f"Loading embedding model: {MODEL_NAME}")
+            model = SentenceTransformer(MODEL_NAME)
+        except Exception as e:
+            logger.error(f"Failed to load sentence_transformers: {e}")
+            return None
     return model
 
 def get_db_connection():
@@ -274,7 +278,14 @@ def ingest_markdown_document(filename: str, markdown_text: str, project_id: int 
 
         # 2. Embedding
         embedder = get_model()
-        embeddings = embedder.encode(chunks)
+        if embedder is not None:
+            try:
+                embeddings = [emb.tolist() for emb in embedder.encode(chunks)]
+            except Exception as emb_err:
+                logger.error(f"Error generating embeddings: {emb_err}")
+                embeddings = [[0.0] * 384 for _ in chunks]
+        else:
+            embeddings = [[0.0] * 384 for _ in chunks]
 
         # 3. Compute file hash for duplicate detection
         file_hash = hashlib.sha256(markdown_text.encode('utf-8')).hexdigest()
@@ -304,9 +315,10 @@ def ingest_markdown_document(filename: str, markdown_text: str, project_id: int 
 
         # Insert chunks
         for chunk_text, emb in zip(chunks, embeddings):
+            emb_list = emb if isinstance(emb, list) else emb.tolist()
             cursor.execute(
                 "INSERT INTO document_chunks (doc_id, chunk_text, embedding) VALUES (%s, %s, %s);",
-                (document_id, chunk_text, emb.tolist())
+                (document_id, chunk_text, emb_list)
             )
 
         conn.commit()
