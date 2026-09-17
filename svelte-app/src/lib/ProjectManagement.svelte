@@ -129,7 +129,7 @@
   function openAddProject() {
     isEditMode = false;
     editingProjectId = null;
-    newProject = { project_code: '', project_name: '', description: '', status: 'Active' };
+    newProject = { project_code: '', project_name: '', description: '', status: 'Active', default_base_url: 'http://localhost:5173' };
     showAddProject = true;
   }
 
@@ -140,7 +140,8 @@
       project_code: p.project_code || '',
       project_name: p.name || p.project_name || '',
       description: p.description || '',
-      status: p.status || 'Active'
+      status: p.status || 'Active',
+      default_base_url: p.default_base_url || 'http://localhost:5173'
     };
     showAddProject = true;
   }
@@ -378,6 +379,12 @@
                     {#if p.description}
                       <div class="proj-desc truncate" title={p.description}>{p.description}</div>
                     {/if}
+                    {#if p.default_base_url}
+                      <div class="proj-url truncate" style="font-size: 11px; color: #38bdf8; display: flex; align-items: center; gap: 4px; margin-top: 2px;" title={`Default Base URL: ${p.default_base_url}`}>
+                        <span>🌐</span>
+                        <span>{p.default_base_url}</span>
+                      </div>
+                    {/if}
                   </td>
                   <td>{p.doc_count || 0} รายการ</td>
                   <td>
@@ -506,6 +513,11 @@
         <div class="form-group">
           <label for="p_desc">รายละเอียด (Description)</label>
           <textarea id="p_desc" class="form-input" rows="3" placeholder="คำอธิบายโครงการ..." bind:value={newProject.description}></textarea>
+        </div>
+        <div class="form-group">
+          <label for="p_base_url">🌐 Default Base URL (สำหรับ AI Test Agent)</label>
+          <input id="p_base_url" type="text" class="form-input" placeholder="เช่น http://203.154.184.162:5019 หรือ https://uat.example.com" bind:value={newProject.default_base_url} />
+          <span style="font-size: 11px; color: #94a3b8; margin-top: 4px; display: block;">URL ของเซิร์ฟเวอร์ระบบทดสอบเริ่มต้นประจำโครงการนี้ เพื่อให้ AI Test Agent นำไปใช้เปิดทดสอบอัตโนมัติ</span>
         </div>
         <div class="form-group">
           <label for="p_status">สถานะ (Status)</label>

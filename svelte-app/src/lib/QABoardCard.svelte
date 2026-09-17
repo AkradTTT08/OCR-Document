@@ -4,8 +4,11 @@
   import { selectedProjectStore } from "./qaHistoryStore.js";
   import ProjectSelection from "./ProjectSelection.svelte";
   import { toast } from "./toastStore.js";
+  import SmartTestLauncherModal from "./SmartTestLauncherModal.svelte";
 
   let projects = [];
+  let isTestModalOpen = false;
+  let testTargetCard = null;
 
   $: selectedProjectId = $selectedProjectStore ? ($selectedProjectStore.id || $selectedProjectStore.project_id) : "";
 
@@ -286,6 +289,30 @@
     } catch (err) {
       toast(`เกิดข้อผิดพลาด: ${err.message}`, "error");
     }
+  }
+
+  // Smart AI Test Launcher handlers
+  function handleAgentTest(cardOrId) {
+    if (typeof cardOrId === 'object' && cardOrId !== null) {
+      testTargetCard = cardOrId;
+    } else if (selectedCard) {
+      testTargetCard = selectedCard;
+    } else {
+      testTargetCard = { title: "Feature Testing", description: "" };
+    }
+    isTestModalOpen = true;
+  }
+
+  function handleTestCompleted(e) {
+    const result = e.detail;
+    if (selectedCard) {
+      selectedCard.test_result = result.test_result_markdown;
+      selectedCard.verdict = result.verdict;
+      selectedCard.isTesting = false;
+      selectedCard = { ...selectedCard };
+    }
+    fetchCards();
+    toast(`รันการทดสอบสำเร็จ: ${result.verdict}`, result.is_passed ? "success" : "warning");
   }
 
   async function fetchBoardIntegration() {
@@ -973,47 +1000,6 @@
       return `https://github.com/${currentIntegration.github_owner}/${currentIntegration.github_repo}/issues/${card.raw_ext_id}`;
     }
     return null;
-  }
-
-  async function handleAgentTest(cardId) {
-    savedCards = savedCards.map(c => c.id === cardId ? { ...c, isTesting: true, status: 'testing' } : c);
-    liveCards = liveCards.map(c => (c.id === cardId || c.raw_ext_id === cardId) ? { ...c, isTesting: true } : c);
-    if (selectedCard && (selectedCard.id === cardId || selectedCard.saved_id === cardId || selectedCard.raw_ext_id === cardId)) {
-      selectedCard = { ...selectedCard, isTesting: true, status: 'testing' };
-    }
-    toast(`AI Agent กำลังเริ่มตรวจสอบ Card...`, "info");
-
-    try {
-      const res = await fetch(`http://localhost:5000/api/projects/${selectedProjectId}/cards/${cardId}/test`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          card: selectedCard,
-          raw_ext_id: selectedCard ? (selectedCard.raw_ext_id || selectedCard.ext_card_id || selectedCard.id) : cardId
-        })
-      });
-      const data = await res.json();
-      if (data.success) {
-        toast(`Agent ตรวจสอบ Card สำเร็จและส่งรายงานแล้ว!`, "success");
-        if (selectedCard) {
-          selectedCard = { 
-            ...selectedCard, 
-            isTesting: false, 
-            status: data.target_status || selectedCard.status,
-            test_result: data.test_result || "AI Agent successfully tested this card.",
-            is_saved: true 
-          };
-        }
-      } else {
-        toast(data.error || "Test failed", "error");
-        if (selectedCard) selectedCard = { ...selectedCard, isTesting: false };
-      }
-    } catch (err) {
-      toast("Error testing card", "error");
-      if (selectedCard) selectedCard = { ...selectedCard, isTesting: false };
-    } finally {
-      await fetchCards();
-    }
   }
 </script>
 
@@ -2244,6 +2230,18 @@
       </div>
     </div>
   </div>
+{/if}
+
+<!-- Smart AI Test Launcher Modal -->
+{#if isTestModalOpen}
+  <SmartTestLauncherModal 
+    projectId={selectedProjectId}
+    projectName={$selectedProjectStore?.name || $selectedProjectStore?.project_name || 'Project'}
+    cardData={testTargetCard}
+    isOpen={isTestModalOpen}
+    on:close={() => isTestModalOpen = false}
+    on:test_completed={handleTestCompleted}
+  />
 {/if}
 
 <style>

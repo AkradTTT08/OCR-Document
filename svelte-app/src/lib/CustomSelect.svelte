@@ -114,6 +114,10 @@
     cursor: not-allowed;
   }
 
+  .custom-select-wrapper.is-open {
+    z-index: 1000;
+  }
+
   .select-trigger-btn {
     width: 100%;
     display: flex;

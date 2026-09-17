@@ -96,7 +96,7 @@ def get_projects():
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT p.project_id, p.project_name, p.project_code, p.description, p.status, p.created_at, COUNT(d.doc_id) as doc_count "
+            "SELECT p.project_id, p.project_name, p.project_code, p.description, p.status, p.created_at, COUNT(d.doc_id) as doc_count, p.default_base_url "
             "FROM projects p LEFT JOIN documents d ON p.project_id = d.project_id GROUP BY p.project_id ORDER BY p.project_id DESC;"
         )
         projects = [
@@ -107,7 +107,8 @@ def get_projects():
                 "description": row[3],
                 "status": row[4],
                 "created_at": row[5].isoformat() if row[5] else None,
-                "doc_count": int(row[6]) if row[6] else 0
+                "doc_count": int(row[6]) if row[6] else 0,
+                "default_base_url": row[7] or "http://localhost:5173"
             }
             for row in cursor.fetchall()
         ]
@@ -121,7 +122,7 @@ def get_projects():
 
 
 def add_project(name: str = None, project_code: str = None, project_name: str = None,
-                description: str = '', status: str = 'Active'):
+                description: str = '', status: str = 'Active', default_base_url: str = 'http://localhost:5173'):
     """Add a new project to the database."""
     conn = None
     cursor = None
@@ -136,11 +137,11 @@ def add_project(name: str = None, project_code: str = None, project_name: str = 
         import uuid
         p_code = project_code if project_code else f"PRJ-{uuid.uuid4().hex[:6].upper()}"
 
-        logger.info(f"Inserting project: code={p_code}, name={p_name}, status={status}")
+        logger.info(f"Inserting project: code={p_code}, name={p_name}, status={status}, default_base_url={default_base_url}")
         cursor.execute(
-            "INSERT INTO projects (project_code, project_name, description, status) "
-            "VALUES (%s, %s, %s, %s) RETURNING project_id;",
-            (p_code, p_name, description, status)
+            "INSERT INTO projects (project_code, project_name, description, status, default_base_url) "
+            "VALUES (%s, %s, %s, %s, %s) RETURNING project_id;",
+            (p_code, p_name, description, status, default_base_url or 'http://localhost:5173')
         )
         project_id = cursor.fetchone()[0]
         conn.commit()
@@ -150,7 +151,8 @@ def add_project(name: str = None, project_code: str = None, project_name: str = 
             "name": p_name,
             "project_code": p_code,
             "description": description,
-            "status": status
+            "status": status,
+            "default_base_url": default_base_url or 'http://localhost:5173'
         }
     except psycopg2.errors.UniqueViolation:
         if conn: conn.rollback()
@@ -163,7 +165,7 @@ def add_project(name: str = None, project_code: str = None, project_name: str = 
         if cursor: cursor.close()
         if conn: conn.close()
 
-def update_project(project_id: str, name: str = None, project_name: str = None, project_code: str = None, description: str = None, status: str = None):
+def update_project(project_id: str, name: str = None, project_name: str = None, project_code: str = None, description: str = None, status: str = None, default_base_url: str = None):
     """Update an existing project in the knowledge base."""
     conn = None
     cursor = None
@@ -188,13 +190,16 @@ def update_project(project_id: str, name: str = None, project_name: str = None, 
         if status is not None:
             update_fields.append("status = %s")
             params.append(status)
+        if default_base_url is not None:
+            update_fields.append("default_base_url = %s")
+            params.append(default_base_url)
             
         if not update_fields:
             return None
             
         params.append(project_id)
         
-        query = f"UPDATE projects SET {', '.join(update_fields)} WHERE project_id = %s::uuid RETURNING project_id, project_code, project_name, description, status, created_at;"
+        query = f"UPDATE projects SET {', '.join(update_fields)} WHERE project_id = %s::uuid RETURNING project_id, project_code, project_name, description, status, created_at, default_base_url;"
         cursor.execute(query, params)
         row = cursor.fetchone()
         
@@ -210,7 +215,8 @@ def update_project(project_id: str, name: str = None, project_name: str = None, 
             'project_name': row[2],
             'description': row[3],
             'status': row[4],
-            'created_at': row[5].isoformat() if row[5] else None
+            'created_at': row[5].isoformat() if row[5] else None,
+            'default_base_url': row[6] or 'http://localhost:5173'
         }
     except psycopg2.errors.UniqueViolation:
         if conn: conn.rollback()
@@ -299,7 +305,7 @@ def ingest_markdown_document(filename: str, markdown_text: str, project_id: int 
         existing = cursor.fetchone()
         if existing:
             logger.info(f"Document with same hash already exists (doc_id={existing[0]}). Skipping ingestion.")
-            return True, "already ingested"
+            return True, str(existing[0])
 
         if project_id is None:
             raise ValueError("project_id is required and must be a valid UUID")
@@ -799,14 +805,15 @@ def init_api_usage_logs():
             cursor.execute("ALTER TABLE api_usage_logs ADD COLUMN filename VARCHAR(255);")
         except Exception:
             pass
-            # Create QA Generated Documents Table
+            
+        # Create QA Generated Documents Table
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS qa_generated_documents (
                 id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                project_id UUID REFERENCES projects(id) ON DELETE CASCADE,
+                project_id UUID REFERENCES projects(project_id) ON DELETE CASCADE,
                 doc_name VARCHAR(255),
                 doc_type VARCHAR(255),
-                skill_id INTEGER,
+                skill_id VARCHAR(255),
                 status VARCHAR(50) DEFAULT 'Generating',
                 file_url VARCHAR(255),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP

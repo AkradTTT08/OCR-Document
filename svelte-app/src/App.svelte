@@ -16,6 +16,7 @@
   import ExitCriteriaManager from "./lib/ExitCriteriaManager.svelte";
   import ApiCollectionAdmin from "./lib/ApiCollectionAdmin.svelte";
   import ApiUsageDashboard from "./lib/ApiUsageDashboard.svelte";
+  import QAAnalysisDiagram from "./lib/QAAnalysisDiagram.svelte";
   import QAPerformance from "./lib/QAPerformance.svelte";
   import QAResearch from "./lib/QAResearch.svelte";
   import QASecurity from "./lib/QASecurity.svelte";
@@ -29,7 +30,7 @@
   import NotificationDropdown from "./lib/NotificationDropdown.svelte";
   import NotificationConfigModal from "./lib/NotificationConfigModal.svelte";
   import { unreadCount } from "./lib/notificationStore.js";
-  import { showLogin, authRole, authUser, authDisplayName, authAvatar, logout } from "./lib/authStore.js";
+  import { showLogin, authRole, authUser, authDisplayName, authAvatar, authAllowedMenus, authAllowedProjects, DEFAULT_USER_MENUS, DEFAULT_ADMIN_MENUS, logout } from "./lib/authStore.js";
   import { globalSearchQuery, triggerGlobalSearch } from "./lib/globalStore.js";
   import { onMount } from "svelte";
   import { toast } from "./lib/toastStore.js";
@@ -38,6 +39,21 @@
   let showNotificationConfigModal = false;
 
   let sidebarProjects = [];
+
+  function isMenuAllowed(menuKey) {
+    if (!$authAllowedMenus || $authAllowedMenus.length === 0) {
+      return true;
+    }
+    return $authAllowedMenus.includes(menuKey);
+  }
+
+  function isProjectAllowed(proj) {
+    if (!$authAllowedProjects || $authAllowedProjects.includes('all')) return true;
+    if (!proj) return true;
+    const pId = String(proj.id || proj.project_id || proj.project_code);
+    const pCode = String(proj.project_code || '');
+    return $authAllowedProjects.includes(pId) || (pCode && $authAllowedProjects.includes(pCode));
+  }
 
   onMount(async () => {
     loadQAHistoryFromDB();
@@ -93,11 +109,19 @@
   let progress = { pct: 0, label: "", step: 0 };
   let activeView = "ocr"; // 'ocr' | 'kb' | 'skills' | 'qa_consult'
 
-  // Reactive statement to enforce default view based on role
-  $: if ($authRole === 'user' && !['qa_consult', 'qa_performance', 'qa_research', 'qa_security', 'qa_automate', 'qa_doc_creation', 'qa_board', 'master_agent', 'workflow_builder'].includes(activeView)) {
-    activeView = 'qa_consult';
-  } else if ($authRole === 'admin' && ['qa_consult', 'qa_performance', 'qa_research', 'qa_security', 'qa_automate', 'qa_doc_creation', 'qa_board', 'master_agent', 'workflow_builder'].includes(activeView)) {
-    activeView = 'project_management';
+  // Reactive statement to enforce allowed view based on permissions and role
+  $: {
+    if ($authRole === 'user') {
+      const userAllowed = ($authAllowedMenus && $authAllowedMenus.length > 0) ? $authAllowedMenus : DEFAULT_USER_MENUS;
+      if (!userAllowed.includes(activeView)) {
+        activeView = userAllowed[0] || 'qa_consult';
+      }
+    } else if ($authRole === 'admin') {
+      const adminAllowed = ($authAllowedMenus && $authAllowedMenus.length > 0) ? $authAllowedMenus : DEFAULT_ADMIN_MENUS;
+      if (!adminAllowed.includes(activeView)) {
+        activeView = adminAllowed[0] || 'ocr';
+      }
+    }
   }
 
   async function handleResult(event) {
@@ -354,107 +378,147 @@
 
       <nav class="sidebar-nav">
         {#if $authRole === 'admin'}
-          <button class="nav-item" class:active={activeView === "ocr" && !scanResult} on:click={() => { activeView = "ocr"; scanResult = null; }}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z"/></svg>
-            Scan OCR
-          </button>
-          
-          {#if activeView === 'ocr'}
-            <div class="history-section" style="margin-top: 4px; padding-top: 8px;">
-              <div class="history-title">ประวัติการสแกนล่าสุด</div>
-              {#if $ocrHistory.length > 0}
-                <div class="history-list">
-                  {#each $ocrHistory.slice(0, 15) as item}
-                    <button class="history-item" class:active={scanResult && scanResult.id === item.id} on:click={() => { scanResult = item; }}>
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="flex-shrink: 0;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path></svg>
-                      <div class="history-details" style="flex: 1;">
-                        <span class="h-filename" style="color: #60a5fa;">{item.filename || 'Unknown Document'}</span>
-                        <span class="h-project">{formatHistoryDate(item.date)}</span>
-                      </div>
-                      <div style="padding: 4px; border-radius: 4px; color: #ef4444; background: rgba(239, 68, 68, 0.1); cursor: pointer;" on:click|stopPropagation={() => deleteOCRHistory(item.id)} title="ลบประวัติ">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M18 6L6 18M6 6l12 12"></path></svg>
-                      </div>
-                    </button>
-                  {/each}
-                </div>
-              {:else}
-                <div style="padding: 15px; text-align: center; color: #9ca3af; font-size: 13px; background: rgba(0,0,0,0.2); border-radius: 8px;">
-                    ยังไม่มีประวัติการสแกน
-                </div>
-              {/if}
-            </div>
+          {#if isMenuAllowed('ocr')}
+            <button class="nav-item" class:active={activeView === "ocr" && !scanResult} on:click={() => { activeView = "ocr"; scanResult = null; }}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z"/></svg>
+              Scan OCR
+            </button>
+            
+            {#if activeView === 'ocr'}
+              <div class="history-section" style="margin-top: 4px; padding-top: 8px;">
+                <div class="history-title">ประวัติการสแกนล่าสุด</div>
+                {#if $ocrHistory.length > 0}
+                  <div class="history-list">
+                    {#each $ocrHistory.slice(0, 15) as item}
+                      <button class="history-item" class:active={scanResult && scanResult.id === item.id} on:click={() => { scanResult = item; }}>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="flex-shrink: 0;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path></svg>
+                        <div class="history-details" style="flex: 1;">
+                          <span class="h-filename" style="color: #60a5fa;">{item.filename || 'Unknown Document'}</span>
+                          <span class="h-project">{formatHistoryDate(item.date)}</span>
+                        </div>
+                        <div style="padding: 4px; border-radius: 4px; color: #ef4444; background: rgba(239, 68, 68, 0.1); cursor: pointer;" on:click|stopPropagation={() => deleteOCRHistory(item.id)} title="ลบประวัติ">
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M18 6L6 18M6 6l12 12"></path></svg>
+                        </div>
+                      </button>
+                    {/each}
+                  </div>
+                {:else}
+                  <div style="padding: 15px; text-align: center; color: #9ca3af; font-size: 13px; background: rgba(0,0,0,0.2); border-radius: 8px;">
+                      ยังไม่มีประวัติการสแกน
+                  </div>
+                {/if}
+              </div>
+            {/if}
           {/if}
           
-          <button class="nav-item" class:active={activeView === "project_management"} on:click={() => (activeView = "project_management")}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
-            Project Management
-          </button>
-          <button class="nav-item" class:active={activeView === "kb"} on:click={() => (activeView = "kb")}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"></path></svg>
-            Knowledge Base
-          </button>
-          <button class="nav-item" class:active={activeView === "skills"} on:click={() => (activeView = "skills")}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"></path></svg>
-            AI Skills
-          </button>
-          <button class="nav-item" class:active={activeView === "qa_member"} on:click={() => (activeView = "qa_member")}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
-            QA Member
-          </button>
-          <button class="nav-item" class:active={activeView === "exit_criteria"} on:click={() => (activeView = "exit_criteria")}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M9 11l3 3L22 4"></path><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>
-            Exit Criteria
-          </button>
-          <button class="nav-item" class:active={activeView === "api_collection"} on:click={() => (activeView = "api_collection")}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
-            API Collections
-          </button>
-          <button class="nav-item" class:active={activeView === "api_usage"} on:click={() => (activeView = "api_usage")}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M3 3v18h18"/><path d="M18.7 8l-5.1 5.2-2.8-2.7L7 14.3"/></svg>
-            Token Usage
-          </button>
+          {#if isMenuAllowed('project_management')}
+            <button class="nav-item" class:active={activeView === "project_management"} on:click={() => (activeView = "project_management")}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
+              Project Management
+            </button>
+          {/if}
+          {#if isMenuAllowed('kb')}
+            <button class="nav-item" class:active={activeView === "kb"} on:click={() => (activeView = "kb")}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"></path></svg>
+              Knowledge Base
+            </button>
+          {/if}
+          {#if isMenuAllowed('skills')}
+            <button class="nav-item" class:active={activeView === "skills"} on:click={() => (activeView = "skills")}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"></path></svg>
+              AI Skills
+            </button>
+          {/if}
+          {#if isMenuAllowed('qa_member')}
+            <button class="nav-item" class:active={activeView === "qa_member"} on:click={() => (activeView = "qa_member")}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+              QA Member
+            </button>
+          {/if}
+          {#if isMenuAllowed('exit_criteria')}
+            <button class="nav-item" class:active={activeView === "exit_criteria"} on:click={() => (activeView = "exit_criteria")}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M9 11l3 3L22 4"></path><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>
+              Exit Criteria
+            </button>
+          {/if}
+          {#if isMenuAllowed('api_collection')}
+            <button class="nav-item" class:active={activeView === "api_collection"} on:click={() => (activeView = "api_collection")}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
+              API Collections
+            </button>
+          {/if}
+          {#if isMenuAllowed('api_usage')}
+            <button class="nav-item" class:active={activeView === "api_usage"} on:click={() => (activeView = "api_usage")}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M3 3v18h18"/><path d="M18.7 8l-5.1 5.2-2.8-2.7L7 14.3"/></svg>
+              Token Usage
+            </button>
+          {/if}
 
         {:else if $authRole === 'user'}
-          <button class="nav-item" class:active={activeView === "qa_consult"} on:click={() => (activeView = "qa_consult")}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
-            QA Consult
-          </button>
-          <button class="nav-item" class:active={activeView === "qa_performance"} on:click={() => (activeView = "qa_performance")}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path></svg>
-            QA Performance
-          </button>
-          <button class="nav-item" class:active={activeView === "qa_research"} on:click={() => (activeView = "qa_research")}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line><path d="M11 7v4l3 3"></path></svg>
-            QA Research
-          </button>
-          <button class="nav-item" class:active={activeView === "qa_security"} on:click={() => (activeView = "qa_security")}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
-            QA Security
-          </button>
-          <button class="nav-item" class:active={activeView === "qa_automate"} on:click={() => (activeView = "qa_automate")}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M12 2v20m-7-7h14m-14-6h14"></path><path d="M2 12h20"></path></svg>
-            QA Test Automation
-          </button>
-          <button class="nav-item" class:active={activeView === "qa_doc_creation"} on:click={() => (activeView = "qa_doc_creation")}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
-            QA Document Creation
-          </button>
-          <button class="nav-item" class:active={activeView === "qa_board"} on:click={() => (activeView = "qa_board")}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="9" y1="3" x2="9" y2="21"></line><line x1="15" y1="3" x2="15" y2="21"></line></svg>
-            QA Board Card
-          </button>
+          {#if isMenuAllowed('qa_consult')}
+            <button class="nav-item" class:active={activeView === "qa_consult"} on:click={() => (activeView = "qa_consult")}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+              QA Consult
+            </button>
+          {/if}
+          {#if isMenuAllowed('qa_performance')}
+            <button class="nav-item" class:active={activeView === "qa_performance"} on:click={() => (activeView = "qa_performance")}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path></svg>
+              QA Performance
+            </button>
+          {/if}
+          {#if isMenuAllowed('qa_research')}
+            <button class="nav-item" class:active={activeView === "qa_research"} on:click={() => (activeView = "qa_research")}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line><path d="M11 7v4l3 3"></path></svg>
+              QA Research
+            </button>
+          {/if}
+          {#if isMenuAllowed('qa_security')}
+            <button class="nav-item" class:active={activeView === "qa_security"} on:click={() => (activeView = "qa_security")}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+              QA Security
+            </button>
+          {/if}
+          {#if isMenuAllowed('qa_automate')}
+            <button class="nav-item" class:active={activeView === "qa_automate"} on:click={() => (activeView = "qa_automate")}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M12 2v20m-7-7h14m-14-6h14"></path><path d="M2 12h20"></path></svg>
+              QA Test Automation
+            </button>
+          {/if}
+          {#if isMenuAllowed('qa_doc_creation')}
+            <button class="nav-item" class:active={activeView === "qa_doc_creation"} on:click={() => (activeView = "qa_doc_creation")}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+              QA Document Creation
+            </button>
+          {/if}
+          {#if isMenuAllowed('qa_analysis_diagram')}
+            <button class="nav-item" class:active={activeView === "qa_analysis_diagram"} on:click={() => (activeView = "qa_analysis_diagram")}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+              QA Analysis Diagram
+            </button>
+          {/if}
+          {#if isMenuAllowed('qa_board')}
+            <button class="nav-item" class:active={activeView === "qa_board"} on:click={() => (activeView = "qa_board")}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="9" y1="3" x2="9" y2="21"></line><line x1="15" y1="3" x2="15" y2="21"></line></svg>
+              QA Board Card
+            </button>
+          {/if}
           
           <div style="height: 1px; background: var(--glass-border); margin: 8px 0;"></div>
           
-          <button class="nav-item" style="color: #c084fc;" class:active={activeView === "master_agent"} on:click={() => (activeView = "master_agent")}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M12 2a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h6z"></path><path d="M22 10v6a2 2 0 0 1-2 2h-6l-4 4v-4H6a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
-            Master Agent 🤖
-          </button>
+          {#if isMenuAllowed('master_agent')}
+            <button class="nav-item" style="color: #c084fc;" class:active={activeView === "master_agent"} on:click={() => (activeView = "master_agent")}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M12 2a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h6z"></path><path d="M22 10v6a2 2 0 0 1-2 2h-6l-4 4v-4H6a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+              Master Agent 🤖
+            </button>
+          {/if}
           
-          <button class="nav-item" style="color: #34d399;" class:active={activeView === "workflow_builder"} on:click={() => (activeView = "workflow_builder")}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line></svg>
-            AI Workflow Builder 🔗
-          </button>
+          {#if isMenuAllowed('workflow_builder')}
+            <button class="nav-item" style="color: #34d399;" class:active={activeView === "workflow_builder"} on:click={() => (activeView = "workflow_builder")}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line></svg>
+              AI Workflow Builder 🔗
+            </button>
+          {/if}
           {#if activeView === 'qa_performance'}
             <!-- Performance History -->
             {#if $selectedProjectStore && $perfHistory.filter(h => h.project_id === ($selectedProjectStore.id || $selectedProjectStore.project_id)).length > 0}
@@ -637,7 +701,7 @@
       </header>
 
       <!-- Content Area -->
-      <div class="content-scroll" id="main-content" class:no-padding={['kb', 'ocr', 'qa_consult', 'qa_member', 'qa_performance', 'qa_research', 'qa_automate', 'qa_board', 'master_agent', 'workflow_builder'].includes(activeView)}>
+      <div class="content-scroll" id="main-content" class:no-padding={['kb', 'ocr', 'qa_consult', 'qa_member', 'qa_analysis_diagram', 'qa_performance', 'qa_research', 'qa_automate', 'qa_board', 'master_agent', 'workflow_builder'].includes(activeView)}>
         {#key activeView}
           <div class="view-wrapper" in:fade="{{ duration: 300, delay: 150 }}">
             {#if activeView === "ocr" && $authRole === "admin"}
@@ -675,6 +739,8 @@
               <QATestAutomation />
             {:else if activeView === "qa_doc_creation"}
               <QADocumentCreation />
+            {:else if activeView === "qa_analysis_diagram"}
+              <QAAnalysisDiagram />
             {:else if activeView === "qa_board"}
               <QABoardCard />
             {:else if activeView === "master_agent"}

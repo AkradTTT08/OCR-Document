@@ -272,6 +272,8 @@ projects (1) ──── (∞) evaluation_logs ──── (∞) documents
                         (∞) agent_skills
 
 projects (1) ──── (∞) qa_transactions
+
+projects (1) ──── (∞) qa_analysis_diagrams
 ```
 
 | Relationship | Type | On Delete |
@@ -282,6 +284,56 @@ projects (1) ──── (∞) qa_transactions
 | `documents` → `evaluation_logs` | One-to-Many | CASCADE |
 | `agent_skills` → `evaluation_logs` | One-to-Many | SET NULL (default) |
 | `projects` → `qa_transactions` | One-to-Many | CASCADE |
+| `projects` → `qa_analysis_diagrams` | One-to-Many | CASCADE |
+
+---
+
+## 📊 ตาราง `qa_analysis_diagrams` (QA Analysis Diagram & Traceability)
+
+ตารางจัดเก็บข้อมูลการวิเคราะห์สถาปัตยกรรมระบบ ผัง Flow แผนผังไซต์แมป ไดอะแกรม UML ม็อคอัพหน้าจอ และเมทริกซ์ความสามารถในการสอบกลับย้อนกลับ (Traceability Matrix) ที่สร้างขึ้นโดย AI Agent จากเอกสาร Markdown ในโครงการ
+
+| Column | Type | Description |
+|---|---|---|
+| `id` | `UUID (PK)` | รหัสรายการวิเคราะห์ |
+| `project_id` | `UUID (FK)` | เชื่อมโยงกับตาราง `projects(project_id)` |
+| `sitemap_data` | `JSONB` | โครงสร้าง Information Architecture / Flow Sitemap |
+| `system_flowchart` | `TEXT` | แผนภาพ System Flowchart แบบ Draw.io (Mermaid Syntax) |
+| `usecase_diagram` | `TEXT` | แผนภาพ Use Case Diagram (Mermaid Syntax) |
+| `activity_diagram` | `TEXT` | แผนภาพ Activity / Process Flow Diagram (Mermaid Syntax) |
+| `sequence_diagram` | `TEXT` | แผนภาพ Sequence / Architecture Flow Diagram (Mermaid Syntax) |
+| `screen_mockups` | `JSONB` | รายการ UI Wireframe Cards จำลองหน้าจอระบบ |
+| `traceability_matrix` | `JSONB` | ตารางเมทริกซ์ความเชื่อมโยง Document ↔ Req ↔ Sitemap ↔ Use Case ↔ Mockup ↔ Test Cases |
+| `summary_stats` | `JSONB` | สรุปสถิติความครอบคลุม (Coverage %, Total Pages, Reqs, Use Cases) |
+| `status` | `VARCHAR(50)` | สถานะ ('Completed', 'Generating', 'Failed') |
+| `created_at` | `TIMESTAMP` | เวลาที่สร้าง |
+| `updated_at` | `TIMESTAMP` | เวลาที่อัปเดตล่าสุด |
+
+---
+
+## 🚀 ตาราง `qa_test_execution_runs` (AI Automated Test Execution History)
+
+ตารางบันทึกประวัติการรันการทดสอบอัตโนมัติด้วย AI Test Agent (Playwright + Gemini AI Evaluator) พร้อมจัดเก็บ Target URL, รายการ Test Cases ที่เลือก, ภาพ Screenshot หลักฐาน, และผลลัพธ์การประเมิน (PASSED / FAILED)
+
+| Column | Type | Description |
+|---|---|---|
+| `id` | `UUID (PK)` | รหัสรอบการรันการทดสอบ |
+| `project_id` | `UUID (FK)` | รหัสโครงการ |
+| `card_id` | `VARCHAR(255)` | รหัส Trello Card หรือ Screen ID ที่ทดสอบ |
+| `card_title` | `TEXT` | ชื่อฟังก์ชันหรือหัวข้องานที่ทดสอบ |
+| `target_url` | `TEXT` | URL เป้าหมายที่ Browser วิ่งเข้าไปทดสอบ |
+| `environment` | `VARCHAR(50)` | สภาพแวดล้อม เช่น `'DEV'`, `'UAT'`, `'STAGING'` |
+| `user_role` | `VARCHAR(50)` | สิทธิ์ผู้ใช้งานที่จำลอง เช่น `'Admin'`, `'Operator'` |
+| `test_cases` | `JSONB` | รายการ Test Cases ที่เลือกทดสอบ (Positive/Negative) |
+| `test_steps` | `JSONB` | ขั้นตอน Browser Action Steps |
+| `verdict` | `VARCHAR(50)` | ผลการประเมิน (`'PASSED'`, `'FAILED'`, `'ERROR'`) |
+| `score_percent` | `INT` | คะแนนความสอดคล้องตามข้อกำหนด (%) |
+| `summary` | `TEXT` | บทสรุปผลการทดสอบ |
+| `matched_criteria` | `JSONB` | รายการเงื่อนไขที่ตรวจสอบผ่าน |
+| `discrepancies` | `JSONB` | รายการข้อบกพร่องที่ตรวจพบ (Defects) |
+| `screenshot_filename` | `TEXT` | ชื่อไฟล์ภาพถ่ายหน้าจอหลักฐาน |
+| `logs` | `TEXT` | บันทึก Console และ Step Execution Logs |
+| `recommendation` | `TEXT` | คำแนะนำสำหรับทีมพัฒนาและ QA |
+| `created_at` | `TIMESTAMP` | เวลาที่ทำการรันการทดสอบ |
 
 ถูกต้องและเป็นวิสัยทัศน์การออกแบบสถาปัตยกรรมระบบที่ ยอดเยี่ยมมากครับ! 🚀
 

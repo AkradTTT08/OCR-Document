@@ -1,5 +1,6 @@
 <script>
   import { createEventDispatcher } from 'svelte';
+  import { authAllowedProjects } from './authStore.js';
   
   export let projects = [];
   export let title = "เลือกโครงการ (Project Selection)";
@@ -10,6 +11,13 @@
   function selectProject(p) {
     dispatch('select', p);
   }
+
+  $: filteredProjects = projects.filter(p => {
+    if (!$authAllowedProjects || $authAllowedProjects.includes('all')) return true;
+    const pId = String(p.id || p.project_id || p.project_code);
+    const pCode = String(p.project_code || '');
+    return $authAllowedProjects.includes(pId) || (pCode && $authAllowedProjects.includes(pCode));
+  });
 </script>
 
 <div class="header-text">
@@ -18,12 +26,12 @@
 </div>
 
 <div class="project-grid">
-  {#if projects.length === 0}
+  {#if filteredProjects.length === 0}
     <div class="empty-state">
-      ไม่พบโครงการในระบบ กรุณาสร้างโครงการที่หน้า Knowledge Base ก่อน
+      ไม่พบโครงการที่คุณมีสิทธิ์เข้าถึงในระบบ (หรือยังไม่มีการสร้างโครงการ)
     </div>
   {:else}
-    {#each projects as p}
+    {#each filteredProjects as p}
       <!-- svelte-ignore a11y-click-events-have-key-events -->
       <!-- svelte-ignore a11y-no-static-element-interactions -->
       <div class="project-card" on:click={() => selectProject(p)}>

@@ -63,6 +63,8 @@ KB_IMAGES_FOLDER = BASE_DIR / 'uploads' / 'kb_images'
 KB_IMAGES_FOLDER.mkdir(exist_ok=True, parents=True)
 AVATARS_FOLDER = BASE_DIR / 'uploads' / 'avatars'
 AVATARS_FOLDER.mkdir(exist_ok=True, parents=True)
+WIREFRAMES_FOLDER = BASE_DIR / 'uploads' / 'wireframes'
+WIREFRAMES_FOLDER.mkdir(exist_ok=True, parents=True)
 
 
 def enrich_errors_with_boxes(errors: List[Dict], words_map: List[Dict]) -> List[Dict]:
@@ -179,6 +181,29 @@ def token_required(f):
         return f(*args, **kwargs)
     return decorated
 
+DEFAULT_USER_MENUS = [
+    "qa_consult", "qa_performance", "qa_research", "qa_security", 
+    "qa_automate", "qa_doc_creation", "qa_board", "master_agent", "workflow_builder"
+]
+
+DEFAULT_ADMIN_MENUS = [
+    "ocr", "project_management", "kb", "skills", "qa_member", 
+    "exit_criteria", "api_collection", "api_usage"
+]
+
+def parse_permissions_json(val, default_val):
+    if val is None or val == "":
+        return default_val
+    if isinstance(val, list):
+        return val
+    try:
+        parsed = json.loads(val)
+        if isinstance(parsed, list):
+            return parsed
+        return default_val
+    except Exception:
+        return default_val
+
 @app.route('/api/login', methods=['POST', 'OPTIONS'])
 def login():
     if request.method == 'OPTIONS':
@@ -199,9 +224,15 @@ def login():
         conn = get_auth_db_connection()
         cursor = conn.cursor()
         
+        # Ensure permission columns exist
+        cursor.execute("""
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS allowed_menus TEXT;
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS allowed_projects TEXT;
+        """)
+        
         # ใช้ PostgreSQL crypt() ตรวจสอบ bcrypt password
         cursor.execute(
-            "SELECT user_id, username, email, display_name, role, is_active, avatar_path "
+            "SELECT user_id, username, email, display_name, role, is_active, avatar_path, allowed_menus, allowed_projects "
             "FROM users WHERE username = %s AND password_hash = crypt(%s, password_hash);",
             (username, password)
         )
@@ -209,6 +240,10 @@ def login():
         
         if user and user[5]:  # is_active = True
             user_id = str(user[0])
+            user_role = user[4] or 'user'
+            default_menus = DEFAULT_ADMIN_MENUS if user_role == 'admin' else DEFAULT_USER_MENUS
+            allowed_menus = parse_permissions_json(user[7], default_menus)
+            allowed_projects = parse_permissions_json(user[8], ["all"])
             
             # อัปเดต login_count และ last_login_at
             cursor.execute(
@@ -221,7 +256,9 @@ def login():
             payload = {
                 'user_id': user_id,
                 'user': user[1],
-                'role': user[4],
+                'role': user_role,
+                'allowed_menus': allowed_menus,
+                'allowed_projects': allowed_projects,
                 'exp': int(time.time()) + (24 * 3600)
             }
             token = encode_jwt(payload)
@@ -234,8 +271,10 @@ def login():
                 'user': user[1],
                 'email': user[2],
                 'display_name': user[3],
-                'role': user[4],
-                'avatar_path': user[6]
+                'role': user_role,
+                'avatar_path': user[6],
+                'allowed_menus': allowed_menus,
+                'allowed_projects': allowed_projects
             })
             
         cursor.close()
@@ -257,16 +296,20 @@ def index():
     return send_from_directory(str(FRONTEND_FOLDER), 'index.html')
 
 
+@app.route('/uploads/<path:filename>')
+def serve_uploads(filename):
+    return send_from_directory(str(UPLOAD_FOLDER), filename)
+
+
 @app.route('/<path:filename>')
-def frontend_files(filename):
+def serve_static(filename):
     return send_from_directory(str(FRONTEND_FOLDER), filename)
 
 
-# ========================
-# API Routes
-# ========================
 
-# ── User Management ──
+# ========================
+# Authentication & User Management Routes
+# ========================
 
 @app.route('/api/users', methods=['GET'])
 @token_required
@@ -277,25 +320,45 @@ def get_users():
         cursor = conn.cursor()
         
         cursor.execute("""
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(50);
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS github_url VARCHAR(255);
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS linkedin_url VARCHAR(255);
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS line_id VARCHAR(100);
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS department VARCHAR(100);
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS allowed_menus TEXT;
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS allowed_projects TEXT;
+        """)
+        
+        cursor.execute("""
             SELECT user_id, username, email, display_name, role, is_active, 
-                   login_count, last_login_at, created_at, avatar_path
+                   login_count, last_login_at, created_at, avatar_path,
+                   allowed_menus, allowed_projects, phone, department, github_url, linkedin_url, line_id
             FROM users 
             ORDER BY user_id ASC;
         """)
         
         users_data = []
         for row in cursor.fetchall():
+            u_role = row[4] or 'user'
+            default_menus = DEFAULT_ADMIN_MENUS if u_role == 'admin' else DEFAULT_USER_MENUS
             users_data.append({
                 'user_id': row[0],
                 'username': row[1],
                 'email': row[2],
                 'display_name': row[3],
-                'role': row[4],
+                'role': u_role,
                 'is_active': row[5],
                 'login_count': row[6],
                 'last_login_at': row[7].isoformat() if row[7] else None,
                 'created_at': row[8].isoformat() if row[8] else None,
-                'avatar_path': row[9]
+                'avatar_path': row[9],
+                'allowed_menus': parse_permissions_json(row[10], default_menus),
+                'allowed_projects': parse_permissions_json(row[11], ["all"]),
+                'phone': row[12] or '',
+                'department': row[13] or '',
+                'github_url': row[14] or '',
+                'linkedin_url': row[15] or '',
+                'line_id': row[16] or ''
             })
             
         cursor.close()
@@ -317,6 +380,11 @@ def create_user():
     password = data.get('password')
     display_name = data.get('display_name', '')
     role = data.get('role', 'user')
+    phone = data.get('phone', '')
+    department = data.get('department', '')
+    github_url = data.get('github_url', '')
+    linkedin_url = data.get('linkedin_url', '')
+    line_id = data.get('line_id', '')
     
     if not username or not email or not password:
         return jsonify({'error': 'Username, email, and password required'}), 400
@@ -326,6 +394,16 @@ def create_user():
         conn = get_auth_db_connection()
         cursor = conn.cursor()
         
+        cursor.execute("""
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(50);
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS github_url VARCHAR(255);
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS linkedin_url VARCHAR(255);
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS line_id VARCHAR(100);
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS department VARCHAR(100);
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS allowed_menus TEXT;
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS allowed_projects TEXT;
+        """)
+        
         # Check if username or email already exists
         cursor.execute("SELECT user_id FROM users WHERE username = %s OR email = %s", (username, email))
         if cursor.fetchone():
@@ -333,11 +411,22 @@ def create_user():
             conn.close()
             return jsonify({'error': 'Username or Email already exists'}), 400
             
+        default_menus = DEFAULT_ADMIN_MENUS if role == 'admin' else DEFAULT_USER_MENUS
+        allowed_menus = data.get('allowed_menus')
+        if allowed_menus is None:
+            allowed_menus = default_menus
+        allowed_menus_str = json.dumps(allowed_menus, ensure_ascii=False)
+
+        allowed_projects = data.get('allowed_projects')
+        if allowed_projects is None:
+            allowed_projects = ["all"]
+        allowed_projects_str = json.dumps(allowed_projects, ensure_ascii=False)
+            
         cursor.execute("""
-            INSERT INTO users (username, email, password_hash, display_name, role, is_active)
-            VALUES (%s, %s, crypt(%s, gen_salt('bf')), %s, %s, true)
-            RETURNING user_id, username, email, display_name, role, is_active, created_at, avatar_path;
-        """, (username, email, password, display_name, role))
+            INSERT INTO users (username, email, password_hash, display_name, role, is_active, allowed_menus, allowed_projects, phone, department, github_url, linkedin_url, line_id)
+            VALUES (%s, %s, crypt(%s, gen_salt('bf')), %s, %s, true, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING user_id, username, email, display_name, role, is_active, created_at, avatar_path, allowed_menus, allowed_projects, phone, department, github_url, linkedin_url, line_id;
+        """, (username, email, password, display_name, role, allowed_menus_str, allowed_projects_str, phone, department, github_url, linkedin_url, line_id))
         
         new_user = cursor.fetchone()
         conn.commit()
@@ -354,7 +443,14 @@ def create_user():
                 'role': new_user[4],
                 'is_active': new_user[5],
                 'created_at': new_user[6].isoformat() if new_user[6] else None,
-                'avatar_path': new_user[7]
+                'avatar_path': new_user[7],
+                'allowed_menus': parse_permissions_json(new_user[8], default_menus),
+                'allowed_projects': parse_permissions_json(new_user[9], ["all"]),
+                'phone': new_user[10] or '',
+                'department': new_user[11] or '',
+                'github_url': new_user[12] or '',
+                'linkedin_url': new_user[13] or '',
+                'line_id': new_user[14] or ''
             }
         })
     except Exception as e:
@@ -362,7 +458,6 @@ def create_user():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/users/<int:user_id>', methods=['GET'])
-
 @token_required
 def get_user_detail(user_id):
     try:
@@ -376,11 +471,14 @@ def get_user_detail(user_id):
             ALTER TABLE users ADD COLUMN IF NOT EXISTS linkedin_url VARCHAR(255);
             ALTER TABLE users ADD COLUMN IF NOT EXISTS line_id VARCHAR(100);
             ALTER TABLE users ADD COLUMN IF NOT EXISTS department VARCHAR(100);
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS allowed_menus TEXT;
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS allowed_projects TEXT;
         """)
         
         cursor.execute("""
             SELECT user_id, username, email, display_name, role, is_active, 
-                   avatar_path, phone, github_url, linkedin_url, line_id, department
+                   avatar_path, phone, github_url, linkedin_url, line_id, department,
+                   allowed_menus, allowed_projects
             FROM users WHERE user_id = %s;
         """, (user_id,))
         row = cursor.fetchone()
@@ -390,6 +488,9 @@ def get_user_detail(user_id):
         if not row:
             return jsonify({'error': 'User not found'}), 404
             
+        u_role = row[4] or 'user'
+        default_menus = DEFAULT_ADMIN_MENUS if u_role == 'admin' else DEFAULT_USER_MENUS
+
         return jsonify({
             'success': True,
             'user': {
@@ -397,14 +498,16 @@ def get_user_detail(user_id):
                 'username': row[1],
                 'email': row[2],
                 'display_name': row[3],
-                'role': row[4],
+                'role': u_role,
                 'is_active': row[5],
                 'avatar_path': row[6],
                 'phone': row[7] or '',
                 'github_url': row[8] or '',
                 'linkedin_url': row[9] or '',
                 'line_id': row[10] or '',
-                'department': row[11] or ''
+                'department': row[11] or '',
+                'allowed_menus': parse_permissions_json(row[12], default_menus),
+                'allowed_projects': parse_permissions_json(row[13], ["all"])
             }
         })
     except Exception as e:
@@ -423,13 +526,15 @@ def update_user(user_id):
         conn = get_auth_db_connection()
         cursor = conn.cursor()
         
-        # Ensure extra profile columns exist
+        # Ensure extra profile columns and permissions exist
         cursor.execute("""
             ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(50);
             ALTER TABLE users ADD COLUMN IF NOT EXISTS github_url VARCHAR(255);
             ALTER TABLE users ADD COLUMN IF NOT EXISTS linkedin_url VARCHAR(255);
             ALTER TABLE users ADD COLUMN IF NOT EXISTS line_id VARCHAR(100);
             ALTER TABLE users ADD COLUMN IF NOT EXISTS department VARCHAR(100);
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS allowed_menus TEXT;
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS allowed_projects TEXT;
         """)
         
         update_fields = []
@@ -462,6 +567,15 @@ def update_user(user_id):
         if 'department' in data:
             update_fields.append("department = %s")
             params.append(data['department'])
+        if 'allowed_menus' in data:
+            update_fields.append("allowed_menus = %s")
+            params.append(json.dumps(data['allowed_menus'], ensure_ascii=False) if isinstance(data['allowed_menus'], list) else data['allowed_menus'])
+        if 'allowed_projects' in data:
+            update_fields.append("allowed_projects = %s")
+            params.append(json.dumps(data['allowed_projects'], ensure_ascii=False) if isinstance(data['allowed_projects'], list) else data['allowed_projects'])
+        if 'avatar_path' in data:
+            update_fields.append("avatar_path = %s")
+            params.append(data['avatar_path'])
             
         if not update_fields:
             cursor.close()
@@ -470,7 +584,11 @@ def update_user(user_id):
             
         params.append(user_id)
         
-        query = f"UPDATE users SET {', '.join(update_fields)} WHERE user_id = %s RETURNING user_id, username, email, display_name, role, is_active, avatar_path, phone, github_url, linkedin_url, line_id, department;"
+        query = f"""
+            UPDATE users SET {', '.join(update_fields)} 
+            WHERE user_id = %s 
+            RETURNING user_id, username, email, display_name, role, is_active, avatar_path, phone, github_url, linkedin_url, line_id, department, allowed_menus, allowed_projects;
+        """
         cursor.execute(query, tuple(params))
         
         updated_user = cursor.fetchone()
@@ -484,6 +602,9 @@ def update_user(user_id):
         cursor.close()
         conn.close()
         
+        u_role = updated_user[4] or 'user'
+        default_menus = DEFAULT_ADMIN_MENUS if u_role == 'admin' else DEFAULT_USER_MENUS
+        
         return jsonify({
             'success': True,
             'user': {
@@ -491,14 +612,16 @@ def update_user(user_id):
                 'username': updated_user[1],
                 'email': updated_user[2],
                 'display_name': updated_user[3],
-                'role': updated_user[4],
+                'role': u_role,
                 'is_active': updated_user[5],
                 'avatar_path': updated_user[6],
                 'phone': updated_user[7],
                 'github_url': updated_user[8],
                 'linkedin_url': updated_user[9],
                 'line_id': updated_user[10],
-                'department': updated_user[11]
+                'department': updated_user[11],
+                'allowed_menus': parse_permissions_json(updated_user[12], default_menus),
+                'allowed_projects': parse_permissions_json(updated_user[13], ["all"])
             }
         })
     except Exception as e:
@@ -620,6 +743,7 @@ def create_project():
         p_code = data.get('project_code')
         desc = data.get('description', '')
         status = data.get('status', 'Active')
+        default_base_url = data.get('default_base_url', 'http://localhost:5173')
         
         # ถ้า project_code เป็น string ว่าง ให้ใช้ None แทน (auto-generate)
         if p_code is not None and not p_code.strip():
@@ -630,7 +754,8 @@ def create_project():
             project_name=p_name,
             project_code=p_code,
             description=desc,
-            status=status
+            status=status,
+            default_base_url=default_base_url
         )
         return jsonify({'success': True, 'project': project})
     except Exception as e:
@@ -650,6 +775,7 @@ def update_project_api(project_id):
         p_code = data.get('project_code')
         desc = data.get('description')
         status = data.get('status')
+        default_base_url = data.get('default_base_url')
         
         if p_code is not None and not str(p_code).strip():
             p_code = None
@@ -659,7 +785,8 @@ def update_project_api(project_id):
             name=p_name,
             project_code=p_code,
             description=desc,
-            status=status
+            status=status,
+            default_base_url=default_base_url
         )
         return jsonify({'success': True, 'project': project, 'message': 'อัปเดตโครงการเรียบร้อยแล้ว'})
     except Exception as e:
@@ -3260,6 +3387,7 @@ def create_document():
     doc_name = data.get('doc_name')
     skill_id = data.get('skill_id')
     reference_document_id = data.get('reference_document_id')
+    custom_prompt = data.get('custom_prompt', '')
     
     if not all([project_id, doc_type, doc_name, skill_id]):
         return jsonify({'error': 'Missing required fields (project_id, doc_type, doc_name, skill_id)'}), 400
@@ -3269,12 +3397,26 @@ def create_document():
         conn = get_db_connection()
         cursor = conn.cursor()
         
+        # Ensure table exists
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS qa_generated_documents (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                project_id UUID REFERENCES projects(project_id) ON DELETE CASCADE,
+                doc_name VARCHAR(255),
+                doc_type VARCHAR(255),
+                skill_id VARCHAR(255),
+                status VARCHAR(50) DEFAULT 'Generating',
+                file_url VARCHAR(255),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        
         # Insert initial record
         cursor.execute("""
             INSERT INTO qa_generated_documents (project_id, doc_name, doc_type, skill_id, status)
             VALUES (%s::uuid, %s, %s, %s, 'Generating')
             RETURNING id
-        """, (project_id, doc_name, doc_type, skill_id))
+        """, (project_id, doc_name, doc_type, str(skill_id)))
         gen_id = cursor.fetchone()[0]
         conn.commit()
         cursor.close()
@@ -3283,7 +3425,7 @@ def create_document():
         # Run generation in background
         from agent_6_doc_creator import create_qa_document_async
         import threading
-        thread = threading.Thread(target=create_qa_document_async, args=(gen_id, project_id, doc_type, doc_name, skill_id, reference_document_id))
+        thread = threading.Thread(target=create_qa_document_async, args=(gen_id, project_id, doc_type, doc_name, str(skill_id), reference_document_id, custom_prompt))
         thread.daemon = True
         thread.start()
         
@@ -3304,10 +3446,29 @@ def get_generated_documents():
         conn = get_db_connection()
         cursor = conn.cursor()
         
+        # Ensure table exists and has required columns
         cursor.execute("""
-            SELECT q.id, q.doc_name, q.doc_type, s.skill_name, q.status, q.file_url, q.created_at
+            CREATE TABLE IF NOT EXISTS qa_generated_documents (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                project_id UUID REFERENCES projects(project_id) ON DELETE CASCADE,
+                doc_name VARCHAR(255),
+                doc_type VARCHAR(255),
+                skill_id VARCHAR(255),
+                status VARCHAR(50) DEFAULT 'Generating',
+                file_url VARCHAR(255),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            ALTER TABLE qa_generated_documents ADD COLUMN IF NOT EXISTS markdown_content TEXT;
+            ALTER TABLE qa_generated_documents ADD COLUMN IF NOT EXISTS pdf_url VARCHAR(255);
+            ALTER TABLE qa_generated_documents ADD COLUMN IF NOT EXISTS is_saved_to_project BOOLEAN DEFAULT FALSE;
+            ALTER TABLE qa_generated_documents ADD COLUMN IF NOT EXISTS saved_doc_id UUID;
+        """)
+        conn.commit()
+
+        cursor.execute("""
+            SELECT q.id, q.doc_name, q.doc_type, s.skill_name, q.status, q.file_url, q.pdf_url, q.is_saved_to_project, q.saved_doc_id, q.created_at, q.project_id
             FROM qa_generated_documents q
-            LEFT JOIN skills s ON q.skill_id = s.id
+            LEFT JOIN agent_skills s ON q.skill_id::text = s.skill_id::text
             WHERE q.project_id = %s::uuid
             ORDER BY q.created_at DESC
         """, (project_id,))
@@ -3322,7 +3483,11 @@ def get_generated_documents():
                 'skill_name': row[3] or 'Unknown Skill',
                 'status': row[4],
                 'file_url': row[5],
-                'created_at': row[6].isoformat() if row[6] else None
+                'pdf_url': row[6],
+                'is_saved_to_project': bool(row[7]) if row[7] is not None else False,
+                'saved_doc_id': str(row[8]) if row[8] else None,
+                'created_at': row[9].isoformat() if row[9] else None,
+                'project_id': str(row[10]) if row[10] else str(project_id)
             })
             
         cursor.close()
@@ -3340,22 +3505,544 @@ def download_generated_document(doc_id):
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        cursor.execute("SELECT file_url FROM qa_generated_documents WHERE id = %s::uuid", (doc_id,))
+        download_format = request.args.get('format', 'pdf').lower() # 'pdf', 'excel', 'xlsx', 'md'
+        
+        cursor.execute("SELECT file_url, pdf_url, doc_name, markdown_content, doc_type FROM qa_generated_documents WHERE id = %s::uuid", (doc_id,))
         row = cursor.fetchone()
         cursor.close()
         conn.close()
         
-        if not row or not row[0]:
-            return jsonify({'error': 'File not found'}), 404
+        if not row:
+            return jsonify({'error': 'Document not found'}), 404
             
-        file_path = row[0]
-        if not os.path.exists(file_path):
-            return jsonify({'error': 'File does not exist on disk'}), 404
+        excel_path, pdf_path, doc_name, markdown_content, doc_type = row
+        safe_name = "".join([c if c.isalnum() or c in (' ', '_', '-') else '_' for c in (doc_name or 'Document')]).strip().replace(' ', '_')
+        
+        if download_format in ['excel', 'xlsx']:
+            file_path = excel_path
+            if not file_path or not os.path.exists(file_path):
+                return jsonify({'error': 'Excel file does not exist on disk'}), 404
+            return send_file(
+                file_path, 
+                as_attachment=True, 
+                download_name=f"{safe_name}.xlsx",
+                mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            )
+        elif download_format in ['md', 'markdown']:
+            import io
+            content = markdown_content or f"# {doc_name}\n(No markdown content)"
+            return send_file(
+                io.BytesIO(content.encode('utf-8')),
+                mimetype='text/markdown',
+                as_attachment=True,
+                download_name=f"{safe_name}.md"
+            )
+        else: # Default: pdf
+            file_path = pdf_path
+            # If pdf_path is missing or not found on disk, generate on-the-fly
+            if not file_path or not os.path.exists(file_path):
+                if markdown_content and markdown_content.strip():
+                    from agent_6_doc_creator import render_html_to_pdf
+                    import uuid
+                    upload_dir = os.path.join(os.getcwd(), 'uploads', 'qa_generated')
+                    os.makedirs(upload_dir, exist_ok=True)
+                    gen_pdf_path = os.path.join(upload_dir, f"{safe_name}_{uuid.uuid4().hex[:6]}.pdf")
+                    import markdown as md_lib
+                    rendered_body = md_lib.markdown(markdown_content, extensions=['tables'])
+                    html_content = f"""<!DOCTYPE html><html><head><meta charset='utf-8'><title>{doc_name}</title><style>body{{font-family:'Segoe UI',Tahoma,sans-serif;padding:24px;font-size:12px;color:#1e293b;line-height:1.5;}} h1{{color:#1e3a8a;border-bottom:2px solid #3b82f6;padding-bottom:6px;}} table{{width:100%;border-collapse:collapse;margin:12px 0;}} th,td{{border:1px solid #cbd5e1;padding:6px 10px;vertical-align:top;}} th{{background:#f1f5f9;font-weight:600;text-align:left;}}</style></head><body>{rendered_body}</body></html>"""
+                    if render_html_to_pdf(html_content, gen_pdf_path) and os.path.exists(gen_pdf_path):
+                        file_path = gen_pdf_path
+                        try:
+                            c2 = get_db_connection()
+                            cur2 = c2.cursor()
+                            cur2.execute("UPDATE qa_generated_documents SET pdf_url = %s WHERE id = %s::uuid", (gen_pdf_path, doc_id))
+                            c2.commit()
+                            cur2.close()
+                            c2.close()
+                        except:
+                            pass
             
-        return send_file(file_path, as_attachment=True)
+            if not file_path or not os.path.exists(file_path):
+                return jsonify({'error': 'PDF file is not available for this document'}), 404
+                
+            return send_file(
+                file_path, 
+                as_attachment=True, 
+                download_name=f"{safe_name}.pdf",
+                mimetype='application/pdf'
+            )
         
     except Exception as e:
         logger.error(f"Error downloading generated document: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/agent/save_generated_doc_to_project', methods=['POST'])
+def save_generated_doc_to_project():
+    data = request.json or {}
+    doc_id = data.get('doc_id')
+    if not doc_id:
+        return jsonify({'error': 'doc_id is required'}), 400
+        
+    try:
+        from db_ingestion import get_db_connection, ingest_markdown_document
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT doc_name, doc_type, project_id, markdown_content, is_saved_to_project, saved_doc_id
+            FROM qa_generated_documents
+            WHERE id = %s::uuid
+        """, (doc_id,))
+        row = cursor.fetchone()
+        
+        if not row:
+            cursor.close()
+            conn.close()
+            return jsonify({'error': 'Document record not found'}), 404
+            
+        row_doc_name, row_doc_type, row_project_id, markdown_content, is_saved, saved_doc_id = row
+        
+        if not markdown_content or not markdown_content.strip():
+            cursor.close()
+            conn.close()
+            return jsonify({'error': 'Markdown content is empty for this document'}), 400
+            
+        target_project_id = data.get('project_id') or str(row_project_id)
+        raw_filename = data.get('filename') or f"{row_doc_name}.md"
+        filename = raw_filename if (raw_filename.endswith('.md') or '.' in raw_filename) else f"{raw_filename}.md"
+        doc_category = data.get('doc_category', 'Reference')
+        doc_type = data.get('doc_type', row_doc_type or 'Test Case')
+        is_golden_data = bool(data.get('is_golden_data', False))
+        
+        logger.info(f"Ingesting QA generated document '{filename}' into project {target_project_id} (Category: {doc_category}, Golden: {is_golden_data})...")
+        success, msg_or_id = ingest_markdown_document(
+            filename=filename,
+            markdown_text=markdown_content.strip(),
+            project_id=target_project_id,
+            doc_category=doc_category,
+            doc_type=doc_type,
+            is_golden_data=is_golden_data
+        )
+        
+        if success:
+            ingested_doc_id = msg_or_id
+            cursor.execute("""
+                UPDATE qa_generated_documents
+                SET is_saved_to_project = TRUE,
+                    saved_doc_id = %s::uuid
+                WHERE id = %s::uuid
+            """, (ingested_doc_id, doc_id))
+            conn.commit()
+            cursor.close()
+            conn.close()
+            return jsonify({
+                'success': True,
+                'message': 'บันทึกเอกสารเข้าโครงการสำเร็จ',
+                'doc_id': str(ingested_doc_id)
+            })
+        else:
+            cursor.close()
+            conn.close()
+            return jsonify({'error': msg_or_id or 'บันทึกเอกสารไม่สำเร็จ'}), 500
+    except Exception as e:
+        logger.error(f"Error saving generated doc to project: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/agent/flow_analysis', methods=['GET'])
+def get_flow_analysis():
+    project_id = request.args.get('project_id')
+    if not project_id:
+        return jsonify({'error': 'project_id is required'}), 400
+        
+    try:
+        from agent_7_flow_analyzer import get_project_flow_analysis
+        result = get_project_flow_analysis(project_id)
+        if result:
+            return jsonify({'success': True, 'analysis': result})
+        return jsonify({'success': False, 'message': 'No flow analysis found for this project'})
+    except Exception as e:
+        logger.error(f"Error fetching flow analysis: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/agent/generate_flow_analysis', methods=['POST'])
+def generate_flow_analysis():
+    data = request.json or {}
+    project_id = data.get('project_id')
+    custom_instructions = data.get('custom_instructions', '')
+    
+    if not project_id:
+        return jsonify({'error': 'project_id is required'}), 400
+        
+    try:
+        from agent_7_flow_analyzer import analyze_project_flow_and_diagrams
+        success, res_or_err = analyze_project_flow_and_diagrams(project_id, custom_instructions)
+        if success:
+            return jsonify({'success': True, 'analysis': res_or_err})
+        else:
+            return jsonify({'error': f"Flow analysis failed: {res_or_err}"}), 500
+    except Exception as e:
+        logger.error(f"Error generating flow analysis: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/agent/save_flow_analysis', methods=['POST'])
+def save_flow_analysis():
+    data = request.json or {}
+    project_id = data.get('project_id')
+    if not project_id:
+        return jsonify({'error': 'project_id is required'}), 400
+        
+    try:
+        from db_ingestion import get_db_connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        sitemap_data = data.get('sitemap', [])
+        system_flowchart = data.get('system_flowchart', '')
+        usecase_diagram = data.get('usecase_diagram', '')
+        activity_diagram = data.get('activity_diagram', '')
+        sequence_diagram = data.get('sequence_diagram', '')
+        screen_mockups = data.get('screen_mockups', [])
+        traceability_matrix = data.get('traceability_matrix', [])
+        summary_stats = data.get('summary_stats', {})
+        
+        cursor.execute("SELECT id FROM qa_analysis_diagrams WHERE project_id = %s::uuid ORDER BY updated_at DESC LIMIT 1", (project_id,))
+        existing_row = cursor.fetchone()
+        
+        if existing_row:
+            analysis_id = existing_row[0]
+            cursor.execute("""
+                UPDATE qa_analysis_diagrams
+                SET sitemap_data = %s,
+                    system_flowchart = %s,
+                    usecase_diagram = %s,
+                    activity_diagram = %s,
+                    sequence_diagram = %s,
+                    screen_mockups = %s,
+                    traceability_matrix = %s,
+                    summary_stats = %s,
+                    status = 'Completed',
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s::uuid
+            """, (
+                json.dumps(sitemap_data, ensure_ascii=False),
+                system_flowchart,
+                usecase_diagram,
+                activity_diagram,
+                sequence_diagram,
+                json.dumps(screen_mockups, ensure_ascii=False),
+                json.dumps(traceability_matrix, ensure_ascii=False),
+                json.dumps(summary_stats, ensure_ascii=False),
+                analysis_id
+            ))
+        else:
+            cursor.execute("""
+                INSERT INTO qa_analysis_diagrams (
+                    project_id, sitemap_data, system_flowchart, usecase_diagram, activity_diagram,
+                    sequence_diagram, screen_mockups, traceability_matrix, summary_stats, status
+                ) VALUES (
+                    %s::uuid, %s, %s, %s, %s, %s, %s, %s, %s, 'Completed'
+                ) RETURNING id
+            """, (
+                project_id,
+                json.dumps(sitemap_data, ensure_ascii=False),
+                system_flowchart,
+                usecase_diagram,
+                activity_diagram,
+                sequence_diagram,
+                json.dumps(screen_mockups, ensure_ascii=False),
+                json.dumps(traceability_matrix, ensure_ascii=False),
+                json.dumps(summary_stats, ensure_ascii=False)
+            ))
+            analysis_id = cursor.fetchone()[0]
+            
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        return jsonify({'success': True, 'id': str(analysis_id), 'message': 'บันทึกข้อมูล Flow Analysis เรียบร้อยแล้ว'})
+    except Exception as e:
+        logger.error(f"Error saving flow analysis: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/agent/upload_wireframe_image', methods=['POST'])
+def upload_wireframe_image():
+    """
+    Uploads a custom UI Wireframe / Mockup image for a specific screen in a project.
+    """
+    project_id = request.form.get('project_id')
+    screen_id = request.form.get('screen_id')
+    file = request.files.get('file')
+    
+    if not project_id or not screen_id:
+        return jsonify({'error': 'project_id and screen_id are required'}), 400
+        
+    if not file or file.filename == '':
+        return jsonify({'error': 'No file uploaded'}), 400
+        
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in ['.png', '.jpg', '.jpeg', '.webp', '.svg', '.gif']:
+        return jsonify({'error': 'Unsupported file format. Please upload PNG, JPG, WebP, SVG, or GIF.'}), 400
+        
+    try:
+        import uuid
+        wireframe_dir = Path(__file__).parent.parent / 'uploads' / 'wireframes'
+        wireframe_dir.mkdir(exist_ok=True, parents=True)
+        
+        safe_proj = "".join([c if c.isalnum() else '_' for c in str(project_id)[:8]])
+        safe_screen = "".join([c if c.isalnum() else '_' for c in str(screen_id)])
+        filename = f"wf_{safe_proj}_{safe_screen}_{uuid.uuid4().hex[:6]}{ext}"
+        save_path = wireframe_dir / filename
+        file.save(str(save_path))
+        
+        image_url = f"/uploads/wireframes/{filename}"
+        
+        # Update in database qa_analysis_diagrams table
+        from db_ingestion import get_db_connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT id, screen_mockups FROM qa_analysis_diagrams WHERE project_id = %s::uuid ORDER BY updated_at DESC LIMIT 1", (project_id,))
+        row = cursor.fetchone()
+        
+        if row:
+            analysis_id, screen_mockups_data = row
+            mockups = screen_mockups_data if isinstance(screen_mockups_data, list) else []
+            updated = False
+            for m in mockups:
+                if m.get('screen_id') == screen_id:
+                    m['wireframe_type'] = 'image'
+                    m['image_url'] = image_url
+                    m['image_filename'] = file.filename
+                    updated = True
+                    break
+                    
+            if not updated:
+                mockups.append({
+                    'screen_id': screen_id,
+                    'screen_name': screen_id,
+                    'wireframe_type': 'image',
+                    'image_url': image_url,
+                    'image_filename': file.filename
+                })
+                
+            cursor.execute("""
+                UPDATE qa_analysis_diagrams
+                SET screen_mockups = %s,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s::uuid
+            """, (json.dumps(mockups, ensure_ascii=False), analysis_id))
+            conn.commit()
+            
+        cursor.close()
+        conn.close()
+        
+        return jsonify({
+            'success': True,
+            'image_url': image_url,
+            'screen_id': screen_id,
+            'message': 'อัปโหลดรูปภาพ Wireframe สำเร็จ'
+        })
+        
+    except Exception as e:
+        logger.error(f"Error uploading wireframe image: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/agent/update_screen_wireframe', methods=['POST'])
+def update_screen_wireframe():
+    """
+    Updates screen wireframe mode (AI, Figma, Image) and settings for a screen.
+    """
+    data = request.json or {}
+    project_id = data.get('project_id')
+    screen_id = data.get('screen_id')
+    wireframe_type = data.get('wireframe_type', 'ai') # 'ai' | 'figma' | 'image'
+    figma_url = data.get('figma_url', '')
+    image_url = data.get('image_url', '')
+    
+    if not project_id or not screen_id:
+        return jsonify({'error': 'project_id and screen_id are required'}), 400
+        
+    try:
+        from db_ingestion import get_db_connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT id, screen_mockups FROM qa_analysis_diagrams WHERE project_id = %s::uuid ORDER BY updated_at DESC LIMIT 1", (project_id,))
+        row = cursor.fetchone()
+        
+        if not row:
+            cursor.close()
+            conn.close()
+            return jsonify({'error': 'Analysis record not found for this project'}), 404
+            
+        analysis_id, screen_mockups_data = row
+        mockups = screen_mockups_data if isinstance(screen_mockups_data, list) else []
+        
+        for m in mockups:
+            if m.get('screen_id') == screen_id:
+                m['wireframe_type'] = wireframe_type
+                if figma_url is not None:
+                    m['figma_url'] = figma_url
+                if image_url is not None:
+                    m['image_url'] = image_url
+                break
+                
+        cursor.execute("""
+            UPDATE qa_analysis_diagrams
+            SET screen_mockups = %s,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = %s::uuid
+        """, (json.dumps(mockups, ensure_ascii=False), analysis_id))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        return jsonify({'success': True, 'message': 'บันทึกการตั้งค่า Wireframe เรียบร้อย'})
+        
+    except Exception as e:
+        logger.error(f"Error updating screen wireframe: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/agent/figma/sync_frame', methods=['POST'])
+def sync_figma_frame():
+    """
+    Parses Figma URL, provides Embed URL, and optionally syncs high-res PNG image via Figma API.
+    """
+    data = request.json or {}
+    figma_url = data.get('figma_url', '').strip()
+    figma_token = data.get('figma_token', '').strip() or os.environ.get('FIGMA_ACCESS_TOKEN', '')
+    project_id = data.get('project_id')
+    screen_id = data.get('screen_id')
+    
+    if not figma_url:
+        return jsonify({'error': 'figma_url is required'}), 400
+        
+    try:
+        import re
+        import urllib.parse
+        import requests
+        import uuid
+        
+        # Parse file key and node id
+        file_key_match = re.search(r'figma\.com/(?:file|design|proto)/([a-zA-Z0-9]+)', figma_url)
+        file_key = file_key_match.group(1) if file_key_match else None
+        
+        node_id_match = re.search(r'node-id=([a-zA-Z0-9%:-]+)', figma_url)
+        node_id_raw = node_id_match.group(1) if node_id_match else None
+        node_id = urllib.parse.unquote(node_id_raw) if node_id_raw else None
+        # Convert colon or hyphen for Figma API (API expects e.g. 1:2 or 1-2)
+        api_node_id = node_id.replace('-', ':') if node_id else None
+        
+        # Standard Figma Live Embed URL
+        encoded_url = urllib.parse.quote(figma_url, safe='')
+        embed_url = f"https://www.figma.com/embed?embed_host=spectra_qa&url={encoded_url}"
+        
+        image_url = None
+        # If Figma Token is provided and we have file_key & node_id, fetch rendered frame image
+        if figma_token and file_key and api_node_id:
+            try:
+                api_res = requests.get(
+                    f"https://api.figma.com/v1/images/{file_key}",
+                    headers={"X-Figma-Token": figma_token},
+                    params={"ids": api_node_id, "format": "png", "scale": 2},
+                    timeout=15
+                )
+                if api_res.ok:
+                    res_data = api_res.json()
+                    images_dict = res_data.get('images', {})
+                    remote_img_url = images_dict.get(api_node_id) or list(images_dict.values())[0] if images_dict else None
+                    if remote_img_url:
+                        # Download and save locally
+                        img_res = requests.get(remote_img_url, timeout=20)
+                        if img_res.ok:
+                            wireframe_dir = Path(__file__).parent.parent / 'uploads' / 'wireframes'
+                            wireframe_dir.mkdir(exist_ok=True, parents=True)
+                            safe_proj = "".join([c if c.isalnum() else '_' for c in str(project_id)[:8]]) if project_id else 'proj'
+                            safe_screen = "".join([c if c.isalnum() else '_' for c in str(screen_id)]) if screen_id else 'screen'
+                            local_fname = f"figma_{safe_proj}_{safe_screen}_{uuid.uuid4().hex[:6]}.png"
+                            with open(wireframe_dir / local_fname, 'wb') as f:
+                                f.write(img_res.content)
+                            image_url = f"/uploads/wireframes/{local_fname}"
+            except Exception as figma_err:
+                logger.warning(f"Figma API image sync warning (fallback to live embed): {figma_err}")
+                
+        return jsonify({
+            'success': True,
+            'figma_url': figma_url,
+            'file_key': file_key,
+            'node_id': node_id,
+            'embed_url': embed_url,
+            'synced_image_url': image_url,
+            'message': 'ดึงข้อมูล Figma Frame สำเร็จ'
+        })
+        
+    except Exception as e:
+        logger.error(f"Error syncing Figma frame: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/agent/map_test_card', methods=['POST'])
+def map_test_card():
+    """
+    Auto-maps a Trello card or sitemap screen to Target URL, matched Test Cases, and suggested Test Steps.
+    """
+    data = request.json or {}
+    project_id = data.get('project_id')
+    card_data = data.get('card_data') or {}
+    
+    if not project_id:
+        return jsonify({'error': 'project_id is required'}), 400
+        
+    try:
+        from agent_card_tester import resolve_card_test_mapping
+        result = resolve_card_test_mapping(project_id, card_data)
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"Error mapping test card: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/agent/execute_test_card', methods=['POST'])
+def execute_test_card():
+    """
+    Executes customized Playwright browser test run and AI Gap analysis with verified test cases.
+    """
+    data = request.json or {}
+    project_id = data.get('project_id')
+    
+    if not project_id:
+        return jsonify({'error': 'project_id is required'}), 400
+        
+    try:
+        from agent_card_tester import execute_customized_test_run
+        result = execute_customized_test_run(project_id, data)
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"Error executing test card: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/agent/test_runs', methods=['GET'])
+def get_test_runs():
+    """
+    Returns historical test runs for a project.
+    """
+    project_id = request.args.get('project_id')
+    limit = int(request.args.get('limit', 50))
+    
+    if not project_id:
+        return jsonify({'error': 'project_id is required'}), 400
+        
+    try:
+        from agent_card_tester import get_project_test_runs
+        runs = get_project_test_runs(project_id, limit)
+        return jsonify({'success': True, 'test_runs': runs})
+    except Exception as e:
+        logger.error(f"Error getting test runs: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 
@@ -5183,6 +5870,13 @@ if __name__ == '__main__':
         logger.info("Exit Criteria tables ready.")
     except Exception as e:
         logger.error(f"Failed to initialize Exit Criteria tables: {e}")
+
+    # Initialize QA Analysis Diagrams table
+    try:
+        from agent_7_flow_analyzer import init_flow_diagrams_table
+        init_flow_diagrams_table()
+    except Exception as e:
+        logger.error(f"Failed to initialize QA Analysis Diagrams table: {e}")
     
     app.run(
         host='0.0.0.0',

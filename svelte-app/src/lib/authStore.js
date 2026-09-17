@@ -1,17 +1,40 @@
 import { writable, derived } from 'svelte/store';
 
+function parseStoredJson(key, defaultVal) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : defaultVal;
+  } catch (e) {
+    return defaultVal;
+  }
+}
+
+export const DEFAULT_USER_MENUS = [
+  'qa_consult', 'qa_performance', 'qa_research', 'qa_security',
+  'qa_automate', 'qa_doc_creation', 'qa_analysis_diagram', 'qa_board', 'master_agent', 'workflow_builder'
+];
+
+export const DEFAULT_ADMIN_MENUS = [
+  'ocr', 'project_management', 'kb', 'skills', 'qa_member',
+  'exit_criteria', 'api_collection', 'api_usage'
+];
+
 // ── Internal stores ──
 const _token = writable(localStorage.getItem('jwt_token') || '');
 const _user  = writable(localStorage.getItem('auth_user')  || '');
 const _role  = writable(localStorage.getItem('auth_role')  || '');
 const _displayName = writable(localStorage.getItem('auth_display_name') || '');
 const _avatarPath = writable(localStorage.getItem('auth_avatar_path') || '');
+const _allowedMenus = writable(parseStoredJson('auth_allowed_menus', []));
+const _allowedProjects = writable(parseStoredJson('auth_allowed_projects', ['all']));
 
 // ── Derived readable stores for components ──
 export const authUser = { subscribe: _user.subscribe };
 export const authRole = { subscribe: _role.subscribe };
 export const authDisplayName = { subscribe: _displayName.subscribe };
 export const authAvatar = { subscribe: _avatarPath.subscribe };
+export const authAllowedMenus = { subscribe: _allowedMenus.subscribe };
+export const authAllowedProjects = { subscribe: _allowedProjects.subscribe };
 
 /** showLogin is true when there is no valid token */
 export const showLogin = derived(_token, ($t) => !$t);
@@ -23,17 +46,24 @@ export const showLogin = derived(_token, ($t) => !$t);
  * Persists credentials and installs a fetch interceptor that
  * attaches the Authorization header to every subsequent request.
  */
-export function login(token, user, role, displayName, avatarPath) {
+export function login(token, user, role, displayName, avatarPath, allowedMenus, allowedProjects) {
+  const finalMenus = allowedMenus || (role === 'admin' ? DEFAULT_ADMIN_MENUS : DEFAULT_USER_MENUS);
+  const finalProjects = allowedProjects || ['all'];
+
   _token.set(token);
   _user.set(user);
   _role.set(role);
   _displayName.set(displayName || user);
   _avatarPath.set(avatarPath || '');
+  _allowedMenus.set(finalMenus);
+  _allowedProjects.set(finalProjects);
 
   localStorage.setItem('jwt_token', token);
   localStorage.setItem('auth_user', user);
   localStorage.setItem('auth_role', role);
   localStorage.setItem('auth_display_name', displayName || user);
+  localStorage.setItem('auth_allowed_menus', JSON.stringify(finalMenus));
+  localStorage.setItem('auth_allowed_projects', JSON.stringify(finalProjects));
   if (avatarPath) {
     localStorage.setItem('auth_avatar_path', avatarPath);
   } else {
@@ -52,12 +82,16 @@ export function logout() {
   _role.set('');
   _displayName.set('');
   _avatarPath.set('');
+  _allowedMenus.set([]);
+  _allowedProjects.set(['all']);
 
   localStorage.removeItem('jwt_token');
   localStorage.removeItem('auth_user');
   localStorage.removeItem('auth_role');
   localStorage.removeItem('auth_display_name');
   localStorage.removeItem('auth_avatar_path');
+  localStorage.removeItem('auth_allowed_menus');
+  localStorage.removeItem('auth_allowed_projects');
 
   // Restore the original fetch if we patched it
   if (window.originalFetch) {

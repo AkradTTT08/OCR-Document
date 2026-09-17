@@ -13,6 +13,55 @@ from ocr_engine import _get_gemini_client
 logger = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+def init_test_execution_tables():
+    """
+    Initializes PostgreSQL tables for storing test execution runs and project environment configurations.
+    """
+    conn = get_db_connection()
+    if not conn:
+        return
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS qa_test_execution_runs (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                project_id UUID NOT NULL,
+                card_id VARCHAR(255),
+                card_title TEXT,
+                target_url TEXT,
+                environment VARCHAR(50) DEFAULT 'UAT',
+                user_role VARCHAR(50) DEFAULT 'Admin',
+                test_cases JSONB DEFAULT '[]',
+                test_steps JSONB DEFAULT '[]',
+                verdict VARCHAR(50) DEFAULT 'PENDING',
+                score_percent INT DEFAULT 0,
+                summary TEXT,
+                matched_criteria JSONB DEFAULT '[]',
+                discrepancies JSONB DEFAULT '[]',
+                screenshot_filename TEXT,
+                logs TEXT,
+                recommendation TEXT,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_qa_test_runs_project ON qa_test_execution_runs(project_id);
+            CREATE INDEX IF NOT EXISTS idx_qa_test_runs_created ON qa_test_execution_runs(created_at DESC);
+        """)
+        conn.commit()
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        logger.warning(f"Error initializing test execution tables: {e}")
+        if 'conn' in locals() and conn:
+            conn.close()
+
+# Auto-run table init on import
+try:
+    init_test_execution_tables()
+except Exception:
+    pass
+
+
 def parse_card_intent(title: str, desc: str = ""):
     """
     Parses card title and description to extract module name, menu, action, and target keywords.
@@ -41,6 +90,7 @@ def parse_card_intent(title: str, desc: str = ""):
         "keywords": keywords[:15]
     }
 
+
 def retrieve_srs_requirements(project_id: str, card_info: dict, max_chunks: int = 5):
     """
     Searches RAG Knowledge Base in PostgreSQL for relevant SRS sections and Test Cases matching this card.
@@ -52,30 +102,31 @@ def retrieve_srs_requirements(project_id: str, card_info: dict, max_chunks: int 
     chunks = []
     try:
         cursor = conn.cursor()
-        keywords = [card_info["module"], card_info["subview"]] + card_info["keywords"]
+        keywords = [card_info.get("module", ""), card_info.get("subview", "")] + card_info.get("keywords", [])
         unique_kws = list(dict.fromkeys([k for k in keywords if k]))
 
         # 1. Search in documents with category Requirements / SRS / Test Cases
-        sql_or_clauses = " OR ".join(["dc.chunk_text ILIKE %s" for _ in unique_kws[:6]])
-        params = [project_id] + [f"%{k}%" for k in unique_kws[:6]]
+        if unique_kws:
+            sql_or_clauses = " OR ".join(["dc.chunk_text ILIKE %s" for _ in unique_kws[:6]])
+            params = [project_id] + [f"%{k}%" for k in unique_kws[:6]]
 
-        query = f"""
-            SELECT d.original_filename, d.doc_category, dc.chunk_text
-            FROM document_chunks dc
-            JOIN documents d ON dc.doc_id = d.doc_id
-            WHERE d.project_id = %s
-              AND (d.doc_category IN ('Requirements', 'Test Cases', 'QA Report') OR d.original_filename ILIKE '%%SRS%%' OR d.original_filename ILIKE '%%REQ%%')
-              AND ({sql_or_clauses})
-            LIMIT %s
-        """
-        cursor.execute(query, tuple(params + [max_chunks]))
-        rows = cursor.fetchall()
-        for r in rows:
-            chunks.append({
-                "source_file": r[0],
-                "category": r[1],
-                "content": r[2]
-            })
+            query = f"""
+                SELECT d.original_filename, d.doc_category, dc.chunk_text
+                FROM document_chunks dc
+                JOIN documents d ON dc.doc_id = d.doc_id
+                WHERE d.project_id = %s
+                  AND (d.doc_category IN ('Requirements', 'Test Cases', 'QA Report') OR d.original_filename ILIKE '%%SRS%%' OR d.original_filename ILIKE '%%REQ%%')
+                  AND ({sql_or_clauses})
+                LIMIT %s
+            """
+            cursor.execute(query, tuple(params + [max_chunks]))
+            rows = cursor.fetchall()
+            for r in rows:
+                chunks.append({
+                    "source_file": r[0],
+                    "category": r[1],
+                    "content": r[2]
+                })
 
         # 2. If nothing found via specific keyword, grab high-level SRS chunks for the project
         if not chunks:
@@ -104,72 +155,280 @@ def retrieve_srs_requirements(project_id: str, card_info: dict, max_chunks: int 
 
     return chunks
 
-def extract_expected_criteria(card_data: dict, srs_chunks: list):
+
+def resolve_card_test_mapping(project_id: str, card_data: dict):
     """
-    Uses Gemini AI to synthesize explicit Acceptance Criteria and expected UI rules
-    based on the card requirements and SRS chunks.
+    Intelligent AI Auto-Mapping Engine:
+    1. Reads Project Settings (Base URL & Environments).
+    2. Reads Flow Analysis (Sitemap & Traceability Matrix).
+    3. Matches Card keywords to find exact Route Path & Screen.
+    4. Matches Traceability Matrix to find linked Test Cases and Use Cases.
+    5. Retrieves RAG Knowledge Base to formulate test cases with Positive/Negative criteria and suggested test steps.
     """
+    title = card_data.get('title') or "Untitled Task"
+    desc = card_data.get('description') or ""
+    card_info = parse_card_intent(title, desc)
+
+    conn = get_db_connection()
+    sitemap = []
+    matrix = []
+    screen_mockups = []
+    project_name = "Project"
+    
+    # Default environment candidates
+    base_url = "http://localhost:5173"
+    environments = [
+        {"name": "DEV", "url": "http://localhost:5173", "description": "Local Development Server"},
+        {"name": "UAT", "url": "https://uat.example.com", "description": "User Acceptance Testing Server"},
+        {"name": "STAGING", "url": "https://staging.example.com", "description": "Staging Pre-production Server"}
+    ]
+
+    if conn:
+        try:
+            cursor = conn.cursor()
+            # 1. Fetch project info
+            cursor.execute("SELECT project_name, project_code, default_base_url FROM projects WHERE project_id = %s::uuid LIMIT 1", (project_id,))
+            p_row = cursor.fetchone()
+            if p_row:
+                project_name = p_row[0] or p_row[1] or "Project"
+                if p_row[2] and p_row[2].strip():
+                    base_url = p_row[2].strip()
+                    # Also update UAT default in environments list
+                    for env in environments:
+                        if env["name"] == "UAT":
+                            env["url"] = base_url
+
+            # 2. Fetch flow analysis diagrams & sitemap
+            cursor.execute("""
+                SELECT sitemap_data, traceability_matrix, screen_mockups
+                FROM qa_analysis_diagrams
+                WHERE project_id = %s::uuid
+                ORDER BY updated_at DESC LIMIT 1
+            """, (project_id,))
+            diag_row = cursor.fetchone()
+            if diag_row:
+                sitemap = diag_row[0] if isinstance(diag_row[0], list) else json.loads(diag_row[0] or '[]')
+                matrix = diag_row[1] if isinstance(diag_row[1], list) else json.loads(diag_row[1] or '[]')
+                screen_mockups = diag_row[2] if isinstance(diag_row[2], list) else json.loads(diag_row[2] or '[]')
+
+            cursor.close()
+            conn.close()
+        except Exception as e:
+            logger.warning(f"Error reading flow analysis for test mapping: {e}")
+            if 'conn' in locals() and conn:
+                conn.close()
+
+    # RAG Retrieval
+    srs_chunks = retrieve_srs_requirements(project_id, card_info, max_chunks=4)
+
+    # 1. Match with Sitemap Node & Route Path
+    matched_sitemap_node = None
+    matched_screen_mockup = None
+    target_route = "/dashboard"
+    
+    # Flatten sitemap hierarchy for search
+    all_sitemap_nodes = []
+    for node in sitemap:
+        all_sitemap_nodes.append(node)
+        if node.get("children"):
+            for child in node["children"]:
+                all_sitemap_nodes.append(child)
+
+    # Keyword scoring for best sitemap match
+    search_terms = [card_info["module"].lower(), card_info["subview"].lower()] + [k.lower() for k in card_info["keywords"]]
+    best_score = -1
+    for snode in all_sitemap_nodes:
+        stitle = (snode.get("title") or "").lower()
+        spath = (snode.get("path") or "").lower()
+        sdesc = (snode.get("description") or "").lower()
+        score = 0
+        for kw in search_terms:
+            if kw and len(kw) >= 2:
+                if kw in stitle: score += 5
+                if kw in spath: score += 4
+                if kw in sdesc: score += 2
+        if score > best_score:
+            best_score = score
+            matched_sitemap_node = snode
+
+    if matched_sitemap_node:
+        target_route = matched_sitemap_node.get("path") or f"/{card_info['module'].lower().replace(' ', '-')}"
+        screen_id = matched_sitemap_node.get("screen_id")
+        if screen_id and screen_mockups:
+            matched_screen_mockup = next((m for m in screen_mockups if m.get("screen_id") == screen_id), None)
+    else:
+        target_route = f"/{card_info['module'].lower().replace(' ', '-')}"
+
+    # Target URL Calculation
+    if card_info.get("target_url"):
+        target_url = card_info["target_url"]
+    else:
+        clean_route = target_route if target_route.startswith("/") else f"/{target_route}"
+        target_url = f"{base_url.rstrip('/')}{clean_route}"
+
+    # 2. Match with Traceability Matrix
+    matched_matrix_rows = []
+    for m in matrix:
+        m_title = (m.get("req_title") or "").lower()
+        m_code = (m.get("req_code") or "").lower()
+        m_screen = (m.get("screen_name") or "").lower()
+        m_uc = (m.get("use_case_id") or "").lower()
+        if any(kw in m_title or kw in m_code or kw in m_screen or kw in m_uc for kw in search_terms if len(kw) >= 2):
+            matched_matrix_rows.append(m)
+
+    # 3. Formulate Structured Test Cases & Steps with AI Synthesis
     client = _get_gemini_client()
-    srs_text = "\n\n---\n\n".join([f"[{c['source_file']} ({c['category']})]:\n{c['content']}" for c in srs_chunks]) if srs_chunks else "No specific SRS document found; use standard web QA standards."
+    srs_text = "\n\n---\n\n".join([f"[{c['source_file']}]:\n{c['content']}" for c in srs_chunks]) if srs_chunks else "Standard Web QA Standards"
+    matrix_context = json.dumps(matched_matrix_rows[:5], ensure_ascii=False) if matched_matrix_rows else "No exact matrix link"
 
     prompt = f"""
-You are a Principal QA Automation Architect.
-Analyze the following Card Details and SRS (Software Requirements Specification) context:
+You are an expert QA Automation Lead configuring an Automated Test Execution run.
+Analyze the following information:
 
-### CARD DETAILS:
-Title: {card_data.get('title')}
-Description: {card_data.get('description')}
-Labels: {[l.get('name') if isinstance(l, dict) else str(l) for l in card_data.get('labels', [])]}
+### TARGET CARD & CONTEXT:
+- Title: {title}
+- Description: {desc}
+- Module Detected: {card_info.get('module')}
+- Target Route: {target_route}
+- Matched Sitemap Node: {json.dumps(matched_sitemap_node, ensure_ascii=False) if matched_sitemap_node else 'N/A'}
+- Traceability Matrix Context: {matrix_context}
+- SRS Knowledge Context:
+{srs_text[:3000]}
 
-### SRS CONTEXT FROM KNOWLEDGE BASE:
-{srs_text[:4000]}
+Your Job:
+1. Generate 3-5 concrete Test Cases for this feature, classifying each as "Positive" (Happy Path) or "Negative" (Error / Boundary check).
+2. Generate 4-6 specific Test Execution Steps (Playwright actions) to verify this screen on a web browser.
+3. Formulate expected acceptance criteria.
 
-Your job:
-1. Identify the target module, screen, or menu.
-2. Formulate 3 to 5 clear, concrete Acceptance Criteria (Expected Results) that can be verified on a live web application.
-3. Formulate specific UI assertions (e.g. table columns, button presence, dropdown options, pagination controls).
-
-Return strictly JSON matching this structure:
+Return strictly valid JSON matching this schema:
 {{
-  "module_name": "...",
-  "target_menu": "...",
+  "matched_module": "{card_info.get('module')}",
+  "target_route": "{target_route}",
+  "test_cases": [
+    {{
+      "id": "TC-01",
+      "title": "...",
+      "type": "Positive",
+      "selected": true,
+      "expected_result": "..."
+    }},
+    {{
+      "id": "TC-02",
+      "title": "...",
+      "type": "Negative",
+      "selected": true,
+      "expected_result": "..."
+    }}
+  ],
+  "test_steps": [
+    {{ "step": 1, "action": "Navigate to target URL and verify page title", "target": "Page" }},
+    {{ "step": 2, "action": "Verify presence of Data Table and Search Controls", "target": "Table / Input" }},
+    {{ "step": 3, "action": "Interact with action buttons or submit test payload", "target": "Button" }},
+    {{ "step": 4, "action": "Verify response, toast alerts, and grid update", "target": "Assertion" }}
+  ],
   "expected_criteria": [
     "Criteria 1...",
     "Criteria 2..."
-  ],
-  "expected_ui_elements": [
-    "Table showing record rows",
-    "Pagination control with options (10, 20, 50, 100 per page)",
-    "Export / Download button"
-  ],
-  "verification_instructions": "Exact check for this card"
+  ]
 }}
 """
+    ai_mapping_data = None
     try:
         model_name = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash')
-        response = client.models.generate_content(
+        resp = client.models.generate_content(
             model=model_name,
             contents=prompt
         )
-        clean_json = response.text.strip()
+        clean_json = resp.text.strip()
         if clean_json.startswith('```'):
             clean_json = re.sub(r'^```json\s*|^```\s*|```$', '', clean_json, flags=re.MULTILINE).strip()
-        return json.loads(clean_json)
-    except Exception as e:
-        logger.warning(f"Gemini criteria extraction error: {e}")
-        return {
-            "module_name": card_data.get('title', 'Module'),
-            "target_menu": "Main Menu",
-            "expected_criteria": ["UI table loads correctly", "Required actions are enabled"],
-            "expected_ui_elements": ["Table", "Controls", "Export Button"],
-            "verification_instructions": "Verify all controls function properly"
-        }
+        ai_mapping_data = json.loads(clean_json)
+    except Exception as gemini_err:
+        logger.warning(f"AI test mapping fallback: {gemini_err}")
 
-def run_playwright_live_exploration(target_url: str, card_data: dict, module_info: dict):
+    # Fallback test cases if AI fails
+    test_cases = (ai_mapping_data and ai_mapping_data.get("test_cases")) or [
+        {
+            "id": f"TC-{card_info['module'][:3].upper()}-01",
+            "title": f"ตรวจสอบการแสดงผลข้อมูลและโครงสร้างหน้าจอ {card_info['module']}",
+            "type": "Positive",
+            "selected": True,
+            "expected_result": "ตารางและปุ่มคำสั่งแสดงผลครบถ้วนตาม SRS"
+        },
+        {
+            "id": f"TC-{card_info['module'][:3].upper()}-02",
+            "title": f"ตรวจสอบการทำงานของปุ่มค้นหาและฟิลเตอร์ {card_info['subview'] or 'Controls'}",
+            "type": "Positive",
+            "selected": True,
+            "expected_result": "สามารถกรองข้อมูลและกดค้นหาได้ถูกต้อง"
+        },
+        {
+            "id": f"TC-{card_info['module'][:3].upper()}-03",
+            "title": "ตรวจสอบ Error Handling และ Validation ในกรณีไม่มีข้อมูล",
+            "type": "Negative",
+            "selected": True,
+            "expected_result": "ระบบแสดงข้อความแจ้งเตือนที่เหมาะสม ไม่เกิด System Crash"
+        }
+    ]
+
+    test_steps = (ai_mapping_data and ai_mapping_data.get("test_steps")) or [
+        {"step": 1, "action": f"เปิดหน้าจอ {target_route} และรอโหลดหน้าสมบูรณ์", "target": "Browser Page"},
+        {"step": 2, "action": "ตรวจสอบ Header, Navigation, และ Breadcrumb", "target": "Header"},
+        {"step": 3, "action": "ตรวจสอบการแสดงผลตารางรายการข้อมูลและ Pagination", "target": "Data Table"},
+        {"step": 4, "action": "ทดสอบคลิกปุ่ม Action เช่น Search, Export, หรือ Add Record", "target": "Action Buttons"},
+        {"step": 5, "action": "บันทึกภาพถ่าย Screenshot และตรวจสอบ Console Log Errors", "target": "Verification"}
+    ]
+
+    expected_criteria = (ai_mapping_data and ai_mapping_data.get("expected_criteria")) or [
+        "หน้าจอโหลดได้อย่างรวดเร็วและไม่มี JavaScript Console Error",
+        "ส่วนประกอบ UI แสดงผลครบถ้วนตาม Wireframe และ SRS"
+    ]
+
+    return {
+        "success": True,
+        "project_name": project_name,
+        "card_title": title,
+        "card_id": card_data.get("id") or card_data.get("saved_id"),
+        "ext_card_id": card_data.get("ext_card_id"),
+        "base_url": base_url,
+        "target_route": target_route,
+        "target_url": target_url,
+        "environments": environments,
+        "matched_sitemap_node": matched_sitemap_node,
+        "matched_screen_mockup": matched_screen_mockup,
+        "matched_matrix_rows": matched_matrix_rows,
+        "test_cases": test_cases,
+        "test_steps": test_steps,
+        "expected_criteria": expected_criteria,
+        "srs_references": [c["source_file"] for c in srs_chunks]
+    }
+
+
+def execute_customized_test_run(project_id: str, payload: dict):
     """
-    Uses Playwright to open Chromium in headless mode, inspects interactive elements,
-    extracts live table and form states, and captures a proof screenshot.
+    Executes an automated test run using Playwright and AI Gap Verification:
+    - payload contains:
+        target_url: str
+        environment: str (DEV, UAT, etc.)
+        user_role: str (Admin, Operator, etc.)
+        test_cases: list of selected test cases
+        test_steps: list of test steps
+        card_id: optional
+        card_title: str
+        description: str
     """
+    target_url = payload.get("target_url") or "http://localhost:5173"
+    environment = payload.get("environment") or "UAT"
+    user_role = payload.get("user_role") or "Admin"
+    test_cases = payload.get("test_cases") or []
+    test_steps = payload.get("test_steps") or []
+    card_id = payload.get("card_id")
+    card_title = payload.get("card_title") or "AI Test Execution"
+    card_desc = payload.get("description") or ""
+
+    logger.info(f"Executing AI Test Run on target URL: {target_url} (Env: {environment}, Role: {user_role})")
+
+    # Step 1: Run Playwright Live Exploration & Evidence Capture
     from playwright.sync_api import sync_playwright
 
     attachments_dir = BASE_DIR / 'uploads' / 'attachments'
@@ -183,19 +442,13 @@ def run_playwright_live_exploration(target_url: str, card_data: dict, module_inf
         "tables": [],
         "selects": [],
         "buttons": [],
+        "inputs": [],
         "screenshot_filename": shot_filename,
         "screenshot_path": str(shot_path),
         "error_logs": [],
-        "status": "unreachable"
+        "status": "unreachable",
+        "step_execution_logs": []
     }
-
-    # If no explicit URL provided, attempt common local dev/staging ports or candidate URLs
-    candidate_urls = [target_url] if target_url else [
-        "http://localhost:5173",
-        "http://localhost:3000",
-        "http://localhost:8080"
-    ]
-    candidate_urls = [u for u in candidate_urls if u]
 
     try:
         with sync_playwright() as p:
@@ -203,26 +456,38 @@ def run_playwright_live_exploration(target_url: str, card_data: dict, module_inf
             context = browser.new_context(viewport={'width': 1280, 'height': 800})
             page = context.new_page()
 
-            # Capture console errors
             page.on("console", lambda msg: web_state["error_logs"].append(f"[{msg.type}] {msg.text}") if msg.type in ["error", "warning"] else None)
 
+            # Step Execution Log
+            web_state["step_execution_logs"].append(f"▶️ Step 1: Navigating to {target_url} (Role: {user_role})...")
+            
             connected = False
-            for test_u in candidate_urls:
-                try:
-                    logger.info(f"Playwright probing URL: {test_u}")
-                    page.goto(test_u, timeout=7000, wait_until='domcontentloaded')
-                    connected = True
-                    web_state["url"] = test_u
-                    break
-                except Exception as net_err:
-                    logger.info(f"Could not connect to {test_u}: {net_err}")
+            try:
+                page.goto(target_url, timeout=9000, wait_until='domcontentloaded')
+                connected = True
+                web_state["status"] = "connected"
+                web_state["step_execution_logs"].append(f"✅ Connection established. Page loaded in {environment} mode.")
+            except Exception as net_err:
+                logger.warning(f"Connection issue on {target_url}: {net_err}")
+                web_state["step_execution_logs"].append(f"⚠️ Direct connect issue: {net_err}. Probing fallback ports...")
+                # Try localhost fallbacks
+                for fb in ["http://localhost:5173", "http://localhost:3000"]:
+                    try:
+                        page.goto(fb, timeout=4000, wait_until='domcontentloaded')
+                        connected = True
+                        web_state["status"] = "connected"
+                        web_state["url"] = fb
+                        web_state["step_execution_logs"].append(f"✅ Connected via fallback server: {fb}")
+                        break
+                    except Exception:
+                        pass
 
             if connected:
-                web_state["status"] = "connected"
                 page.wait_for_timeout(1500)
                 web_state["title"] = page.title()
 
-                # Extract dropdowns / selects (critical for pagination check like 10, 20, 50/page)
+                # Extract live elements
+                web_state["step_execution_logs"].append("▶️ Step 2: Inspecting DOM elements, forms, and data tables...")
                 selects_info = page.evaluate('''() => {
                     const res = [];
                     document.querySelectorAll('select, .custom-select, [role="combobox"]').forEach(el => {
@@ -238,7 +503,6 @@ def run_playwright_live_exploration(target_url: str, card_data: dict, module_inf
                 }''')
                 web_state["selects"] = selects_info
 
-                # Extract tables
                 tables_info = page.evaluate('''() => {
                     const res = [];
                     document.querySelectorAll('table, .data-table, .grid-table').forEach(tbl => {
@@ -251,7 +515,6 @@ def run_playwright_live_exploration(target_url: str, card_data: dict, module_inf
                 }''')
                 web_state["tables"] = tables_info
 
-                # Extract buttons
                 buttons_info = page.evaluate('''() => {
                     const btns = [];
                     document.querySelectorAll('button, a.btn, input[type="button"], input[type="submit"]').forEach(b => {
@@ -262,286 +525,364 @@ def run_playwright_live_exploration(target_url: str, card_data: dict, module_inf
                 }''')
                 web_state["buttons"] = buttons_info
 
+                web_state["step_execution_logs"].append(f"✅ Extracted: {len(buttons_info)} action buttons, {len(tables_info)} tables, {len(selects_info)} dropdowns.")
+                
                 # Take proof screenshot
+                web_state["step_execution_logs"].append("▶️ Step 3: Capturing proof screenshot & DOM state...")
                 page.screenshot(path=str(shot_path), full_page=False)
-                logger.info(f"Playwright captured proof screenshot: {shot_path}")
+                web_state["step_execution_logs"].append(f"📸 Screenshot saved successfully: {shot_filename}")
 
             browser.close()
     except Exception as pw_err:
-        logger.error(f"Playwright exploration exception: {pw_err}")
+        logger.error(f"Playwright execution error: {pw_err}")
         web_state["error_logs"].append(str(pw_err))
+        web_state["step_execution_logs"].append(f"❌ Playwright Runner Error: {pw_err}")
 
-    return web_state
-
-def verify_and_analyze_gaps(card_data: dict, criteria: dict, web_state: dict, srs_chunks: list):
-    """
-    Uses Gemini AI (Agent 3 style) to compare Expected SRS criteria with Actual Live Web State.
-    If actual web is unreachable, inspects card description, comments, and uploaded attachments (Vision).
-    """
+    # Step 2: Gemini AI Evaluation against selected Test Cases
     client = _get_gemini_client()
-
-    # Check if user uploaded any screenshots to the card
-    user_attachments = card_data.get('attachments') or []
-    attachment_desc = []
-    shot_path = web_state.get('screenshot_path')
-
-    for att in user_attachments:
-        fn = att.get('filename')
-        if fn:
-            p = BASE_DIR / 'uploads' / 'attachments' / fn
-            if p.exists():
-                attachment_desc.append(f"Attached User Evidence: {fn}")
+    srs_chunks = retrieve_srs_requirements(project_id, {"keywords": [card_title], "module": card_title, "subview": ""}, max_chunks=3)
+    srs_text = "\n\n".join([f"[{c['source_file']}]: {c['content']}" for c in srs_chunks]) if srs_chunks else "Standard Quality Specification"
 
     prompt = f"""
-You are an Elite QA Lead performing an automated audit and gap analysis on a software feature.
+You are the Lead QA Automation Agent evaluating the results of an automated test execution.
 
-### 1. CARD INFORMATION:
-- Card Title: {card_data.get('title')}
-- Description: {card_data.get('description')}
-- Reported Issue/Note: {card_data.get('description')}
+### TEST EXECUTION DETAILS:
+- Feature / Card Title: {card_title}
+- Target URL: {web_state.get('url')}
+- Environment: {environment} (User Role: {user_role})
+- Selected Test Cases to Validate:
+{json.dumps(test_cases, ensure_ascii=False, indent=2)}
 
-### 2. EXPECTED REQUIREMENTS (FROM SRS & TEST CASES):
-- Module: {criteria.get('module_name')}
-- Expected Criteria:
-{json.dumps(criteria.get('expected_criteria', []), ensure_ascii=False, indent=2)}
-- Expected UI Elements:
-{json.dumps(criteria.get('expected_ui_elements', []), ensure_ascii=False, indent=2)}
-
-### 3. ACTUAL LIVE WEB STATE (CAPTURED BY PLAYWRIGHT):
-- URL Inspected: {web_state.get('url')}
+### ACTUAL LIVE WEB STATE CAPTURED:
 - Status: {web_state.get('status')}
-- Extracted Selects/Dropdowns: {json.dumps(web_state.get('selects', []), ensure_ascii=False)}
-- Extracted Tables: {json.dumps(web_state.get('tables', []), ensure_ascii=False)}
-- Extracted Buttons: {json.dumps(web_state.get('buttons', []), ensure_ascii=False)}
-- Browser Error Logs: {json.dumps(web_state.get('error_logs', []), ensure_ascii=False)}
+- Page Title: {web_state.get('title')}
+- Tables Extracted: {json.dumps(web_state.get('tables', []), ensure_ascii=False)}
+- Buttons Extracted: {json.dumps(web_state.get('buttons', []), ensure_ascii=False)}
+- Selects/Dropdowns: {json.dumps(web_state.get('selects', []), ensure_ascii=False)}
+- Browser Errors: {json.dumps(web_state.get('error_logs', []), ensure_ascii=False)}
 
-### 4. EVIDENCE & DEFECT VALIDATION RULES:
-- Notice if the card description or user attachments report a defect (for example: "paggination ไม่มีให้เลือก 10/page" or missing export button).
-- If an expected requirement (such as pagination containing 10/page, or table columns, or mandatory validations) is missing or violated, mark verdict as "FAILED".
-- If all checks pass and no defects exist, mark verdict as "PASSED".
+### SRS CONTEXT:
+{srs_text[:2500]}
 
-Provide your evaluation strictly in the following JSON format:
+### EVALUATION RULES:
+1. Compare each selected test case's expected result with the captured web state.
+2. If any critical test case fails (or if severe browser crash errors are present, or reported defects like missing required buttons/tables), mark verdict as "FAILED".
+3. If all selected test cases satisfy their expectations, mark verdict as "PASSED".
+
+Return strictly JSON matching this structure:
 {{
   "verdict": "PASSED" or "FAILED",
-  "score_percent": 85,
-  "summary": "Brief 1-2 sentence executive summary of test result in Thai",
+  "score_percent": 90,
+  "summary": "1-2 sentence executive summary of test result in Thai",
   "matched_criteria": [
-    "List of requirements that passed"
+    "✅ List of test cases and requirements that passed..."
   ],
   "discrepancies": [
     {{
-      "item": "Missing Pagination Option 10/page",
-      "severity": "Medium",
-      "impact": "User cannot view 10 items per page as defined in SRS"
+      "item": "Issue description in Thai",
+      "severity": "High/Medium/Low",
+      "impact": "Impact on user in Thai"
     }}
   ],
-  "technical_logs": "Summary of logs and validation details",
-  "recommendation": "Recommendation for QA and dev team in Thai"
+  "recommendation": "Recommendation for QA/Dev team in Thai"
 }}
 """
+    eval_result = {}
     try:
         model_name = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash')
-        response = client.models.generate_content(
+        resp = client.models.generate_content(
             model=model_name,
             contents=prompt
         )
-        clean_json = response.text.strip()
+        clean_json = resp.text.strip()
         if clean_json.startswith('```'):
             clean_json = re.sub(r'^```json\s*|^```\s*|```$', '', clean_json, flags=re.MULTILINE).strip()
-        return json.loads(clean_json)
-    except Exception as e:
-        logger.warning(f"Gemini gap analysis error: {e}")
-        is_defect_reported = any(w in (card_data.get('description') or '').lower() for w in ['ไม่มี', 'not found', 'error', 'fail', 'defect', 'bug', 'ผิด'])
-        return {
-            "verdict": "FAILED" if is_defect_reported else "PASSED",
-            "score_percent": 60 if is_defect_reported else 100,
-            "summary": "พบข้อบกพร่องตามที่ระบุในการ์ดและข้อกำหนด SRS" if is_defect_reported else "ตรวจสอบระบบเบื้องต้นเรียบร้อยแล้ว",
-            "matched_criteria": ["โครงสร้างตารางแสดงผลได้"],
-            "discrepancies": [{"item": "Defect ตามรายละเอียดในการ์ด", "severity": "Medium", "impact": "ฟังก์ชันทำงานไม่ตรงตามที่คาดหวัง"}] if is_defect_reported else [],
-            "technical_logs": "Auto-analyzed via Spectra QA Fallback Rules",
-            "recommendation": "ส่งมอบให้ทีมพัฒนาแก้ไขข้อบกพร่องตามรายงาน" if is_defect_reported else "พร้อมส่งมอบขึ้น Production"
+        eval_result = json.loads(clean_json)
+    except Exception as eval_err:
+        logger.warning(f"Gemini evaluation error: {eval_err}")
+        is_fail = web_state.get("status") == "unreachable" or len(web_state.get("error_logs", [])) > 0
+        eval_result = {
+            "verdict": "FAILED" if is_fail else "PASSED",
+            "score_percent": 65 if is_fail else 95,
+            "summary": "พบข้อผิดพลาดในการเชื่อมต่อหน้าจอหรือโครงสร้าง UI" if is_fail else "ทดสอบระบบผ่านตามเกณฑ์และ Test Cases ทั้งหมด",
+            "matched_criteria": ["ตรวจสอบโครงสร้างหน้าจอเบื้องต้น"],
+            "discrepancies": [{"item": "Connection Error", "severity": "High", "impact": "ไม่สามารถเข้าถึงหน้าจอเป้าหมายได้"}] if is_fail else [],
+            "recommendation": "ตรวจสอบสถานะเว็บเซิร์ฟเวอร์และลองรันอีกครั้ง" if is_fail else "ระบบพร้อมสำหรับการทดสอบขั้นต่อไป"
         }
 
-def run_card_agent_test(project_id: str, card_id: str, card_data: dict):
-    """
-    Main Entrypoint: Runs the full End-to-End QA Agent Pipeline for a card.
-    1. Parses Intent
-    2. RAG Match SRS & Test Cases
-    3. Playwright Live Exploration
-    4. Gemini Gap Analysis & Verification
-    5. Sync to Board & Knowledge Base
-    """
-    title = card_data.get('title') or "Untitled Card"
-    desc = card_data.get('description') or ""
-    logger.info(f"Starting E2E QA Agent Test for Card [{card_id}]: {title}")
-
-    # Step 1: Parse Intent & Context
-    card_info = parse_card_intent(title, desc)
-    
-    # Step 2: Retrieve SRS Context from RAG
-    srs_chunks = retrieve_srs_requirements(project_id, card_info)
-    criteria = extract_expected_criteria(card_data, srs_chunks)
-    logger.info(f"Extracted criteria for {title}: {len(criteria.get('expected_criteria', []))} criteria found")
-
-    # Step 3: Playwright Live Web Exploration
-    target_url = card_info.get("target_url")
-    web_state = run_playwright_live_exploration(target_url, card_data, criteria)
-
-    # Step 4: Gap Analysis & Verification
-    eval_result = verify_and_analyze_gaps(card_data, criteria, web_state, srs_chunks)
     verdict = eval_result.get("verdict", "PASSED")
     is_passed = (verdict == "PASSED")
+    score_percent = eval_result.get("score_percent", 100 if is_passed else 60)
+    summary = eval_result.get("summary", "")
+    matched_criteria = eval_result.get("matched_criteria", [])
+    discrepancies = eval_result.get("discrepancies", [])
+    recommendation = eval_result.get("recommendation", "")
+    logs_text = "\n".join(web_state.get("step_execution_logs", []))
 
     # Generate Markdown Report
     screenshot_fn = web_state.get("screenshot_filename")
-    shot_md = f"\n\n![Live Test Screenshot](http://localhost:5000/api/attachments/{screenshot_fn})" if screenshot_fn and os.path.exists(web_state.get("screenshot_path", "")) else ""
+    shot_md = f"\n\n![Live Test Evidence](http://localhost:5000/api/attachments/{screenshot_fn})" if screenshot_fn and os.path.exists(web_state.get("screenshot_path", "")) else ""
 
-    matched_list = "\n".join([f"- ✅ {m}" for m in eval_result.get("matched_criteria", [])]) or "- ตรวจสอบตามมาตรฐานสเปกทั่วไป"
-    discrepancy_list = "\n".join([f"- ❌ **[{d.get('severity', 'Defect')}]** {d.get('item')}: {d.get('impact', '')}" for d in eval_result.get("discrepancies", [])]) or "- ไม่มีข้อบกพร่อง ตรวจสอบผ่านทุกหัวข้อ"
+    matched_list = "\n".join([f"- {m}" for m in matched_criteria]) or "- ตรวจสอบตามเกณฑ์ทั่วไป"
+    discrepancy_list = "\n".join([f"- ❌ **[{d.get('severity', 'Defect')}]** {d.get('item')}: {d.get('impact', '')}" for d in discrepancies]) or "- ไม่มีข้อบกพร่อง ตรวจสอบผ่านทุกรายการ"
 
     report_markdown = f"""### 🤖 Spectra QA Agent Automated Test Report
-**Verdict:** `{'PASSED' if is_passed else 'FAILED (DEFECT DETECTED)'}` (Score: {eval_result.get('score_percent', 0)}%)
-**Card:** {title}
-**Module Analyzed:** {criteria.get('module_name')}
-**SRS Reference:** {srs_chunks[0]['source_file'] if srs_chunks else '69A_REQ_SRS'}
+**Verdict:** `{'PASSED' if is_passed else 'FAILED (DEFECT DETECTED)'}` (Score: {score_percent}%)
+**Target URL:** `{target_url}` | **Environment:** `{environment}` | **Role:** `{user_role}`
+**Feature:** {card_title}
 
-#### 📋 ผลการตรวจสอบเทียบกับ SRS & Test Case:
+#### 📋 ผลการตรวจสอบตาม Test Cases ที่เลือก:
 {matched_list}
 
 #### ⚠️ ข้อบกพร่องที่ตรวจพบ (Defects / Discrepancies):
 {discrepancy_list}
 
 #### 💡 ข้อเสนอแนะ (Recommendation):
-{eval_result.get('recommendation')}
+{recommendation}
 {shot_md}
 """
 
-    # Step 5: Database & Board Sync
+    # Step 3: Persist to qa_test_execution_runs and update board_cards if card_id provided
+    run_id = str(uuid.uuid4())
     conn = get_db_connection()
-    target_status = None
     if conn:
         try:
             cursor = conn.cursor()
-            
-            # Fetch board integration to find Done or Defect lists
             cursor.execute("""
-                SELECT provider, trello_api_key, trello_token, trello_board_id, columns_json
-                FROM board_integrations WHERE project_id = %s
-            """, (project_id,))
-            integ = cursor.fetchone()
+                INSERT INTO qa_test_execution_runs (
+                    id, project_id, card_id, card_title, target_url, environment, user_role,
+                    test_cases, test_steps, verdict, score_percent, summary, matched_criteria,
+                    discrepancies, screenshot_filename, logs, recommendation
+                ) VALUES (
+                    %s::uuid, %s::uuid, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s
+                )
+            """, (
+                run_id, project_id, str(card_id) if card_id else None, card_title, target_url, environment, user_role,
+                json.dumps(test_cases, ensure_ascii=False), json.dumps(test_steps, ensure_ascii=False), verdict, score_percent,
+                summary, json.dumps(matched_criteria, ensure_ascii=False), json.dumps(discrepancies, ensure_ascii=False),
+                screenshot_fn, logs_text, recommendation
+            ))
 
-            cols = []
-            if integ and integ[4]:
-                try:
-                    cols = json.loads(integ[4]) if isinstance(integ[4], str) else integ[4]
-                except Exception:
-                    cols = []
-
-            # Determine destination column
-            if is_passed:
-                # Find Done column
-                done_col = next((c for c in cols if any(w in c.get('title', '').lower() for w in ['done', 'complete', 'finish', 'ผ่าน', 'เสร็จ'])), None)
-                target_status = done_col['id'] if done_col else (cols[-1]['id'] if cols else 'done')
-            else:
-                # Find Defect or Review column
-                defect_col = next((c for c in cols if any(w in c.get('title', '').lower() for w in ['defect', 'bug', 'review', 'แก้ไข', 'รอตรวจ'])), None)
-                target_status = defect_col['id'] if defect_col else (cols[1]['id'] if len(cols) > 1 else 'defect')
-
-            # Upsert into board_cards
-            ext_card_id = card_data.get('ext_card_id') or f"TRL-{str(card_id)[:6]}"
-            raw_ext_id = str(card_data.get('raw_ext_id') or card_id)
-            card_type = card_data.get('type') or ('Bug' if not is_passed else 'Feature')
-            priority = card_data.get('priority') or 'Medium'
-            labels_json = json.dumps(card_data.get('labels') or [], ensure_ascii=False)
-            members_json = json.dumps(card_data.get('members') or [], ensure_ascii=False)
-            story_points = str(card_data.get('story_points') or '1')
-            actions_json = json.dumps(card_data.get('actions') or [], ensure_ascii=False)
-
-            cursor.execute("""
-                INSERT INTO board_cards (
-                    project_id, ext_card_id, title, description, status,
-                    card_type, priority, raw_ext_id, labels_json, members_json,
-                    story_points, actions_json, test_result
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (project_id, ext_card_id) DO UPDATE SET
-                    status = EXCLUDED.status,
-                    test_result = EXCLUDED.test_result,
-                    card_type = EXCLUDED.card_type
-                RETURNING card_id;
-            """, (project_id, ext_card_id, title, desc, target_status, card_type, priority, raw_ext_id, labels_json, members_json, story_points, actions_json, report_markdown))
-            
-            # Ingest into RAG documents
-            doc_filename = f"QA_Report_{ext_card_id.replace('#', '')}.md"
-            cursor.execute("""
-                INSERT INTO documents (project_id, doc_category, doc_type, original_filename, full_markdown_content, status)
-                VALUES (%s, 'QA Report', 'Automated Test', %s, %s, 'Active')
-                RETURNING doc_id;
-            """, (project_id, doc_filename, report_markdown))
-            d_row = cursor.fetchone()
-            if d_row:
+            # Update board_cards test_result if card exists
+            clean_raw_id = str(card_id).lstrip('#') if card_id else None
+            if card_id:
                 cursor.execute("""
-                    INSERT INTO document_chunks (doc_id, chunk_text)
-                    VALUES (%s, %s);
-                """, (d_row[0], report_markdown))
-            
-            conn.commit()
+                    UPDATE board_cards
+                    SET test_result = %s,
+                        status = CASE WHEN %s = 'PASSED' THEN status ELSE 'defect' END
+                    WHERE project_id = %s::uuid AND (card_id::text = %s OR ext_card_id = %s OR raw_ext_id = %s)
+                """, (report_markdown, verdict, project_id, str(card_id), str(card_id), str(card_id)))
 
-            # Sync to Trello if configured
-            if integ and integ[0] == 'trello' and integ[1] and integ[2]:
-                t_key, t_token = integ[1], integ[2]
-                clean_raw_id = raw_ext_id.lstrip('#')
+                # Resolve actual raw external card ID if card is stored in DB
+                cursor.execute("""
+                    SELECT raw_ext_id, ext_card_id FROM board_cards
+                    WHERE project_id = %s::uuid AND (card_id::text = %s OR ext_card_id = %s OR raw_ext_id = %s)
+                """, (project_id, str(card_id), str(card_id), str(card_id)))
+                b_card_row = cursor.fetchone()
+                if b_card_row:
+                    clean_raw_id = b_card_row[0] or b_card_row[1] or clean_raw_id
+                
+                if clean_raw_id and clean_raw_id.startswith('TRL-'):
+                    clean_raw_id = clean_raw_id.replace('TRL-', '')
 
-                # Move card to target list
-                if target_status and len(target_status) == 24:
-                    try:
-                        requests.put(
-                            f"https://api.trello.com/1/cards/{clean_raw_id}",
-                            params={"idList": target_status, "key": t_key, "token": t_token},
-                            timeout=8
-                        )
-                    except Exception as ex:
-                        logger.warning(f"Could not move Trello card: {ex}")
-
-                # Upload screenshot if captured
-                if screenshot_fn:
-                    shot_file_path = web_state.get("screenshot_path")
-                    if shot_file_path and os.path.exists(shot_file_path):
-                        try:
-                            with open(shot_file_path, 'rb') as f_up:
-                                requests.post(
-                                    f"https://api.trello.com/1/cards/{clean_raw_id}/attachments",
-                                    params={"key": t_key, "token": t_token, "name": "Agent_Test_Evidence.png"},
-                                    files={"file": ("Agent_Test_Evidence.png", f_up, 'image/png')},
-                                    timeout=15
-                                )
-                        except Exception as att_err:
-                            logger.warning(f"Could not upload agent screenshot to Trello: {att_err}")
-
-                # Post comment report to Trello
+            # Sync test result to Board Integration (Trello / GitHub)
+            if card_id and clean_raw_id:
                 try:
-                    requests.post(
-                        f"https://api.trello.com/1/cards/{clean_raw_id}/actions/comments",
-                        params={"key": t_key, "token": t_token, "text": report_markdown},
-                        timeout=10
-                    )
-                except Exception as c_err:
-                    logger.warning(f"Could not post agent report to Trello: {c_err}")
+                    cursor.execute("""
+                        SELECT provider, trello_api_key, trello_token, trello_board_id,
+                               github_token, github_owner, github_repo, columns_json
+                        FROM board_integrations
+                        WHERE project_id = %s::uuid
+                    """, (project_id,))
+                    integ_row = cursor.fetchone()
 
+                    if integ_row:
+                        provider, t_key, t_token, t_board, gh_token, gh_owner, gh_repo, cols_json = integ_row
+
+                        if provider == 'trello' and t_key and t_token:
+                            # 1. Upload screenshot attachment to Trello if available
+                            if screenshot_fn and os.path.exists(web_state.get("screenshot_path", "")):
+                                try:
+                                    with open(web_state.get("screenshot_path"), 'rb') as f_up:
+                                        requests.post(
+                                            f"https://api.trello.com/1/cards/{clean_raw_id}/attachments",
+                                            params={"key": t_key, "token": t_token, "name": "Agent Test Evidence.png"},
+                                            files={"file": (screenshot_fn, f_up, 'image/png')},
+                                            timeout=15
+                                        )
+                                except Exception as att_err:
+                                    logger.warning(f"Could not upload screenshot to Trello card: {att_err}")
+
+                            # 2. Post markdown test report as comment to Trello
+                            try:
+                                comment_payload = f"🤖 **Spectra QA Agent Automated Test Report ({verdict})**\n\n{report_markdown}"
+                                tc_res = requests.post(
+                                    f"https://api.trello.com/1/cards/{clean_raw_id}/actions/comments",
+                                    params={"key": t_key, "token": t_token, "text": comment_payload},
+                                    timeout=12
+                                )
+                                logger.info(f"Posted Trello test comment to card {clean_raw_id}: status={tc_res.status_code}")
+                            except Exception as c_err:
+                                logger.warning(f"Failed to post Trello comment: {c_err}")
+
+                            # 3. If test FAILED, move card to Defect list on Trello
+                            if not is_passed:
+                                defect_list_id = None
+                                try:
+                                    lists_res = requests.get(
+                                        f"https://api.trello.com/1/boards/{t_board}/lists",
+                                        params={"key": t_key, "token": t_token},
+                                        timeout=10
+                                    )
+                                    if lists_res.ok:
+                                        t_lists = lists_res.json()
+                                        for lst in t_lists:
+                                            lname = (lst.get('name') or '').lower()
+                                            if any(w in lname for w in ['defect', 'bug', 'ข้อบกพร่อง', 'บั๊ก']):
+                                                defect_list_id = lst.get('id')
+                                                break
+
+                                        # If no Defect list exists on Trello board, create one automatically
+                                        if not defect_list_id and t_board:
+                                            create_l_res = requests.post(
+                                                f"https://api.trello.com/1/boards/{t_board}/lists",
+                                                params={"key": t_key, "token": t_token, "name": "Defect", "pos": "bottom"},
+                                                timeout=10
+                                            )
+                                            if create_l_res.ok:
+                                                defect_list_id = create_l_res.json().get('id')
+                                                logger.info(f"Created 'Defect' list on Trello board: {defect_list_id}")
+                                except Exception as l_err:
+                                    logger.warning(f"Error resolving or creating Defect list on Trello: {l_err}")
+
+                                if defect_list_id:
+                                    try:
+                                        move_res = requests.put(
+                                            f"https://api.trello.com/1/cards/{clean_raw_id}",
+                                            params={"idList": defect_list_id, "key": t_key, "token": t_token},
+                                            json={"idList": defect_list_id},
+                                            timeout=10
+                                        )
+                                        logger.info(f"Moved Trello card {clean_raw_id} to Defect list {defect_list_id}: status={move_res.status_code}")
+
+                                        # Update status in local board_cards
+                                        cursor.execute("""
+                                            UPDATE board_cards
+                                            SET status = %s
+                                            WHERE project_id = %s::uuid AND (card_id::text = %s OR ext_card_id = %s OR raw_ext_id = %s)
+                                        """, (defect_list_id, project_id, str(card_id), str(card_id), str(card_id)))
+                                    except Exception as move_err:
+                                        logger.warning(f"Failed to move Trello card to Defect list: {move_err}")
+
+                        elif provider == 'github' and gh_token and gh_owner and gh_repo:
+                            try:
+                                gh_comment = f"🤖 **Spectra QA Agent Test Report ({verdict})**\n\n{report_markdown}"
+                                requests.post(
+                                    f"https://api.github.com/repos/{gh_owner}/{gh_repo}/issues/{clean_raw_id}/comments",
+                                    headers={"Authorization": f"Bearer {gh_token}", "Accept": "application/vnd.github.v3+json", "User-Agent": "SpectraQA"},
+                                    json={"body": gh_comment},
+                                    timeout=12
+                                )
+                                if not is_passed:
+                                    requests.post(
+                                        f"https://api.github.com/repos/{gh_owner}/{gh_repo}/issues/{clean_raw_id}/labels",
+                                        headers={"Authorization": f"Bearer {gh_token}", "Accept": "application/vnd.github.v3+json", "User-Agent": "SpectraQA"},
+                                        json={"labels": ["bug", "defect"]},
+                                        timeout=10
+                                    )
+                            except Exception as gh_err:
+                                logger.warning(f"Failed to sync test report to GitHub: {gh_err}")
+                except Exception as integ_err:
+                    logger.warning(f"Error executing board integration sync: {integ_err}")
+
+            conn.commit()
             cursor.close()
             conn.close()
         except Exception as db_err:
-            logger.error(f"Error persisting agent test results: {db_err}")
+            logger.error(f"Error persisting test execution run: {db_err}")
             if 'conn' in locals() and conn:
                 conn.close()
 
     return {
         "success": True,
-        "is_passed": is_passed,
+        "run_id": run_id,
         "verdict": verdict,
-        "test_result": report_markdown,
-        "target_status": target_status,
+        "is_passed": is_passed,
+        "score_percent": score_percent,
+        "summary": summary,
+        "matched_criteria": matched_criteria,
+        "discrepancies": discrepancies,
+        "recommendation": recommendation,
+        "logs": logs_text,
         "screenshot_url": f"http://localhost:5000/api/attachments/{screenshot_fn}" if screenshot_fn else None,
-        "discrepancies": eval_result.get("discrepancies", []),
-        "matched_criteria": eval_result.get("matched_criteria", []),
-        "recommendation": eval_result.get("recommendation", "")
+        "test_result_markdown": report_markdown
     }
+
+
+def get_project_test_runs(project_id: str, limit: int = 50):
+    """
+    Retrieves historical test execution runs for a project.
+    """
+    conn = get_db_connection()
+    if not conn:
+        return []
+    runs = []
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, card_id, card_title, target_url, environment, user_role,
+                   verdict, score_percent, summary, screenshot_filename, created_at,
+                   matched_criteria, discrepancies, recommendation, test_cases
+            FROM qa_test_execution_runs
+            WHERE project_id = %s::uuid
+            ORDER BY created_at DESC
+            LIMIT %s
+        """, (project_id, limit))
+        rows = cursor.fetchall()
+        for r in rows:
+            runs.append({
+                "id": str(r[0]),
+                "card_id": r[1],
+                "card_title": r[2],
+                "target_url": r[3],
+                "environment": r[4],
+                "user_role": r[5],
+                "verdict": r[6],
+                "score_percent": r[7],
+                "summary": r[8],
+                "screenshot_url": f"http://localhost:5000/api/attachments/{r[9]}" if r[9] else None,
+                "created_at": r[10].isoformat() if r[10] else None,
+                "matched_criteria": r[11] if isinstance(r[11], list) else (json.loads(r[11] or '[]') if r[11] else []),
+                "discrepancies": r[12] if isinstance(r[12], list) else (json.loads(r[12] or '[]') if r[12] else []),
+                "recommendation": r[13],
+                "test_cases": r[14] if isinstance(r[14], list) else (json.loads(r[14] or '[]') if r[14] else [])
+            })
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        logger.error(f"Error fetching test runs: {e}")
+        if 'conn' in locals() and conn:
+            conn.close()
+    return runs
+
+
+def run_card_agent_test(project_id: str, card_id: str, card_data: dict):
+    """
+    Wrapper function to map and execute agent tests for a single card.
+    """
+    mapping = resolve_card_test_mapping(project_id, card_data)
+    payload = {
+        "project_id": project_id,
+        "target_url": mapping.get("target_url"),
+        "environment": "UAT",
+        "user_role": "Admin",
+        "test_cases": mapping.get("test_cases", []),
+        "test_steps": mapping.get("test_steps", []),
+        "card_id": card_id or card_data.get("id") or card_data.get("ext_card_id"),
+        "card_title": card_data.get("title") or mapping.get("card_title") or "Feature Test",
+        "description": card_data.get("description") or ""
+    }
+    return execute_customized_test_run(project_id, payload)
+

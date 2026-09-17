@@ -36,8 +36,12 @@ def init_auth_db():
                 is_active BOOLEAN DEFAULT true,
                 login_count INTEGER DEFAULT 0,
                 last_login_at TIMESTAMP,
+                allowed_menus TEXT,
+                allowed_projects TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS allowed_menus TEXT;
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS allowed_projects TEXT;
         """)
 
         # ตรวจสอบว่ามี Admin หรือยัง ถ้ายังให้สร้างเพิ่ม

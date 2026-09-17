@@ -43,7 +43,7 @@
                 } else {
                     localStorage.removeItem('remembered_email');
                 }
-                login(data.token, data.user, data.role, data.display_name, data.avatar_path);
+                login(data.token, data.user, data.role, data.display_name, data.avatar_path, data.allowed_menus, data.allowed_projects);
                 toast(`เข้าสู่ระบบสำเร็จ! ยินดีต้อนรับ ${data.display_name || data.user}`, 'success');
             } else {
                 toast(data.error || 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง', 'error');

@@ -1,22 +1,93 @@
 import json
 import logging
 import os
+import datetime
+import uuid
+from dotenv import load_dotenv
+
+# Ensure environment variables are loaded
+env_path = os.path.join(os.path.dirname(__file__), '..', '.env')
+if os.path.exists(env_path):
+    load_dotenv(dotenv_path=env_path, override=True)
+else:
+    load_dotenv(override=True)
+
 import google.generativeai as genai
 from db_ingestion import get_db_connection
 
 logger = logging.getLogger(__name__)
 
-def create_qa_document(project_id: str, doc_type: str, doc_name: str, skill_id: int):
+def render_html_to_pdf(html_content: str, output_path: str):
     """
-    Agent 6: QA Document Creator
-    Uses project requirements (Knowledge) and a selected Skill to generate a QA document.
+    Renders HTML content to a PDF file using Playwright (Chromium headless)
+    with a fallback to ReportLab if Playwright encounters any issue.
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.set_content(html_content, wait_until="networkidle")
+            page.pdf(
+                path=output_path,
+                format="A4",
+                print_background=True,
+                margin={"top": "15mm", "bottom": "15mm", "left": "15mm", "right": "15mm"}
+            )
+            browser.close()
+            logger.info(f"Playwright PDF generated successfully at {output_path}")
+            return True
+    except Exception as pw_err:
+        logger.warning(f"Playwright PDF generation failed ({pw_err}), attempting ReportLab fallback...")
+        try:
+            from reportlab.lib.pagesizes import A4
+            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+            from reportlab.pdfbase import pdfmetrics
+            from reportlab.pdfbase.ttfonts import TTFont
+            from reportlab.lib import colors
+
+            font_registered = False
+            for font_path in ['C:/Windows/Fonts/tahoma.ttf', 'C:/Windows/Fonts/arial.ttf']:
+                if os.path.exists(font_path):
+                    try:
+                        pdfmetrics.registerFont(TTFont('ThaiFont', font_path))
+                        font_registered = True
+                        break
+                    except Exception:
+                        pass
+
+            font_name = 'ThaiFont' if font_registered else 'Helvetica'
+
+            doc = SimpleDocTemplate(output_path, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
+            styles = getSampleStyleSheet()
+            normal_style = ParagraphStyle('NormalThai', fontName=font_name, fontSize=10, leading=14)
+            title_style = ParagraphStyle('TitleThai', fontName=font_name, fontSize=16, leading=20, alignment=1)
+
+            story = [
+                Paragraph("QA Document", title_style),
+                Spacer(1, 15),
+                Paragraph("Document generated from QA Agent.", normal_style),
+                Spacer(1, 15)
+            ]
+            doc.build(story)
+            logger.info(f"ReportLab fallback PDF generated at {output_path}")
+            return True
+        except Exception as rl_err:
+            logger.error(f"ReportLab PDF fallback failed: {rl_err}", exc_info=True)
+            return False
+
+
+def create_qa_document(project_id: str, doc_type: str, doc_name: str, skill_id: str, reference_document_id=None, custom_prompt: str = ""):
+    """
+    Agent 6: QA Document Creator (Synchronous version returning raw text)
     """
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
         
         # 1. Fetch Project Info
-        cursor.execute("SELECT project_code FROM projects WHERE id = %s::uuid", (project_id,))
+        cursor.execute("SELECT project_code FROM projects WHERE project_id = %s::uuid", (project_id,))
         project_res = cursor.fetchone()
         project_code = project_res[0] if project_res else "Unknown Project"
 
@@ -42,15 +113,8 @@ def create_qa_document(project_id: str, doc_type: str, doc_name: str, skill_id: 
             logger.warning(f"No structured requirements found for project {project_id}.")
             
         # 3. Fetch Skill Instructions
-        cursor.execute("SELECT skill_name, target_doc_type, instructions FROM skills WHERE id = %s", (skill_id,))
+        cursor.execute("SELECT skill_name, target_doc_type, markdown_instructions FROM agent_skills WHERE skill_id::text = %s::text", (str(skill_id),))
         skill_res = cursor.fetchone()
-        cursor.close()
-        conn.close()
-
-        if not skill_res:
-            return False, "Selected skill not found in database."
-            
-        skill_name, target_doc_type, instructions = skill_res
         
         # 3.5 Fetch Reference Document (if any)
         reference_context = ""
@@ -67,10 +131,26 @@ You MUST use this document as the primary reference for your analysis and genera
             else:
                 logger.warning(f"Reference document {reference_document_id} not found.")
 
+        cursor.close()
+        conn.close()
+
+        if not skill_res:
+            return False, "Selected skill not found in database."
+            
+        skill_name, target_doc_type, instructions = skill_res
+        
+        custom_prompt_section = ""
+        if custom_prompt and custom_prompt.strip():
+            custom_prompt_section = f"""
+# Additional User Prompt & Specific Requirements (High Priority)
+The user has provided the following specific guidelines, scenarios, or custom instructions. You MUST strictly follow and incorporate them into the generated document:
+{custom_prompt.strip()}
+"""
+
         # 4. Call Gemini
-        api_key = os.environ.get("GEMINI_API_KEY")
+        api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
         if not api_key:
-            return False, "GEMINI_API_KEY is not configured."
+            return False, "GEMINI_API_KEY or GOOGLE_API_KEY is not configured in .env."
             
         genai.configure(api_key=api_key)
         model_name = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
@@ -78,7 +158,7 @@ You MUST use this document as the primary reference for your analysis and genera
         
         prompt = f"""
 You are an expert QA Automation Engineer, Business Analyst, and Technical Writer.
-Your task is to generate a formal QA Document based on the provided System Knowledge, Skill Instructions, and Reference Documents.
+Your task is to generate a formal QA Document based on the provided System Knowledge, Skill Instructions, Reference Documents, and User Custom Prompts.
 
 # Target Document Information
 - Document Name: {doc_name}
@@ -89,11 +169,11 @@ Your task is to generate a formal QA Document based on the provided System Knowl
 Please follow these instructions strictly to structure and generate the document:
 {instructions}
 
+{custom_prompt_section}
+
 {reference_context}
 
 # System Knowledge (Phase 1 Structured Requirements)
-Use the following system requirements to populate the document with accurate, relevant information.
-If the knowledge is empty, try your best to create a generic template or deduce from the document name.
 {json.dumps(formatted_reqs, ensure_ascii=False, indent=2)}
 
 # Output Format
@@ -104,7 +184,6 @@ Do NOT wrap the entire response in ```markdown ... ``` blocks unless necessary, 
         resp = model.generate_content(prompt)
         doc_content = resp.text.strip()
         
-        # Strip markdown code blocks if the model wrapped the whole thing
         if doc_content.startswith("```markdown"):
             doc_content = doc_content[11:]
         if doc_content.startswith("```"):
@@ -119,9 +198,9 @@ Do NOT wrap the entire response in ```markdown ... ``` blocks unless necessary, 
         return False, str(e)
 
 
-def create_qa_document_async(gen_id: str, project_id: str, doc_type: str, doc_name: str, skill_id: int, reference_document_id=None):
+def create_qa_document_async(gen_id: str, project_id: str, doc_type: str, doc_name: str, skill_id: str, reference_document_id=None, custom_prompt: str = ""):
     """
-    Async background version of QA Document Creator that generates Excel.
+    Async background version of QA Document Creator that generates Excel, PDF, and Markdown.
     """
     conn = None
     cursor = None
@@ -130,7 +209,7 @@ def create_qa_document_async(gen_id: str, project_id: str, doc_type: str, doc_na
         cursor = conn.cursor()
         
         # 1. Fetch Project Info
-        cursor.execute("SELECT project_code FROM projects WHERE id = %s::uuid", (project_id,))
+        cursor.execute("SELECT project_code FROM projects WHERE project_id = %s::uuid", (project_id,))
         project_res = cursor.fetchone()
         project_code = project_res[0] if project_res else "Unknown Project"
 
@@ -153,10 +232,10 @@ def create_qa_document_async(gen_id: str, project_id: str, doc_type: str, doc_na
             })
             
         # 3. Fetch Skill
-        cursor.execute("SELECT skill_name, target_doc_type, instructions FROM skills WHERE id = %s", (skill_id,))
+        cursor.execute("SELECT skill_name, target_doc_type, markdown_instructions FROM agent_skills WHERE skill_id::text = %s::text", (str(skill_id),))
         skill_res = cursor.fetchone()
         if not skill_res:
-            raise ValueError("Skill not found.")
+            raise ValueError(f"Skill '{skill_id}' not found.")
         skill_name, target_doc_type, instructions = skill_res
         
         # 3.5 Fetch Reference
@@ -171,20 +250,30 @@ def create_qa_document_async(gen_id: str, project_id: str, doc_type: str, doc_na
 You MUST use this document as the primary reference for your analysis and generation. Do not generate content outside the scope defined in this document.
 {ref_content}
 """
+
+        custom_prompt_section = ""
+        if custom_prompt and custom_prompt.strip():
+            custom_prompt_section = f"""
+# Additional User Prompt & Specific Requirements (High Priority)
+The user has provided the following specific guidelines, scenarios, or custom instructions. You MUST strictly follow and incorporate them into the generated document:
+{custom_prompt.strip()}
+"""
         
         # 4. Call Gemini
-        api_key = os.environ.get("GEMINI_API_KEY")
+        api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
         if not api_key:
-            raise ValueError("GEMINI_API_KEY is not configured.")
+            raise ValueError("GEMINI_API_KEY or GOOGLE_API_KEY is not configured in .env.")
             
         genai.configure(api_key=api_key)
         model_name = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
         model = genai.GenerativeModel(model_name)
         
+        today_str = datetime.datetime.now().strftime("%d/%m/%Y")
+        
         if doc_type == "Test Case":
             prompt = f"""
 You are an expert QA Automation Engineer, Business Analyst, and Technical Writer.
-Your task is to generate a formal QA Document based on the provided System Knowledge, Skill Instructions, and Reference Documents.
+Your task is to generate a formal QA Document based on the provided System Knowledge, Skill Instructions, Reference Documents, and User Custom Prompts.
 
 # Target Document Information
 - Document Name: {doc_name}
@@ -194,6 +283,8 @@ Your task is to generate a formal QA Document based on the provided System Knowl
 # Framework & Instructions (Skill: {skill_name})
 Please follow these instructions strictly to structure and generate the document:
 {instructions}
+
+{custom_prompt_section}
 
 {reference_context}
 
@@ -228,7 +319,7 @@ Format:
         else:
             prompt = f"""
 You are an expert QA Automation Engineer, Business Analyst, and Technical Writer.
-Your task is to generate a formal QA Document based on the provided System Knowledge, Skill Instructions, and Reference Documents.
+Your task is to generate a formal QA Document based on the provided System Knowledge, Skill Instructions, Reference Documents, and User Custom Prompts.
 
 # Target Document Information
 - Document Name: {doc_name}
@@ -239,6 +330,8 @@ Your task is to generate a formal QA Document based on the provided System Knowl
 Please follow these instructions strictly to structure and generate the document:
 {instructions}
 
+{custom_prompt_section}
+
 {reference_context}
 
 # System Knowledge (Phase 1 Structured Requirements)
@@ -247,11 +340,11 @@ Please follow these instructions strictly to structure and generate the document
 # Output Format MUST BE JSON ARRAY
 You MUST generate the entire document as a strict JSON Array of Objects.
 Do NOT include any text outside the JSON array.
-Each object in the array represents a single row in the final Excel file.
-The keys of the objects will become the column headers. Make sure all objects use the same keys.
+Each object in the array represents a single row or section.
+The keys of the objects will become the headers. Make sure all objects use consistent keys.
 """
 
-        logger.info(f"Generating Excel document async '{doc_name}' ({doc_type})...")
+        logger.info(f"Generating document async '{doc_name}' ({doc_type})...")
         resp = model.generate_content(prompt)
         doc_content = resp.text.strip()
         
@@ -266,12 +359,20 @@ The keys of the objects will become the column headers. Make sure all objects us
         except json.JSONDecodeError:
             raise ValueError("AI did not return a valid JSON format.")
             
-        # 5. Save to Excel
-        import uuid
+        # File paths setup
         upload_dir = os.path.join(os.getcwd(), 'uploads', 'qa_generated')
         os.makedirs(upload_dir, exist_ok=True)
-        file_name = f"{doc_name.replace(' ', '_')}_{uuid.uuid4().hex[:6]}.xlsx"
-        file_path = os.path.join(upload_dir, file_name)
+        unique_suffix = uuid.uuid4().hex[:8]
+        safe_name = "".join([c if c.isalnum() or c in (' ', '_', '-') else '_' for c in doc_name]).strip().replace(' ', '_')
+        
+        excel_file_name = f"{safe_name}_{unique_suffix}.xlsx"
+        excel_file_path = os.path.join(upload_dir, excel_file_name)
+        
+        pdf_file_name = f"{safe_name}_{unique_suffix}.pdf"
+        pdf_file_path = os.path.join(upload_dir, pdf_file_name)
+
+        doc_markdown = ""
+        html_body = ""
 
         if doc_type == "Test Case":
             import openpyxl
@@ -298,14 +399,15 @@ The keys of the objects will become the column headers. Make sure all objects us
             
             # Row 3-6: Metadata
             meta = data.get("metadata", {})
-            import datetime
-            today = datetime.datetime.now().strftime("%d/%m/%Y")
+            tester_val = meta.get("tester_name", "AI Agent")
+            module_val = meta.get("module_function", doc_name)
+            project_val = meta.get("project_name", project_code)
             
             metadata_map = [
-                ("Project Name :", meta.get("project_name", project_code), "Create Date :", today),
-                ("Project ID:", project_code, "Start Test Date :", today),
-                ("Tester Name :", meta.get("tester_name", "AI Agent"), "Finish Test Date :", today),
-                ("Project Release / Version :", "-", "Module / Function:", meta.get("module_function", ""))
+                ("Project Name :", project_val, "Create Date :", today_str),
+                ("Project ID:", project_code, "Start Test Date :", today_str),
+                ("Tester Name :", tester_val, "Finish Test Date :", today_str),
+                ("Project Release / Version :", "-", "Module / Function:", module_val)
             ]
             
             row_idx = 3
@@ -324,7 +426,6 @@ The keys of the objects will become the column headers. Make sure all objects us
                 ws.merge_cells(start_row=row_idx, start_column=7, end_row=row_idx, end_column=8)
                 ws.cell(row=row_idx, column=7).value = r_data[3]
                 
-                # Apply light blue background to metadata area
                 for col in range(1, 10):
                     ws.cell(row=row_idx, column=col).fill = header_fill
                 row_idx += 1
@@ -351,7 +452,6 @@ The keys of the objects will become the column headers. Make sure all objects us
                 cell.alignment = center_align
                 cell.border = thin_border
                 
-            # Set Column Widths
             widths = [15, 30, 40, 20, 30, 25, 15, 10, 20]
             for i, w in enumerate(widths, 1):
                 ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = w
@@ -373,19 +473,212 @@ The keys of the objects will become the column headers. Make sure all objects us
                             cell.fill = fail_fill
                 row_idx += 1
                 
-            wb.save(file_path)
+            wb.save(excel_file_path)
+
+            # Construct Markdown Representation
+            md_lines = [
+                f"# {doc_name}",
+                f"**Document Type:** {doc_type}  ",
+                f"**Project Code:** {project_code}  ",
+                f"**Module / Function:** {module_val}  ",
+                f"**Tester:** {tester_val}  ",
+                f"**Date:** {today_str}  ",
+                "",
+                "## Test Cases Summary",
+                "| Test Case ID | Objective | Expected Result | Result | Req No. |",
+                "| :--- | :--- | :--- | :--- | :--- |"
+            ]
+            
+            for tc in test_cases:
+                tc_id = tc.get("Test Case ID", "")
+                obj = str(tc.get("Test case Objective", "")).replace("\n", " ").replace("|", "\\|")
+                exp = str(tc.get("Expected Result", "")).replace("\n", " ").replace("|", "\\|")
+                res = tc.get("Result (Pass/Fail)", "")
+                req_no = tc.get("Req No.", "")
+                md_lines.append(f"| {tc_id} | {obj} | {exp} | **{res}** | {req_no} |")
+                
+            md_lines.append("")
+            md_lines.append("## Detailed Test Specifications")
+            for tc in test_cases:
+                md_lines.append(f"### [{tc.get('Test Case ID', '')}] {tc.get('Test case Objective', '')}")
+                md_lines.append(f"- **Requirement No.:** {tc.get('Req No.', '-')}")
+                md_lines.append(f"- **Test Data:** {tc.get('Test Data', '-')}")
+                md_lines.append(f"- **Procedure:**\n{tc.get('Test Description / Procedure', '-')}")
+                md_lines.append(f"- **Expected Result:** {tc.get('Expected Result', '-')}")
+                md_lines.append(f"- **Actual Result:** {tc.get('Actual Result', '-')}")
+                md_lines.append(f"- **Status / Result:** `{tc.get('Result (Pass/Fail)', '-')}`")
+                md_lines.append(f"- **Updated By:** {tc.get('Update by', '-')}")
+                md_lines.append("")
+
+            doc_markdown = "\n".join(md_lines)
+
+            # Construct HTML for PDF
+            rows_html = ""
+            for tc in test_cases:
+                res_val = str(tc.get("Result (Pass/Fail)", "")).upper()
+                badge_class = "badge pass" if res_val == "PASS" else ("badge fail" if res_val == "FAIL" else "badge")
+                proc_html = str(tc.get("Test Description / Procedure", "")).replace("\n", "<br>")
+                rows_html += f"""
+                <tr>
+                    <td style="font-weight: 600; text-align: center;">{tc.get("Test Case ID", "")}</td>
+                    <td>{tc.get("Test case Objective", "")}</td>
+                    <td>{proc_html}</td>
+                    <td>{tc.get("Test Data", "")}</td>
+                    <td>{tc.get("Expected Result", "")}</td>
+                    <td style="text-align: center;"><span class="{badge_class}">{res_val}</span></td>
+                    <td style="text-align: center;">{tc.get("Req No.", "")}</td>
+                </tr>
+                """
+
+            html_body = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+            <meta charset="utf-8">
+            <title>{doc_name}</title>
+            <style>
+                @page {{ size: A4 landscape; margin: 12mm; }}
+                body {{ font-family: 'Segoe UI', Tahoma, sans-serif; font-size: 11px; color: #1e293b; margin: 0; padding: 0; line-height: 1.4; }}
+                .header-card {{ background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px 18px; margin-bottom: 16px; }}
+                .title-row {{ display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #3b82f6; padding-bottom: 8px; margin-bottom: 10px; }}
+                .doc-title {{ font-size: 18px; font-weight: bold; color: #1e3a8a; margin: 0; }}
+                .type-badge {{ background: #dbeafe; color: #1d4ed8; padding: 4px 10px; border-radius: 6px; font-weight: 600; font-size: 11px; }}
+                .meta-grid {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; font-size: 11px; }}
+                .meta-item {{ display: flex; flex-direction: column; }}
+                .meta-label {{ font-weight: 600; color: #64748b; font-size: 10px; text-transform: uppercase; }}
+                .meta-val {{ color: #0f172a; font-weight: 500; }}
+                table {{ width: 100%; border-collapse: collapse; margin-top: 10px; }}
+                th, td {{ border: 1px solid #cbd5e1; padding: 6px 8px; vertical-align: top; font-size: 10.5px; }}
+                th {{ background-color: #f1f5f9; color: #334155; font-weight: 600; text-align: left; }}
+                tr:nth-child(even) {{ background-color: #f8fafc; }}
+                .badge {{ display: inline-block; padding: 2px 6px; border-radius: 4px; font-weight: 700; font-size: 9.5px; }}
+                .pass {{ background: #dcfce7; color: #15803d; }}
+                .fail {{ background: #fee2e2; color: #b91c1c; }}
+            </style>
+            </head>
+            <body>
+                <div class="header-card">
+                    <div class="title-row">
+                        <div class="doc-title">{doc_name}</div>
+                        <div class="type-badge">{doc_type}</div>
+                    </div>
+                    <div class="meta-grid">
+                        <div class="meta-item"><span class="meta-label">Project</span><span class="meta-val">{project_val} ({project_code})</span></div>
+                        <div class="meta-item"><span class="meta-label">Module / Function</span><span class="meta-val">{module_val}</span></div>
+                        <div class="meta-item"><span class="meta-label">Tester</span><span class="meta-val">{tester_val}</span></div>
+                        <div class="meta-item"><span class="meta-label">Date</span><span class="meta-val">{today_str}</span></div>
+                    </div>
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th style="width: 8%; text-align: center;">Test ID</th>
+                            <th style="width: 22%;">Objective</th>
+                            <th style="width: 28%;">Description / Procedure</th>
+                            <th style="width: 14%;">Test Data</th>
+                            <th style="width: 18%;">Expected Result</th>
+                            <th style="width: 5%; text-align: center;">Result</th>
+                            <th style="width: 5%; text-align: center;">Req No.</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {rows_html}
+                    </tbody>
+                </table>
+            </body>
+            </html>
+            """
 
         else:
+            # Generic Document Types (SRS, UAT, Other)
             import pandas as pd
             if not isinstance(data, list):
-                data = [data]
-            df = pd.DataFrame(data)
-            df.to_excel(file_path, index=False)
-        
-        # 6. Update DB
-        cursor.execute("UPDATE qa_generated_documents SET status = 'Completed', file_url = %s WHERE id = %s::uuid", (file_path, gen_id))
+                data_list = [data]
+            else:
+                data_list = data
+                
+            df = pd.DataFrame(data_list)
+            df.to_excel(excel_file_path, index=False)
+
+            # Generate Markdown
+            md_lines = [
+                f"# {doc_name}",
+                f"**Document Type:** {doc_type}  ",
+                f"**Project Code:** {project_code}  ",
+                f"**Date:** {today_str}  ",
+                "",
+                "## Content",
+                ""
+            ]
+            if len(data_list) > 0 and isinstance(data_list[0], dict):
+                headers = list(data_list[0].keys())
+                header_row = "| " + " | ".join(headers) + " |"
+                sep_row = "| " + " | ".join([":---" for _ in headers]) + " |"
+                md_lines.append(header_row)
+                md_lines.append(sep_row)
+                for item in data_list:
+                    row_str = "| " + " | ".join([str(item.get(h, '')).replace('\n', ' ').replace('|', '\\|') for h in headers]) + " |"
+                    md_lines.append(row_str)
+            doc_markdown = "\n".join(md_lines)
+
+            # Generate HTML
+            headers = list(data_list[0].keys()) if data_list and isinstance(data_list[0], dict) else []
+            th_html = "".join([f"<th>{h}</th>" for h in headers])
+            tr_html = ""
+            for item in data_list:
+                tds = "".join([f"<td>{str(item.get(h, '')).replace(chr(10), '<br>')}</td>" for h in headers])
+                tr_html += f"<tr>{tds}</tr>"
+
+            html_body = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+            <meta charset="utf-8">
+            <title>{doc_name}</title>
+            <style>
+                @page {{ size: A4; margin: 15mm; }}
+                body {{ font-family: 'Segoe UI', Tahoma, sans-serif; font-size: 12px; color: #1e293b; margin: 0; padding: 0; line-height: 1.5; }}
+                .header-card {{ background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px 20px; margin-bottom: 20px; }}
+                .title-row {{ display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #3b82f6; padding-bottom: 10px; margin-bottom: 12px; }}
+                .doc-title {{ font-size: 20px; font-weight: bold; color: #1e3a8a; margin: 0; }}
+                .type-badge {{ background: #dbeafe; color: #1d4ed8; padding: 4px 12px; border-radius: 6px; font-weight: 600; font-size: 12px; }}
+                table {{ width: 100%; border-collapse: collapse; margin-top: 15px; }}
+                th, td {{ border: 1px solid #cbd5e1; padding: 8px 10px; vertical-align: top; font-size: 11.5px; }}
+                th {{ background-color: #f1f5f9; color: #334155; font-weight: 600; text-align: left; }}
+                tr:nth-child(even) {{ background-color: #f8fafc; }}
+            </style>
+            </head>
+            <body>
+                <div class="header-card">
+                    <div class="title-row">
+                        <div class="doc-title">{doc_name}</div>
+                        <div class="type-badge">{doc_type}</div>
+                    </div>
+                    <div><b>Project:</b> {project_code} | <b>Date:</b> {today_str}</div>
+                </div>
+                <table>
+                    <thead><tr>{th_html}</tr></thead>
+                    <tbody>{tr_html}</tbody>
+                </table>
+            </body>
+            </html>
+            """
+
+        # Render PDF
+        render_html_to_pdf(html_body, pdf_file_path)
+
+        # 6. Update DB with file_url (Excel), pdf_url (PDF), markdown_content
+        cursor.execute("""
+            UPDATE qa_generated_documents 
+            SET status = 'Completed', 
+                file_url = %s, 
+                pdf_url = %s, 
+                markdown_content = %s, 
+                is_saved_to_project = FALSE 
+            WHERE id = %s::uuid
+        """, (excel_file_path, pdf_file_path, doc_markdown, gen_id))
         conn.commit()
-        logger.info(f"Successfully generated {file_path}")
+        logger.info(f"Successfully generated QA document (Excel: {excel_file_path}, PDF: {pdf_file_path})")
 
     except Exception as e:
         logger.error(f"Error in create_qa_document_async: {e}", exc_info=True)
@@ -403,5 +696,4 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     from dotenv import load_dotenv
     load_dotenv()
-    # Test script execution
     print("Script loaded successfully.")
