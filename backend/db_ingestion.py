@@ -417,6 +417,47 @@ def update_markdown_document(doc_id: str, new_markdown_text: str):
         if conn: conn.close()
 
 
+def get_project_markdown_documents_summary(project_id: str, limit: int = 20):
+    """
+    Retrieves all Markdown / KB documents available for a project,
+    returning basic metadata and a preview so the AI Agent knows
+    which MD documents exist in the project to cross-examine.
+    """
+    if not project_id:
+        return []
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT doc_id, original_filename, doc_category, doc_type, is_golden_data,
+                   SUBSTRING(full_markdown_content FROM 1 FOR 400) as preview
+            FROM documents
+            WHERE project_id = %s::uuid AND (status = 'Active' OR status IS NULL)
+            ORDER BY is_golden_data DESC, doc_id DESC
+            LIMIT %s;
+        """, (project_id, limit))
+        rows = cursor.fetchall()
+        docs = []
+        for r in rows:
+            docs.append({
+                'doc_id': str(r[0]),
+                'filename': r[1] or 'Untitled',
+                'category': r[2] or 'General',
+                'doc_type': r[3] or 'MD',
+                'is_golden_data': bool(r[4]),
+                'preview': (r[5] or '').replace('\n', ' ').strip()
+            })
+        return docs
+    except Exception as e:
+        logger.error(f"Error fetching project markdown documents summary: {e}")
+        return []
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+
+
 def search_knowledge_base(query_text: str, doc_type: str = None, top_k: int = 5, project_id: str = None):
     """
     Searches the knowledge base for chunks most similar to the query text.
@@ -551,7 +592,7 @@ def init_qa_transactions():
 
 def save_qa_transaction(project_id, group_name, group_type, filename, doc_type, extracted_text, qa_report, total_pages=None, email=None, qa_findings=None, exit_criteria_eval=None):
     """Saves a QA consult transaction to the database."""
-    import json
+    import json, re
     conn = None
     cursor = None
     try:
@@ -559,6 +600,11 @@ def save_qa_transaction(project_id, group_name, group_type, filename, doc_type, 
             logger.warning("No project_id provided, skipping saving QA transaction.")
             return False
             
+        if group_name:
+            group_name = re.sub(r'^\[.*?\]\s*', '', str(group_name)).strip()
+        if not group_name:
+            group_name = 'General'
+
         conn = get_db_connection()
         cursor = conn.cursor()
         
@@ -569,14 +615,14 @@ def save_qa_transaction(project_id, group_name, group_type, filename, doc_type, 
             INSERT INTO qa_transactions (project_id, group_name, group_type, filename, doc_type, extracted_text, qa_report, total_pages, email, qa_findings, exit_criteria_eval)
             VALUES (%s::uuid, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)
             RETURNING transaction_id
-        """, (project_id, group_name, group_type, filename, doc_type, extracted_text, qa_report, total_pages, email, qf_json, ece_json))
+        """, (project_id, group_name, group_type or 'Project Plan', filename, doc_type, extracted_text, qa_report, total_pages, email, qf_json, ece_json))
         transaction_id = cursor.fetchone()[0]
         conn.commit()
-        logger.info(f"Saved QA transaction for {filename} in project {project_id}.")
+        logger.info(f"Saved QA transaction {transaction_id} for {filename} in project {project_id}.")
         return str(transaction_id)
     except Exception as e:
         if conn: conn.rollback()
-        logger.error(f"Error saving QA transaction: {e}", exc_info=True)
+        logger.error(f"Error saving QA transaction for {filename}: {e}", exc_info=True)
         return False
     finally:
         if cursor: cursor.close()
@@ -730,6 +776,62 @@ def get_qa_groups(project_id=None):
     except Exception as e:
         logger.error(f"Error retrieving QA groups: {e}", exc_info=True)
         return []
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+
+def delete_qa_transaction(transaction_id: str):
+    """Deletes a QA transaction by ID."""
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM qa_transactions WHERE transaction_id = %s::uuid;", (transaction_id,))
+        conn.commit()
+        return True, "Transaction deleted successfully"
+    except Exception as e:
+        if conn: conn.rollback()
+        logger.error(f"Error deleting QA transaction {transaction_id}: {e}", exc_info=True)
+        return False, str(e)
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+
+def delete_qa_group(project_id: str, group_name: str, delete_history: bool = True):
+    """
+    Deletes a QA group and optionally all associated transactions.
+    Matches both original name and stripped name.
+    """
+    conn = None
+    cursor = None
+    try:
+        import re
+        clean_name = re.sub(r'^\[.*?\]\s*', '', str(group_name)).strip()
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Delete from qa_groups
+        cursor.execute("""
+            DELETE FROM qa_groups
+            WHERE project_id = %s::uuid 
+              AND (group_name = %s OR group_name = %s OR TRIM(LOWER(group_name)) = TRIM(LOWER(%s)));
+        """, (project_id, group_name, clean_name, clean_name))
+        
+        # Delete from qa_transactions if requested
+        if delete_history:
+            cursor.execute("""
+                DELETE FROM qa_transactions
+                WHERE project_id = %s::uuid 
+                  AND (group_name = %s OR group_name = %s OR TRIM(LOWER(group_name)) = TRIM(LOWER(%s)));
+            """, (project_id, group_name, clean_name, clean_name))
+            
+        conn.commit()
+        return True, "Group deleted successfully"
+    except Exception as e:
+        if conn: conn.rollback()
+        logger.error(f"Error deleting QA group {group_name}: {e}", exc_info=True)
+        return False, str(e)
     finally:
         if cursor: cursor.close()
         if conn: conn.close()

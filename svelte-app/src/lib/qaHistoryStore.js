@@ -7,6 +7,7 @@ export const qaSessionGroups = writable([]);
 export const activeQAContext = writable(null);
 export const activeSidebarGroup = writable(null);
 export const qaDbGroups = writable([]);
+export const activeScanStatus = writable(null);
 
 /**
  * Derived store: unique groups from DB groups, DB history, and session groups
@@ -16,12 +17,15 @@ export const allGroups = derived(
   ([$qaHistory, $qaSessionGroups, $qaDbGroups]) => {
     const groupMap = new Map();
 
+    const cleanGroup = (name) => String(name || 'General').replace(/^\[.*?\]\s*/, '').trim();
+
     // From DB Groups (the master source of explicitly created groups)
     for (const g of $qaDbGroups) {
-      const key = `${g.project_id}::${g.group_name}`;
+      const gName = cleanGroup(g.group_name);
+      const key = `${g.project_id}::${gName.toLowerCase()}`;
       groupMap.set(key, {
         group_id: g.group_id,
-        group_name: g.group_name,
+        group_name: gName,
         group_type: g.group_type,
         project_id: g.project_id,
         project_code: g.project_code || 'Unknown',
@@ -32,10 +36,11 @@ export const allGroups = derived(
 
     // From DB history (to count scans and get implicitly created groups)
     for (const h of $qaHistory) {
-      const key = `${h.project_id}::${h.group_name}`;
+      const hName = cleanGroup(h.group_name);
+      const key = `${h.project_id}::${hName.toLowerCase()}`;
       if (!groupMap.has(key)) {
         groupMap.set(key, {
-          group_name: h.group_name || 'General',
+          group_name: hName,
           group_type: h.group_type || 'Project Plan',
           project_id: h.project_id,
           project_code: h.project_code || 'Unknown',
@@ -49,10 +54,11 @@ export const allGroups = derived(
 
     // From session groups (newly created in this session)
     for (const g of $qaSessionGroups) {
-      const key = `${g.project_id}::${g.group_name}`;
+      const gName = cleanGroup(g.group_name);
+      const key = `${g.project_id}::${gName.toLowerCase()}`;
       if (!groupMap.has(key)) {
         groupMap.set(key, {
-          group_name: g.group_name,
+          group_name: gName,
           group_type: g.group_type || 'Project Plan',
           project_id: g.project_id,
           project_code: g.project_code || '',
@@ -72,7 +78,11 @@ export async function loadQAHistoryFromDB() {
     if (res.ok) {
       const data = await res.json();
       if (data.success && data.transactions) {
-        qaHistory.set(data.transactions);
+        qaHistory.update(current => {
+          // Preserve any in-progress pending items that haven't finished
+          const inProgress = current.filter(item => item.is_processing);
+          return [...inProgress, ...data.transactions];
+        });
       }
     }
   } catch (err) {

@@ -3,7 +3,7 @@
   import { fade } from "svelte/transition";
   import { toast } from "./toastStore.js";
   import { authUser } from "./authStore.js";
-  import { qaHistory, selectedHistory, loadQAHistoryFromDB, selectedProjectStore, qaSessionGroups, activeQAContext, loadQAGroupsFromDB } from "./qaHistoryStore.js";
+  import { qaHistory, selectedHistory, loadQAHistoryFromDB, selectedProjectStore, qaSessionGroups, activeQAContext, loadQAGroupsFromDB, activeSidebarGroup, activeScanStatus } from "./qaHistoryStore.js";
   import GateResultModal from "./GateResultModal.svelte";
   import ProjectSelection from "./ProjectSelection.svelte";
 
@@ -70,9 +70,31 @@
     scanGroupName = ctx.group_name;
     scanGroupType = ctx.group_type;
     isGroupNameSet = true;
-    scanResult = null;
-    isProcessing = false;
-    file = null;
+
+    // Check if this group is currently scanning
+    const scan = $activeScanStatus;
+    const cleanCurrent = String(ctx.group_name || '').replace(/^\[.*?\]\s*/, '').trim().toLowerCase();
+    const cleanScanning = scan ? String(scan.groupName || '').replace(/^\[.*?\]\s*/, '').trim().toLowerCase() : '';
+    if (scan && cleanScanning === cleanCurrent) {
+      isProcessing = true;
+      scanResult = null;
+      processStatus = scan.processStatus || "กำลังวิเคราะห์ข้อมูลเบื้องหลัง...";
+      progressPct = scan.progressPct || 50;
+    } else {
+      isProcessing = false;
+      scanResult = null;
+      file = null;
+    }
+  }
+
+  $: if ($activeScanStatus && $activeScanStatus.isProcessing) {
+    const cleanCurrent = String(scanGroupName || '').replace(/^\[.*?\]\s*/, '').trim().toLowerCase();
+    const cleanScanning = String($activeScanStatus.groupName || '').replace(/^\[.*?\]\s*/, '').trim().toLowerCase();
+    if (cleanCurrent === cleanScanning) {
+      isProcessing = true;
+      processStatus = $activeScanStatus.processStatus || processStatus;
+      progressPct = $activeScanStatus.progressPct || progressPct;
+    }
   }
 
   $: if ($selectedHistory && projects.length > 0) {
@@ -89,13 +111,10 @@
         selectedProjectStore.set(p);
       }
       
-      // If the component was remounted, re-enable the processing UI
-      if (!isProcessing) {
-        isProcessing = true;
-        scanResult = null;
-        processStatus = "กำลังวิเคราะห์ข้อมูลเบื้องหลัง...";
-        progressPct = 50;
-      }
+      isProcessing = true;
+      scanResult = null;
+      processStatus = ($activeScanStatus && $activeScanStatus.processStatus) || "กำลังวิเคราะห์ข้อมูลเบื้องหลัง...";
+      progressPct = ($activeScanStatus && $activeScanStatus.progressPct) || 50;
     } else {
       const baseName = item.filename ? item.filename.replace(/\.[^/.]+$/, "") : "";
       const safeName = baseName.replace(/[^\w\-.]/g, '_');
@@ -230,7 +249,9 @@
     if (!scanGroupName.trim()) return;
     
     const pId = selectedProjectObj.id || selectedProjectObj.project_id;
-    const groupName = scanGroupName.trim();
+    // Clean group name by removing any leading bracketed type e.g. "[Project Plan] II" -> "II"
+    const groupName = scanGroupName.replace(/^\[.*?\]\s*/, '').trim();
+    scanGroupName = groupName;
     
     // Save to DB via API
     try {
@@ -259,6 +280,13 @@
         return [...groups, { group_name: groupName, group_type: scanGroupType, project_id: pId, project_code: selectedProjectObj.project_code || '' }];
       }
       return groups;
+    });
+    
+    activeSidebarGroup.set({
+      project: selectedProjectObj,
+      group_name: groupName,
+      group_type: scanGroupType,
+      project_id: pId
     });
     
     isGroupNameSet = true;
@@ -301,16 +329,39 @@
     progressPct = 10;
     processStatus = "กำลังอัปโหลดเอกสารและเริ่มประมวลผล...";
 
+    const cleanGroupName = scanGroupName.replace(/^\[.*?\]\s*/, '').trim() || 'General';
+    scanGroupName = cleanGroupName;
+    const pId = selectedProjectObj.id || selectedProjectObj.project_id;
+
+    // Keep sidebar active group in sync
+    activeSidebarGroup.set({
+      project: selectedProjectObj,
+      group_name: cleanGroupName,
+      group_type: scanGroupType,
+      project_id: pId
+    });
+
     const pendingItem = {
       id: 'pending-' + Date.now(),
       filename: file.name,
-      group_name: scanGroupName.trim() || 'General',
+      group_name: cleanGroupName,
       group_type: scanGroupType,
-      project_id: selectedProjectObj.id || selectedProjectObj.project_id,
+      project_id: pId,
       date: new Date().toISOString(),
       is_processing: true
     };
     qaHistory.update(h => [pendingItem, ...h]);
+
+    activeScanStatus.set({
+      isProcessing: true,
+      projectId: pId,
+      groupName: cleanGroupName,
+      groupType: scanGroupType,
+      filename: file.name,
+      processStatus: "กำลังอัปโหลดเอกสารและเริ่มประมวลผล...",
+      progressPct: 10,
+      pendingId: pendingItem.id
+    });
 
     const formData = new FormData();
     formData.append("file", file);
@@ -318,12 +369,10 @@
     formData.append("email", email);
     formData.append("skill_id", JSON.stringify(selectedSkills));
     if (selectedProjectObj) {
-      formData.append("project_id", selectedProjectObj.id || selectedProjectObj.project_id);
+      formData.append("project_id", pId);
       formData.append("project_name", `${selectedProjectObj.project_code || ''} ${selectedProjectObj.name || ''}`.trim() || 'Unknown Project');
     }
-    if (scanGroupName.trim()) {
-      formData.append("group_name", scanGroupName.trim());
-    }
+    formData.append("group_name", cleanGroupName);
     formData.append("group_type", scanGroupType);
 
     try {
@@ -365,18 +414,19 @@
             if (data.type === "progress") {
               processStatus = data.message;
               progressPct = data.pct;
+              activeScanStatus.update(s => s ? { ...s, processStatus: data.message, progressPct: data.pct } : s);
             } else if (data.type === "complete") {
               progressPct = 100;
               scanResult = data.result;
               isProcessing = false;
+              activeScanStatus.set(null);
               qaHistory.update(h => h.filter(item => item.id !== pendingItem.id));
               await loadQAHistoryFromDB();
+              await loadQAGroupsFromDB();
               if (scanResult && scanResult.exit_criteria_eval) {
                 gateResultData = scanResult.exit_criteria_eval;
                 showGateModal = true;
               }
-              // Refresh history from DB
-              loadQAHistoryFromDB();
             } else if (data.type === "error") {
               throw new Error(data.message);
             }
@@ -387,8 +437,12 @@
       const msg = err instanceof Error ? err.message : String(err);
       toast(`เกิดข้อผิดพลาด: ${msg}`, "error");
       isProcessing = false;
+      activeScanStatus.set(null);
     } finally {
+      activeScanStatus.set(null);
       qaHistory.update(h => h.filter(item => item.id !== pendingItem.id));
+      await loadQAHistoryFromDB();
+      await loadQAGroupsFromDB();
     }
   }
 
@@ -589,21 +643,49 @@
         <!-- RIGHT: Settings -->
         <div class="settings-section">
           <div class="setting-group relative">
-            <label>ประเภทเอกสาร (Document Type)</label>
+            <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px;">
+              <label style="margin-bottom: 0;">ประเภทเอกสาร (Document Type) <span style="font-size: 11px; color: #94a3b8; font-weight: normal;">(เลือกหรือไม่เลือกก็ได้)</span></label>
+              {#if selectedDocTypes.length > 0}
+                <button 
+                  type="button" 
+                  class="btn-clear-doctype" 
+                  on:click|stopPropagation={() => selectedDocTypes = []}
+                  style="background: none; border: none; color: #f87171; font-size: 11px; cursor: pointer; text-decoration: underline; padding: 0;"
+                >
+                  ล้างค่า (ให้ AI ตรวจสอบอัตโนมัติ)
+                </button>
+              {/if}
+            </div>
             <!-- Custom Dropdown for Doc Type -->
             <div class="custom-select" on:click|stopPropagation={() => { docTypeOpen = !docTypeOpen; skillOpen = false; }}>
               <div class="select-trigger" class:open={docTypeOpen}>
                 {#if selectedDocTypes.length === 0}
-                  <span style="color: #9ca3af;">-- เลือกประเภทเอกสาร --</span>
+                  <span style="color: #c4b5fd; display: flex; align-items: center; gap: 6px;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+                    -- ไม่ระบุ (AI วิเคราะห์และตรวจเอกสาร MD ใน Project อัตโนมัติ) --
+                  </span>
                 {:else if selectedDocTypes.length <= 2}
-                  {selectedDocTypes.join(", ")}
+                  <span style="color: #6ee7b7; font-weight: 500;">
+                    🎯 {selectedDocTypes.join(", ")}
+                  </span>
                 {:else}
-                  เลือกแล้ว {selectedDocTypes.length} รายการ
+                  <span style="color: #6ee7b7; font-weight: 500;">
+                    🎯 เลือกแล้ว {selectedDocTypes.length} รายการ
+                  </span>
                 {/if}
                 <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
               </div>
               {#if docTypeOpen}
                 <div class="options-menu" transition:fade={{duration: 100}}>
+                  <div 
+                    class="option-item" 
+                    class:selected={selectedDocTypes.length === 0} 
+                    on:click|stopPropagation={() => { selectedDocTypes = []; docTypeOpen = false; }}
+                    style="color: #c4b5fd; font-style: italic; border-bottom: 1px solid rgba(255,255,255,0.08);"
+                  >
+                    <span style="margin-right: 8px;">🤖</span>
+                    -- ไม่ระบุ (AI Agent วิเคราะห์เนื้อหาและดึงเอกสาร MD ในโครงการอัตโนมัติ) --
+                  </div>
                   {#each docTypes as type}
                     <div class="option-item" class:selected={selectedDocTypes.includes(type)} on:click|stopPropagation={() => toggleDocType(type)}>
                       <input type="checkbox" checked={selectedDocTypes.includes(type)} style="margin-right: 8px; cursor: pointer;" />
@@ -611,6 +693,20 @@
                     </div>
                   {/each}
                 </div>
+              {/if}
+            </div>
+            <!-- Dynamic flow description text -->
+            <div style="font-size: 11px; margin-top: 5px; line-height: 1.4;">
+              {#if selectedDocTypes.length > 0}
+                <span style="color: #34d399; display: flex; align-items: center; gap: 4px;">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                  กำหนด Flow ชัดเจน: AI จะตรวจเจาะจงตาม Flow และมาตรฐานเอกสาร {selectedDocTypes.join(", ")} เพื่อความแม่นยำสูงสุด
+                </span>
+              {:else}
+                <span style="color: #94a3b8; display: flex; align-items: center; gap: 4px;">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+                  โหมดอัตโนมัติ: AI Agent จะวิเคราะห์ประเภทเอกสาร และดึงเอกสาร MD ในโครงการมา Cross-check อัตโนมัติ
+                </span>
               {/if}
             </div>
           </div>

@@ -104,6 +104,61 @@
     }
   }
 
+  async function confirmDeleteGroup(group) {
+    const gName = group.group_name || 'General';
+    if (!confirm(`คุณแน่ใจหรือไม่ว่าต้องการลบกลุ่ม "${gName}" และประวัติการสแกนทั้งหมดในกลุ่มนี้?`)) {
+      return;
+    }
+    try {
+      const res = await fetch("http://127.0.0.1:5000/api/qa_groups/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project_id: group.project_id,
+          group_name: gName
+        })
+      });
+      if (res.ok) {
+        toast(`ลบกลุ่ม "${gName}" เรียบร้อยแล้ว`, "success");
+        qaSessionGroups.update(gs => gs.filter(g => !(g.project_id === group.project_id && g.group_name === gName)));
+        if ($activeSidebarGroup && String($activeSidebarGroup.group_name || '').toLowerCase() === String(gName).toLowerCase()) {
+          activeSidebarGroup.set(null);
+        }
+        await loadQAGroupsFromDB();
+        await loadQAHistoryFromDB();
+      } else {
+        const err = await res.json();
+        toast(err.error || "ไม่สามารถลบกลุ่มได้", "error");
+      }
+    } catch (e) {
+      console.error(e);
+      toast("เกิดข้อผิดพลาดในการลบกลุ่ม", "error");
+    }
+  }
+
+  async function confirmDeleteHistory(item) {
+    const fName = item.filename || 'เอกสารนี้';
+    if (!confirm(`คุณแน่ใจหรือไม่ว่าต้องการลบประวัติการตรวจ "${fName}"?`)) {
+      return;
+    }
+    try {
+      const res = await fetch(`http://127.0.0.1:5000/api/qa_transactions/${item.id}`, {
+        method: "DELETE"
+      });
+      if (res.ok) {
+        toast(`ลบประวัติ "${fName}" เรียบรซ์แล้ว`, "success");
+        await loadQAHistoryFromDB();
+        await loadQAGroupsFromDB();
+      } else {
+        const err = await res.json();
+        toast(err.error || "ไม่สามารถลบประวัติได้", "error");
+      }
+    } catch (e) {
+      console.error(e);
+      toast("เกิดข้อผิดพลาดในการลบประวัติ", "error");
+    }
+  }
+
   let scanResult = null;
   let isProcessing = false;
   let progress = { pct: 0, label: "", step: 0 };
@@ -346,11 +401,13 @@
       if (h.project_id != targetProject) return false;
       
       if (context) {
-        const hGroup = String(h.group_name || 'General').trim().toLowerCase();
-        const ctxGroup = String(context.group_name || 'General').trim().toLowerCase();
-        return hGroup === ctxGroup;
+        const cleanHGroup = String(h.group_name || 'General').replace(/^\[.*?\]\s*/, '').trim().toLowerCase();
+        const cleanCtxGroup = String(context.group_name || 'General').replace(/^\[.*?\]\s*/, '').trim().toLowerCase();
+        const rawHGroup = String(h.group_name || 'General').trim().toLowerCase();
+        const rawCtxGroup = String(context.group_name || 'General').trim().toLowerCase();
+        return rawHGroup === rawCtxGroup || cleanHGroup === cleanCtxGroup;
       }
-      return false; // hide all if no group selected
+      return true; // Show all project history if no group context selected
     });
   })();
 </script>
@@ -549,20 +606,32 @@
                 <div class="history-title">กลุ่มการตรวจสอบ (Groups)</div>
                 <div class="history-list">
                   {#each $allGroups.filter(g => g.project_id === ($selectedProjectStore.id || $selectedProjectStore.project_id)) as group}
-                    <button class="history-item group-item" class:active={$activeSidebarGroup && $activeSidebarGroup.group_name === group.group_name} on:click={() => handleGroupClick(group)}>
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="flex-shrink: 0;">
-                        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
-                      </svg>
-                      <div class="history-details">
-                        <span class="h-filename" style="color: #c4b5fd;">[{group.group_type || 'General'}] {group.group_name}</span>
-                        <span class="h-project">{group.project_code}</span>
-                        {#if group.scan_count > 0}
-                          <span class="h-date">{group.scan_count} ไฟล์ที่ scan แล้ว</span>
-                        {:else}
-                          <span class="h-date" style="color: #f59e0b;">ยังไม่มีไฟล์</span>
-                        {/if}
-                      </div>
-                    </button>
+                    <div class="sidebar-item-row">
+                      <button class="history-item group-item" class:active={$activeSidebarGroup && String($activeSidebarGroup.group_name || '').replace(/^\[.*?\]\s*/, '').trim().toLowerCase() === String(group.group_name || '').replace(/^\[.*?\]\s*/, '').trim().toLowerCase()} on:click={() => handleGroupClick(group)}>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="flex-shrink: 0;">
+                          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                        </svg>
+                        <div class="history-details">
+                          <span class="h-filename" style="color: #c4b5fd;">[{group.group_type || 'General'}] {group.group_name}</span>
+                          <span class="h-project">{group.project_code}</span>
+                          {#if group.scan_count > 0}
+                            <span class="h-date">{group.scan_count} ไฟล์ที่ scan แล้ว</span>
+                          {:else}
+                            <span class="h-date" style="color: #f59e0b;">ยังไม่มีไฟล์</span>
+                          {/if}
+                        </div>
+                      </button>
+                      <button 
+                        class="btn-sidebar-delete" 
+                        title="ลบกลุ่มนี้" 
+                        on:click|stopPropagation={() => confirmDeleteGroup(group)}
+                      >
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13">
+                          <polyline points="3 6 5 6 21 6"></polyline>
+                          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                        </svg>
+                      </button>
+                    </div>
                   {/each}
                 </div>
               </div>
@@ -575,32 +644,46 @@
                 {#if filteredQAHistory.length > 0}
                   <div class="history-list">
                     {#each filteredQAHistory.slice(0, 10) as item}
-                      <button class="history-item" class:is-processing={item.is_processing} on:click={() => { activeView = "qa_consult"; selectedHistory.set(item); }}>
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path></svg>
-                        <div class="history-details">
-                          <span class="h-filename">{item.filename}</span>
-                          <span class="h-project" style="color: #a78bfa;">
-                            {#if item.group_type}[{item.group_type}] {/if}{item.group_name || 'General'}
-                          </span>
-                          {#if item.is_processing}
-                            <span class="h-status" style="color: #60a5fa; font-size: 11px; margin-top: 4px; display: flex; align-items: center; gap: 4px; animation: pulse 1.5s infinite;">
-                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="10" height="10" style="animation: spin 2s linear infinite;">
-                                <line x1="12" y1="2" x2="12" y2="6"></line>
-                                <line x1="12" y1="18" x2="12" y2="22"></line>
-                                <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line>
-                                <line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line>
-                                <line x1="2" y1="12" x2="6" y2="12"></line>
-                                <line x1="18" y1="12" x2="22" y2="12"></line>
-                                <line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line>
-                                <line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line>
-                              </svg>
-                              กำลังประมวลผล...
+                      <div class="sidebar-item-row">
+                        <button class="history-item" class:is-processing={item.is_processing} on:click={() => { activeView = "qa_consult"; selectedHistory.set(item); }}>
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path></svg>
+                          <div class="history-details">
+                            <span class="h-filename">{item.filename}</span>
+                            <span class="h-project" style="color: #a78bfa;">
+                              {#if item.group_type}[{item.group_type}] {/if}{item.group_name || 'General'}
                             </span>
-                          {:else if item.date}
-                            <span class="h-date">{formatHistoryDate(item.date)}</span>
-                          {/if}
-                        </div>
-                      </button>
+                            {#if item.is_processing}
+                              <span class="h-status" style="color: #60a5fa; font-size: 11px; margin-top: 4px; display: flex; align-items: center; gap: 4px; animation: pulse 1.5s infinite;">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="10" height="10" style="animation: spin 2s linear infinite;">
+                                  <line x1="12" y1="2" x2="12" y2="6"></line>
+                                  <line x1="12" y1="18" x2="12" y2="22"></line>
+                                  <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line>
+                                  <line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line>
+                                  <line x1="2" y1="12" x2="6" y2="12"></line>
+                                  <line x1="18" y1="12" x2="22" y2="12"></line>
+                                  <line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line>
+                                  <line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line>
+                                </svg>
+                                กำลังประมวลผล...
+                              </span>
+                            {:else if item.date}
+                              <span class="h-date">{formatHistoryDate(item.date)}</span>
+                            {/if}
+                          </div>
+                        </button>
+                        {#if !item.is_processing}
+                          <button 
+                            class="btn-sidebar-delete" 
+                            title="ลบประวัติการตรวจนี้" 
+                            on:click|stopPropagation={() => confirmDeleteHistory(item)}
+                          >
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13">
+                              <polyline points="3 6 5 6 21 6"></polyline>
+                              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                            </svg>
+                          </button>
+                        {/if}
+                      </div>
                     {/each}
                   </div>
                 {:else}
@@ -1164,6 +1247,44 @@
     border-left-color: #a855f7;
     background: rgba(168, 85, 247, 0.15);
     color: #fff;
+  }
+  .sidebar-item-row {
+    position: relative;
+    display: flex;
+    align-items: center;
+    width: 100%;
+    border-radius: 6px;
+  }
+  .sidebar-item-row .history-item {
+    flex: 1;
+    min-width: 0;
+    padding-right: 28px;
+  }
+  .btn-sidebar-delete {
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    opacity: 0;
+    background: transparent;
+    border: none;
+    color: #94a3b8;
+    padding: 5px;
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+    z-index: 2;
+  }
+  .sidebar-item-row:hover .btn-sidebar-delete {
+    opacity: 0.75;
+  }
+  .btn-sidebar-delete:hover {
+    opacity: 1 !important;
+    color: #f87171;
+    background: rgba(239, 68, 68, 0.18);
   }
   .history-item svg {
     margin-top: 2px;

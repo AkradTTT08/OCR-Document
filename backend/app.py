@@ -23,8 +23,12 @@ from flask import Flask, request, jsonify, send_from_directory, send_file, Respo
 from flask_cors import CORS, cross_origin
 from werkzeug.utils import secure_filename
 
-# เพิ่ม backend dir ใน path
+# เพิ่ม backend dir และ root dir ใน path
 sys.path.insert(0, os.path.dirname(__file__))
+_parent_dir = str(Path(__file__).resolve().parent.parent)
+if _parent_dir not in sys.path:
+    sys.path.append(_parent_dir)
+
 
 from ocr_engine import ocr_pdf_bytes, ocr_pdf_file, ocr_pdf_bytes_generator
 from spell_checker import spellcheck_text, spellcheck_pages
@@ -2073,7 +2077,11 @@ def qa_consult_api():
         skill_id_raw = request.form.get('skill_id', '')
         project_id = request.form.get('project_id', '')
         project_name = request.form.get('project_name', 'โครงการนี้')
-        group_name = request.form.get('group_name', 'General')
+        group_name_raw = request.form.get('group_name', 'General')
+        import re
+        group_name = re.sub(r'^\[.*?\]\s*', '', group_name_raw).strip() if group_name_raw else 'General'
+        if not group_name:
+            group_name = 'General'
         group_type = request.form.get('group_type', 'Project Plan')
 
         # parse doc_type array
@@ -2137,15 +2145,30 @@ def qa_consult_api():
                     yield f"data: {json.dumps({'type': 'error', 'message': 'ไม่พบข้อความในเอกสาร' })}\n\n"
                     return
 
-                yield f"data: {json.dumps({'type': 'progress', 'pct': 40, 'message': 'กำลังสืบค้นฐานข้อมูล Knowledge Base (Vector Search)...' })}\n\n"
+                # Check if explicit doc_type flow is selected or auto-discovery
+                is_explicit = bool(doc_type and ((isinstance(doc_type, list) and len(doc_type) > 0) or (isinstance(doc_type, str) and doc_type.strip())))
+                doc_type_display = ', '.join(doc_type) if isinstance(doc_type, list) and doc_type else (doc_type if isinstance(doc_type, str) and doc_type else "")
+
+                # 2. Vector Search & Project MD Inventory
+                from db_ingestion import search_knowledge_base, get_latest_qa_transaction, save_qa_transaction, get_project_markdown_documents_summary
                 
-                # 2. Vector Search
-                from db_ingestion import search_knowledge_base, get_latest_qa_transaction, save_qa_transaction
-                kb_results = search_knowledge_base(extracted_text[:2000], doc_type=doc_type, top_k=5, project_id=project_id if project_id else None)
+                available_md_docs = []
+                if project_id:
+                    try:
+                        available_md_docs = get_project_markdown_documents_summary(project_id)
+                    except Exception as e:
+                        logger.error(f"Failed to fetch available project MD docs: {e}")
+
+                if is_explicit:
+                    yield f"data: {json.dumps({'type': 'progress', 'pct': 40, 'message': f'กำลังสืบค้นฐานข้อมูลตามประเภทเอกสารที่ระบุ [{doc_type_display}] (Explicit Flow)...' })}\n\n"
+                    kb_results = search_knowledge_base(extracted_text[:2000], doc_type=doc_type, top_k=6, project_id=project_id if project_id else None)
+                else:
+                    yield f"data: {json.dumps({'type': 'progress', 'pct': 40, 'message': 'กำลังสำรวจเอกสาร Markdown ในโครงการและค้นหาข้อมูลอ้างอิงอัตโนมัติ...' })}\n\n"
+                    kb_results = search_knowledge_base(extracted_text[:2000], doc_type=None, top_k=8, project_id=project_id if project_id else None)
                 
                 kb_context = ''
                 for res in kb_results:
-                    kb_context += f"[Source: {res['filename']}]\n{res['chunk_text']}\n\n"
+                    kb_context += f"[Source: {res['filename']} | Category: {res.get('doc_type', '')}]\n{res['chunk_text']}\n\n"
                 
                 # Fetch previous transaction if exists
                 prev_transaction = None
@@ -2159,8 +2182,12 @@ def qa_consult_api():
                 yield f"data: {json.dumps({'type': 'progress', 'pct': 70, 'message': 'กำลังใช้ AI วิเคราะห์และเปรียบเทียบข้อมูล...' })}\n\n"
                 
                 # 3. Analyze with Multi-Agent Pipeline
-                from backend.orchestrator.state import QAState
-                from backend.orchestrator.pipeline import run_qa_consult
+                try:
+                    from orchestrator.state import QAState
+                    from orchestrator.pipeline import run_qa_consult
+                except ImportError:
+                    from backend.orchestrator.state import QAState
+                    from backend.orchestrator.pipeline import run_qa_consult
                 
                 prev_report_context = ""
                 if prev_transaction:
@@ -2170,11 +2197,35 @@ def qa_consult_api():
 {prev_transaction['qa_report']}
 """
                 
-                instruction = "กรุณาวิเคราะห์และจัดทำรายงาน QA แจกแจงรายละเอียดดังต่อไปนี้:\n"
-                instruction += "1. ความสอดคล้อง (Conformity): เอกสารนี้สอดคล้องกับข้อมูลในฐานข้อมูลหรือไม่ อย่างไร\n"
+                instruction = "กรุณาวิเคราะห์และจัดทำรายงาน QA Audit Report อย่างละเอียด:\n\n"
+                
+                if is_explicit:
+                    instruction += f"=== โหมดการตรวจสอบ: กำหนดประเภทเอกสารชัดเจน (Explicit Flow Mode) ===\n"
+                    instruction += f"ผู้ใช้ระบุประเภทเอกสารเป้าหมายเป็น: '{doc_type_display}'\n"
+                    instruction += f"ให้ AI ตรวจสอบและประเมินเจาะจงตามมาตรฐานและ Lifecycle/Flow การทำงานของเอกสารประเภทนี้โดยเฉพาะ เพื่อความแม่นยำสูงสุด\n\n"
+                else:
+                    instruction += f"=== โหมดการตรวจสอบ: ตรวจสอบและเลือกเอกสาร MD ในโครงการอัตโนมัติ (Autonomous Project MD Discovery Mode) ===\n"
+                    instruction += f"ผู้ใช้ไม่ได้ระบุประเภทเอกสารเจาะจง ให้ AI Agent ใช้ความฉลาดในการวินิจฉัย:\n"
+                    instruction += f"1. วิเคราะห์เนื้อหาของ 'เอกสารที่อัปโหลด' เพื่อระบุว่าคือเอกสารประเภทใด (Detected Document Type)\n"
+                    if available_md_docs:
+                        instruction += f"2. รายการเอกสาร Markdown (MD) ที่มีอยู่ในโครงการนี้ ({len(available_md_docs)} รายการ):\n"
+                        for idx, d in enumerate(available_md_docs, 1):
+                            golden_tag = " [Golden Data]" if d.get('is_golden_data') else ""
+                            instruction += f"   - {idx}. {d['filename']}{golden_tag} (หมวดหมู่: {d['category']}, ประเภท: {d['doc_type']})\n"
+                            if d.get('preview'):
+                                instruction += f"     เนื้อหาโดยสังเขป: {d['preview'][:120]}...\n"
+                        instruction += f"3. วินิจฉัยและระบุอย่างชัดเจนว่า 'ต้องใช้เอกสาร MD ใดบ้างในโครงการ' มาเป็นคู่เทียบในการ Cross-check ตรวจสอบความถูกต้องและสมบูรณ์ พร้อมระบุเหตุผลในการเลือก\n\n"
+                    else:
+                        instruction += f"2. พิจารณาโครงสร้างและมาตรฐานที่ควรมีของเอกสารประเภทนี้\n\n"
+
+                instruction += "รายละเอียดหัวข้อที่ต้องจัดทำในรายงาน:\n"
+                if not is_explicit:
+                    instruction += "0. ข้อมูลการจำแนกอัตโนมัติ (Autonomous Classification):\n"
+                    instruction += "   - ประเภทเอกสารที่ตรวจพบ (Detected Document Type)\n"
+                    instruction += "   - เอกสาร MD ในโครงการที่เลือกมาใช้ตรวจสอบ (Cross-referenced MD Documents in Project) พร้อมเหตุผล\n"
+                instruction += "1. ความสอดคล้อง (Conformity): เอกสารนี้สอดคล้องกับเอกสารอ้างอิงในโครงการอย่างไร\n"
                 instruction += "2. จุดที่พบข้อขัดแย้ง หรือข้อผิดพลาด (Discrepancies / Errors): มีส่วนใดที่ไม่ตรงกับฐานข้อมูล หรือผิดไปจากมาตรฐาน\n"
                 instruction += "3. สิ่งที่ขาดหายไป (Missing Information): ข้อมูลสำคัญใดที่ควรมีแต่ในเอกสารไม่มี\n"
-                
                 if prev_transaction:
                     instruction += "4. การแก้ไขจากครั้งก่อน (Revision Check): เปรียบเทียบกับประวัติการตรวจสอบครั้งก่อนว่าปัญหาเดิมได้รับการแก้ไขแล้วหรือไม่\n"
                     instruction += "5. ข้อเสนอแนะแนวทางแก้ไข (Recommendations)\n"
@@ -2184,7 +2235,7 @@ def qa_consult_api():
                 qa_state = QAState(
                     project_id=project_id or "",
                     project_name=project_name,
-                    doc_type=', '.join(doc_type) if isinstance(doc_type, list) else doc_type,
+                    doc_type=doc_type_display if is_explicit else "ไม่ระบุ (Auto-detect / Autonomous MD Discovery)",
                     skill_instructions=skill_instructions or "",
                     kb_context=kb_context or "",
                     prev_report_context=prev_report_context,
@@ -2283,7 +2334,7 @@ def qa_consult_api():
                     'status': 'success',
                     'report': report,
                     'email': email,
-                    'doc_type': ', '.join(doc_type) if isinstance(doc_type, list) else doc_type,
+                    'doc_type': doc_type_display if is_explicit else 'Auto-detect (MD Cross-Check)',
                     'filename': original_filename,
                     'excel_url': excel_download_url,
                     'exit_criteria_eval': exit_criteria_eval,
@@ -2420,10 +2471,24 @@ def get_qa_transactions():
         logger.error(f"Error fetching qa_transactions: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/qa_groups', methods=['GET', 'POST'])
+@app.route('/api/qa_transactions/<string:transaction_id>', methods=['DELETE'])
+def delete_qa_transaction_api(transaction_id):
+    """Delete a QA transaction by ID"""
+    try:
+        from db_ingestion import delete_qa_transaction
+        success, msg = delete_qa_transaction(transaction_id)
+        if success:
+            return jsonify({'success': True, 'message': msg})
+        else:
+            return jsonify({'error': msg}), 500
+    except Exception as e:
+        logger.error(f"Error deleting qa_transaction {transaction_id}: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/qa_groups', methods=['GET', 'POST', 'DELETE'])
 def handle_qa_groups():
-    """Handle QA groups (create and list)"""
-    from db_ingestion import get_qa_groups, save_qa_group
+    """Handle QA groups (create, list, and delete)"""
+    from db_ingestion import get_qa_groups, save_qa_group, delete_qa_group
     
     if request.method == 'GET':
         try:
@@ -2448,6 +2513,43 @@ def handle_qa_groups():
         except Exception as e:
             logger.error(f"Error creating qa_group: {e}", exc_info=True)
             return jsonify({'error': str(e)}), 500
+
+    elif request.method == 'DELETE':
+        try:
+            data = request.json or {}
+            project_id = data.get('project_id') or request.args.get('project_id')
+            group_name = data.get('group_name') or request.args.get('group_name')
+            if not project_id or not group_name:
+                return jsonify({'error': 'project_id and group_name are required'}), 400
+                
+            success, msg = delete_qa_group(project_id, group_name, delete_history=True)
+            if success:
+                return jsonify({'success': True, 'message': msg})
+            else:
+                return jsonify({'error': msg}), 500
+        except Exception as e:
+            logger.error(f"Error deleting qa_group: {e}", exc_info=True)
+            return jsonify({'error': str(e)}), 500
+
+@app.route('/api/qa_groups/delete', methods=['POST'])
+def delete_qa_group_post():
+    """Alternative POST endpoint to delete a QA group and its history"""
+    try:
+        from db_ingestion import delete_qa_group
+        data = request.json or {}
+        project_id = data.get('project_id')
+        group_name = data.get('group_name')
+        if not project_id or not group_name:
+            return jsonify({'error': 'project_id and group_name are required'}), 400
+            
+        success, msg = delete_qa_group(project_id, group_name, delete_history=True)
+        if success:
+            return jsonify({'success': True, 'message': msg})
+        else:
+            return jsonify({'error': msg}), 500
+    except Exception as e:
+        logger.error(f"Error deleting qa_group: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
 
 
 # ========================================================
@@ -2991,7 +3093,10 @@ def handle_single_exit_criteria_template(template_id):
 def reset_universal_exit_criteria():
     """Reset or re-seed the standard Universal Exit Criteria Checklist"""
     try:
-        from add_exit_criteria_tables import add_exit_criteria_tables
+        try:
+            from scripts.add_exit_criteria_tables import add_exit_criteria_tables
+        except ImportError:
+            from add_exit_criteria_tables import add_exit_criteria_tables
         add_exit_criteria_tables(force_reset=True)
         return jsonify({'success': True, 'message': 'Universal Document Exit Criteria template reset/seeded successfully'})
     except Exception as e:
@@ -3076,8 +3181,12 @@ def research_chat():
                 context_str += f"[Excerpt {idx+1}]: {chunk}\n\n"
             
         # 2. Analyze with Multi-Agent Pipeline
-        from backend.orchestrator.state import QAState
-        from backend.orchestrator.pipeline import run_qa_research
+        try:
+            from orchestrator.state import QAState
+            from orchestrator.pipeline import run_qa_research
+        except ImportError:
+            from backend.orchestrator.state import QAState
+            from backend.orchestrator.pipeline import run_qa_research
         
         # Serialize history into text format
         history_text = ""
@@ -5855,7 +5964,10 @@ if __name__ == '__main__':
             logger.error(f"Failed to initialize requirements table: {err}")
             
         try:
-            from add_agent_sessions_table import create_agent_sessions_table
+            try:
+                from scripts.add_agent_sessions_table import create_agent_sessions_table
+            except ImportError:
+                from add_agent_sessions_table import create_agent_sessions_table
             create_agent_sessions_table()
         except Exception as err:
             logger.error(f"Failed to initialize agent sessions table: {err}")
@@ -5865,7 +5977,10 @@ if __name__ == '__main__':
     # Initialize Exit Criteria tables & seed Universal template
     logger.info("กำลังตรวจสอบและสร้างตาราง Exit Criteria...")
     try:
-        from add_exit_criteria_tables import add_exit_criteria_tables
+        try:
+            from scripts.add_exit_criteria_tables import add_exit_criteria_tables
+        except ImportError:
+            from add_exit_criteria_tables import add_exit_criteria_tables
         add_exit_criteria_tables()
         logger.info("Exit Criteria tables ready.")
     except Exception as e:
