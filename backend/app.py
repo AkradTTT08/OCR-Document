@@ -711,6 +711,15 @@ def upload_avatar(user_id):
 def serve_avatar(filename):
     return send_from_directory(str(AVATARS_FOLDER), filename)
 
+@app.route('/', methods=['GET'])
+def root_index():
+    """Root info endpoint"""
+    return jsonify({
+        'service': 'Spectra QA & Thai OCR Backend API',
+        'status': 'online',
+        'health_check': '/api/health'
+    })
+
 @app.route('/api/health', methods=['GET'])
 def health():
     """Health check"""

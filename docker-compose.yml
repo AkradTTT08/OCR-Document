@@ -95,6 +95,7 @@ services:
       - "${FRONTEND_PORT:-5173}:80"
     depends_on:
       - backend
+      - mcp_server
 
   # ──────────────────────────────────────────────────
   # MCP Server: Spectra QA Consult Server (FastMCP SSE)
