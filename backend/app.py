@@ -708,8 +708,22 @@ def upload_avatar(user_id):
             return jsonify({'error': str(e)}), 500
 
 @app.route('/api/avatars/<path:filename>')
+@app.route('/uploads/avatars/<path:filename>')
+@app.route('/uploads/<path:filename>')
 def serve_avatar(filename):
-    return send_from_directory(str(AVATARS_FOLDER), filename)
+    if filename.startswith('avatars/'):
+        filename = filename.replace('avatars/', '', 1)
+        
+    avatar_file = AVATARS_FOLDER / filename
+    if avatar_file.exists() and avatar_file.is_file():
+        return send_from_directory(str(AVATARS_FOLDER), filename)
+        
+    upload_file = UPLOAD_FOLDER / filename
+    if upload_file.exists() and upload_file.is_file():
+        return send_from_directory(str(UPLOAD_FOLDER), filename)
+        
+    logger.warning(f"Avatar file not found: {filename}")
+    return jsonify({'error': 'File not found'}), 404
 
 @app.route('/', methods=['GET'])
 def root_index():

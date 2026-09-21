@@ -725,7 +725,7 @@ docker compose logs -f mcp_server</code></pre>
             </div>
         </div>
         <div class="step-content">
-            <p>เปิดไฟล์ <code>%APPDATA%\Claude\claude_desktop_config.json</code> บนเครื่องคอมพิวเตอร์ของคุณ แล้วเพิ่ม MCP Server ชี้ไปยัง Server IP:</p>
+            <p>เปิดไฟล์ <code>%APPDATA%\Claude\claude_desktop_config.json</code> บนเครื่องคอมพิวเตอร์ของคุณ แล้วเพิ่ม MCP Server ชี้ไปยัง Server IP (ขอเพียงแค่มี Node.js ติดตั้งบนเครื่อง โดยไม่ต้องก๊อปปี้ไฟล์โค้ดใดๆ เพิ่มเติม):</p>
 
             <div class="code-container">
                 <div class="code-header">
@@ -735,14 +735,19 @@ docker compose logs -f mcp_server</code></pre>
                 <pre><code>{
   "mcpServers": {
     "spectra-qa-remote": {
-      "command": "node",
+      "command": "npx",
       "args": [
-        "d:/OCR-Github/OCR-Document/mcp-proxy/mcp-proxy.js",
-        "http://&lt;IP_SERVER_ของคุณ&gt;:5173/sse"
+        "-y",
+        "mcp-remote",
+        "http://&lt;IP_SERVER_ของคุณ&gt;:5173/sse",
+        "--allow-http"
       ]
     }
   }
 }</code></pre>
+            </div>
+            <div class="alert-info" style="margin-top: 15px;">
+                <strong>💡 ข้อสังเกต:</strong> อย่าลืมใส่ <code>/sse</code> ต่อท้าย URL และแฟล็ก <code>--allow-http</code> จำเป็นต้องใส่เสมอเมื่อเชื่อมต่อผ่าน HTTP IP Address (ที่ไม่ใช่ localhost)
             </div>
         </div>
     </div>

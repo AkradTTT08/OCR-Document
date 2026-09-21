@@ -213,6 +213,8 @@
   let showMyPassword = false;
   let myProfileAvatarFile = null;
   let myProfileAvatarPreview = null;
+  let previewImageError = false;
+  let topbarAvatarError = false;
   let isDragOverAvatar = false;
   let activeProfileTab = 'general';
   
@@ -242,6 +244,7 @@
       };
       myProfileAvatarFile = null;
       myProfileAvatarPreview = currentAvatar ? `${currentAvatar}` : null;
+      previewImageError = false;
       activeProfileTab = 'general';
 
       const userId = getUserIdFromToken();
@@ -262,6 +265,7 @@
               myProfileFormData.line_id = data.user.line_id || '';
               if (data.user.avatar_path) {
                 myProfileAvatarPreview = `${data.user.avatar_path}`;
+                previewImageError = false;
               }
             }
           }
@@ -276,6 +280,7 @@
   function removeMyAvatar() {
       myProfileAvatarFile = null;
       myProfileAvatarPreview = null;
+      previewImageError = false;
       toast('ลบรูปภาพโปรไฟล์เรียบร้อยแล้ว', 'info');
   }
 
@@ -287,6 +292,7 @@
           if (file.type.startsWith('image/')) {
               myProfileAvatarFile = file;
               myProfileAvatarPreview = URL.createObjectURL(file);
+              previewImageError = false;
               toast('เลือกรูปภาพสำเร็จแล้ว', 'success');
           } else {
               toast('กรุณาเลือกไฟล์รูปภาพเท่านั้น', 'warning');
@@ -754,8 +760,8 @@
               <span class="user-role">{$authRole === 'admin' ? 'System Admin' : 'Standard User'}</span>
             </div>
             <div class="avatar" title="{$authDisplayName || $authUser} ({$authRole})">
-              {#if $authAvatar}
-                <img src={`${$authAvatar}`} alt="Profile" />
+              {#if $authAvatar && !topbarAvatarError}
+                <img src={`${$authAvatar}`} alt="Profile" on:error={() => topbarAvatarError = true} />
               {:else}
                 {$authDisplayName ? $authDisplayName.charAt(0).toUpperCase() : ($authUser ? $authUser.charAt(0).toUpperCase() : 'A')}
               {/if}
@@ -891,8 +897,8 @@
               on:click={() => document.getElementById('my_profile_avatar_input').click()}
               title="คลิกเพื่อเปลี่ยนรูป หรือลากวางไฟล์รูปภาพตรงนี้"
             >
-                {#if myProfileAvatarPreview}
-                    <img src={myProfileAvatarPreview} alt="Preview Avatar" />
+                {#if myProfileAvatarPreview && !previewImageError}
+                    <img src={myProfileAvatarPreview} alt="Preview Avatar" on:error={() => previewImageError = true} />
                 {:else}
                     <div class="avatar-fallback-text">
                         {$authDisplayName ? $authDisplayName.charAt(0).toUpperCase() : ($authUser ? $authUser.charAt(0).toUpperCase() : 'A')}
@@ -918,6 +924,7 @@
                   if (file) {
                       myProfileAvatarFile = file;
                       myProfileAvatarPreview = URL.createObjectURL(file);
+                      previewImageError = false;
                       toast('เลือกรูปภาพใหม่สำเร็จ', 'success');
                   }
               }} 
@@ -1398,7 +1405,7 @@
     border-bottom: 1px solid var(--glass-border);
     background: var(--glass-bg);
     backdrop-filter: var(--glass-blur);
-    z-index: 5;
+    z-index: 999;
   }
 
   .breadcrumb {
@@ -1607,13 +1614,13 @@
   /* Profile Dropdown */
   .dropdown-overlay {
     position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
-    z-index: 90;
+    z-index: 9998;
   }
   .profile-dropdown {
     position: absolute; top: 100%; right: 0; margin-top: 10px;
     background: var(--bg-dark); border: 1px solid var(--glass-border);
     border-radius: var(--radius-md); box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-    padding: 8px; z-index: 100; min-width: 160px;
+    padding: 8px; z-index: 9999; min-width: 160px;
     display: flex; flex-direction: column; gap: 4px;
   }
   .dropdown-item {
@@ -1633,7 +1640,7 @@
   /* Modal Base */
   .modal-backdrop {
     position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-    background: rgba(0,0,0,0.75); z-index: 1000;
+    background: rgba(0,0,0,0.75); z-index: 10000;
     display: flex; align-items: center; justify-content: center;
     backdrop-filter: blur(5px);
   }

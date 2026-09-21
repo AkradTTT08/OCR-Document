@@ -115,7 +115,7 @@
   .noti-overlay {
     position: fixed;
     top: 0; left: 0; right: 0; bottom: 0;
-    z-index: 100;
+    z-index: 9998;
   }
 
   .noti-panel {
@@ -129,7 +129,7 @@
     border: 1px solid rgba(168, 85, 247, 0.25);
     border-radius: 20px;
     box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6), 0 0 20px rgba(168, 85, 247, 0.15);
-    z-index: 101;
+    z-index: 9999;
     display: flex;
     flex-direction: column;
     overflow: hidden;
