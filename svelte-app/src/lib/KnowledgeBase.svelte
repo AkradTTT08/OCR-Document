@@ -244,6 +244,36 @@
     }
   }
 
+  let isReindexing = false;
+  async function reindexProjectRAG() {
+    if (!selectedProject) {
+      toast('กรุณาเลือกโครงการก่อน', 'warning');
+      return;
+    }
+    isReindexing = true;
+    try {
+      toast('⚡ กำลังประมวลผล Re-index Semantic Chunks & Contextual Breadcrumbs...', 'info');
+      const r = await fetch(`${API}/kb/reindex`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_id: selectedProject })
+      });
+      const d = await r.json();
+      if (r.ok && d.success) {
+        toast(`✅ ${d.message || 'Re-index สำเร็จ'}`, 'success');
+        await loadStats();
+        await loadDocs(selectedProject);
+        if (selectedDoc) await loadDocDetail(selectedDoc);
+      } else {
+        toast(d.error || 'Re-index ไม่สำเร็จ', 'error');
+      }
+    } catch(e) {
+      toast('เกิดข้อผิดพลาดในการเชื่อมต่อ', 'error');
+    } finally {
+      isReindexing = false;
+    }
+  }
+
   async function doSearch() {
     if (!searchQuery.trim()) return;
     isSearching = true;
@@ -605,13 +635,24 @@
 
       <!-- Document list -->
       {#if documents.length > 0 || isLoadingDocs || selectedProject}
-        <div class="section-label" style="display: flex; justify-content: space-between; align-items: center; margin-top: 24px;">
+        <div class="section-label" style="display: flex; justify-content: space-between; align-items: center; margin-top: 24px; gap: 8px;">
           <span>เอกสาร ({documents.length})</span>
-          {#if mode === 'knowledge_base'}
-          <button class="btn-icon-add" on:click={openAddManualDocModal} title="เพิ่มเอกสาร Manual">
-            + Manual Add
-          </button>
-          {/if}
+          <div style="display: flex; gap: 6px;">
+            {#if mode === 'knowledge_base' && documents.length > 0}
+              <button class="btn-icon-add" style="background: rgba(139, 92, 246, 0.2); color: #c4b5fd; border: 1px solid rgba(139, 92, 246, 0.4); padding: 2px 8px; border-radius: 4px; font-size: 11px; cursor: pointer;" on:click={reindexProjectRAG} disabled={isReindexing} title="Re-index Semantic Chunks & Contextual Breadcrumbs">
+                {#if isReindexing}
+                  <span class="spinner-small" style="width: 10px; height: 10px; display: inline-block;"></span>
+                {:else}
+                  ⚡ Re-index RAG
+                {/if}
+              </button>
+            {/if}
+            {#if mode === 'knowledge_base'}
+            <button class="btn-icon-add" on:click={openAddManualDocModal} title="เพิ่มเอกสาร Manual">
+              + Manual Add
+            </button>
+            {/if}
+          </div>
         </div>
         <div class="doc-list">
           {#if isLoadingDocs}

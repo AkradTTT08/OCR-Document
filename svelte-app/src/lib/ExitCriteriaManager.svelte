@@ -29,6 +29,8 @@
     showDocTypeDropdown = false;
   }
 
+  import { EXIT_CRITERIA_DOC_TYPES } from './constants.js';
+
   // Template Form State
   let form = {
     template_id: null,
@@ -40,20 +42,7 @@
     items: []
   };
 
-  const docTypes = [
-    'ALL',
-    'Test Case',
-    'UAT',
-    'Project Plan',
-    'SRS Document',
-    'SDD',
-    'Technical Spec',
-    'SOP',
-    'Contract',
-    'Project Proposal',
-    'Summary Report',
-    'General'
-  ];
+  const docTypes = EXIT_CRITERIA_DOC_TYPES;
   const categories = [
     'Defect & Comment Resolution',
     'Content Accuracy & Completeness',
@@ -395,7 +384,7 @@
         <div class="loading-overlay">กำลังโหลดรายละเอียด...</div>
       {:else}
         <!-- Form Header -->
-        <div class="editor-card glass-panel">
+        <div class="editor-card glass-panel form-card-top" class:dropdown-active={showDocTypeDropdown}>
           <div class="panel-header">
             <h3>⚙️ รายละเอียด Template</h3>
             <button class="btn btn-success" on:click={saveTemplate} disabled={saving}>
@@ -414,7 +403,7 @@
               <input type="text" id="form_title" bind:value={form.title} placeholder="เช่น Universal Document Exit Criteria" class="form-control" />
             </div>
 
-            <div class="form-group">
+            <div class="form-group doc-type-group" class:dropdown-open={showDocTypeDropdown}>
               <label for="form_doc_type">ประเภทเอกสารเป้าหมาย (Doc Type):</label>
               <div class="custom-dropdown-container">
                 <button type="button" class="custom-dropdown-trigger" on:click|stopPropagation={() => showDocTypeDropdown = !showDocTypeDropdown}>
@@ -780,6 +769,7 @@
   .custom-dropdown-container {
     position: relative;
     width: 100%;
+    z-index: 50;
   }
 
   .custom-dropdown-trigger {
@@ -819,15 +809,15 @@
     top: calc(100% + 6px);
     left: 0;
     right: 0;
-    background: rgba(15, 23, 42, 0.95) !important;
-    backdrop-filter: blur(16px) !important;
-    border: 1px solid rgba(255, 255, 255, 0.15) !important;
+    background: #0f172a !important;
+    backdrop-filter: blur(24px) !important;
+    border: 1px solid rgba(255, 255, 255, 0.2) !important;
     border-radius: 12px;
     padding: 6px;
-    z-index: 100;
+    z-index: 99999 !important;
     max-height: 260px;
     overflow-y: auto;
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6), 0 0 20px rgba(99, 102, 241, 0.15);
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.9), 0 0 25px rgba(99, 102, 241, 0.35);
   }
 
   .dropdown-item-opt {
@@ -933,6 +923,30 @@
     display: flex;
     flex-direction: column;
     gap: 20px;
+    position: relative;
+  }
+
+  .editor-card.form-card-top {
+    position: relative;
+    z-index: 10;
+  }
+
+  .editor-card.form-card-top.dropdown-active {
+    z-index: 100;
+  }
+
+  .form-group.doc-type-group {
+    position: relative;
+    z-index: 10;
+  }
+
+  .form-group.doc-type-group.dropdown-open {
+    z-index: 101;
+  }
+
+  .category-panel {
+    position: relative;
+    z-index: 1;
   }
 
   .glass-panel {

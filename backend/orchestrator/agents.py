@@ -80,6 +80,13 @@ Provide a very concise executive summary (1-3 sentences) in Thai evaluating the 
                     temperature=0.2,
                 )
             )
+            if hasattr(response, 'usage_metadata') and response.usage_metadata:
+                try:
+                    from db_ingestion import log_api_usage
+                    log_api_usage("FinalReviewer_Agent", model_name, response.usage_metadata)
+                except Exception as log_err:
+                    logger.warning(f"Failed to log API usage in FinalReviewer: {log_err}")
+
             state.final_review_summary = response.text.strip()
             
         except Exception as e:
@@ -144,6 +151,12 @@ class QAConsultAgent:
                             )
                         )
                         if response and response.text:
+                            if hasattr(response, 'usage_metadata') and response.usage_metadata:
+                                try:
+                                    from db_ingestion import log_api_usage
+                                    log_api_usage("QAConsult_Agent", current_model, response.usage_metadata)
+                                except Exception as log_err:
+                                    logger.warning(f"Failed to log API usage in QAConsult: {log_err}")
                             break
                     except Exception as model_err:
                         logger.warning(f"QAConsultAgent error with {current_model}: {model_err}")
@@ -166,6 +179,90 @@ class QAConsultAgent:
 
 class QAResearchAgent:
     @staticmethod
+    def _build_prompt_and_system(state: 'QAState'):
+        system_instruction = f"""คุณคือ Rainbow 🌈 ผู้เชี่ยวชาญด้าน QA Research & Requirements Intelligence ประจำระบบ 'Spectra QA'
+หน้าที่หลักของคุณคือ: ตอบคำถามและวิเคราะห์ข้อมูลเกี่ยวกับโครงการ "{state.project_name or 'N/A'}" (รหัสโครงการ: {state.project_code or state.project_id}) อย่างแม่นยำ ละเอียด ลึกซึ้ง และถูกต้อง 100% โดยอ้างอิงจากคลังข้อมูล (Knowledge Base), เอกสารความต้องการ (Requirements), SRS, Test Cases และเอกสารที่อัปโหลดทั้งหมด
+
+กฎเหล็กในการค้นหาและตอบคำถาม (QA Accuracy & Grounding Rules):
+1. ความแม่นยำและการอ้างอิง (Grounding & Citations):
+   - ให้ยึดข้อมูลจาก CONTEXT FROM KNOWLEDGE BASE เป็นหลักความจริงสูงสุด ห้ามคาดเดาหรือสร้างข้อมูลขึ้นมาเอง (Zero Hallucination)
+   - ระบุแหล่งที่มาของข้อมูลเสมอเมื่อกล่าวถึงข้อกำหนด เช่น `[อ้างอิง: ชื่อไฟล์]` หรือ `[ความต้องการ: REQ-XXX]`
+2. รูปแบบคำตอบที่ชัดเจน (Structured Output):
+   - ใช้ Markdown จัดโครงสร้างให้อ่านง่าย เช่น หัวข้อย่อย (###), รายการ Bullet Points, ตัวเลขขั้นตอน, ตารางเปรียบเทียบ (Table), และ Code blocks สำหรับ API/JSON
+   - สำหรับคำถามภาพรวม/สรุปโครงการ: ให้สรุปวัตถุประสงค์, ฟังก์ชันหลัก, กลุ่มผู้ใช้งาน, และรายการเอกสารที่เกี่ยวข้อง
+   - สำหรับคำถามเชิงเทคนิค/Business Logic: ให้ระบุเงื่อนไข (Preconditions), กฎการตรวจสอบ (Validation Rules), กรณี Error, และผลลัพธ์ที่คาดหวัง (Expected Results)
+3. ความซื่อสัตย์เมื่อไม่พบข้อมูล (Honesty on Gaps):
+   - หากข้อมูลที่ผู้ใช้ถามไม่มีระบุไว้ในเอกสารของโครงการ ให้แจ้งอย่างตรงไปตรงมาว่า "ในเอกสารของโครงการปัจจุบันยังไม่มีการระบุข้อมูลในส่วนนี้..." พร้อมให้คำแนะนำในมุมมอง QA ว่าควรประสานงานขอข้อมูลเพิ่มในส่วนใด
+4. ภาษาและบุคลิกภาพ (Tone):
+   - ตอบเป็นภาษาไทยอย่างสุภาพ เป็นมืออาชีพ ชัดเจน มีชีวิตชีวาตามเอกลักษณ์ของ Rainbow 🌈
+"""
+
+        prompt = f"""
+======================================================================
+CONTEXT FROM PROJECT KNOWLEDGE BASE:
+======================================================================
+{state.kb_context if state.kb_context else 'ไม่พบข้อมูลใน Knowledge Base สำหรับคำถามนี้'}
+
+======================================================================
+CHAT HISTORY (บทสนทนาก่อนหน้า):
+======================================================================
+{state.original_text[-4000:] if state.original_text else 'ยังไม่มีประวัติการสนทนา'}
+
+======================================================================
+USER QUERY (คำถามของผู้ใช้):
+======================================================================
+{state.instruction}
+"""
+        return system_instruction, prompt
+
+    @staticmethod
+    def generate_stream(state: 'QAState'):
+        """Streams QA Research responses token by token with Gemini."""
+        logger.info("Running QAResearchAgent (Streaming)...")
+        from ocr_engine import get_all_api_keys, _get_gemini_client
+        from google.genai import types
+        
+        keys = get_all_api_keys()
+        if not keys:
+            yield "ขออภัยครับ ไม่พบคีย์ API สำหรับประมวลผลคำตอบ"
+            return
+            
+        system_instruction, prompt = QAResearchAgent._build_prompt_and_system(state)
+        
+        gemini_model = os.environ.get('GEMINI_MODEL', 'gemini-3.1-pro')
+        raw_fallback_models = [gemini_model, 'gemini-3.1-flash', 'gemini-2.5-flash', 'gemini-2.5-flash-lite']
+        seen = set()
+        fallback_models = [m for m in raw_fallback_models if not (m in seen or seen.add(m))]
+        
+        success = False
+        for key_idx in range(len(keys)):
+            client = _get_gemini_client(key_idx)
+            for current_model in fallback_models:
+                try:
+                    logger.info(f"QAResearchAgent Stream: Calling model {current_model}...")
+                    response_stream = client.models.generate_content_stream(
+                        model=current_model,
+                        contents=prompt,
+                        config=types.GenerateContentConfig(
+                            system_instruction=system_instruction,
+                            temperature=0.2, # Lower temperature for higher accuracy and factual consistency
+                        )
+                    )
+                    for chunk in response_stream:
+                        if chunk and chunk.text:
+                            yield chunk.text
+                    success = True
+                    break
+                except Exception as model_err:
+                    logger.warning(f"QAResearchAgent stream error with {current_model}: {model_err}")
+                    continue
+            if success:
+                break
+                
+        if not success:
+            yield "ขออภัยครับ เกิดข้อผิดพลาดในการประมวลผลคำตอบจาก AI กรุณาลองใหม่อีกครั้ง"
+
+    @staticmethod
     def run(state: 'QAState') -> 'QAState':
         """Agent for QA Research (Project Knowledge Queries)"""
         logger.info("Running QAResearchAgent...")
@@ -181,31 +278,9 @@ class QAResearchAgent:
                 state.status = "failed"
                 return state
                 
-            client = _get_gemini_client(0)
+            system_instruction, prompt = QAResearchAgent._build_prompt_and_system(state)
+            
             gemini_model = os.environ.get('GEMINI_MODEL', 'gemini-3.1-pro')
-            
-            # Use original_text for chat history in Research context
-            system_instruction = f"""You are a QA Research AI Assistant for the 'Spectra QA' system.
-Your role is to answer questions based strictly on the provided Context from the project's Knowledge Base (Vector DB).
-If the context contains relevant markdown documentation (like SRS, test cases), use it to answer precisely.
-If the answer is not in the context, clearly state that you don't have enough information from the uploaded documents.
-Always answer in Thai, using a professional and helpful tone.
-
-Project ID: {state.project_id}
-Project Name: {state.project_name}
-"""
-            
-            prompt = f"""
-CONTEXT FROM KNOWLEDGE BASE:
-{state.kb_context if state.kb_context else 'No context found in Vector DB for this query.'}
-
-CHAT HISTORY:
-{state.original_text[-4000:]}
-
-USER QUERY:
-{state.instruction}
-"""
-            
             raw_fallback_models = [gemini_model, 'gemini-3.1-flash', 'gemini-2.5-flash', 'gemini-2.5-flash-lite']
             seen = set()
             fallback_models = [m for m in raw_fallback_models if not (m in seen or seen.add(m))]
@@ -221,10 +296,16 @@ USER QUERY:
                             contents=prompt,
                             config=types.GenerateContentConfig(
                                 system_instruction=system_instruction,
-                                temperature=0.3,
+                                temperature=0.2,
                             )
                         )
                         if response and response.text:
+                            if hasattr(response, 'usage_metadata') and response.usage_metadata:
+                                try:
+                                    from db_ingestion import log_api_usage
+                                    log_api_usage("QAResearch_Agent", current_model, response.usage_metadata)
+                                except Exception as log_err:
+                                    logger.warning(f"Failed to log API usage in QAResearch: {log_err}")
                             break
                     except Exception as model_err:
                         logger.warning(f"QAResearchAgent error with {current_model}: {model_err}")
@@ -296,6 +377,12 @@ Always format your response cleanly using Markdown. Provide the report in Thai."
                             )
                         )
                         if response and response.text:
+                            if hasattr(response, 'usage_metadata') and response.usage_metadata:
+                                try:
+                                    from db_ingestion import log_api_usage
+                                    log_api_usage("QASecurity_Agent", current_model, response.usage_metadata)
+                                except Exception as log_err:
+                                    logger.warning(f"Failed to log API usage in QASecurity: {log_err}")
                             break
                     except Exception as model_err:
                         logger.warning(f"QASecurityAgent error with {current_model}: {model_err}")

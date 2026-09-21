@@ -50,17 +50,45 @@ def run_alignment_analysis(project_id: str, web_state_file: str):
             
         with open(web_state_file, 'r', encoding='utf-8') as f:
             web_state = json.load(f)
+
+        # 3. Optional: Fetch QA Analysis Diagram / Flow Data if available
+        diagram_context = ""
+        try:
+            from agent_7_flow_analyzer import get_project_flow_analysis
+            flow_analysis = get_project_flow_analysis(project_id)
+            if flow_analysis:
+                diagram_parts = []
+                if flow_analysis.get("sitemap"):
+                    diagram_parts.append(f"- **Sitemap & Menu Structure:**\n{json.dumps(flow_analysis['sitemap'], ensure_ascii=False, indent=2)}")
+                if flow_analysis.get("system_flowchart") or flow_analysis.get("activity_diagram"):
+                    fc = flow_analysis.get("system_flowchart") or flow_analysis.get("activity_diagram")
+                    diagram_parts.append(f"- **System Flowchart & Activity Decision Flow (Mermaid):**\n{fc}")
+                if flow_analysis.get("usecase_diagram"):
+                    diagram_parts.append(f"- **Use Case Architecture (Mermaid):**\n{flow_analysis['usecase_diagram']}")
+                if flow_analysis.get("sequence_diagram"):
+                    diagram_parts.append(f"- **Sequence Flow (Mermaid):**\n{flow_analysis['sequence_diagram']}")
+                if flow_analysis.get("screen_mockups"):
+                    screens = [{"screen_name": s.get("screen_name"), "route": s.get("route"), "key_elements": s.get("key_elements", [])} for s in flow_analysis["screen_mockups"] if isinstance(s, dict)]
+                    if screens:
+                        diagram_parts.append(f"- **Screen Mockups & Expected Components:**\n{json.dumps(screens, ensure_ascii=False, indent=2)}")
+                
+                if diagram_parts:
+                    diagram_context = "\n\n### QA Analysis Diagram & Architecture Models (Domain Knowledge):\n" + "\n\n".join(diagram_parts)
+                    logger.info(f"Incorporated QA Analysis Diagram into Alignment for project {project_id}")
+        except Exception as diagram_err:
+            logger.warning(f"Optional QA Analysis Diagram fetch skipped: {diagram_err}")
             
-        # 3. Call Gemini to analyze gaps
+        # 4. Call Gemini to analyze gaps
         model = genai.GenerativeModel('gemini-1.5-pro')
         
         prompt = f"""
 You are an expert QA Automation Engineer and System Analyst.
-Your task is to compare the 'Structured Requirements' of a project with the 'Live Web State' captured by a web explorer agent.
-Identify any discrepancies, missing elements, or mismatches between what is required and what is actually present on the web page.
+Your task is to compare the 'Structured Requirements' and 'QA Analysis Architecture / Diagrams' (if provided) of a project with the 'Live Web State' captured by a web explorer agent.
+Identify any discrepancies, missing elements, navigation breaks, or mismatches between what is required/modeled and what is actually present on the web page.
 
 ### Structured Requirements (Expected):
 {json.dumps(formatted_reqs, ensure_ascii=False, indent=2)}
+{diagram_context}
 
 ### Live Web State (Actual):
 {json.dumps(web_state, ensure_ascii=False, indent=2)}
@@ -69,7 +97,7 @@ Please provide a detailed Gap Analysis Report. Format your response strictly in 
 {{
     "analysis_summary": "Overall summary of the comparison",
     "matched_elements": [
-        "List of UI elements or features that correctly match the requirements"
+        "List of UI elements or features that correctly match the requirements and flow models"
     ],
     "discrepancies": [
         {{
@@ -82,6 +110,14 @@ Please provide a detailed Gap Analysis Report. Format your response strictly in 
 }}
 """
         response = model.generate_content(prompt)
+        
+        if hasattr(response, 'usage_metadata') and response.usage_metadata:
+            try:
+                from db_ingestion import log_api_usage
+                log_api_usage("Agent_3_Alignment", os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"), response.usage_metadata)
+            except Exception as log_err:
+                logger.warning(f"Failed to log API usage in Agent 3: {log_err}")
+
         text_response = response.text
         
         # Clean up markdown JSON block if present

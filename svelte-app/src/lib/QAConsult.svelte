@@ -6,6 +6,7 @@
   import { qaHistory, selectedHistory, loadQAHistoryFromDB, selectedProjectStore, qaSessionGroups, activeQAContext, loadQAGroupsFromDB, activeSidebarGroup, activeScanStatus } from "./qaHistoryStore.js";
   import GateResultModal from "./GateResultModal.svelte";
   import ProjectSelection from "./ProjectSelection.svelte";
+  import { MASTER_DOC_TYPES } from "./constants.js";
 
   const dispatch = createEventDispatcher();
 
@@ -13,10 +14,30 @@
   let gateResultData = null;
 
   let skills = [];
-  let docTypes = ["Requirement", "Design", "Manual", "Other"];
+  let docTypes = MASTER_DOC_TYPES;
   let selectedSkill = "";
   
   let projects = [];
+  let exitCriteriaTemplates = [];
+  let isCheckingCriteria = false;
+
+  async function loadExitCriteriaTemplates(projectId = null) {
+    try {
+      isCheckingCriteria = true;
+      const url = projectId 
+        ? `http://127.0.0.1:5000/api/exit-criteria/templates?project_id=${projectId}` 
+        : `http://127.0.0.1:5000/api/exit-criteria/templates`;
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        exitCriteriaTemplates = data.templates || [];
+      }
+    } catch (err) {
+      console.error("Failed to load Exit Criteria templates:", err);
+    } finally {
+      isCheckingCriteria = false;
+    }
+  }
   
   // Use store for selected project so App.svelte can filter history
   $: selectedProjectObj = $selectedProjectStore;
@@ -39,8 +60,9 @@
       console.error("Failed to load skills:", err);
     }
 
-    // Load Doc Types
+    // Load Doc Types & Exit Criteria
     try { await loadDocTypes(); } catch (err) { console.error("Failed to load doc types:", err); }
+    try { await loadExitCriteriaTemplates(selectedProjectObj?.id || selectedProjectObj?.project_id); } catch (err) { console.error("Failed to load exit criteria:", err); }
 
     // Load Projects — must always run independently
     try {
@@ -161,9 +183,12 @@
   }
 
   $: if (selectedProjectObj) {
-    loadDocTypes(selectedProjectObj.id || selectedProjectObj.project_id);
+    const pId = selectedProjectObj.id || selectedProjectObj.project_id;
+    loadDocTypes(pId);
+    loadExitCriteriaTemplates(pId);
   } else {
     loadDocTypes();
+    loadExitCriteriaTemplates();
   }
 
   let selectedDocTypes = [];
@@ -218,7 +243,19 @@
   let docTypeOpen = false;
   let skillOpen = false;
   let groupTypeOpen = false;
-  const masterGroupTypes = ["Project Plan", "SRS", "SDD", "UAT", "Test case"];
+  const masterGroupTypes = MASTER_DOC_TYPES;
+
+  $: matchedCriteriaTemplate = exitCriteriaTemplates.find(t => 
+    t.is_active && 
+    t.doc_type && 
+    t.doc_type.trim().toUpperCase() === scanGroupType.trim().toUpperCase() &&
+    t.doc_type.trim().toUpperCase() !== 'ALL'
+  );
+  $: hasUniversalTemplate = exitCriteriaTemplates.some(t => 
+    t.is_active && 
+    t.doc_type && 
+    t.doc_type.trim().toUpperCase() === 'ALL'
+  );
 
   function toggleDocType(type) {
     if (selectedDocTypes.includes(type)) {
@@ -561,6 +598,38 @@
             </div>
           {/if}
         </div>
+      </div>
+
+      <!-- Exit Criteria Mapping Status / Missing Warning Alert -->
+      <div class="criteria-mapping-status" style="margin-top: 14px;">
+        {#if isCheckingCriteria}
+          <div class="criteria-badge-box loading">
+            <div class="box-icon spin">⏳</div>
+            <div class="box-content">
+              <div class="box-title">กำลังตรวจสอบ Exit Criteria...</div>
+            </div>
+          </div>
+        {:else if matchedCriteriaTemplate}
+          <div class="criteria-badge-box matched">
+            <div class="box-icon">🎯</div>
+            <div class="box-content">
+              <div class="box-title">เชื่อมโยง Exit Criteria: <span class="highlight">{matchedCriteriaTemplate.title}</span></div>
+              <div class="box-desc">
+                ระบบจะตรวจสอบด้วยเกณฑ์เฉพาะ <strong>"{scanGroupType}"</strong> ควบคู่กับเกณฑ์มาตรฐานกลาง <strong>(ALL)</strong> โดยอัตโนมัติ
+              </div>
+            </div>
+          </div>
+        {:else}
+          <div class="criteria-badge-box warning">
+            <div class="box-icon">⚠️</div>
+            <div class="box-content">
+              <div class="box-title">ยังไม่มี Exit Criteria สำหรับประเภท <span class="highlight-warn">"{scanGroupType}"</span> ในการตรวจสอบ</div>
+              <div class="box-desc">
+                ระบบจะใช้เฉพาะเกณฑ์มาตรฐานกลาง (ALL) ในการตรวจสอบ หรือสามารถเพิ่มเกณฑ์เฉพาะได้ที่เมนู <strong>Exit Criteria</strong>
+              </div>
+            </div>
+          </div>
+        {/if}
       </div>
       
       <button 
@@ -1971,5 +2040,65 @@
     margin-top: 4px;
     font-size: 0.78rem;
     color: #fbbf24;
+  }
+
+  /* Criteria Mapping Status Box */
+  .criteria-badge-box {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 12px 16px;
+    border-radius: 10px;
+    font-size: 0.85rem;
+    line-height: 1.45;
+    transition: all 0.25s ease;
+  }
+  .criteria-badge-box.matched {
+    background: rgba(16, 185, 129, 0.08);
+    border: 1px solid rgba(16, 185, 129, 0.35);
+    box-shadow: 0 4px 16px rgba(16, 185, 129, 0.08);
+  }
+  .criteria-badge-box.warning {
+    background: rgba(245, 158, 11, 0.08);
+    border: 1px solid rgba(245, 158, 11, 0.35);
+    box-shadow: 0 4px 16px rgba(245, 158, 11, 0.08);
+  }
+  .criteria-badge-box.loading {
+    background: rgba(148, 163, 184, 0.08);
+    border: 1px solid rgba(148, 163, 184, 0.25);
+  }
+  .box-icon {
+    font-size: 1.25rem;
+    line-height: 1;
+    margin-top: 2px;
+    flex-shrink: 0;
+  }
+  .box-content {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .box-title {
+    font-weight: 600;
+    color: #f1f5f9;
+  }
+  .box-desc {
+    font-size: 0.8rem;
+    color: #94a3b8;
+  }
+  .highlight {
+    color: #34d399;
+    font-weight: 700;
+  }
+  .highlight-warn {
+    color: #fbbf24;
+    font-weight: 700;
+  }
+  .spin {
+    animation: spin 1.5s linear infinite;
+  }
+  @keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
   }
 </style>

@@ -1,12 +1,16 @@
 <script>
   import { onMount } from 'svelte';
   import { fade, slide } from 'svelte/transition';
+  import { toast } from './toastStore.js';
   import { selectedProjectStore } from './qaHistoryStore.js';
   import ProjectSelection from './ProjectSelection.svelte';
   
   let projects = [];
   let requirements = [];
+  let projectDocuments = [];
   let isLoading = false;
+  let isSyncingReqs = false;
+  let reqSearchText = "";
   let expandedReqId = null;
   
   onMount(async () => {
@@ -25,8 +29,31 @@
     selectedProjectStore.set(p);
   }
 
+  let flowAnalysisData = null;
+
   $: if ($selectedProjectStore) {
-    loadRequirements($selectedProjectStore.id || $selectedProjectStore.project_id);
+    const pid = $selectedProjectStore.id || $selectedProjectStore.project_id;
+    loadRequirements(pid);
+    loadProjectDocuments(pid);
+    loadFlowAnalysis(pid);
+    if (!exploreUrl && $selectedProjectStore.default_base_url) {
+      exploreUrl = $selectedProjectStore.default_base_url;
+    }
+  }
+
+  async function loadFlowAnalysis(projectId) {
+    flowAnalysisData = null;
+    try {
+      const res = await fetch(`http://localhost:5000/api/agent/flow_analysis?project_id=${projectId}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.analysis) {
+          flowAnalysisData = data.analysis;
+        }
+      }
+    } catch(e) {
+      console.warn('Flow analysis not available for project', e);
+    }
   }
 
   async function loadRequirements(projectId) {
@@ -43,6 +70,55 @@
       isLoading = false;
     }
   }
+
+  async function loadProjectDocuments(projectId) {
+    try {
+      const res = await fetch(`http://127.0.0.1:5000/api/kb/documents?project_id=${projectId}`);
+      if (res.ok) {
+        const data = await res.json();
+        projectDocuments = data.documents || [];
+      }
+    } catch(e) {
+      console.error('Failed to load project documents', e);
+    }
+  }
+
+  async function syncRequirementsFromProject() {
+    const pid = $selectedProjectStore?.id || $selectedProjectStore?.project_id;
+    if (!pid) return;
+    
+    isSyncingReqs = true;
+    try {
+      toast("กำลังสกัดและซิงค์ Requirement จากเอกสารในโครงการ...", "info");
+      const res = await fetch("http://127.0.0.1:5000/api/requirements/sync-from-project", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_id: pid })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        requirements = data.requirements || [];
+        toast(`✅ สกัด Requirement สำเร็จแล้ว ${requirements.length} รายการ`, "success");
+      } else {
+        toast(`เกิดข้อผิดพลาด: ${data.error || 'ไม่สามารถสกัดข้อมูลได้'}`, "error");
+      }
+    } catch(err) {
+      console.error(err);
+      toast("ไม่สามารถเชื่อมต่อกับเซิร์ฟเวอร์", "error");
+    } finally {
+      isSyncingReqs = false;
+    }
+  }
+
+  $: filteredRequirements = requirements.filter(req => {
+    if (!reqSearchText.trim()) return true;
+    const q = reqSearchText.toLowerCase();
+    return (
+      (req.req_code && req.req_code.toLowerCase().includes(q)) ||
+      (req.title && req.title.toLowerCase().includes(q)) ||
+      (req.description && req.description.toLowerCase().includes(q))
+    );
+  });
 
   function toggleExpand(reqId) {
     expandedReqId = expandedReqId === reqId ? null : reqId;
@@ -272,17 +348,76 @@
   <div class="header-section">
     <h2>QA Test Automation (Autonomous QA)</h2>
     <p class="subtitle">ระบบสร้างสคริปต์ทดสอบอัตโนมัติจากเอกสารและวิเคราะห์การทำงานของระบบจริง (MCP Support)</p>
-    <div class="active-project-badge" style="margin-top: 12px; display: inline-block; padding: 6px 16px; background: rgba(139, 92, 246, 0.1); border-radius: 20px; border: 1px solid rgba(139, 92, 246, 0.3); font-size: 14px;">
-      โครงการปัจจุบัน: <strong style="color: #a78bfa;">{$selectedProjectStore.project_code} - {$selectedProjectStore.name}</strong>
+    <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 12px;">
+      <div class="active-project-badge" style="padding: 6px 16px; background: rgba(139, 92, 246, 0.1); border-radius: 20px; border: 1px solid rgba(139, 92, 246, 0.3); font-size: 14px;">
+        โครงการปัจจุบัน: <strong style="color: #a78bfa;">{$selectedProjectStore.project_code} - {$selectedProjectStore.name}</strong>
+      </div>
+      {#if flowAnalysisData}
+        <div class="diagram-linked-badge" style="padding: 6px 14px; background: rgba(16, 185, 129, 0.12); border-radius: 20px; border: 1px solid rgba(16, 185, 129, 0.35); font-size: 13px; color: #34d399; display: flex; align-items: center; gap: 6px;" title="ระบบจะนำข้อมูลผัง Flow & Sitemap ไปช่วยเพิ่มความแม่นยำในการ Alignment และสร้าง Test">
+          <span>📊</span>
+          <span>เชื่อมโยง QA Analysis Diagram (Sitemap / Flowcharts) แล้ว</span>
+        </div>
+      {:else}
+        <div class="diagram-linked-badge" style="padding: 6px 14px; background: rgba(148, 163, 184, 0.1); border-radius: 20px; border: 1px solid rgba(148, 163, 184, 0.25); font-size: 13px; color: #94a3b8; display: flex; align-items: center; gap: 6px;" title="ไม่มีผัง Diagram สำหรับโครงการนี้ ระบบจะใช้เฉพาะ Requirement และ Web State ในการวิเคราะห์">
+          <span>📊</span>
+          <span>QA Analysis Diagram: ยังไม่มี (วิเคราะห์เพิ่มเติมได้ที่เมนู Diagram)</span>
+        </div>
+      {/if}
     </div>
   </div>
   
   <div class="glass-panel">
     <div class="panel-header">
-      <h3>Phase 1: Structured Requirements (Agent 1)</h3>
-      <span class="badge">Phase 1 Complete</span>
+      <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+        <h3>Phase 1: Structured Requirements (Agent 1)</h3>
+        {#if requirements.length > 0}
+          <span class="badge" style="background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4);">
+            ✓ สกัดแล้ว {requirements.length} ข้อกำหนด
+          </span>
+        {:else}
+          <span class="badge" style="background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.4);">
+            รอการสกัดข้อมูล
+          </span>
+        {/if}
+      </div>
+      {#if requirements.length > 0}
+        <button class="btn-secondary-sm" on:click={syncRequirementsFromProject} disabled={isSyncingReqs}>
+          {#if isSyncingReqs}
+            <div class="spinner-small"></div> กำลังซิงค์...
+          {:else}
+            🔄 ซิงค์และสกัดใหม่ ({projectDocuments.length} เอกสาร)
+          {/if}
+        </button>
+      {/if}
     </div>
-    <p class="desc-text">ผลลัพธ์จากการสกัดเอกสาร Requirement (PDF/Docx) ด้วย AI เพื่อแปลงเป็นรูปแบบโครงสร้าง JSON ที่พร้อมนำไปสร้าง Test Script</p>
+    <p class="desc-text">สกัดโครงสร้างข้อกำหนด (Structured Requirements) จากเอกสารและทรัพยากรที่สแกนแล้วในระบบ เพื่อนำไปขับเคลื่อน AI Agent ใน Phase ถัดไป</p>
+
+    <!-- Project Resources Box -->
+    <div class="project-resources-box">
+      <div class="res-box-header">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" style="color: #60a5fa;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+          <strong style="color: #f1f5f9; font-size: 14px;">ทรัพยากรเอกสารในโครงการ (Project Scanned Documents / Resources):</strong>
+          <span class="doc-count-badge">{projectDocuments.length} ไฟล์</span>
+        </div>
+      </div>
+      
+      {#if projectDocuments.length > 0}
+        <div class="doc-chips-list">
+          {#each projectDocuments as doc}
+            <div class="doc-chip" title={doc.original_filename || doc.filename}>
+              <span class="doc-type-tag">{doc.doc_category || doc.doc_type || 'DOC'}</span>
+              <span class="doc-name">{doc.original_filename || doc.filename || doc.doc_id}</span>
+              <span class="doc-status-dot" title="สถานะพร้อมใช้งาน"></span>
+            </div>
+          {/each}
+        </div>
+      {:else}
+        <p class="empty-docs-msg">
+          ⚠️ ยังไม่พบเอกสารที่สแกนในโครงการนี้ คุณสามารถสแกนเอกสาร OCR ในหน้า Admin / จัดการเอกสาร ได้
+        </p>
+      {/if}
+    </div>
     
     {#if isLoading}
       <div class="loading-state">
@@ -292,12 +427,35 @@
     {:else if requirements.length === 0}
       <div class="empty-state">
         <svg viewBox="0 0 24 24" width="48" height="48" stroke="currentColor" stroke-width="1.5" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
-        <p>ยังไม่มีข้อมูล Requirement สำหรับ Project นี้</p>
-        <p class="hint">ให้ Admin ทำการ Scan OCR เอกสาร Requirement ระบบจะสกัดข้อมูลให้โดยอัตโนมัติ</p>
+        <p>ยังไม่มีข้อมูล Requirement ที่ถูกสกัดสำหรับโครงการนี้</p>
+        <p class="hint">ระบบสามารถดึงข้อมูลจากเอกสาร Resource ที่สแกนไว้ในระบบเพื่อสกัดเป็น Structured Requirements ได้ทันที</p>
+        
+        {#if projectDocuments.length > 0}
+          <button class="btn-primary-sync" on:click={syncRequirementsFromProject} disabled={isSyncingReqs}>
+            {#if isSyncingReqs}
+              <div class="spinner-small"></div> กำลังสกัด Requirements จากเอกสารระบบ...
+            {:else}
+              ⚡ ดึงข้อมูลและสกัด Requirement จากเอกสารในระบบ ({projectDocuments.length} ไฟล์)
+            {/if}
+          </button>
+        {/if}
       </div>
     {:else}
+      <div class="req-toolbar">
+        <div class="search-box">
+          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" style="color: #94a3b8;"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+          <input type="text" bind:value={reqSearchText} placeholder="ค้นหา Requirement (รหัส, ชื่อหัวข้อ, รายละเอียด)..." class="search-input" />
+          {#if reqSearchText}
+            <button class="clear-search-btn" on:click={() => reqSearchText = ''}>✕</button>
+          {/if}
+        </div>
+        <div class="req-stats-text">
+          แสดง {filteredRequirements.length} จาก {requirements.length} รายการ
+        </div>
+      </div>
+
       <div class="requirements-list">
-        {#each requirements as req (req.req_id)}
+        {#each filteredRequirements as req (req.req_id)}
           <div class="req-card" class:expanded={expandedReqId === req.req_id} transition:fade>
             <div class="req-header" on:click={() => toggleExpand(req.req_id)}>
               <div class="req-title">
@@ -305,7 +463,7 @@
                 <h4>{req.title}</h4>
               </div>
               <div class="req-actions">
-                <span class="status-badge {req.status.toLowerCase()}">{req.status}</span>
+                <span class="status-badge {(req.status || 'Active').toLowerCase()}">{req.status || 'Active'}</span>
                 <button class="expand-btn">
                   <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" style="transform: rotate({expandedReqId === req.req_id ? 180 : 0}deg); transition: transform 0.3s;"><polyline points="6 9 12 15 18 9"></polyline></svg>
                 </button>
@@ -482,12 +640,12 @@
         <span class="badge in-progress">Phase 3 Ready</span>
       {/if}
     </div>
-    <p class="desc-text">เปรียบเทียบ Requirements ที่สกัดได้จาก Phase 1 กับโครงสร้างเว็บจริงจาก Phase 2 เพื่อหาช่องโหว่ (Gap Analysis)</p>
+    <p class="desc-text">เปรียบเทียบ Requirements ที่สกัดได้จาก Phase 1 และผังระบบ QA Analysis Diagram (ถ้ามี) กับโครงสร้างเว็บจริงจาก Phase 2 เพื่อหาจุดต่าง (Gap Analysis)</p>
     
     <div class="explore-form">
       <button class="btn-primary" on:click={startAlignment} disabled={isAligning || !exploreResult || !exploreResult.file_saved}>
         {#if isAligning}
-          <div class="spinner-small"></div> Analyzing Gaps...
+          <div class="spinner-small"></div> Analyzing Gaps (AI Alignment)...
         {:else}
           Start Gap Analysis
         {/if}
@@ -537,7 +695,7 @@
         <span class="badge in-progress">Phase 4 Ready</span>
       {/if}
     </div>
-    <p class="desc-text">สร้างสคริปต์ Playwright (TypeScript) ด้วยรูปแบบ Page Object Model (POM) ตาม Requirement และ Web State</p>
+    <p class="desc-text">สร้างสคริปต์ Playwright (TypeScript) รูปแบบ Page Object Model (POM) โดยผสาน Requirement, ผัง Flow/Sitemap (ถ้ามี) และ Web State เข้าด้วยกัน</p>
     
     <div class="explore-form">
       <button class="btn-primary" on:click={startTestGeneration} disabled={isGenerating || !alignResult}>
@@ -1337,6 +1495,191 @@
   
   .suite-meta {
     font-size: 12px;
+    color: #94a3b8;
+  }
+
+  /* Phase 1 Project Resources & Sync Styling */
+  .project-resources-box {
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid rgba(59, 130, 246, 0.25);
+    border-radius: 10px;
+    padding: 14px 18px;
+    margin-bottom: 20px;
+  }
+
+  .res-box-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+  }
+
+  .doc-count-badge {
+    background: rgba(59, 130, 246, 0.2);
+    color: #93c5fd;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .doc-chips-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 6px;
+  }
+
+  .doc-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(30, 41, 59, 0.8);
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    border-radius: 6px;
+    padding: 5px 10px;
+    font-size: 13px;
+    color: #e2e8f0;
+    max-width: 320px;
+  }
+
+  .doc-type-tag {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    background: #3b82f6;
+    color: #ffffff;
+    padding: 1px 5px;
+    border-radius: 4px;
+    letter-spacing: 0.5px;
+  }
+
+  .doc-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .doc-status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #10b981;
+    box-shadow: 0 0 6px #10b981;
+    flex-shrink: 0;
+  }
+
+  .empty-docs-msg {
+    margin: 4px 0 0 0;
+    font-size: 13px;
+    color: #94a3b8;
+  }
+
+  .btn-secondary-sm {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(139, 92, 246, 0.15);
+    border: 1px solid rgba(139, 92, 246, 0.35);
+    color: #c4b5fd;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .btn-secondary-sm:hover:not(:disabled) {
+    background: rgba(139, 92, 246, 0.25);
+    border-color: #a78bfa;
+    color: #ffffff;
+  }
+
+  .btn-primary-sync {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    margin-top: 16px;
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    color: #ffffff;
+    border: none;
+    border-radius: 8px;
+    padding: 12px 24px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: 0 4px 14px rgba(99, 102, 241, 0.35);
+    transition: all 0.2s ease;
+  }
+
+  .btn-primary-sync:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px rgba(99, 102, 241, 0.5);
+  }
+
+  .btn-primary-sync:disabled, .btn-secondary-sm:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .req-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+  }
+
+  .search-box {
+    position: relative;
+    display: flex;
+    align-items: center;
+    flex: 1;
+    max-width: 450px;
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    padding: 0 12px;
+  }
+
+  .search-box:focus-within {
+    border-color: #8b5cf6;
+    box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.2);
+  }
+
+  .search-input {
+    width: 100%;
+    padding: 9px 8px;
+    background: transparent;
+    border: none;
+    color: #f8fafc;
+    font-size: 13px;
+    outline: none;
+  }
+
+  .search-input::placeholder {
+    color: #64748b;
+  }
+
+  .clear-search-btn {
+    background: none;
+    border: none;
+    color: #94a3b8;
+    cursor: pointer;
+    font-size: 12px;
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+
+  .clear-search-btn:hover {
+    color: #f8fafc;
+  }
+
+  .req-stats-text {
+    font-size: 13px;
     color: #94a3b8;
   }
 </style>

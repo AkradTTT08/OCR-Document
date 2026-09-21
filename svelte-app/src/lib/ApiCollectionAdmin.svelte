@@ -3,7 +3,8 @@
   import { toast } from "./toastStore.js";
   import CustomSelect from "./CustomSelect.svelte";
   import ExtensionSyncModal from "./ExtensionSyncModal.svelte";
-  import { fade, fly } from "svelte/transition";
+  import { fade, fly, scale } from "svelte/transition";
+  import { selectedProjectStore } from "./qaHistoryStore.js";
 
   let projects = [];
   let selectedProjectId = null;
@@ -12,14 +13,28 @@
   let isUploading = false;
   let uploadFile = null;
   let showExtensionModal = false;
+  let selectedCollectionForView = null;
+  let testingCollectionId = null;
 
   $: projectOptions = projects.map(p => ({
     value: p.id || p.project_id,
     label: `${p.project_name || p.name || 'Unnamed Project'} (${p.project_code || 'PROJ'})`
   }));
 
+  $: if ($selectedProjectStore) {
+    const pid = $selectedProjectStore.id || $selectedProjectStore.project_id;
+    if (pid && pid !== selectedProjectId) {
+      selectedProjectId = pid;
+      fetchCollections(selectedProjectId);
+    }
+  }
+
   function handleProjectChange(e) {
     selectedProjectId = e.detail;
+    const found = projects.find(p => (p.id || p.project_id) === selectedProjectId);
+    if (found) {
+      selectedProjectStore.set(found);
+    }
     fetchCollections(selectedProjectId);
   }
 
@@ -34,17 +49,17 @@
         const data = await res.json();
         projects = data.projects || [];
         if (projects.length > 0) {
-          selectedProjectId = projects[0].id || projects[0].project_id;
+          if ($selectedProjectStore) {
+            selectedProjectId = $selectedProjectStore.id || $selectedProjectStore.project_id;
+          } else {
+            selectedProjectId = projects[0].id || projects[0].project_id;
+            selectedProjectStore.set(projects[0]);
+          }
           fetchCollections(selectedProjectId);
         }
-      } else {
-        projects = [{ id: 1, project_name: "TIFFA Cargo Import System", project_code: "69A" }];
-        selectedProjectId = 1;
       }
     } catch (err) {
       console.error("Failed to fetch projects", err);
-      projects = [{ id: 1, project_name: "TIFFA Cargo Import System", project_code: "69A" }];
-      selectedProjectId = 1;
     }
   }
 
@@ -52,21 +67,17 @@
     if (!projectId) return;
     isLoading = true;
     try {
-      // Mock API call to get collections for a project
-      // const res = await fetch(`http://127.0.0.1:5000/api/projects/${projectId}/api-collections`);
-      // const data = await res.json();
-      // apiCollections = data.collections || [];
-      
-      // MOCK DATA for demonstration
-      setTimeout(() => {
-        apiCollections = [
-          { id: 1, name: "WMS_API_v1.0.json", format: "Swagger/OpenAPI", uploaded_at: new Date().toISOString(), version: "1.0", file_size: "45 KB" },
-          { id: 2, name: "PMRP_Postman_Collection.json", format: "Postman Collection", uploaded_at: new Date(Date.now() - 86400000).toISOString(), version: "1.1", file_size: "120 KB" }
-        ];
-        isLoading = false;
-      }, 500);
+      const res = await fetch(`http://127.0.0.1:5000/api/projects/${projectId}/api-collections`);
+      if (res.ok) {
+        const data = await res.json();
+        apiCollections = data.collections || [];
+      } else {
+        apiCollections = [];
+      }
     } catch (err) {
       console.error("Failed to fetch collections", err);
+      apiCollections = [];
+    } finally {
       isLoading = false;
     }
   }
@@ -77,7 +88,7 @@
       if (file.name.endsWith('.json') || file.name.endsWith('.yaml') || file.name.endsWith('.yml')) {
         uploadFile = file;
       } else {
-        toast("Please upload a JSON or YAML file.", "error");
+        toast("กรุณาอัปโหลดไฟล์ JSON หรือ YAML", "error");
         e.target.value = null;
       }
     }
@@ -85,47 +96,38 @@
 
   async function handleUpload() {
     if (!uploadFile) {
-      toast("Please select a file first.", "warning");
+      toast("กรุณาเลือกไฟล์ก่อนอัปโหลด", "warning");
       return;
     }
     if (!selectedProjectId) {
-      toast("Please select a project.", "warning");
+      toast("กรุณาเลือกโครงการ", "warning");
       return;
     }
 
     isUploading = true;
     try {
-      // Mock upload process
-      /*
       const formData = new FormData();
       formData.append("file", uploadFile);
       formData.append("project_id", selectedProjectId);
+
       const res = await fetch("http://127.0.0.1:5000/api/api-collections/upload", {
         method: "POST",
         body: formData
       });
-      if (!res.ok) throw new Error("Upload failed");
-      */
-      
-      await new Promise(r => setTimeout(r, 1200)); // simulate network
-      
-      // Add to list
-      const newCol = {
-        id: Date.now(),
-        name: uploadFile.name,
-        format: uploadFile.name.endsWith('.yaml') || uploadFile.name.endsWith('.yml') ? "OpenAPI (YAML)" : "OpenAPI / Postman",
-        uploaded_at: new Date().toISOString(),
-        version: "Draft",
-        file_size: (uploadFile.size / 1024).toFixed(1) + " KB"
-      };
-      
-      apiCollections = [newCol, ...apiCollections];
-      toast("API Collection uploaded successfully", "success");
-      uploadFile = null;
-      document.getElementById('api-file-upload').value = '';
+      const data = await res.json();
+
+      if (res.ok && data.success) {
+        toast(`✅ อัปโหลดและประมวลผล API Spec สำเร็จ! (${data.collection?.endpoints_count || 0} Endpoints)`, "success");
+        uploadFile = null;
+        const fileInput = document.getElementById('api-file-upload');
+        if (fileInput) fileInput.value = '';
+        await fetchCollections(selectedProjectId);
+      } else {
+        toast(`เกิดข้อผิดพลาด: ${data.error || 'ไม่สามารถอัปโหลดไฟล์ได้'}`, "error");
+      }
     } catch (err) {
       console.error(err);
-      toast("Failed to upload file", "error");
+      toast("เกิดข้อผิดพลาดในการเชื่อมต่อกับเซิร์ฟเวอร์", "error");
     } finally {
       isUploading = false;
     }
@@ -139,12 +141,25 @@
     showDeleteModal = true;
   }
 
-  function executeDelete() {
+  async function executeDelete() {
     if (itemToDelete) {
-      apiCollections = apiCollections.filter(c => c.id !== itemToDelete);
-      toast("Deleted successfully", "success");
-      itemToDelete = null;
-      showDeleteModal = false;
+      try {
+        const res = await fetch(`http://127.0.0.1:5000/api/api-collections/${itemToDelete}`, {
+          method: "DELETE"
+        });
+        if (res.ok) {
+          toast("ลบ API Collection เรียบร้อยแล้ว", "success");
+          apiCollections = apiCollections.filter(c => c.id !== itemToDelete);
+        } else {
+          toast("ไม่สามารถลบรายการได้", "error");
+        }
+      } catch (e) {
+        console.error(e);
+        toast("เกิดข้อผิดพลาดในการเชื่อมต่อ", "error");
+      } finally {
+        itemToDelete = null;
+        showDeleteModal = false;
+      }
     }
   }
   
@@ -153,21 +168,31 @@
     showDeleteModal = false;
   }
   
-  // Run API Test
-  function runApiTest(id) {
-    const col = apiCollections.find(c => c.id === id);
+  // Real Run API Test
+  async function runApiTest(col) {
     if (!col) return;
-    toast(`Running connection test for ${col.name}...`, "info");
+    testingCollectionId = col.id;
+    toast(`🚀 กำลังส่ง Ping / Connection Test ไปยัง "${col.name}"...`, "info");
     
-    // Simulate API ping
-    setTimeout(() => {
-      const isSuccess = Math.random() > 0.2; // 80% success mock
-      if (isSuccess) {
-        toast(`✅ API "${col.name}" is reachable (200 OK)`, "success");
+    try {
+      const res = await fetch(`http://127.0.0.1:5000/api/api-collections/${col.id}/test`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({})
+      });
+      const data = await res.json();
+      
+      if (res.ok && data.reachable) {
+        toast(`✅ API "${col.name}" ตอบสนองปกติ (${data.status_code} ${data.status_text || 'OK'} - ${data.latency_ms}ms)`, "success");
       } else {
-        toast(`❌ Failed to reach "${col.name}" (Connection Timeout)`, "error");
+        toast(`❌ การเชื่อมต่อล้มเหลว: ${data.error || 'HTTP ' + (data.status_code || 'Unreachable')}`, "error");
       }
-    }, 1500);
+    } catch (err) {
+      console.error(err);
+      toast(`❌ ไม่สามารถเชื่อมต่อกับเป้าหมายได้`, "error");
+    } finally {
+      testingCollectionId = null;
+    }
   }
 
   // Manual API Logic
@@ -185,14 +210,12 @@
     if (val.toLowerCase().startsWith("curl ")) {
       try {
         let parsedUrl = "";
-        // extract URL
         const urlMatch = val.match(/curl\s+(?:-X\s+[A-Z]+\s+)?['"]?([^'"\s]+)['"]?/i);
         if (urlMatch) {
             parsedUrl = urlMatch[1];
             manualApiData.url = parsedUrl;
         }
         
-        // extract method
         const methodMatch = val.match(/-X\s+([A-Z]+)/i);
         if (methodMatch) {
             manualApiData.method = methodMatch[1].toUpperCase();
@@ -200,7 +223,6 @@
             manualApiData.method = "POST";
         }
         
-        // extract headers
         const headerMatches = [...val.matchAll(/-H\s+['"]([^'"]+)['"]/gi)];
         if (headerMatches.length > 0) {
             const headers = {};
@@ -213,13 +235,11 @@
             manualApiData.headers = JSON.stringify(headers, null, 2);
         }
         
-        // extract body
         const dataMatch = val.match(/(?:--data-raw|--data|-d)\s+['"](.*?)['"]/is);
         if (dataMatch) {
             manualApiData.body = dataMatch[1];
         }
 
-        // Generate a name from URL
         try {
             const urlObj = new URL(parsedUrl);
             manualApiData.name = "cURL: " + (urlObj.pathname.split('/').pop() || "Endpoint");
@@ -227,47 +247,61 @@
             manualApiData.name = "Imported cURL API";
         }
         
-        toast("cURL imported successfully!", "success");
+        toast("นำเข้า cURL Command เรียบร้อยแล้ว!", "success");
       } catch (err) {
         console.error("Failed to parse cURL", err);
       }
     }
   }
 
-  function saveManualApi() {
+  async function saveManualApi() {
     if (!manualApiData.name || !manualApiData.url) {
-      toast("Please provide both Name and URL", "warning");
+      toast("กรุณาระบุทั้งชื่อและ URL ของ API Endpoint", "warning");
       return;
     }
-    
-    const newCol = {
-      id: Date.now(),
-      name: manualApiData.name,
-      format: `Manual (${manualApiData.method})`,
-      uploaded_at: new Date().toISOString(),
-      version: "1.0",
-      file_size: "-",
-      url: manualApiData.url,
-      headers: manualApiData.headers,
-      body: manualApiData.body
-    };
-    
-    apiCollections = [newCol, ...apiCollections];
-    toast("Manual API added successfully", "success");
-    showManualModal = false;
-    manualApiData = { name: "", url: "", method: "GET", headers: "{\n  \"Content-Type\": \"application/json\"\n}", body: "" };
+    if (!selectedProjectId) {
+      toast("กรุณาเลือกโครงการก่อนบันทึก", "warning");
+      return;
+    }
+
+    try {
+      const res = await fetch("http://127.0.0.1:5000/api/api-collections/manual", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project_id: selectedProjectId,
+          name: manualApiData.name,
+          url: manualApiData.url,
+          method: manualApiData.method,
+          headers: manualApiData.headers,
+          body: manualApiData.body
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        toast("✅ เพิ่ม API Manual สำเร็จแล้ว!", "success");
+        showManualModal = false;
+        manualApiData = { name: "", url: "", method: "GET", headers: "{\n  \"Content-Type\": \"application/json\"\n}", body: "" };
+        await fetchCollections(selectedProjectId);
+      } else {
+        toast(`เกิดข้อผิดพลาด: ${data.error || 'ไม่สามารถบันทึกได้'}`, "error");
+      }
+    } catch (e) {
+      console.error(e);
+      toast("เกิดข้อผิดพลาดในการเชื่อมต่อ", "error");
+    }
   }
 
   // --- Web API Sniffer / Scraper State ---
   let showSnifferModal = false;
-  let targetSniffUrl = "http://localhost:5173";
+  let targetSniffUrl = "http://127.0.0.1:5000";
   let isSniffing = false;
   let sniffedEndpoints = [];
   let selectedSniffIds = [];
 
   function openSnifferModal() {
     showSnifferModal = true;
-    targetSniffUrl = window.location.origin || "http://localhost:5173";
+    targetSniffUrl = window.location.origin || "http://127.0.0.1:5000";
     sniffedEndpoints = [];
     selectedSniffIds = [];
     isSniffing = false;
@@ -283,24 +317,25 @@
     sniffedEndpoints = [];
     selectedSniffIds = [];
 
-    toast("🔍 กำลังสแกน Network Traffic & Inspecting API Endpoints...", "info");
+    toast("🔍 กำลังสแกนหา API Endpoints ที่พร้อมใช้งาน...", "info");
 
     try {
-      // Simulate real-time Network Inspection & Parsing
-      await new Promise(r => setTimeout(r, 1800));
-
-      sniffedEndpoints = [
-        { id: 101, method: "GET", url: "http://127.0.0.1:5000/api/users", name: "Get All Registered Users", status: 200, category: "User Management" },
-        { id: 102, method: "POST", url: "http://127.0.0.1:5000/api/login", name: "User Auth & JWT Issue", status: 200, category: "Authentication" },
-        { id: 103, method: "GET", url: "http://127.0.0.1:5000/api/projects", name: "Fetch Active QA Projects", status: 200, category: "Project Core" },
-        { id: 104, method: "POST", url: "http://127.0.0.1:5000/api/upload", name: "Upload Document Payload", status: 200, category: "OCR Engine" },
-        { id: 105, method: "GET", url: "http://127.0.0.1:5000/api/kb/documents", name: "Query Knowledge Base Docs", status: 200, category: "Knowledge Base" },
-        { id: 106, method: "POST", url: "http://127.0.0.1:5000/api/master-agent/chat", name: "Master Agent Orchestrator Stream", status: 200, category: "AI Agent" },
-        { id: 107, method: "GET", url: "http://127.0.0.1:5000/api/skills", name: "Fetch Registered AI Skills", status: 200, category: "Skills" }
-      ];
-
-      selectedSniffIds = sniffedEndpoints.map(e => e.id);
-      toast(`✅ พบ API ทั้งหมด ${sniffedEndpoints.length} รายการจากหน้าเว็บ!`, "success");
+      const res = await fetch("http://127.0.0.1:5000/api/api-collections/sniff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project_id: selectedProjectId,
+          target_url: targetSniffUrl.trim()
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        sniffedEndpoints = data.endpoints || [];
+        selectedSniffIds = sniffedEndpoints.map(e => e.id);
+        toast(`✅ ตรวจพบ API ทั้งหมด ${sniffedEndpoints.length} รายการ!`, "success");
+      } else {
+        toast(`เกิดข้อผิดพลาด: ${data.error || 'ไม่สามารถสแกนได้'}`, "error");
+      }
     } catch (e) {
       toast("เกิดข้อผิดพลาดในการดึงข้อมูล API", "error");
     } finally {
@@ -308,31 +343,38 @@
     }
   }
 
-  function importSelectedSniffedApis() {
+  async function importSelectedSniffedApis() {
     const toImport = sniffedEndpoints.filter(e => selectedSniffIds.includes(e.id));
     if (toImport.length === 0) {
       toast("กรุณาเลือก API อย่างน้อย 1 รายการ", "warning");
       return;
     }
 
-    const newCols = toImport.map(e => ({
-      id: Date.now() + Math.random(),
-      name: `[Sniffed] ${e.name} (${e.method})`,
-      format: `Web Sniffed (${e.method})`,
-      uploaded_at: new Date().toISOString(),
-      version: "Auto-Detected",
-      file_size: "-",
-      url: e.url,
-      headers: JSON.stringify({ "Content-Type": "application/json", "Authorization": "Bearer <token>" }, null, 2),
-      body: e.method === 'POST' ? '{\n  "sample": "payload"\n}' : ''
-    }));
-
-    apiCollections = [...newCols, ...apiCollections];
-    toast(`นำเข้า API จำนวน ${newCols.length} รายการเข้าสู่ Repository เรียบร้อยแล้ว!`, "success");
-    showSnifferModal = false;
+    try {
+      const res = await fetch("http://127.0.0.1:5000/api/api-collections/save-sniffed", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project_id: selectedProjectId,
+          endpoints: toImport
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        toast(`✅ นำเข้า API จำนวน ${data.count || toImport.length} รายการเข้าสู่ Repository เรียบร้อยแล้ว!`, "success");
+        showSnifferModal = false;
+        await fetchCollections(selectedProjectId);
+      } else {
+        toast(`เกิดข้อผิดพลาด: ${data.error || 'ไม่สามารถนำเข้าข้อมูลได้'}`, "error");
+      }
+    } catch (e) {
+      console.error(e);
+      toast("เกิดข้อผิดพลาดในการเชื่อมต่อ", "error");
+    }
   }
 
   function formatDate(isoString) {
+    if (!isoString) return "-";
     const d = new Date(isoString);
     return d.toLocaleDateString('th-TH') + ' ' + d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
   }
@@ -342,7 +384,7 @@
   <div class="header">
     <div class="title-area">
       <h2>API Collections / Specification</h2>
-      <p>Manage API Specifications (Swagger/OpenAPI/Postman) as a Single Source of Truth for generating K6 Performance Test scripts.</p>
+      <p>จัดการ API Specifications (Swagger/OpenAPI/Postman) สำหรับเป็น Single Source of Truth ในการสร้าง Test Scripts & Performance Tests</p>
     </div>
   </div>
 
@@ -392,10 +434,10 @@
 
         <button class="btn-primary upload-btn" disabled={!uploadFile || isUploading} on:click={handleUpload}>
           {#if isUploading}
-            <span class="spinner"></span> Uploading...
+            <span class="spinner"></span> กำลังประมวลผล...
           {:else}
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
-            Save to Repository
+            บันทึกเข้า Repository
           {/if}
         </button>
       </div>
@@ -420,7 +462,7 @@
       </div>
     </div>
 
-<ExtensionSyncModal bind:showModal={showExtensionModal} projectId={selectedProjectId} on:synced={() => fetchCollections(selectedProjectId)} />
+    <ExtensionSyncModal bind:showModal={showExtensionModal} projectId={selectedProjectId} on:synced={() => fetchCollections(selectedProjectId)} />
 
     <div class="right-panel">
       <div class="card glass-panel full-height">
@@ -433,7 +475,7 @@
           {#if isLoading}
             <div class="loading-state">
               <div class="spinner"></div>
-              <span>Loading collections...</span>
+              <span>กำลังโหลดข้อมูล API Collections...</span>
             </div>
           {:else if apiCollections.length === 0}
             <div class="empty-state">
@@ -442,7 +484,8 @@
                 <polyline points="14 2 14 8 20 8"></polyline>
                 <line x1="9" y1="15" x2="15" y2="15"></line>
               </svg>
-              <p>ไม่มี API Collection สำหรับโปรเจกต์นี้</p>
+              <p>ยังไม่มี API Collection สำหรับโปรเจกต์นี้</p>
+              <span style="font-size: 0.85rem; color: #64748b;">อัปโหลดไฟล์ Swagger/Postman หรือใช้ Web Sniffer เพื่อเพิ่ม API เข้าสู่ระบบ</span>
             </div>
           {:else}
             {#each apiCollections as col (col.id)}
@@ -455,17 +498,25 @@
                   <div class="col-meta">
                     <span class="meta-tag">{col.format}</span>
                     <span class="meta-dot">•</span>
-                    <span>Version {col.version}</span>
+                    <span>Version {col.version || '1.0'}</span>
                     <span class="meta-dot">•</span>
-                    <span>{col.file_size}</span>
+                    <span>{col.endpoints_count || (col.endpoints ? col.endpoints.length : 1)} Endpoints</span>
+                    {#if col.file_size && col.file_size !== '-'}
+                      <span class="meta-dot">•</span>
+                      <span>{col.file_size}</span>
+                    {/if}
                   </div>
                   <div class="col-date">Uploaded on {formatDate(col.uploaded_at)}</div>
                 </div>
                 <div class="col-actions">
-                  <button class="btn-icon" title="Run / Test API" style="color: #10b981;" on:click={() => runApiTest(col.id)}>
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                  <button class="btn-icon" title="Run / Ping Test API" style="color: #10b981;" disabled={testingCollectionId === col.id} on:click={() => runApiTest(col)}>
+                    {#if testingCollectionId === col.id}
+                      <span class="spinner" style="width: 14px; height: 14px; border-width: 2px;"></span>
+                    {:else}
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                    {/if}
                   </button>
-                  <button class="btn-icon" title="View/Edit" style="color: #60a5fa;">
+                  <button class="btn-icon" title="View Details / Endpoints" style="color: #60a5fa;" on:click={() => selectedCollectionForView = col}>
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
                   </button>
                   <button class="btn-icon" title="Delete" style="color: #f87171;" on:click={() => confirmDelete(col.id)}>
@@ -480,6 +531,64 @@
     </div>
   </div>
 </div>
+
+<!-- View Spec / Details Modal -->
+{#if selectedCollectionForView}
+<div class="modal-backdrop" transition:fade={{duration: 200}}>
+  <div class="modal-content glass-card" transition:fly={{y: -20, duration: 300}} style="text-align: left; max-width: 850px; width: 95%;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 12px;">
+      <div>
+        <h3 class="modal-title" style="margin: 0; font-size: 1.2rem; color: #f8fafc;">
+          📄 {selectedCollectionForView.name}
+        </h3>
+        <p style="font-size: 0.85rem; color: #94a3b8; margin: 4px 0 0 0;">
+          รูปแบบ: <span style="color: #38bdf8;">{selectedCollectionForView.format}</span> | Version: {selectedCollectionForView.version || '1.0'} | อัปโหลดเมื่อ: {formatDate(selectedCollectionForView.uploaded_at)}
+        </p>
+      </div>
+      <button style="background: transparent; border: none; color: #94a3b8; cursor: pointer; font-size: 1.2rem;" on:click={() => selectedCollectionForView = null}>✕</button>
+    </div>
+
+    <!-- Endpoints List -->
+    <div style="max-height: 400px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px;">
+      {#if selectedCollectionForView.endpoints && selectedCollectionForView.endpoints.length > 0}
+        {#each selectedCollectionForView.endpoints as ep}
+          <div style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 12px 14px; display: flex; align-items: center; justify-content: space-between; gap: 12px;">
+            <div style="display: flex; align-items: center; gap: 10px; flex: 1; overflow: hidden;">
+              <span class="meta-tag" style="font-weight: 700; background: {ep.method === 'POST' ? 'rgba(16,185,129,0.2)' : ep.method === 'DELETE' ? 'rgba(239,68,68,0.2)' : ep.method === 'PUT' ? 'rgba(245,158,11,0.2)' : 'rgba(59,130,246,0.2)'}; color: {ep.method === 'POST' ? '#34d399' : ep.method === 'DELETE' ? '#f87171' : ep.method === 'PUT' ? '#fcd34d' : '#60a5fa'}; border-color: transparent; min-width: 55px; text-align: center;">
+                {ep.method || 'GET'}
+              </span>
+              <div style="overflow: hidden;">
+                <div style="font-family: monospace; font-size: 0.9rem; color: #f1f5f9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                  {ep.path || ep.url || '/'}
+                </div>
+                {#if ep.summary && ep.summary !== ep.path}
+                  <div style="font-size: 0.8rem; color: #94a3b8; margin-top: 2px;">{ep.summary}</div>
+                {/if}
+              </div>
+            </div>
+            {#if ep.category || ep.folder}
+              <span style="font-size: 0.75rem; background: rgba(255,255,255,0.05); color: #94a3b8; padding: 3px 8px; border-radius: 4px; white-space: nowrap;">
+                {ep.category || ep.folder}
+              </span>
+            {/if}
+          </div>
+        {/each}
+      {:else}
+        <div style="padding: 24px; text-align: center; color: #64748b;">
+          ไม่มีรายการ Endpoints แยกย่อยในไฟล์นี้
+        </div>
+      {/if}
+    </div>
+
+    <div class="modal-actions" style="justify-content: flex-end;">
+      <button class="btn-cancel" style="flex: none; width: 120px;" on:click={() => selectedCollectionForView = null}>ปิด</button>
+      <button class="btn-confirm" style="flex: none; width: 140px; background: #10b981;" on:click={() => { runApiTest(selectedCollectionForView); selectedCollectionForView = null; }}>
+        ⚡ Test Ping
+      </button>
+    </div>
+  </div>
+</div>
+{/if}
 
 <!-- Delete Confirmation Modal -->
 {#if showDeleteModal}

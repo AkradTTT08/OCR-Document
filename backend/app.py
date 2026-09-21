@@ -748,6 +748,7 @@ def create_project():
         desc = data.get('description', '')
         status = data.get('status', 'Active')
         default_base_url = data.get('default_base_url', 'http://localhost:5173')
+        site_urls = data.get('site_urls')
         
         # ถ้า project_code เป็น string ว่าง ให้ใช้ None แทน (auto-generate)
         if p_code is not None and not p_code.strip():
@@ -759,7 +760,8 @@ def create_project():
             project_code=p_code,
             description=desc,
             status=status,
-            default_base_url=default_base_url
+            default_base_url=default_base_url,
+            site_urls=site_urls
         )
         return jsonify({'success': True, 'project': project})
     except Exception as e:
@@ -780,6 +782,7 @@ def update_project_api(project_id):
         desc = data.get('description')
         status = data.get('status')
         default_base_url = data.get('default_base_url')
+        site_urls = data.get('site_urls')
         
         if p_code is not None and not str(p_code).strip():
             p_code = None
@@ -790,7 +793,8 @@ def update_project_api(project_id):
             project_code=p_code,
             description=desc,
             status=status,
-            default_base_url=default_base_url
+            default_base_url=default_base_url,
+            site_urls=site_urls
         )
         return jsonify({'success': True, 'project': project, 'message': 'อัปเดตโครงการเรียบร้อยแล้ว'})
     except Exception as e:
@@ -1914,6 +1918,20 @@ from db_ingestion import search_knowledge_base
 from email_service import send_qa_report
 from excel_report import generate_qa_excel
 
+MASTER_DOC_TYPES = [
+    'Project Plan',
+    'SRS',
+    'SDD',
+    'UAT',
+    'Test Case',
+    'Technical Spec',
+    'SOP',
+    'Contract',
+    'Project Proposal',
+    'Summary Report',
+    'General'
+]
+
 @app.route('/api/doc_types', methods=['GET'])
 def get_doc_types():
     conn = None
@@ -1929,14 +1947,16 @@ def get_doc_types():
             cursor.execute("SELECT DISTINCT doc_category FROM documents WHERE doc_category IS NOT NULL AND doc_category != '';")
             
         rows = cursor.fetchall()
-        doc_categories = [r[0] for r in rows]
-        # Add some defaults if empty
-        if not doc_categories:
-            doc_categories = ['Requirement', 'Design', 'Manual', 'Other']
-        return jsonify(doc_categories)
+        db_categories = [r[0] for r in rows if r[0]]
+        
+        combined = list(MASTER_DOC_TYPES)
+        for cat in db_categories:
+            if cat not in combined:
+                combined.append(cat)
+        return jsonify(combined)
     except Exception as e:
         logger.error(f"Error fetching doc categories: {e}")
-        return jsonify(['Requirement', 'Design', 'Manual', 'Other'])
+        return jsonify(MASTER_DOC_TYPES)
     finally:
         if conn: conn.close()
 
@@ -2276,7 +2296,8 @@ def qa_consult_api():
                 try:
                     yield f"data: {json.dumps({'type': 'progress', 'pct': 85, 'message': 'กำลังตรวจสอบเกณฑ์ Exit Criteria Review Gate...' })}\n\n"
                     doc_type_str = ', '.join(doc_type) if isinstance(doc_type, list) else doc_type
-                    exit_criteria_eval = evaluate_document_exit_criteria(extracted_text, doc_type=doc_type_str, project_id=project_id, qa_findings=qa_findings)
+                    doc_type_eval = group_type if group_type else (doc_type_str or 'ALL')
+                    exit_criteria_eval = evaluate_document_exit_criteria(extracted_text, doc_type=doc_type_eval, project_id=project_id, qa_findings=qa_findings)
                 except Exception as eval_err:
                     logger.error(f"Failed to evaluate document exit criteria: {eval_err}")
 
@@ -2632,6 +2653,7 @@ def sync_exit_criteria_to_agent_skills(template_id):
 def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', project_id = None, qa_findings: list = None):
     """
     Evaluates document text against Exit Criteria items using Gemini AI.
+    Combines universal baseline criteria ('ALL') with specific criteria for doc_type (e.g. SRS, UAT, Project Plan).
     Returns evaluation summary, status, and itemized results.
     """
     from db_ingestion import get_db_connection
@@ -2643,31 +2665,82 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
     try:
         cur = conn.cursor()
         
-        # Find matching template
-        query = "SELECT template_id, title FROM exit_criteria_templates WHERE is_active = TRUE"
-        params = []
-        if doc_type and doc_type != 'ALL':
-            query += " AND (doc_type = %s OR doc_type = 'ALL')"
-            params.append(doc_type)
-        query += " ORDER BY CASE WHEN doc_type = %s THEN 1 ELSE 2 END, created_at DESC LIMIT 1;"
-        if doc_type and doc_type != 'ALL':
-            params.append(doc_type)
+        # 1. Fetch Universal ALL templates (Active)
+        templates_to_use = []
+        cur.execute("""
+            SELECT template_id, title, doc_type, max_loops 
+            FROM exit_criteria_templates 
+            WHERE is_active = TRUE AND UPPER(TRIM(doc_type)) = 'ALL'
+            ORDER BY created_at DESC;
+        """)
+        all_template_rows = cur.fetchall()
+        for r in all_template_rows:
+            templates_to_use.append({
+                'template_id': r[0],
+                'title': r[1],
+                'doc_type': 'ALL',
+                'max_loops': r[3] or 3
+            })
             
-        cur.execute(query, params)
-        t_row = cur.fetchone()
-        
-        if not t_row:
+        # 2. Fetch Specific doc_type templates (Active) if doc_type is specified and != 'ALL'
+        specific_template_found = False
+        target_type_clean = (doc_type or '').strip()
+        if target_type_clean and target_type_clean.upper() != 'ALL':
+            cur.execute("""
+                SELECT template_id, title, doc_type, max_loops 
+                FROM exit_criteria_templates 
+                WHERE is_active = TRUE AND UPPER(TRIM(doc_type)) = UPPER(TRIM(%s))
+                ORDER BY created_at DESC;
+            """, (target_type_clean,))
+            spec_rows = cur.fetchall()
+            for r in spec_rows:
+                specific_template_found = True
+                templates_to_use.append({
+                    'template_id': r[0],
+                    'title': r[1],
+                    'doc_type': r[2],
+                    'max_loops': r[3] or 3
+                })
+
+        if not templates_to_use:
             cur.close()
             conn.close()
             return None
-            
-        template_id, template_title = t_row
-        
-        cur.execute("""
-            SELECT item_id, item_code, category, question_text, target_metric, severity, is_mandatory, order_index
-            FROM exit_criteria_items WHERE template_id = %s ORDER BY order_index ASC, item_code ASC;
-        """, (template_id,))
-        item_rows = cur.fetchall()
+
+        # Determine composite title
+        if specific_template_found:
+            spec_titles = [t['title'] for t in templates_to_use if t['doc_type'] != 'ALL']
+            all_titles = [t['title'] for t in templates_to_use if t['doc_type'] == 'ALL']
+            if all_titles:
+                template_title = f"{' / '.join(spec_titles)} + เกณฑ์กลาง ({' / '.join(all_titles)})"
+            else:
+                template_title = f"{' / '.join(spec_titles)}"
+        else:
+            template_title = templates_to_use[0]['title']
+
+        template_id = templates_to_use[0]['template_id']
+
+        # Collect items from all matching templates
+        item_rows = []
+        seen_codes = set()
+        for t in templates_to_use:
+            cur.execute("""
+                SELECT item_id, item_code, category, question_text, target_metric, severity, is_mandatory, order_index
+                FROM exit_criteria_items WHERE template_id = %s ORDER BY order_index ASC, item_code ASC;
+            """, (t['template_id'],))
+            t_items = cur.fetchall()
+            is_universal = (t['doc_type'] == 'ALL')
+            t_prefix = "เกณฑ์กลาง ALL" if is_universal else t['doc_type']
+            for row in t_items:
+                i_id, i_code, i_cat, i_q, i_metric, i_sev, i_mand, i_idx = row
+                # Disambiguate item codes if multiple templates share codes
+                code_key = i_code
+                if code_key in seen_codes:
+                    code_key = f"{'ALL' if is_universal else target_type_clean}-{i_code}"
+                seen_codes.add(code_key)
+                
+                cat_label = f"[{t_prefix}] {i_cat}" if specific_template_found else i_cat
+                item_rows.append((i_id, code_key, cat_label, i_q, i_metric, i_sev, i_mand, i_idx))
         
         if not item_rows:
             cur.close()
@@ -2676,7 +2749,7 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
 
         # Fetch relevant AI skills for this doc_type
         skill_context = ""
-        cur.execute("SELECT skill_name, markdown_instructions FROM agent_skills WHERE is_active = TRUE AND (target_doc_type = %s OR target_doc_type = 'ALL') AND skill_name NOT ILIKE %s;", (doc_type, '%Exit Criteria%'))
+        cur.execute("SELECT skill_name, markdown_instructions FROM agent_skills WHERE is_active = TRUE AND (UPPER(TRIM(target_doc_type)) = UPPER(TRIM(%s)) OR target_doc_type = 'ALL') AND skill_name NOT ILIKE %s;", (doc_type, '%Exit Criteria%'))
         active_skills = cur.fetchall()
         if active_skills:
             skill_context = "\n=== แนวทางวิเคราะห์เฉพาะด้าน (AI Skills & Knowledge) ===\n"
@@ -2687,9 +2760,9 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
         checklist_formatted = ""
         items_dict = {}
         for row in item_rows:
-            item_id, item_code, category, question, metric, severity, mandatory, idx = row
+            i_id, item_code, category, question, metric, severity, mandatory, idx = row
             items_dict[item_code] = {
-                'item_id': str(item_id),
+                'item_id': str(i_id),
                 'item_code': item_code,
                 'category': category,
                 'question_text': question,
@@ -3159,56 +3232,45 @@ def research_chat():
     history = data.get('history', [])
     
     try:
-        # 1. Retrieve context from DB
-        logger.info(f"Querying knowledge base for project {project_id}...")
-        from db_ingestion import search_knowledge_base
-        results = search_knowledge_base(message, top_k=30, project_id=project_id)
+        # 1. Retrieve comprehensive multi-source grounded context from DB
+        logger.info(f"Querying comprehensive knowledge base for project {project_id}...")
+        from db_ingestion import retrieve_comprehensive_qa_context
+        ctx_data = retrieve_comprehensive_qa_context(project_id, message, history=history)
         
-        logger.info(f"Found {len(results)} relevant chunks. Sending to Gemini...")
+        context_str = ctx_data.get('context_str', '')
+        project_name = ctx_data.get('project_name', '')
+        project_code = ctx_data.get('project_code', '')
         
-        # Group chunks by filename to avoid AI thinking they are separate documents
-        grouped_context = {}
-        for res in results:
-            fname = res.get('filename', 'Unknown')
-            if fname not in grouped_context:
-                grouped_context[fname] = []
-            grouped_context[fname].append(res.get('chunk_text', ''))
-            
-        context_str = ""
-        for fname, chunks in grouped_context.items():
-            context_str += f"--- Document Name: {fname} ---\n"
-            for idx, chunk in enumerate(chunks):
-                context_str += f"[Excerpt {idx+1}]: {chunk}\n\n"
-            
-        # 2. Analyze with Multi-Agent Pipeline
-        try:
-            from orchestrator.state import QAState
-            from orchestrator.pipeline import run_qa_research
-        except ImportError:
-            from backend.orchestrator.state import QAState
-            from backend.orchestrator.pipeline import run_qa_research
+        logger.info(f"Assembled comprehensive QA context ({len(context_str)} chars) for project '{project_name}' ({project_code}).")
         
-        # Serialize history into text format
+        # 2. Serialize history into text format
         history_text = ""
         for h in history:
             role = "User" if h.get("role") == "user" else "Assistant"
             history_text += f"{role}: {h.get('content', '')}\n"
         
+        try:
+            from orchestrator.state import QAState
+            from orchestrator.agents import QAResearchAgent
+        except ImportError:
+            from backend.orchestrator.state import QAState
+            from backend.orchestrator.agents import QAResearchAgent
+            
         qa_state = QAState(
             project_id=project_id,
+            project_name=project_name,
+            project_code=project_code,
             kb_context=context_str,
             instruction=message,
-            original_text=history_text # Used as history placeholder
+            original_text=history_text
         )
         
-        qa_state = run_qa_research(qa_state)
-        
-        if qa_state.status == "failed":
-            logger.error(f"QA Research Agent failed: {qa_state.error}")
-            return jsonify({'success': False, 'error': qa_state.error}), 500
-            
-        from flask import Response
-        return Response(qa_state.report, mimetype='text/plain')
+        from flask import Response, stream_with_context
+        def generate():
+            for chunk in QAResearchAgent.generate_stream(qa_state):
+                yield chunk
+                
+        return Response(stream_with_context(generate()), mimetype='text/plain; charset=utf-8')
             
     except Exception as e:
         logger.error(f"Research chat error: {e}", exc_info=True)
@@ -3375,6 +3437,109 @@ def get_requirements():
         return jsonify({'success': True, 'requirements': reqs})
     except Exception as e:
         logger.error(f"Error fetching requirements: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/requirements/sync-from-project', methods=['POST'])
+def sync_requirements_from_project():
+    """
+    Extracts & synchronizes structured requirements directly from the active
+    documents/resources stored in the system for this project.
+    """
+    data = request.get_json() or {}
+    project_id = data.get('project_id')
+    doc_ids = data.get('doc_ids', [])
+    
+    if not project_id:
+        return jsonify({'error': 'Missing project_id'}), 400
+        
+    try:
+        from db_ingestion import get_db_connection
+        from agent_1_ingestion import extract_requirements_from_text, init_requirements_table
+        
+        init_requirements_table()
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        if doc_ids and len(doc_ids) > 0:
+            cursor.execute("""
+                SELECT doc_id, original_filename, doc_category, doc_type, full_markdown_content
+                FROM documents
+                WHERE project_id = %s::uuid AND doc_id = ANY(%s) AND (status = 'Active' OR status IS NULL)
+                ORDER BY doc_id ASC;
+            """, (project_id, doc_ids))
+        else:
+            cursor.execute("""
+                SELECT doc_id, original_filename, doc_category, doc_type, full_markdown_content
+                FROM documents
+                WHERE project_id = %s::uuid AND (status = 'Active' OR status IS NULL)
+                ORDER BY doc_id ASC;
+            """, (project_id,))
+            
+        doc_rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        
+        if not doc_rows:
+            return jsonify({
+                'success': False, 
+                'error': 'ไม่พบเอกสารหรือ Resource ในโครงการนี้ กรุณาอัปโหลดเอกสารผ่านหน้า Knowledge Base หรือสแกนเอกสารในโครงการก่อน'
+            }), 404
+            
+        doc_messages = []
+        for d in doc_rows:
+            did = d[0]
+            fname = d[1] or "Document"
+            markdown_text = d[4] or ""
+            if not markdown_text.strip():
+                continue
+                
+            success, msg = extract_requirements_from_text(markdown_text, str(project_id), did)
+            if success:
+                doc_messages.append(f"{fname}: สำเร็จ")
+            else:
+                doc_messages.append(f"{fname}: {msg}")
+                
+        # Query updated requirements
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT req_id, req_code, title, description, actors, preconditions, steps, expected_results, ui_elements, api_endpoints, status, created_at, doc_id
+            FROM structured_requirements
+            WHERE project_id = %s::uuid
+            ORDER BY created_at DESC;
+        """, (project_id,))
+        rows = cursor.fetchall()
+        reqs = []
+        for row in rows:
+            reqs.append({
+                'req_id': str(row[0]),
+                'req_code': row[1],
+                'title': row[2],
+                'description': row[3],
+                'actors': row[4],
+                'preconditions': row[5],
+                'steps': row[6],
+                'expected_results': row[7],
+                'ui_elements': row[8],
+                'api_endpoints': row[9],
+                'status': row[10],
+                'created_at': row[11].isoformat() if row[11] else None,
+                'doc_id': row[12]
+            })
+        cursor.close()
+        conn.close()
+        
+        return jsonify({
+            'success': True,
+            'message': f'สกัดและซิงค์ Requirement จากเอกสาร {len(doc_rows)} รายการเรียบร้อยแล้ว',
+            'requirements': reqs,
+            'docs_processed': len(doc_rows)
+        })
+        
+    except Exception as e:
+        logger.error(f"Error syncing requirements from project: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 # ========================
@@ -3873,6 +4038,245 @@ def save_flow_analysis():
     except Exception as e:
         logger.error(f"Error saving flow analysis: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
+
+
+# =========================================================================
+# API Collections / Specification Management Endpoints
+# =========================================================================
+
+@app.route('/api/projects/<project_id>/api-collections', methods=['GET'])
+def get_project_api_collections_route(project_id):
+    try:
+        from api_collections_manager import get_project_api_collections
+        success, res = get_project_api_collections(project_id)
+        if success:
+            return jsonify({'success': True, 'collections': res})
+        return jsonify({'error': res}), 500
+    except Exception as e:
+        logger.error(f"Error getting api collections: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/api-collections/upload', methods=['POST'])
+def upload_api_collection_route():
+    try:
+        from api_collections_manager import parse_spec_content, save_api_collection
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file uploaded'}), 400
+        
+        file = request.files['file']
+        project_id = request.form.get('project_id')
+        if not project_id:
+            return jsonify({'error': 'project_id is required'}), 400
+            
+        filename = file.filename or "api_spec.json"
+        raw_bytes = file.read()
+        file_size_str = f"{len(raw_bytes) / 1024:.1f} KB"
+        content_str = raw_bytes.decode('utf-8', errors='ignore')
+
+        parsed = parse_spec_content(content_str, filename)
+        
+        success, res = save_api_collection(
+            project_id=project_id,
+            name=parsed['name'] or filename,
+            format_type=parsed['format'],
+            version=parsed['version'],
+            file_size=file_size_str,
+            raw_content=content_str,
+            content_json=parsed['content_json'] if isinstance(parsed['content_json'], dict) else {'endpoints': parsed['endpoints']},
+            endpoints_count=parsed['endpoints_count']
+        )
+        if success:
+            return jsonify({'success': True, 'collection': res})
+        return jsonify({'error': res}), 500
+    except Exception as e:
+        logger.error(f"Error uploading api collection: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/api-collections/manual', methods=['POST'])
+def create_manual_api_collection_route():
+    try:
+        from api_collections_manager import save_api_collection
+        data = request.json or {}
+        project_id = data.get('project_id')
+        name = data.get('name')
+        url = data.get('url')
+        method = (data.get('method') or 'GET').upper()
+        headers_val = data.get('headers') or "{}"
+        body_val = data.get('body') or ""
+
+        if not project_id or not name or not url:
+            return jsonify({'error': 'project_id, name, and url are required'}), 400
+
+        content_json = {
+            "name": name,
+            "url": url,
+            "method": method,
+            "headers": headers_val,
+            "body": body_val,
+            "endpoints": [
+                {
+                    "method": method,
+                    "path": url,
+                    "summary": name,
+                    "headers": headers_val,
+                    "body": body_val
+                }
+            ]
+        }
+
+        success, res = save_api_collection(
+            project_id=project_id,
+            name=name,
+            format_type=f"Manual ({method})",
+            version="1.0",
+            file_size="-",
+            raw_content=json.dumps(content_json, ensure_ascii=False, indent=2),
+            content_json=content_json,
+            endpoints_count=1
+        )
+        if success:
+            return jsonify({'success': True, 'collection': res})
+        return jsonify({'error': res}), 500
+    except Exception as e:
+        logger.error(f"Error creating manual api: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/api-collections/sniff', methods=['POST'])
+def sniff_api_collections_route():
+    try:
+        from api_collections_manager import sniff_endpoints_from_system
+        data = request.json or {}
+        project_id = data.get('project_id')
+        target_url = data.get('target_url') or "http://127.0.0.1:5000"
+        
+        endpoints = sniff_endpoints_from_system(project_id, target_url)
+        return jsonify({'success': True, 'endpoints': endpoints})
+    except Exception as e:
+        logger.error(f"Error sniffing APIs: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/api-collections/save-sniffed', methods=['POST'])
+def save_sniffed_api_collections_route():
+    try:
+        from api_collections_manager import save_api_collection
+        data = request.json or {}
+        project_id = data.get('project_id')
+        endpoints = data.get('endpoints') or []
+        
+        if not project_id or not endpoints:
+            return jsonify({'error': 'project_id and endpoints are required'}), 400
+
+        created_collections = []
+        for ep in endpoints:
+            content_json = {
+                "name": ep.get('name', 'Sniffed API'),
+                "url": ep.get('url', ''),
+                "method": ep.get('method', 'GET').upper(),
+                "category": ep.get('category', 'General'),
+                "endpoints": [ep]
+            }
+            success, res = save_api_collection(
+                project_id=project_id,
+                name=f"[Sniffed] {ep.get('name', 'API')} ({ep.get('method', 'GET')})",
+                format_type=f"Web Sniffed ({ep.get('method', 'GET')})",
+                version="Auto-Detected",
+                file_size="-",
+                raw_content=json.dumps(content_json, ensure_ascii=False, indent=2),
+                content_json=content_json,
+                endpoints_count=1
+            )
+            if success:
+                created_collections.append(res)
+                
+        return jsonify({'success': True, 'collections': created_collections, 'count': len(created_collections)})
+    except Exception as e:
+        logger.error(f"Error saving sniffed APIs: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/api-collections/<collection_id>', methods=['DELETE'])
+def delete_api_collection_route(collection_id):
+    try:
+        from api_collections_manager import delete_api_collection
+        success, res = delete_api_collection(collection_id)
+        if success:
+            return jsonify({'success': True, 'message': res})
+        return jsonify({'error': res}), 500
+    except Exception as e:
+        logger.error(f"Error deleting api collection: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/api-collections/<collection_id>/test', methods=['POST'])
+def test_api_collection_route(collection_id):
+    try:
+        from api_collections_manager import test_api_connection
+        data = request.json or {}
+        res = test_api_connection(
+            collection_id=collection_id,
+            url=data.get('url'),
+            method=data.get('method'),
+            headers=data.get('headers'),
+            body=data.get('body')
+        )
+        return jsonify(res)
+    except Exception as e:
+        logger.error(f"Error testing API collection: {e}", exc_info=True)
+        return jsonify({'success': False, 'reachable': False, 'error': str(e)}), 500
+
+
+# =========================================================================
+# Enhanced RAG (Semantic Breadcrumbs & Hybrid Search) Endpoints
+# =========================================================================
+
+@app.route('/api/kb/reindex', methods=['POST'])
+def reindex_kb_route():
+    """
+    Re-indexes all active documents in a project with Heading-Aware Semantic Chunking and Contextual Breadcrumbs.
+    """
+    try:
+        from db_ingestion import reindex_project_documents
+        data = request.json or {}
+        project_id = data.get('project_id')
+        if not project_id:
+            return jsonify({'error': 'project_id is required'}), 400
+            
+        success, res = reindex_project_documents(project_id)
+        if success:
+            return jsonify({'success': True, 'result': res, 'message': f"Re-indexed {res.get('documents_count', 0)} documents into {res.get('total_chunks', 0)} contextual chunks."})
+        return jsonify({'error': res}), 500
+    except Exception as e:
+        logger.error(f"Error reindexing KB: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/kb/semantic-search', methods=['POST'])
+def semantic_search_kb_route():
+    """
+    Performs Hybrid Knowledge Base search with Category filters and Keyword boosting.
+    """
+    try:
+        from db_ingestion import search_knowledge_base
+        data = request.json or {}
+        query = data.get('query', '')
+        project_id = data.get('project_id')
+        doc_type = data.get('category') or data.get('doc_type')
+        top_k = int(data.get('top_k', 5))
+        hybrid = bool(data.get('hybrid', True))
+        
+        if not query:
+            return jsonify({'success': True, 'results': []})
+            
+        results = search_knowledge_base(
+            query_text=query,
+            doc_type=doc_type,
+            top_k=top_k,
+            project_id=project_id,
+            hybrid=hybrid
+        )
+        return jsonify({'success': True, 'results': results, 'count': len(results)})
+    except Exception as e:
+        logger.error(f"Error in semantic search: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
 
 
 @app.route('/api/agent/upload_wireframe_image', methods=['POST'])

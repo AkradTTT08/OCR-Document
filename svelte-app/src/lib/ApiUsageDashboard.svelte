@@ -74,19 +74,23 @@
     });
 
     function formatNumber(num) {
-        if (num === undefined || num === null) return '0';
-        return num.toLocaleString('en-US');
+        if (num === undefined || num === null || isNaN(Number(num))) return '0';
+        return Number(num).toLocaleString('en-US', { maximumFractionDigits: 2 });
     }
 
     function formatCurrency(amount) {
-        if (amount === undefined || amount === null) return '0.000000';
-        return amount.toFixed(6);
+        if (amount === undefined || amount === null || isNaN(Number(amount))) return '0.000000';
+        return Number(amount).toFixed(6);
     }
     
     function formatCurrencyTHB(amountUSD) {
-        if (amountUSD === undefined || amountUSD === null) return '0.00';
-        return (amountUSD * 35).toFixed(2); // Approximate THB conversion
+        if (amountUSD === undefined || amountUSD === null || isNaN(Number(amountUSD))) return '0.00';
+        return (Number(amountUSD) * 35).toFixed(2); // Approximate THB conversion
     }
+
+    $: totalCostThb = ((stats && stats.total_cost_usd != null && !isNaN(Number(stats.total_cost_usd))) ? Number(stats.total_cost_usd) : 0) * 35;
+    $: safeCreditThb = (creditThb != null && !isNaN(Number(creditThb))) ? Number(creditThb) : 0;
+    $: remainingBalance = safeCreditThb - totalCostThb;
 </script>
 
 <div class="usage-dashboard" in:fade>
@@ -160,10 +164,10 @@
                         <button on:click={() => isEditingCredit = false} class="btn-sm btn-secondary">Cancel</button>
                     </div>
                 {:else}
-                    <div class="card-value highlight">฿{formatNumber(creditThb)}</div>
+                    <div class="card-value highlight">฿{formatNumber(safeCreditThb)}</div>
                     <div class="card-sub" style="display:flex; justify-content:space-between; align-items:center;">
-                        <span>Cost: ฿{formatCurrencyTHB(stats.total_cost_usd)}</span>
-                        <button on:click={() => { newCreditThb = creditThb; isEditingCredit = true; }} class="btn-text">Edit Credit</button>
+                        <span>Cost: ฿{formatCurrencyTHB(stats ? stats.total_cost_usd : 0)}</span>
+                        <button on:click={() => { newCreditThb = safeCreditThb; isEditingCredit = true; }} class="btn-text">Edit Credit</button>
                     </div>
                 {/if}
             </div>
@@ -171,12 +175,12 @@
             <div class="card glass-card balance-card">
                 <div class="card-header">
                     <div class="card-label">Remaining Balance (THB)</div>
-                    <div class="card-icon" class:warning={(creditThb - (stats.total_cost_usd * 35)) < 0} style="background: rgba(245, 158, 11, 0.1); color: #fbbf24;">
+                    <div class="card-icon" class:warning={remainingBalance < 0} style="background: rgba(245, 158, 11, 0.1); color: #fbbf24;">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
                     </div>
                 </div>
-                <div class="card-value" class:danger={(creditThb - (stats.total_cost_usd * 35)) < 0}>
-                    ฿{formatNumber(creditThb - (stats.total_cost_usd * 35))}
+                <div class="card-value" class:danger={remainingBalance < 0}>
+                    ฿{formatNumber(remainingBalance)}
                 </div>
             </div>
         </div>

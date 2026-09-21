@@ -234,12 +234,10 @@
 
 <div class="workflow-outer-wrapper">
   {#if currentStep === 'project' || !selectedProjectObj}
-    <div class="project-selection-wrapper">
-      <ProjectSelection 
-        {projects} 
-        on:select={(e) => selectProject(e.detail)} 
-      />
-    </div>
+    <ProjectSelection 
+      {projects} 
+      on:select={(e) => selectProject(e.detail)} 
+    />
   {:else if currentStep === 'pipeline'}
     <div class="top-nav">
       <button class="btn-back" on:click={resetProject}>

@@ -184,6 +184,14 @@ async def explore_and_capture(url: str, project_id: str = None, username: str = 
                     Return ONLY valid JSON. Do not use Markdown formatting blocks like ```json.
                     """
                     resp = model.generate_content(prompt)
+                    
+                    if hasattr(resp, 'usage_metadata') and resp.usage_metadata:
+                        try:
+                            from db_ingestion import log_api_usage
+                            log_api_usage("Agent_2_Web_Explorer", os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"), resp.usage_metadata)
+                        except Exception as log_err:
+                            logger.warning(f"Failed to log API usage in Agent 2: {log_err}")
+
                     text_val = resp.text.strip()
                     if text_val.startswith('```json'):
                         text_val = text_val.strip('```json').strip('```').strip()

@@ -27,6 +27,7 @@ class QAState(BaseModel):
     skill_instructions: str = ""
     doc_type: str = "general"
     project_name: str = "Unknown"
+    project_code: str = ""
     
     # Execution details
     report: Optional[str] = None

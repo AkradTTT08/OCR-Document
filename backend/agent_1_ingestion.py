@@ -80,6 +80,15 @@ def extract_requirements_from_text(text: str, project_id: str, doc_id: int):
 
     try:
         response = model.generate_content(prompt)
+        
+        # Log API Token Usage
+        if hasattr(response, 'usage_metadata') and response.usage_metadata:
+            try:
+                from db_ingestion import log_api_usage
+                log_api_usage("Agent_1_Ingestion", os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"), response.usage_metadata)
+            except Exception as log_err:
+                logger.warning(f"Failed to log API usage in Agent 1: {log_err}")
+
         raw_json = response.text.strip()
         
         # Clean up markdown if AI added it

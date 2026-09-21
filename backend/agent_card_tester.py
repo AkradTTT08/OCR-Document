@@ -178,24 +178,47 @@ def resolve_card_test_mapping(project_id: str, card_data: dict):
     # Default environment candidates
     base_url = "http://localhost:5173"
     environments = [
-        {"name": "DEV", "url": "http://localhost:5173", "description": "Local Development Server"},
-        {"name": "UAT", "url": "https://uat.example.com", "description": "User Acceptance Testing Server"},
-        {"name": "STAGING", "url": "https://staging.example.com", "description": "Staging Pre-production Server"}
+        {"name": "TEST", "url": "http://localhost:5173", "is_default": True, "description": "Local Test Server"},
+        {"name": "UAT", "url": "https://uat.example.com", "is_default": False, "description": "User Acceptance Testing Server"},
+        {"name": "PRD", "url": "https://example.com", "is_default": False, "description": "Production Live Server"}
     ]
 
     if conn:
         try:
             cursor = conn.cursor()
-            # 1. Fetch project info
-            cursor.execute("SELECT project_name, project_code, default_base_url FROM projects WHERE project_id = %s::uuid LIMIT 1", (project_id,))
+            # 1. Fetch project info including site_urls
+            cursor.execute("SELECT project_name, project_code, default_base_url, site_urls FROM projects WHERE project_id = %s::uuid LIMIT 1", (project_id,))
             p_row = cursor.fetchone()
             if p_row:
                 project_name = p_row[0] or p_row[1] or "Project"
-                if p_row[2] and p_row[2].strip():
+                default_url = p_row[2] or "http://localhost:5173"
+                raw_sites = p_row[3]
+                site_urls = raw_sites if isinstance(raw_sites, list) else (json.loads(raw_sites) if raw_sites else [])
+                
+                if site_urls and len(site_urls) > 0:
+                    custom_envs = []
+                    found_default = False
+                    for s in site_urls:
+                        env_type = s.get('env_type', 'TEST').upper()
+                        url = s.get('url', '').strip()
+                        is_def = bool(s.get('is_default', False))
+                        if is_def:
+                            base_url = url
+                            found_default = True
+                        custom_envs.append({
+                            "name": env_type,
+                            "url": url,
+                            "is_default": is_def,
+                            "description": f"{env_type} Server"
+                        })
+                    if not found_default and custom_envs:
+                        custom_envs[0]['is_default'] = True
+                        base_url = custom_envs[0]['url']
+                    environments = custom_envs
+                elif p_row[2] and p_row[2].strip():
                     base_url = p_row[2].strip()
-                    # Also update UAT default in environments list
                     for env in environments:
-                        if env["name"] == "UAT":
+                        if env["name"] == "TEST":
                             env["url"] = base_url
 
             # 2. Fetch flow analysis diagrams & sitemap
@@ -339,6 +362,13 @@ Return strictly valid JSON matching this schema:
             model=model_name,
             contents=prompt
         )
+        if hasattr(resp, 'usage_metadata') and resp.usage_metadata:
+            try:
+                from db_ingestion import log_api_usage
+                log_api_usage("Agent_Card_Tester_Mapping", model_name, resp.usage_metadata)
+            except Exception as log_err:
+                logger.warning(f"Failed to log API usage in Card Tester: {log_err}")
+
         clean_json = resp.text.strip()
         if clean_json.startswith('```'):
             clean_json = re.sub(r'^```json\s*|^```\s*|```$', '', clean_json, flags=re.MULTILINE).strip()
@@ -594,6 +624,13 @@ Return strictly JSON matching this structure:
             model=model_name,
             contents=prompt
         )
+        if hasattr(resp, 'usage_metadata') and resp.usage_metadata:
+            try:
+                from db_ingestion import log_api_usage
+                log_api_usage("Agent_Card_Tester_Evaluation", model_name, resp.usage_metadata)
+            except Exception as log_err:
+                logger.warning(f"Failed to log API usage in Card Tester Eval: {log_err}")
+
         clean_json = resp.text.strip()
         if clean_json.startswith('```'):
             clean_json = re.sub(r'^```json\s*|^```\s*|```$', '', clean_json, flags=re.MULTILINE).strip()

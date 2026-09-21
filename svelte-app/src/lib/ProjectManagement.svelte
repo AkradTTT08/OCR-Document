@@ -129,21 +129,77 @@
   function openAddProject() {
     isEditMode = false;
     editingProjectId = null;
-    newProject = { project_code: '', project_name: '', description: '', status: 'Active', default_base_url: 'http://localhost:5173' };
+    newProject = { 
+      project_code: '', 
+      project_name: '', 
+      description: '', 
+      status: 'Active', 
+      site_urls: [
+        { env_type: 'TEST', url: 'http://localhost:5173', is_default: true },
+        { env_type: 'UAT', url: '', is_default: false },
+        { env_type: 'PRD', url: '', is_default: false }
+      ],
+      default_base_url: 'http://localhost:5173' 
+    };
     showAddProject = true;
   }
 
   function openEditProject(p) {
     isEditMode = true;
     editingProjectId = p.id;
+    let sites = (p.site_urls && Array.isArray(p.site_urls) && p.site_urls.length > 0)
+      ? JSON.parse(JSON.stringify(p.site_urls))
+      : [
+          { env_type: 'TEST', url: p.default_base_url || 'http://localhost:5173', is_default: true },
+          { env_type: 'UAT', url: '', is_default: false },
+          { env_type: 'PRD', url: '', is_default: false }
+        ];
+
+    // Ensure at least one is default
+    if (!sites.some(s => s.is_default)) {
+      sites[0].is_default = true;
+    }
+
     newProject = {
       project_code: p.project_code || '',
       project_name: p.name || p.project_name || '',
       description: p.description || '',
       status: p.status || 'Active',
+      site_urls: sites,
       default_base_url: p.default_base_url || 'http://localhost:5173'
     };
     showAddProject = true;
+  }
+
+  function setDefaultSite(index) {
+    if (!newProject.site_urls || !newProject.site_urls[index]) return;
+    newProject.site_urls = newProject.site_urls.map((s, i) => ({
+      ...s,
+      is_default: (i === index)
+    }));
+    if (newProject.site_urls[index].url) {
+      newProject.default_base_url = newProject.site_urls[index].url;
+    }
+  }
+
+  function addSiteUrlRow() {
+    newProject.site_urls = [
+      ...(newProject.site_urls || []),
+      { env_type: 'CUSTOM', url: '', is_default: (newProject.site_urls || []).length === 0 }
+    ];
+  }
+
+  function removeSiteUrlRow(index) {
+    if (!newProject.site_urls || newProject.site_urls.length <= 1) {
+      toast('ต้องมี Site URL อย่างน้อย 1 รายการ', 'warning');
+      return;
+    }
+    const wasDefault = newProject.site_urls[index]?.is_default;
+    newProject.site_urls = newProject.site_urls.filter((_, i) => i !== index);
+    if (wasDefault && newProject.site_urls.length > 0) {
+      newProject.site_urls[0].is_default = true;
+      newProject.default_base_url = newProject.site_urls[0].url || 'http://localhost:5173';
+    }
   }
 
   async function createProject() {
@@ -151,6 +207,13 @@
       toast('กรุณาระบุชื่อโครงการ', 'error');
       return;
     }
+
+    // Determine default URL from site_urls
+    if (newProject.site_urls && newProject.site_urls.length > 0) {
+      const defSite = newProject.site_urls.find(s => s.is_default) || newProject.site_urls[0];
+      newProject.default_base_url = defSite.url || 'http://localhost:5173';
+    }
+
     isAddingProject = true;
     try {
       const endpoint = isEditMode ? `${API}/projects/${editingProjectId}` : `${API}/projects`;
@@ -379,7 +442,25 @@
                     {#if p.description}
                       <div class="proj-desc truncate" title={p.description}>{p.description}</div>
                     {/if}
-                    {#if p.default_base_url}
+                    {#if p.site_urls && p.site_urls.length > 0}
+                      <div class="proj-sites-tags" style="display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px;">
+                        {#each p.site_urls as s}
+                          {#if s.url}
+                            <span 
+                              class="site-tag-pill" 
+                              class:is-default={s.is_default}
+                              title={`${s.env_type}: ${s.url} ${s.is_default ? '(Default Site)' : ''}`}
+                            >
+                              <span class="env-badge env-{s.env_type ? s.env_type.toLowerCase() : 'test'}">{s.env_type || 'TEST'}</span>
+                              <span class="url-text truncate">{s.url}</span>
+                              {#if s.is_default}
+                                <span class="star-icon" title="Site Default หลัก">⭐</span>
+                              {/if}
+                            </span>
+                          {/if}
+                        {/each}
+                      </div>
+                    {:else if p.default_base_url}
                       <div class="proj-url truncate" style="font-size: 11px; color: #38bdf8; display: flex; align-items: center; gap: 4px; margin-top: 2px;" title={`Default Base URL: ${p.default_base_url}`}>
                         <span>🌐</span>
                         <span>{p.default_base_url}</span>
@@ -514,10 +595,69 @@
           <label for="p_desc">รายละเอียด (Description)</label>
           <textarea id="p_desc" class="form-input" rows="3" placeholder="คำอธิบายโครงการ..." bind:value={newProject.description}></textarea>
         </div>
-        <div class="form-group">
-          <label for="p_base_url">🌐 Default Base URL (สำหรับ AI Test Agent)</label>
-          <input id="p_base_url" type="text" class="form-input" placeholder="เช่น http://203.154.184.162:5019 หรือ https://uat.example.com" bind:value={newProject.default_base_url} />
-          <span style="font-size: 11px; color: #94a3b8; margin-top: 4px; display: block;">URL ของเซิร์ฟเวอร์ระบบทดสอบเริ่มต้นประจำโครงการนี้ เพื่อให้ AI Test Agent นำไปใช้เปิดทดสอบอัตโนมัติ</span>
+        <!-- Multi-Site Base URLs Manager -->
+        <div class="form-group sites-manager-group">
+          <div class="sites-manager-header">
+            <label class="sites-label">
+              <span>🌐</span>
+              <span>Target Site Base URLs (สำหรับ AI Test Agent)</span>
+            </label>
+            <button type="button" class="btn-add-site" on:click={addSiteUrlRow}>
+              + เพิ่ม Site
+            </button>
+          </div>
+          <span class="sites-hint">
+            กำหนด URL ของเซิร์ฟเวอร์ระบบทดสอบ (TEST, UAT, PRD) พร้อมคลิกเลือก <b>⭐ Default</b> เพื่อให้ AI Agent ใช้เป็น Site เริ่มต้น
+          </span>
+
+          <div class="site-urls-list">
+            {#if newProject.site_urls && newProject.site_urls.length > 0}
+              {#each newProject.site_urls as site, idx}
+                <div class="site-url-row" class:is-default-row={site.is_default}>
+                  <select class="site-env-select env-{site.env_type ? site.env_type.toLowerCase() : 'test'}" bind:value={site.env_type} on:change={() => { if (site.is_default) setDefaultSite(idx); }}>
+                    <option value="TEST">TEST</option>
+                    <option value="UAT">UAT</option>
+                    <option value="PRD">PRD</option>
+                    <option value="DEV">DEV</option>
+                    <option value="STAGING">STAGING</option>
+                    <option value="CUSTOM">CUSTOM</option>
+                  </select>
+
+                  <input 
+                    type="text" 
+                    class="form-input site-url-input" 
+                    placeholder="เช่น http://localhost:5173 หรือ https://uat.example.com" 
+                    bind:value={site.url}
+                    on:input={() => { if (site.is_default) newProject.default_base_url = site.url; }}
+                  />
+
+                  <button 
+                    type="button" 
+                    class="btn-default-toggle" 
+                    class:active={site.is_default}
+                    on:click={() => setDefaultSite(idx)}
+                    title={site.is_default ? "เป็น Site Default หลักที่ AI Agent จะใช้อัตโนมัติ" : "คลิกเพื่อตั้งเป็น Site Default"}
+                  >
+                    {#if site.is_default}
+                      ⭐ Default
+                    {:else}
+                      ตั้ง Default
+                    {/if}
+                  </button>
+
+                  <button 
+                    type="button" 
+                    class="btn-remove-site" 
+                    on:click={() => removeSiteUrlRow(idx)}
+                    title="ลบ Site นี้"
+                    disabled={newProject.site_urls.length <= 1}
+                  >
+                    ✕
+                  </button>
+                </div>
+              {/each}
+            {/if}
+          </div>
         </div>
         <div class="form-group">
           <label for="p_status">สถานะ (Status)</label>
@@ -976,10 +1116,210 @@
     background: #1e1e2e;
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 12px;
-    width: 90%;
-    max-width: 500px;
+    width: 92%;
+    max-width: 620px;
     box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
     overflow: hidden;
+  }
+
+  /* Multi-Site Base URLs Manager Styles */
+  .sites-manager-group {
+    background: rgba(15, 23, 42, 0.4);
+    border: 1px solid rgba(56, 189, 248, 0.15);
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin-bottom: 16px;
+  }
+
+  .sites-manager-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 4px;
+  }
+
+  .sites-label {
+    margin: 0 !important;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #38bdf8 !important;
+  }
+
+  .btn-add-site {
+    background: rgba(56, 189, 248, 0.15);
+    color: #38bdf8;
+    border: 1px solid rgba(56, 189, 248, 0.3);
+    border-radius: 4px;
+    padding: 3px 10px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .btn-add-site:hover {
+    background: rgba(56, 189, 248, 0.25);
+    color: #fff;
+    border-color: #38bdf8;
+  }
+
+  .sites-hint {
+    font-size: 11px;
+    color: #94a3b8;
+    margin-bottom: 10px;
+    display: block;
+    line-height: 1.4;
+  }
+
+  .site-urls-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .site-url-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(0, 0, 0, 0.3);
+    padding: 6px 8px;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    transition: all 0.2s;
+  }
+
+  .site-url-row.is-default-row {
+    border-color: rgba(56, 189, 248, 0.4);
+    background: rgba(56, 189, 248, 0.04);
+  }
+
+  .site-env-select {
+    padding: 7px 8px;
+    background: #0f172a;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 4px;
+    color: #f1f5f9;
+    font-size: 12px;
+    font-weight: 600;
+    width: 90px;
+    cursor: pointer;
+  }
+
+  .site-url-input {
+    flex: 1;
+    padding: 7px 10px !important;
+    font-size: 13px !important;
+    background: rgba(15, 23, 42, 0.6) !important;
+  }
+
+  .btn-default-toggle {
+    background: rgba(255, 255, 255, 0.06);
+    color: #94a3b8;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 4px;
+    padding: 6px 10px;
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.2s;
+  }
+
+  .btn-default-toggle:hover {
+    background: rgba(255, 255, 255, 0.12);
+    color: #fff;
+  }
+
+  .btn-default-toggle.active {
+    background: rgba(245, 158, 11, 0.18);
+    color: #fbbf24;
+    border-color: rgba(245, 158, 11, 0.5);
+    font-weight: 600;
+  }
+
+  .btn-remove-site {
+    background: transparent;
+    color: #64748b;
+    border: none;
+    font-size: 14px;
+    cursor: pointer;
+    padding: 4px 6px;
+    border-radius: 4px;
+    transition: all 0.2s;
+  }
+
+  .btn-remove-site:hover:not(:disabled) {
+    color: #f87171;
+    background: rgba(239, 68, 68, 0.1);
+  }
+
+  .btn-remove-site:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+  }
+
+  /* Table Site Tags */
+  .site-tag-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+    max-width: 280px;
+  }
+
+  .site-tag-pill.is-default {
+    border-color: rgba(56, 189, 248, 0.35);
+    background: rgba(56, 189, 248, 0.08);
+  }
+
+  .env-badge {
+    font-size: 9px;
+    font-weight: 700;
+    padding: 1px 4px;
+    border-radius: 3px;
+    text-transform: uppercase;
+  }
+
+  .env-test, .env-dev {
+    background: rgba(56, 189, 248, 0.2);
+    color: #38bdf8;
+  }
+
+  .env-uat {
+    background: rgba(245, 158, 11, 0.2);
+    color: #fbbf24;
+  }
+
+  .env-prd {
+    background: rgba(168, 85, 247, 0.2);
+    color: #c084fc;
+  }
+
+  .env-staging, .env-custom {
+    background: rgba(148, 163, 184, 0.2);
+    color: #cbd5e1;
+  }
+
+  .url-text {
+    color: #cbd5e1;
+    max-width: 170px;
+  }
+
+  .site-tag-pill.is-default .url-text {
+    color: #e0f2fe;
+    font-weight: 500;
+  }
+
+  .star-icon {
+    font-size: 10px;
+    color: #fbbf24;
   }
 
   .modal-sm {

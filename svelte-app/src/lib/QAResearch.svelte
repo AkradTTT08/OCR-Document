@@ -124,6 +124,12 @@
     }
   }
 
+  function sendPrompt(text) {
+    if (isLoading) return;
+    currentInput = text;
+    sendMessage();
+  }
+
   async function sendMessage() {
     if (!currentInput.trim() || isLoading) return;
     
@@ -258,6 +264,26 @@
           </div>
         {/if}
       </div>
+
+      {#if messages.length <= 1}
+        <div class="suggestions-container" in:fade>
+          <div class="suggestions-title">💡 คำถามแนะนำเพื่อค้นหาข้อมูลเชิงลึก:</div>
+          <div class="suggestion-chips">
+            <button type="button" class="suggestion-chip" on:click={() => sendPrompt("สรุปภาพรวมและฟังก์ชันหลักทั้งหมดของระบบนี้ให้หน่อย")}>
+              📋 สรุปภาพรวมและฟังก์ชันหลักทั้งหมด
+            </button>
+            <button type="button" class="suggestion-chip" on:click={() => sendPrompt("มีเอกสารอะไรบ้างในโครงการนี้ และแต่ละเอกสารมีเนื้อหาเกี่ยวกับอะไร")}>
+              📄 เอกสารทั้งหมดในโครงการ
+            </button>
+            <button type="button" class="suggestion-chip" on:click={() => sendPrompt("เงื่อนไขการ Login, สิทธิ์ผู้ใช้งาน และ Security Validation มีอะไรบ้าง")}>
+              🔐 เงื่อนไข Login & Security
+            </button>
+            <button type="button" class="suggestion-chip" on:click={() => sendPrompt("สรุป Test Scenarios และ Acceptance Criteria ที่สำคัญของโครงการ")}>
+              🧪 Test Scenarios & เกณฑ์ผ่าน
+            </button>
+          </div>
+        </div>
+      {/if}
 
       <!-- Chat Input Area -->
       <div class="chat-input-area">
@@ -471,11 +497,45 @@
     line-height: 1.6;
   }
 
-  .message-row.user .msg-content {
-    background: rgba(59, 130, 246, 0.15);
-    border: 1px solid rgba(59, 130, 246, 0.3);
-    border-radius: 12px;
-    border-top-right-radius: 4px;
+  .suggestions-container {
+    padding: 14px 24px 8px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+    background: rgba(15, 23, 42, 0.3);
+  }
+
+  .suggestions-title {
+    font-size: 12px;
+    color: #94a3b8;
+    font-weight: 500;
+  }
+
+  .suggestion-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .suggestion-chip {
+    background: rgba(168, 85, 247, 0.12);
+    border: 1px solid rgba(168, 85, 247, 0.3);
+    color: #d8b4fe;
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 12.5px;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-align: left;
+  }
+
+  .suggestion-chip:hover {
+    background: rgba(168, 85, 247, 0.25);
+    border-color: #c084fc;
+    color: #ffffff;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(168, 85, 247, 0.2);
   }
 
   .chat-input-area {

@@ -163,7 +163,7 @@ def send_qa_report(recipient_email: str, doc_type: str, filename: str, report_co
         
         # Send email
         logger.info(f"Connecting to SMTP server to send email to {to_list}...")
-        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server = smtplib.SMTP('smtp.gmail.com', 587, timeout=10)
         server.starttls()
         server.login(gmail_user, gmail_app_password)
         text = msg.as_string()

@@ -26,7 +26,9 @@
     created_by: 'Admin'
   };
 
-  const docTypes = ['General', 'Flowchart', 'Table', 'SRS Document', 'PDF', 'Image', 'Word', 'Other'];
+  import { SKILL_DOC_TYPES } from './constants.js';
+
+  const docTypes = SKILL_DOC_TYPES;
 
   $: filterDocTypeOptions = [
     { value: '', label: 'ทุกประเภท (Doc Type)', icon: '📁' },

@@ -20,50 +20,64 @@
   });
 </script>
 
-<div class="header-text">
-  <h2>{title}</h2>
-  <p>{subtitle}</p>
-</div>
+<div class="project-selection-wrapper">
+  <div class="header-text">
+    <h2>{title}</h2>
+    <p>{subtitle}</p>
+  </div>
 
-<div class="project-grid">
-  {#if filteredProjects.length === 0}
-    <div class="empty-state">
-      ไม่พบโครงการที่คุณมีสิทธิ์เข้าถึงในระบบ (หรือยังไม่มีการสร้างโครงการ)
-    </div>
-  {:else}
-    {#each filteredProjects as p}
-      <!-- svelte-ignore a11y-click-events-have-key-events -->
-      <!-- svelte-ignore a11y-no-static-element-interactions -->
-      <div class="project-card" on:click={() => selectProject(p)}>
-        <div class="card-header-row">
-          <div class="p-code">{p.project_code}</div>
-        </div>
-        <div class="p-name">{p.name || p.project_name}</div>
-        
-        <div class="p-status-section">
-          <div class="p-meta-label">สถานะ (STATUS)</div>
-          <div class="p-status-value" class:active={p.status === 'Active'} class:inactive={p.status !== 'Active'}>{p.status || 'Active'}</div>
-        </div>
-        
-        <div class="p-desc-section">
-          <div class="p-meta-label">รายละเอียด (DESCRIPTION)</div>
-          <div class="p-desc-box">
-            {#if p.description}
-              {p.description}
-            {:else}
-              <span class="empty-desc">ไม่มีรายละเอียด</span>
-            {/if}
+  <div class="project-grid">
+    {#if filteredProjects.length === 0}
+      <div class="empty-state">
+        ไม่พบโครงการที่คุณมีสิทธิ์เข้าถึงในระบบ (หรือยังไม่มีการสร้างโครงการ)
+      </div>
+    {:else}
+      {#each filteredProjects as p}
+        <!-- svelte-ignore a11y-click-events-have-key-events -->
+        <!-- svelte-ignore a11y-no-static-element-interactions -->
+        <div class="project-card" on:click={() => selectProject(p)}>
+          <div class="card-header-row">
+            <div class="p-code">{p.project_code}</div>
+          </div>
+          <div class="p-name">{p.name || p.project_name}</div>
+          
+          <div class="p-status-section">
+            <div class="p-meta-label">สถานะ (STATUS)</div>
+            <div class="p-status-value" class:active={p.status === 'Active'} class:inactive={p.status !== 'Active'}>{p.status || 'Active'}</div>
+          </div>
+          
+          <div class="p-desc-section">
+            <div class="p-meta-label">รายละเอียด (DESCRIPTION)</div>
+            <div class="p-desc-box">
+              {#if p.description}
+                {p.description}
+              {:else}
+                <span class="empty-desc">ไม่มีรายละเอียด</span>
+              {/if}
+            </div>
           </div>
         </div>
-      </div>
-    {/each}
-  {/if}
+      {/each}
+    {/if}
+  </div>
 </div>
 
 <style>
+  .project-selection-wrapper {
+    width: 100%;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 30px 20px 60px 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    box-sizing: border-box;
+  }
+
   .header-text {
     text-align: center;
-    margin-bottom: 30px;
+    margin-bottom: 36px;
+    max-width: 800px;
   }
   .header-text h2 {
     font-size: 28px;
@@ -80,9 +94,12 @@
   
   .project-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-    gap: 20px;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 360px));
+    justify-content: center;
+    gap: 24px;
     width: 100%;
+    max-width: 1200px;
+    margin: 0 auto;
   }
   .project-card {
     background: rgba(255, 255, 255, 0.04);
@@ -95,6 +112,8 @@
     position: relative;
     overflow: hidden;
     backdrop-filter: blur(10px);
+    width: 100%;
+    box-sizing: border-box;
   }
   .project-card::before {
     content: '';
@@ -173,5 +192,15 @@
     border-radius: 12px;
     color: var(--text-muted, #9ca3af);
     border: 1px dashed rgba(255, 255, 255, 0.2);
+    max-width: 600px;
+    margin: 0 auto;
+    width: 100%;
+  }
+
+  @media (max-width: 640px) {
+    .project-grid {
+      grid-template-columns: 1fr;
+      padding: 0 10px;
+    }
   }
 </style>

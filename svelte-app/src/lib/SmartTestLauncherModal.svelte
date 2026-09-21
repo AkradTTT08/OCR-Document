@@ -74,9 +74,18 @@
       const data = await res.json();
 
       if (data.success) {
-        baseUrl = data.base_url || 'http://localhost:5173';
         routePath = data.target_route || '/';
         environments = data.environments || environments;
+        
+        // Automatically select the configured default site environment
+        const defEnv = (environments || []).find(e => e.is_default);
+        if (defEnv) {
+          targetEnvironment = defEnv.name;
+          baseUrl = defEnv.url || data.base_url || 'http://localhost:5173';
+        } else {
+          baseUrl = data.base_url || 'http://localhost:5173';
+        }
+        
         testCases = (data.test_cases || []).map(tc => ({ 
           ...tc, 
           source: tc.source || 'srs',
@@ -269,7 +278,12 @@
                           class="btn-env-select" 
                           class:active={targetEnvironment === env.name} 
                           on:click={() => handleEnvChange(env.name)}>
-                          <span class="env-code">{env.name}</span>
+                          <span class="env-code">
+                            {env.name}
+                            {#if env.is_default}
+                              <span style="font-size: 10px; color: #38bdf8; margin-left: 4px;">★ Default</span>
+                            {/if}
+                          </span>
                           <span class="env-desc">{env.description}</span>
                         </button>
                       {/each}

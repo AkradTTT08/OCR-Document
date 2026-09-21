@@ -86,6 +86,13 @@ def parse_qa_report_with_ai(report_text: str, filename: str) -> list[dict]:
                 break
 
         if gemini_res and gemini_res.text:
+            if hasattr(gemini_res, 'usage_metadata') and gemini_res.usage_metadata:
+                try:
+                    from db_ingestion import log_api_usage
+                    log_api_usage("Excel_Report_Summary", current_model or "gemini-2.5-flash", gemini_res.usage_metadata)
+                except Exception as log_err:
+                    logger.warning(f"Failed to log API usage in Excel Report: {log_err}")
+
             # Extract JSON from response
             text = gemini_res.text.strip()
             # Remove markdown code block if present

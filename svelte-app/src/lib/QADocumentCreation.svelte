@@ -6,9 +6,11 @@
   import ProjectSelection from './ProjectSelection.svelte';
   import CustomSelect from './CustomSelect.svelte';
 
+  import { MASTER_DOC_TYPES } from './constants.js';
+
   let docName = "";
   let docType = "Test Case"; // Default
-  let docTypes = ["SRS", "Test Case", "UAT", "Other"];
+  let docTypes = MASTER_DOC_TYPES;
   let customPrompt = "";
   
   let skills = [];

@@ -45,8 +45,31 @@ def generate_playwright_script(project_id: str, gap_analysis_data: dict, web_sta
         if os.path.exists(web_state_file):
             with open(web_state_file, 'r', encoding='utf-8') as f:
                 web_state = json.load(f)
+
+        # 3. Optional: Fetch QA Analysis Diagram / Flow Data if available
+        diagram_context = ""
+        try:
+            from agent_7_flow_analyzer import get_project_flow_analysis
+            flow_analysis = get_project_flow_analysis(project_id)
+            if flow_analysis:
+                diagram_parts = []
+                if flow_analysis.get("sitemap"):
+                    diagram_parts.append(f"- **Sitemap & Routes:**\n{json.dumps(flow_analysis['sitemap'], ensure_ascii=False, indent=2)}")
+                if flow_analysis.get("system_flowchart") or flow_analysis.get("activity_diagram"):
+                    fc = flow_analysis.get("system_flowchart") or flow_analysis.get("activity_diagram")
+                    diagram_parts.append(f"- **System Flow & Sequence Decisions (Mermaid):**\n{fc}")
+                if flow_analysis.get("screen_mockups"):
+                    screens = [{"screen_name": s.get("screen_name"), "route": s.get("route"), "key_elements": s.get("key_elements", [])} for s in flow_analysis["screen_mockups"] if isinstance(s, dict)]
+                    if screens:
+                        diagram_parts.append(f"- **Screen Mockups & Component Specifications:**\n{json.dumps(screens, ensure_ascii=False, indent=2)}")
                 
-        # 3. Use LLM to generate the code
+                if diagram_parts:
+                    diagram_context = "\n\n### QA Analysis Diagram & Flow Knowledge (Use to optimize Page Object Model & navigation transitions):\n" + "\n\n".join(diagram_parts)
+                    logger.info(f"Incorporated QA Analysis Diagram into Test Generator for project {project_id}")
+        except Exception as diagram_err:
+            logger.warning(f"Optional QA Analysis Diagram fetch in Test Generator skipped: {diagram_err}")
+                
+        # 4. Use LLM to generate the code
         model = genai.GenerativeModel('gemini-1.5-pro')
         
         prompt = f"""
@@ -55,6 +78,7 @@ Your task is to generate Playwright (TypeScript) Test Scripts using the Page Obj
 
 ### Project Requirements (What to test):
 {json.dumps(formatted_reqs, ensure_ascii=False, indent=2)}
+{diagram_context}
 
 ### Web Interactive Elements (Available Selectors from live page):
 {json.dumps(web_state.get('interactive_elements', []), ensure_ascii=False, indent=2)}
@@ -83,6 +107,14 @@ You MUST respond strictly in JSON format matching this schema:
 """
         # Call Gemini (we might need to increase timeout or use a model with larger output)
         response = model.generate_content(prompt)
+        
+        if hasattr(response, 'usage_metadata') and response.usage_metadata:
+            try:
+                from db_ingestion import log_api_usage
+                log_api_usage("Agent_4_Test_Generator", os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"), response.usage_metadata)
+            except Exception as log_err:
+                logger.warning(f"Failed to log API usage in Agent 4: {log_err}")
+
         text_response = response.text.strip()
         
         # Clean up markdown if model still included it

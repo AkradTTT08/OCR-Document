@@ -108,6 +108,14 @@ Respond strictly in JSON format as follows:
 }}
 """
         response = model.generate_content(prompt)
+        
+        if hasattr(response, 'usage_metadata') and response.usage_metadata:
+            try:
+                from db_ingestion import log_api_usage
+                log_api_usage("Agent_5_Test_Runner", os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"), response.usage_metadata)
+            except Exception as log_err:
+                logger.warning(f"Failed to log API usage in Agent 5: {log_err}")
+
         text_response = response.text.strip()
         
         if text_response.startswith('```json'):

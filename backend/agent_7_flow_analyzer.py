@@ -345,6 +345,14 @@ Make sure:
 
         logger.info(f"Agent 7: Generating flow analysis & diagrams for project {project_name} ({project_id})...")
         resp = model.generate_content(prompt)
+        
+        if hasattr(resp, 'usage_metadata') and resp.usage_metadata:
+            try:
+                from db_ingestion import log_api_usage
+                log_api_usage("Agent_7_Flow_Analyzer", os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"), resp.usage_metadata)
+            except Exception as log_err:
+                logger.warning(f"Failed to log API usage in Agent 7: {log_err}")
+
         raw_text = resp.text.strip()
 
         # Clean JSON wrappers if any

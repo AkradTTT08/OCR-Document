@@ -182,6 +182,14 @@ Do NOT wrap the entire response in ```markdown ... ``` blocks unless necessary, 
 """
         logger.info(f"Generating document '{doc_name}' ({doc_type}) using skill '{skill_name}'...")
         resp = model.generate_content(prompt)
+        
+        if hasattr(resp, 'usage_metadata') and resp.usage_metadata:
+            try:
+                from db_ingestion import log_api_usage
+                log_api_usage("Agent_6_Doc_Creator", os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"), resp.usage_metadata, filename=doc_name)
+            except Exception as log_err:
+                logger.warning(f"Failed to log API usage in Agent 6: {log_err}")
+
         doc_content = resp.text.strip()
         
         if doc_content.startswith("```markdown"):
@@ -346,6 +354,14 @@ The keys of the objects will become the headers. Make sure all objects use consi
 
         logger.info(f"Generating document async '{doc_name}' ({doc_type})...")
         resp = model.generate_content(prompt)
+        
+        if hasattr(resp, 'usage_metadata') and resp.usage_metadata:
+            try:
+                from db_ingestion import log_api_usage
+                log_api_usage("Agent_6_Doc_Creator", os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"), resp.usage_metadata, filename=doc_name)
+            except Exception as log_err:
+                logger.warning(f"Failed to log API usage in Agent 6 (async): {log_err}")
+
         doc_content = resp.text.strip()
         
         # Clean JSON

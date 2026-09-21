@@ -173,6 +173,84 @@
       selectedEndpointIds = [selectedEndpointIds[0]];
   }
 
+  // --- Threshold & SLA Criteria State ---
+  let enableThresholds = true;
+
+  const thresholdMetricOptions = [
+    { value: 'http_req_status_200', label: 'Status 200 Success Rate (อัตราตอบกลับ 200)', unit: '%', defaultOp: '>=', defaultVal: 90, desc: 'อัตราคำขอที่ตอบกลับด้วย Status 200' },
+    { value: 'http_req_failed', label: 'HTTP Error Rate (อัตราคำขอล้มเหลว)', unit: '%', defaultOp: '<=', defaultVal: 5, desc: 'อัตราคำขอที่เกิด Error (4xx, 5xx)' },
+    { value: 'http_req_duration_p95', label: 'Response Time (p95 - 95% เร็วกว่า)', unit: 'ms', defaultOp: '<=', defaultVal: 500, desc: '95% ของคำขอต้องตอบกลับเร็วกว่าเกณฑ์' },
+    { value: 'http_req_duration_p99', label: 'Response Time (p99 - 99% เร็วกว่า)', unit: 'ms', defaultOp: '<=', defaultVal: 1000, desc: '99% ของคำขอต้องตอบกลับเร็วกว่าเกณฑ์' },
+    { value: 'http_req_duration_avg', label: 'Average Response Time (เวลาเฉลี่ย)', unit: 'ms', defaultOp: '<=', defaultVal: 200, desc: 'ระยะเวลาตอบสนองเฉลี่ย' },
+    { value: 'http_req_duration_med', label: 'Median Response Time (มัธยฐาน p50)', unit: 'ms', defaultOp: '<=', defaultVal: 150, desc: 'ระยะเวลาตอบสนองมัธยฐาน 50%' },
+    { value: 'http_req_duration_max', label: 'Max Response Time (เวลาสูงสุด)', unit: 'ms', defaultOp: '<=', defaultVal: 2000, desc: 'ระยะเวลาตอบสนองสูงสุดไม่เกิน' }
+  ];
+
+  const thresholdOperatorOptions = [
+    { value: '>=', label: '>= (มากกว่าหรือเท่ากับ)' },
+    { value: '>', label: '> (มากกว่า)' },
+    { value: '<=', label: '<= (น้อยกว่าหรือเท่ากับ)' },
+    { value: '<', label: '< (น้อยกว่า)' },
+    { value: '==', label: '== (เท่ากับ)' }
+  ];
+
+  let thresholds = [
+    { id: 1, enabled: true, metric: 'http_req_status_200', operator: '>=', value: 90, unit: '%' },
+    { id: 2, enabled: true, metric: 'http_req_failed', operator: '<=', value: 5, unit: '%' },
+    { id: 3, enabled: true, metric: 'http_req_duration_p95', operator: '<=', value: 500, unit: 'ms' }
+  ];
+
+  function addThresholdRule() {
+    const nextId = thresholds.length > 0 ? Math.max(...thresholds.map(t => t.id)) + 1 : 1;
+    thresholds = [
+      ...thresholds,
+      { id: nextId, enabled: true, metric: 'http_req_status_200', operator: '>=', value: 90, unit: '%' }
+    ];
+  }
+
+  function removeThresholdRule(id) {
+    thresholds = thresholds.filter(t => t.id !== id);
+  }
+
+  function handleMetricChange(rule) {
+    const meta = thresholdMetricOptions.find(m => m.value === rule.metric);
+    if (meta) {
+      rule.unit = meta.unit;
+      rule.operator = meta.defaultOp;
+      rule.value = meta.defaultVal;
+      thresholds = [...thresholds];
+    }
+  }
+
+  function applyThresholdPreset(type) {
+    if (type === 'standard') {
+      thresholds = [
+        { id: 1, enabled: true, metric: 'http_req_status_200', operator: '>=', value: 90, unit: '%' },
+        { id: 2, enabled: true, metric: 'http_req_failed', operator: '<=', value: 5, unit: '%' },
+        { id: 3, enabled: true, metric: 'http_req_duration_p95', operator: '<=', value: 500, unit: 'ms' }
+      ];
+      enableThresholds = true;
+      toast('โหลด Preset: Standard SLA (200 >= 90%, p95 <= 500ms) แล้ว', 'info');
+    } else if (type === 'strict') {
+      thresholds = [
+        { id: 1, enabled: true, metric: 'http_req_status_200', operator: '>=', value: 99, unit: '%' },
+        { id: 2, enabled: true, metric: 'http_req_failed', operator: '<=', value: 1, unit: '%' },
+        { id: 3, enabled: true, metric: 'http_req_duration_p95', operator: '<=', value: 200, unit: 'ms' },
+        { id: 4, enabled: true, metric: 'http_req_duration_p99', operator: '<=', value: 500, unit: 'ms' }
+      ];
+      enableThresholds = true;
+      toast('โหลด Preset: Strict SLA (200 >= 99%, p95 <= 200ms) แล้ว', 'info');
+    } else if (type === 'stress') {
+      thresholds = [
+        { id: 1, enabled: true, metric: 'http_req_status_200', operator: '>=', value: 80, unit: '%' },
+        { id: 2, enabled: true, metric: 'http_req_failed', operator: '<=', value: 15, unit: '%' },
+        { id: 3, enabled: true, metric: 'http_req_duration_max', operator: '<=', value: 5000, unit: 'ms' }
+      ];
+      enableThresholds = true;
+      toast('โหลด Preset: High Load / Stress Test แล้ว', 'info');
+    }
+  }
+
   // React to selected history
   $: if ($selectedPerfHistory) {
       testName = $selectedPerfHistory.name;
@@ -182,6 +260,12 @@
       duration = $selectedPerfHistory.duration;
       rampUp = $selectedPerfHistory.rampUp;
       rampDown = $selectedPerfHistory.rampDown || 10;
+      if ($selectedPerfHistory.enableThresholds !== undefined) {
+        enableThresholds = $selectedPerfHistory.enableThresholds;
+      }
+      if ($selectedPerfHistory.thresholds && Array.isArray($selectedPerfHistory.thresholds)) {
+        thresholds = JSON.parse(JSON.stringify($selectedPerfHistory.thresholds));
+      }
       generatedCode = $selectedPerfHistory.code;
   }
 
@@ -231,12 +315,57 @@
     const isScenario = scriptType === 'scenario';
     
     let httpImports = "import http from 'k6/http';\nimport { check, sleep } from 'k6';";
+    
+    // Compile Thresholds for K6 Options
+    let thresholdsObj = {};
+    let activeThresholdsList = [];
+    if (enableThresholds) {
+      activeThresholdsList = thresholds.filter(t => t.enabled);
+      activeThresholdsList.forEach(t => {
+        const op = t.operator;
+        const val = Number(t.value);
+        if (t.metric === 'http_req_status_200') {
+          const rateVal = (val / 100).toFixed(2);
+          if (!thresholdsObj['checks']) thresholdsObj['checks'] = [];
+          thresholdsObj['checks'].push(`rate${op}${rateVal}`);
+        } else if (t.metric === 'http_req_failed') {
+          const rateVal = (val / 100).toFixed(2);
+          if (!thresholdsObj['http_req_failed']) thresholdsObj['http_req_failed'] = [];
+          thresholdsObj['http_req_failed'].push(`rate${op}${rateVal}`);
+        } else if (t.metric === 'http_req_duration_p95') {
+          if (!thresholdsObj['http_req_duration']) thresholdsObj['http_req_duration'] = [];
+          thresholdsObj['http_req_duration'].push(`p(95)${op}${val}`);
+        } else if (t.metric === 'http_req_duration_p99') {
+          if (!thresholdsObj['http_req_duration']) thresholdsObj['http_req_duration'] = [];
+          thresholdsObj['http_req_duration'].push(`p(99)${op}${val}`);
+        } else if (t.metric === 'http_req_duration_avg') {
+          if (!thresholdsObj['http_req_duration']) thresholdsObj['http_req_duration'] = [];
+          thresholdsObj['http_req_duration'].push(`avg${op}${val}`);
+        } else if (t.metric === 'http_req_duration_med') {
+          if (!thresholdsObj['http_req_duration']) thresholdsObj['http_req_duration'] = [];
+          thresholdsObj['http_req_duration'].push(`med${op}${val}`);
+        } else if (t.metric === 'http_req_duration_max') {
+          if (!thresholdsObj['http_req_duration']) thresholdsObj['http_req_duration'] = [];
+          thresholdsObj['http_req_duration'].push(`max${op}${val}`);
+        }
+      });
+    }
+
+    let thresholdsFormatted = '';
+    if (enableThresholds && Object.keys(thresholdsObj).length > 0) {
+      thresholdsFormatted = `,\n  thresholds: {\n`;
+      for (const [key, rules] of Object.entries(thresholdsObj)) {
+        thresholdsFormatted += `    '${key}': [${rules.map(r => `'${r}'`).join(', ')}],\n`;
+      }
+      thresholdsFormatted += `  }`;
+    }
+
     let optionsCode = `export const options = {
   stages: [
     { duration: '${rampUp}s', target: ${vus} }, // Ramp-up
     { duration: '${duration}s', target: ${vus} }, // Sustained load
     { duration: '${rampDown}s', target: 0 }, // Ramp-down
-  ],
+  ]${thresholdsFormatted}
 };`;
     
     let defaultFuncCode = `export default function () {
@@ -250,7 +379,7 @@
   let res${idx} = http.${api.method.toLowerCase()}('` + '${BASE_URL}' + api.path + `');
   check(res${idx}, {
     '${api.path} status is 200': (r) => r.status === 200,
-    '${api.path} time OK': (r) => r.timings.duration < 500,
+    '${api.path} response OK': (r) => r.timings.duration < 500,
   });\n`;
       });
     } else {
@@ -261,7 +390,7 @@
   
   check(res, {
     'status is 200': (r) => r.status === 200,
-    'transaction time OK': (r) => r.timings.duration < 200,
+    'transaction time OK': (r) => r.timings.duration < 500,
   });\n`;
     }
 
@@ -280,6 +409,8 @@
           project_id: selectedProjectId,
           project_code: projCode,
           vus, duration, rampUp, rampDown,
+          enableThresholds,
+          thresholds: JSON.parse(JSON.stringify(thresholds)),
           code: generatedCode,
           date: new Date().toISOString()
       });
@@ -434,6 +565,102 @@
           <input type="number" bind:value={rampDown} min="0" placeholder="e.g. 10" />
           <span class="help-text">เวลาลดระดับจาก VUs กลับเป็น 0</span>
         </div>
+      </div>
+
+      <!-- Thresholds & SLA Criteria Section -->
+      <div class="thresholds-section" in:slide>
+        <div class="thresholds-header">
+          <div class="title-with-toggle">
+            <label class="switch">
+              <input type="checkbox" bind:checked={enableThresholds} />
+              <span class="slider"></span>
+            </label>
+            <div class="header-titles">
+              <span class="section-title">🎯 เกณฑ์การทดสอบผ่าน (Pass/Fail Thresholds)</span>
+              <span class="help-text">กำหนดเงื่อนไข SLA สำหรับประเมินว่าการทดสอบผ่านหรือตก</span>
+            </div>
+          </div>
+          {#if enableThresholds}
+            <div class="preset-badges">
+              <button type="button" class="preset-badge" on:click={() => applyThresholdPreset('standard')} title="Status 200 >= 90%, Failed <= 5%, p95 <= 500ms">
+                Standard (90%)
+              </button>
+              <button type="button" class="preset-badge" on:click={() => applyThresholdPreset('strict')} title="Status 200 >= 99%, Failed <= 1%, p95 <= 200ms">
+                Strict (99%)
+              </button>
+              <button type="button" class="preset-badge" on:click={() => applyThresholdPreset('stress')} title="Status 200 >= 80%, Failed <= 15%, max <= 5000ms">
+                Stress Test
+              </button>
+            </div>
+          {/if}
+        </div>
+
+        {#if enableThresholds}
+          <div class="threshold-rules-list" transition:slide>
+            {#if thresholds.length === 0}
+              <div class="empty-rules">
+                <span>ยังไม่มีเกณฑ์ที่กำหนด คลิก "+ เพิ่มเกณฑ์ Threshold" เพื่อเริ่มต้น</span>
+              </div>
+            {:else}
+              {#each thresholds as rule, index (rule.id)}
+                <div class="rule-card" class:disabled={!rule.enabled}>
+                  <div class="rule-header-row">
+                    <label class="rule-enable-cb">
+                      <input type="checkbox" bind:checked={rule.enabled} />
+                      <span class="rule-num">เงื่อนไข #{index + 1}</span>
+                    </label>
+                    <button type="button" class="btn-del-rule" on:click={() => removeThresholdRule(rule.id)} title="ลบเงื่อนไขนี้">
+                      ✕
+                    </button>
+                  </div>
+                  <div class="rule-controls-grid">
+                    <div class="control-item metric-select">
+                      <label>Metric / ตัววัด</label>
+                      <select bind:value={rule.metric} on:change={() => handleMetricChange(rule)}>
+                        {#each thresholdMetricOptions as opt}
+                          <option value={opt.value}>{opt.label}</option>
+                        {/each}
+                      </select>
+                    </div>
+                    <div class="control-item op-select">
+                      <label>เงื่อนไข</label>
+                      <select bind:value={rule.operator}>
+                        {#each thresholdOperatorOptions as op}
+                          <option value={op.value}>{op.label}</option>
+                        {/each}
+                      </select>
+                    </div>
+                    <div class="control-item val-input">
+                      <label>ค่าเป้าหมาย ({rule.unit})</label>
+                      <div class="input-with-unit">
+                        <input type="number" bind:value={rule.value} min="0" step={rule.unit === '%' ? '1' : '10'} />
+                        <span class="unit-tag">{rule.unit}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="rule-preview-badge">
+                    {#if rule.metric === 'http_req_status_200'}
+                      <span>✅ อัตรา Status 200 ต้อง <strong>{rule.operator} {rule.value}%</strong></span>
+                    {:else if rule.metric === 'http_req_failed'}
+                      <span>⚠️ อัตรา Error ต้อง <strong>{rule.operator} {rule.value}%</strong></span>
+                    {:else if rule.metric.includes('duration')}
+                      <span>⚡ เวลาตอบสนอง ({rule.metric.replace('http_req_duration_', '')}) ต้อง <strong>{rule.operator} {rule.value} ms</strong></span>
+                    {:else}
+                      <span>🎯 {rule.metric} <strong>{rule.operator} {rule.value} {rule.unit}</strong></span>
+                    {/if}
+                  </div>
+                </div>
+              {/each}
+            {/if}
+
+            <div class="threshold-actions">
+              <button type="button" class="btn-add-rule" on:click={addThresholdRule}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                + เพิ่มเกณฑ์ Threshold
+              </button>
+            </div>
+          </div>
+        {/if}
       </div>
 
       <button class="btn-primary generate-btn" on:click={generateScript} disabled={isGenerating}>
@@ -798,6 +1025,290 @@
     gap: 16px;
     padding-top: 12px;
     border-top: 1px dashed var(--glass-border);
+  }
+
+  /* Thresholds Section Styles */
+  .thresholds-section {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 14px;
+    background: rgba(15, 23, 42, 0.45);
+    border: 1px solid rgba(168, 85, 247, 0.25);
+    border-radius: var(--radius-md);
+    margin-top: 4px;
+  }
+
+  .thresholds-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .title-with-toggle {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .header-titles {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .section-title {
+    font-size: 13.5px;
+    font-weight: 600;
+    color: #f1f5f9;
+  }
+
+  /* Switch Toggle */
+  .switch {
+    position: relative;
+    display: inline-block;
+    width: 36px;
+    height: 20px;
+    flex-shrink: 0;
+  }
+
+  .switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+  }
+
+  .slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(100, 116, 139, 0.5);
+    transition: .3s;
+    border-radius: 20px;
+  }
+
+  .slider:before {
+    position: absolute;
+    content: "";
+    height: 14px;
+    width: 14px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: .3s;
+    border-radius: 50%;
+  }
+
+  input:checked + .slider {
+    background-color: #8b5cf6;
+  }
+
+  input:checked + .slider:before {
+    transform: translateX(16px);
+  }
+
+  .preset-badges {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .preset-badge {
+    background: rgba(168, 85, 247, 0.12);
+    border: 1px solid rgba(168, 85, 247, 0.3);
+    color: #d8b4fe;
+    padding: 3px 8px;
+    font-size: 11px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .preset-badge:hover {
+    background: rgba(168, 85, 247, 0.25);
+    border-color: #c084fc;
+    color: #fff;
+  }
+
+  .threshold-rules-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .empty-rules {
+    text-align: center;
+    padding: 14px;
+    color: var(--text-muted);
+    font-size: 12px;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 6px;
+  }
+
+  .rule-card {
+    background: rgba(30, 41, 59, 0.5);
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    border-radius: 8px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    transition: all 0.2s;
+  }
+
+  .rule-card.disabled {
+    opacity: 0.5;
+    background: rgba(15, 23, 42, 0.3);
+  }
+
+  .rule-card:hover {
+    border-color: rgba(168, 85, 247, 0.4);
+  }
+
+  .rule-header-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .rule-enable-cb {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    font-size: 12px;
+    color: #e2e8f0;
+    font-weight: 500;
+  }
+
+  .rule-enable-cb input {
+    accent-color: #8b5cf6;
+    cursor: pointer;
+  }
+
+  .rule-num {
+    color: #a78bfa;
+    font-weight: 600;
+  }
+
+  .btn-del-rule {
+    background: transparent;
+    border: none;
+    color: #94a3b8;
+    cursor: pointer;
+    font-size: 13px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    line-height: 1;
+  }
+
+  .btn-del-rule:hover {
+    color: #ef4444;
+    background: rgba(239, 68, 68, 0.15);
+  }
+
+  .rule-controls-grid {
+    display: grid;
+    grid-template-columns: 2fr 1fr 1.2fr;
+    gap: 8px;
+  }
+
+  @media (max-width: 600px) {
+    .rule-controls-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .control-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+  }
+
+  .control-item label {
+    font-size: 10.5px;
+    color: #94a3b8;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .control-item select, .control-item input {
+    background: rgba(15, 23, 42, 0.7);
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    color: #fff;
+    padding: 6px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .control-item select:focus, .control-item input:focus {
+    outline: none;
+    border-color: #8b5cf6;
+  }
+
+  .input-with-unit {
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
+
+  .input-with-unit input {
+    padding-right: 32px;
+  }
+
+  .unit-tag {
+    position: absolute;
+    right: 8px;
+    font-size: 11px;
+    color: #a78bfa;
+    font-weight: 600;
+    pointer-events: none;
+  }
+
+  .rule-preview-badge {
+    font-size: 11px;
+    color: #cbd5e1;
+    background: rgba(0, 0, 0, 0.25);
+    padding: 4px 8px;
+    border-radius: 4px;
+    border-left: 2px solid #8b5cf6;
+  }
+
+  .rule-preview-badge strong {
+    color: #facc15;
+  }
+
+  .threshold-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 4px;
+  }
+
+  .btn-add-rule {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(139, 92, 246, 0.15);
+    border: 1px dashed rgba(139, 92, 246, 0.4);
+    color: #c084fc;
+    font-size: 12px;
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .btn-add-rule:hover {
+    background: rgba(139, 92, 246, 0.25);
+    border-color: #a855f7;
+    color: #fff;
   }
 
   .generate-btn {
