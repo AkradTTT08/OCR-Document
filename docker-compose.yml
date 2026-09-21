@@ -1,0 +1,132 @@
+services:
+  # ──────────────────────────────────────────────────
+  # Database 1: QA Agent & Vector Storage (Postgres + pgvector)
+  # ──────────────────────────────────────────────────
+  qa_agent_db:
+    image: pgvector/pgvector:pg16
+    container_name: qa_agent_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-qa_agent_db}
+      POSTGRES_USER: ${DB_USER:-qa_admin}
+      POSTGRES_PASSWORD: ${DB_PASS:-qa_password}
+    ports:
+      - "${DB_PORT:-8123}:5432"
+    volumes:
+      - qa_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-qa_admin} -d ${DB_NAME:-qa_agent_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ──────────────────────────────────────────────────
+  # Database 2: User Authentication & Audit Logs
+  # ──────────────────────────────────────────────────
+  spectra_auth_db:
+    image: postgres:16
+    container_name: spectra_auth_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${AUTH_DB_NAME:-postgres}
+      POSTGRES_USER: ${AUTH_DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${AUTH_DB_PASS:-postgres}
+    ports:
+      - "${AUTH_DB_PORT:-8124}:5432"
+    volumes:
+      - auth_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${AUTH_DB_USER:-postgres} -d ${AUTH_DB_NAME:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ──────────────────────────────────────────────────
+  # Backend: Flask API + Gunicorn Production Server
+  # ──────────────────────────────────────────────────
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: spectra_backend
+    restart: unless-stopped
+    environment:
+      - DB_HOST=qa_agent_db
+      - DB_PORT=5432
+      - DB_NAME=${DB_NAME:-qa_agent_db}
+      - OCR_DB_NAME=${DB_NAME:-qa_agent_db}
+      - DB_USER=${DB_USER:-qa_admin}
+      - DB_PASS=${DB_PASS:-qa_password}
+      - AUTH_DB_HOST=spectra_auth_db
+      - AUTH_DB_PORT=5432
+      - AUTH_DB_NAME=${AUTH_DB_NAME:-postgres}
+      - AUTH_DB_USER=${AUTH_DB_USER:-postgres}
+      - AUTH_DB_PASS=${AUTH_DB_PASS:-postgres}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
+      - GMAIL_USER=${GMAIL_USER}
+      - GMAIL_APP_PASSWORD=${GMAIL_APP_PASSWORD}
+      - FLASK_ENV=production
+      - FLASK_DEBUG=0
+      - SECRET_KEY=${SECRET_KEY:-spectra_production_secret_key_change_me}
+    ports:
+      - "${BACKEND_PORT:-8125}:5000"
+    volumes:
+      - backend_uploads:/app/uploads
+      - backend_reports:/app/reports
+    depends_on:
+      qa_agent_db:
+        condition: service_healthy
+      spectra_auth_db:
+        condition: service_healthy
+
+  # ──────────────────────────────────────────────────
+  # Frontend: Svelte 5 + Nginx Reverse Proxy
+  # ──────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./svelte-app
+      dockerfile: Dockerfile
+    container_name: spectra_frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-5173}:80"
+    depends_on:
+      - backend
+
+  # ──────────────────────────────────────────────────
+  # MCP Server: Spectra QA Consult Server (FastMCP SSE)
+  # ──────────────────────────────────────────────────
+  mcp_server:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: spectra_mcp_server
+    restart: unless-stopped
+    command: ["python", "mcp_server.py", "--sse"]
+    environment:
+      - DB_HOST=qa_agent_db
+      - DB_PORT=5432
+      - DB_NAME=${DB_NAME:-qa_agent_db}
+      - DB_USER=${DB_USER:-qa_admin}
+      - DB_PASS=${DB_PASS:-qa_password}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
+      - MCP_TRANSPORT=sse
+    ports:
+      - "8000:8000"
+    depends_on:
+      qa_agent_db:
+        condition: service_healthy
+
+volumes:
+  qa_db_data:
+    name: spectra_qa_db_data
+  auth_db_data:
+    name: spectra_auth_db_data
+  backend_uploads:
+    name: spectra_backend_uploads
+  backend_reports:
+    name: spectra_backend_reports

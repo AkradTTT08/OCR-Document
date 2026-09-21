@@ -1,0 +1,813 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>คู่มือการ Deploy ระบบ Thai OCR & Spectra QA Consult ขึ้น Linux Server</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Prompt:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-base: #090d16;
+            --bg-surface: #0f172a;
+            --card-bg: rgba(15, 23, 42, 0.75);
+            --card-border: rgba(255, 255, 255, 0.08);
+            --card-border-hover: rgba(56, 189, 248, 0.4);
+            --primary: #38bdf8;
+            --primary-glow: rgba(56, 189, 248, 0.25);
+            --secondary: #818cf8;
+            --accent: #10b981;
+            --accent-glow: rgba(16, 185, 129, 0.25);
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --text-dim: #64748b;
+            --code-bg: #050811;
+            --code-border: rgba(255, 255, 255, 0.06);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Prompt', 'Plus Jakarta Sans', sans-serif;
+            background-color: var(--bg-base);
+            color: var(--text-main);
+            line-height: 1.7;
+            min-height: 100vh;
+            background-image: 
+                radial-gradient(circle at 15% 15%, rgba(56, 189, 248, 0.12) 0px, transparent 40%),
+                radial-gradient(circle at 85% 75%, rgba(129, 140, 248, 0.1) 0px, transparent 45%),
+                linear-gradient(to bottom, rgba(9, 13, 22, 0.95), var(--bg-base));
+            background-attachment: fixed;
+            padding-bottom: 80px;
+        }
+
+        .container {
+            max-width: 1060px;
+            margin: 0 auto;
+            padding: 40px 24px;
+        }
+
+        /* ── Header ── */
+        header {
+            text-align: center;
+            margin-bottom: 50px;
+            padding: 40px 20px;
+            position: relative;
+        }
+
+        .badge-group {
+            display: flex;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .badge {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            font-size: 0.8rem;
+            font-weight: 600;
+            padding: 6px 14px;
+            border-radius: 9999px;
+            letter-spacing: 0.03em;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+        }
+
+        .badge-blue { background: rgba(56, 189, 248, 0.12); color: #38bdf8; border-color: rgba(56, 189, 248, 0.3); }
+        .badge-purple { background: rgba(129, 140, 248, 0.12); color: #a5b4fc; border-color: rgba(129, 140, 248, 0.3); }
+        .badge-green { background: rgba(16, 185, 129, 0.12); color: #34d399; border-color: rgba(16, 185, 129, 0.3); }
+
+        h1 {
+            font-size: 2.6rem;
+            font-weight: 800;
+            letter-spacing: -0.02em;
+            background: linear-gradient(135deg, #ffffff 30%, #38bdf8 70%, #818cf8 100%);
+            background-clip: text;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 16px;
+            line-height: 1.25;
+        }
+
+        .subtitle {
+            font-size: 1.15rem;
+            color: var(--text-muted);
+            max-width: 720px;
+            margin: 0 auto;
+            font-weight: 400;
+        }
+
+        /* ── Architecture Visual Grid ── */
+        .arch-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-bottom: 45px;
+        }
+
+        .arch-node {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 16px;
+            padding: 20px;
+            backdrop-filter: blur(12px);
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .arch-node::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 3px;
+            background: linear-gradient(90deg, var(--primary), var(--secondary));
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        .arch-node:hover {
+            transform: translateY(-4px);
+            border-color: var(--card-border-hover);
+            box-shadow: 0 12px 30px -10px var(--primary-glow);
+        }
+
+        .arch-node:hover::before {
+            opacity: 1;
+        }
+
+        .arch-node .node-icon {
+            font-size: 1.8rem;
+            margin-bottom: 10px;
+            display: inline-block;
+        }
+
+        .arch-node h4 {
+            font-size: 1.05rem;
+            font-weight: 700;
+            margin-bottom: 6px;
+            color: #fff;
+        }
+
+        .arch-node p {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            line-height: 1.5;
+        }
+
+        .arch-node .node-port {
+            font-family: 'Fira Code', monospace;
+            font-size: 0.75rem;
+            color: var(--primary);
+            margin-top: 8px;
+            display: inline-block;
+            background: rgba(56, 189, 248, 0.1);
+            padding: 2px 8px;
+            border-radius: 6px;
+        }
+
+        /* ── Step Section ── */
+        .step-card {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 20px;
+            padding: 32px;
+            margin-bottom: 30px;
+            backdrop-filter: blur(16px);
+            box-shadow: 0 10px 30px -10px rgba(0,0,0,0.5);
+            transition: border-color 0.25s ease;
+            position: relative;
+        }
+
+        .step-card:hover {
+            border-color: rgba(255, 255, 255, 0.15);
+        }
+
+        .step-header {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            margin-bottom: 22px;
+        }
+
+        .step-number {
+            width: 44px;
+            height: 44px;
+            border-radius: 12px;
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            color: #050811;
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            font-size: 1.25rem;
+            font-weight: 800;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            box-shadow: 0 4px 15px var(--primary-glow);
+        }
+
+        .step-title-group h2 {
+            font-size: 1.45rem;
+            font-weight: 700;
+            color: #fff;
+        }
+
+        .step-title-group p {
+            font-size: 0.95rem;
+            color: var(--text-muted);
+        }
+
+        .step-content {
+            padding-left: 60px;
+        }
+
+        @media (max-width: 640px) {
+            .step-content {
+                padding-left: 0;
+            }
+        }
+
+        /* ── Code Blocks ── */
+        .code-container {
+            position: relative;
+            margin: 16px 0 20px;
+            border-radius: 12px;
+            overflow: hidden;
+            border: 1px solid var(--code-border);
+            background: var(--code-bg);
+            box-shadow: 0 8px 24px -6px rgba(0,0,0,0.6);
+        }
+
+        .code-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 16px;
+            background: rgba(255, 255, 255, 0.03);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            font-family: 'Fira Code', monospace;
+            font-size: 0.78rem;
+            color: var(--text-dim);
+        }
+
+        pre {
+            padding: 16px;
+            overflow-x: auto;
+            font-family: 'Fira Code', monospace;
+            font-size: 0.88rem;
+            line-height: 1.6;
+            color: #e2e8f0;
+        }
+
+        .copy-btn {
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: #f1f5f9;
+            padding: 5px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.78rem;
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s ease;
+        }
+
+        .copy-btn:hover {
+            background: var(--primary);
+            color: #050811;
+            border-color: var(--primary);
+        }
+
+        .copy-btn.copied {
+            background: var(--accent);
+            color: #050811;
+            border-color: var(--accent);
+        }
+
+        /* ── Alerts / Notice ── */
+        .notice {
+            display: flex;
+            align-items: flex-start;
+            gap: 14px;
+            padding: 16px 20px;
+            border-radius: 12px;
+            margin: 18px 0;
+            font-size: 0.95rem;
+        }
+
+        .notice-info {
+            background: rgba(56, 189, 248, 0.08);
+            border-left: 4px solid var(--primary);
+            color: #bae6fd;
+        }
+
+        .notice-warning {
+            background: rgba(245, 158, 11, 0.08);
+            border-left: 4px solid var(--warning);
+            color: #fde68a;
+        }
+
+        .notice-success {
+            background: rgba(16, 185, 129, 0.08);
+            border-left: 4px solid var(--accent);
+            color: #a7f3d0;
+        }
+
+        .notice-icon {
+            font-size: 1.3rem;
+            flex-shrink: 0;
+            line-height: 1.3;
+        }
+
+        /* ── Tables ── */
+        .table-wrap {
+            overflow-x: auto;
+            margin: 18px 0;
+            border-radius: 12px;
+            border: 1px solid var(--card-border);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.9rem;
+            text-align: left;
+        }
+
+        th {
+            background: rgba(255, 255, 255, 0.03);
+            padding: 12px 18px;
+            color: #fff;
+            font-weight: 600;
+            border-bottom: 1px solid var(--card-border);
+        }
+
+        td {
+            padding: 12px 18px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+            color: var(--text-muted);
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        code {
+            font-family: 'Fira Code', monospace;
+            background: rgba(255, 255, 255, 0.08);
+            color: #38bdf8;
+            padding: 2px 6px;
+            border-radius: 5px;
+            font-size: 0.85em;
+        }
+
+        /* ── Footer ── */
+        footer {
+            text-align: center;
+            margin-top: 60px;
+            color: var(--text-dim);
+            font-size: 0.85rem;
+            border-top: 1px solid var(--card-border);
+            padding-top: 30px;
+        }
+
+        /* Syntax colors */
+        .c-cmd { color: #38bdf8; font-weight: 600; }
+        .c-arg { color: #f472b6; }
+        .c-comment { color: #64748b; font-style: italic; }
+        .c-val { color: #34d399; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+
+    <!-- Header Section -->
+    <header>
+        <div class="badge-group">
+            <span class="badge badge-blue">🚀 Production Deployment</span>
+            <span class="badge badge-purple">🐳 Docker Compose v2</span>
+            <span class="badge badge-green">🧠 Spectra QA Consult MCP</span>
+        </div>
+        <h1>คู่มือการ Deploy ระบบ Thai OCR & Spectra QA Consult</h1>
+        <p class="subtitle">แนวทางการติดตั้ง รัน Service และคอนฟิก Production Linux Server (Ubuntu 22.04 / 24.04 หรือ Debian 12) แบบครบวงจร</p>
+    </header>
+
+    <!-- Architecture Overview -->
+    <div class="arch-grid">
+        <div class="arch-node">
+            <div class="node-icon">🌐</div>
+            <h4>Frontend (Nginx)</h4>
+            <p>Svelte 5 SPA เสิร์ฟผ่าน Nginx ทำ Reverse Proxy และแคช Asset</p>
+            <span class="node-port">Port 5173</span>
+        </div>
+        <div class="arch-node">
+            <div class="node-icon">⚙️</div>
+            <h4>Backend API</h4>
+            <p>Flask API รันด้วย Gunicorn (2 Workers, 4 Threads) พร้อมโมดูล OCR/QA</p>
+            <span class="node-port">Port 8125</span>
+        </div>
+        <div class="arch-node">
+            <div class="node-icon">🗄️</div>
+            <h4>QA Agent DB</h4>
+            <p>PostgreSQL 16 + pgvector สำหรับเก็บ Golden Reference และ Semantic Search RAG</p>
+            <span class="node-port">Port 8123:5432</span>
+        </div>
+        <div class="arch-node">
+            <div class="node-icon">🔐</div>
+            <h4>Auth DB</h4>
+            <p>PostgreSQL 16 สำหรับจัดการข้อมูลผู้ใช้, สิทธิ์เข้าถึง, และ Audit Logs</p>
+            <span class="node-port">Port 8124:5432</span>
+        </div>
+        <div class="arch-node">
+            <div class="node-icon">🤖</div>
+            <h4>MCP Server</h4>
+            <p>Spectra QA Consult Server ผ่านมาตรฐาน FastMCP SSE Transport</p>
+            <span class="node-port">Port 8000 (SSE)</span>
+        </div>
+    </div>
+
+    <!-- Step 1: Server Prep -->
+    <div class="step-card">
+        <div class="step-header">
+            <div class="step-number">1</div>
+            <div class="step-title-group">
+                <h2>เตรียมความพร้อม Linux Server & ติดตั้ง Docker</h2>
+                <p>ติดตั้ง Docker Engine, Docker Compose Plugin และเปิดพอร์ต Firewall ที่จำเป็น</p>
+            </div>
+        </div>
+        <div class="step-content">
+            <p>เชื่อมต่อไปยัง Linux Server ของคุณผ่าน SSH แล้วรันคำสั่งติดตั้ง Docker Engine อย่างเป็นทางการ:</p>
+            
+            <div class="code-container">
+                <div class="code-header">
+                    <span>bash (SSH Terminal)</span>
+                    <button class="copy-btn" onclick="copyCode(this)">📋 คัดลอกคำสั่ง</button>
+                </div>
+                <pre><code><span class="c-comment"># 1. อัปเดตแพ็กเกจระบบ</span>
+sudo apt-get update && sudo apt-get upgrade -y
+
+<span class="c-comment"># 2. ติดตั้งเครื่องมือพื้นฐาน</span>
+sudo apt-get install -y ca-certificates curl gnupg lsb-release git
+
+<span class="c-comment"># 3. ติดตั้ง Docker และ Docker Compose Plugin</span>
+curl -fsSL https://get.docker.com -o get-docker.sh
+sudo sh get-docker.sh
+
+<span class="c-comment"># 4. อนุญาตให้ User รัน Docker โดยไม่ต้องพิมพ์ sudo (แทนที่ $USER ด้วย user ของคุณ)</span>
+sudo usermod -aG docker $USER
+newgrp docker
+
+<span class="c-comment"># 5. ทดสอบว่า Docker พร้อมใช้งาน</span>
+docker compose version</code></pre>
+            </div>
+
+            <div class="notice notice-info">
+                <div class="notice-icon">🛡️</div>
+                <div>
+                    <strong>การตั้งค่า Firewall:</strong> เปิดพอร์ตที่จำเป็นตามระบบปฏิบัติการของ Server (รันในฐานะ root ไม่ต้องพิมพ์ sudo):
+                    
+                    <p style="margin: 8px 0 4px; font-weight: 600; color: #38bdf8;">แบบที่ A: สำหรับ CentOS / AlmaLinux / Rocky Linux / RHEL (ใช้ firewall-cmd)</p>
+                    <div class="code-container" style="margin: 4px 0 12px;">
+                        <pre><code>firewall-cmd --permanent --add-port=5173/tcp  <span class="c-comment"># Web Frontend UI</span>
+firewall-cmd --permanent --add-port=8125/tcp  <span class="c-comment"># Backend API (Direct / Healthcheck)</span>
+firewall-cmd --permanent --add-port=8123/tcp  <span class="c-comment"># QA Agent DB (pgvector)</span>
+firewall-cmd --permanent --add-port=8124/tcp  <span class="c-comment"># Spectra Auth DB</span>
+firewall-cmd --permanent --add-port=8000/tcp  <span class="c-comment"># MCP SSE Endpoint</span>
+firewall-cmd --reload
+firewall-cmd --list-ports                     <span class="c-comment"># ตรวจสอบพอร์ตที่เปิด</span></code></pre>
+                    </div>
+
+                    <p style="margin: 8px 0 4px; font-weight: 600; color: #34d399;">แบบที่ B: สำหรับ Ubuntu / Debian (ใช้ UFW)</p>
+                    <div class="code-container" style="margin: 4px 0 0;">
+                        <pre><code><span class="c-comment"># หากเครื่องยังไม่มี ufw ให้ติดตั้งก่อน: apt install -y ufw</span>
+ufw allow 22/tcp    <span class="c-comment"># SSH (อย่าลืมเปิดก่อน enable)</span>
+ufw allow 5173/tcp  <span class="c-comment"># Web Frontend UI</span>
+ufw allow 8125/tcp  <span class="c-comment"># Backend API (Direct / Healthcheck)</span>
+ufw allow 8123/tcp  <span class="c-comment"># QA Agent DB (pgvector)</span>
+ufw allow 8124/tcp  <span class="c-comment"># Spectra Auth DB</span>
+ufw allow 8000/tcp  <span class="c-comment"># MCP SSE Endpoint</span>
+ufw enable
+ufw status</code></pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Step 2: Clone & Env Setup -->
+    <div class="step-card">
+        <div class="step-header">
+            <div class="step-number">2</div>
+            <div class="step-title-group">
+                <h2>Clone Repository & ตั้งค่า Environment (.env)</h2>
+                <p>ดึงซอร์สโค้ดจาก Git และสร้างไฟล์ตั้งค่าความปลอดภัยของระบบ</p>
+            </div>
+        </div>
+        <div class="step-content">
+            <div class="code-container">
+                <div class="code-header">
+                    <span>bash</span>
+                    <button class="copy-btn" onclick="copyCode(this)">📋 คัดลอกคำสั่ง</button>
+                </div>
+                <pre><code><span class="c-comment"># 1. Clone โปรเจกต์ลงมายัง Server</span>
+git clone https://github.com/AkradTTT08/OCR-Document.git
+cd OCR-Document
+
+<span class="c-comment"># 2. สร้างไฟล์ .env จากแม่แบบ .env.example</span>
+cp .env.example .env
+
+<span class="c-comment"># 3. เปิดไฟล์ .env ขึ้นมาแก้ไข</span>
+nano .env</code></pre>
+            </div>
+
+            <p><strong>ตัวแปรสำคัญในไฟล์ <code>.env</code> ที่ต้องกำหนดค่าจริง:</strong></p>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ชื่อตัวแปร (Key)</th>
+                            <th>คำอธิบาย</th>
+                            <th>ตัวอย่างค่า</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>GOOGLE_API_KEY</code></td>
+                            <td>API Key ของ Gemini จาก Google AI Studio (จำเป็นสำหรับ Vision OCR & QA Reasoning)</td>
+                            <td><code>AIzaSy...</code></td>
+                        </tr>
+                        <tr>
+                            <td><code>GEMINI_MODEL</code></td>
+                            <td>โมเดล Gemini ที่ต้องการใช้งาน</td>
+                            <td><code>gemini-2.5-flash</code></td>
+                        </tr>
+                        <tr>
+                            <td><code>GMAIL_USER</code></td>
+                            <td>อีเมล Gmail สำหรับส่งรายงานผล QA อัตโนมัติ</td>
+                            <td><code>your_email@gmail.com</code></td>
+                        </tr>
+                        <tr>
+                            <td><code>GMAIL_APP_PASSWORD</code></td>
+                            <td>App Password 16 ตัวอักษร (สร้างจาก Google Account Security)</td>
+                            <td><code>xxxx yyyy zzzz wwww</code></td>
+                        </tr>
+                        <tr>
+                            <td><code>SECRET_KEY</code></td>
+                            <td>คีย์สำหรับเข้ารหัส Session ของ Flask Authentication</td>
+                            <td>สร้าง string สุ่มยาว 32+ ตัว</td>
+                        </tr>
+                        <tr>
+                            <td><code>FRONTEND_PORT</code></td>
+                            <td>พอร์ตของ Web Frontend UI (เข้าใช้งานผ่าน Browser)</td>
+                            <td><code>5173</code></td>
+                        </tr>
+                        <tr>
+                            <td><code>BACKEND_PORT</code></td>
+                            <td>พอร์ตของ Backend API Service (Flask / Gunicorn)</td>
+                            <td><code>8125</code></td>
+                        </tr>
+                        <tr>
+                            <td><code>DB_PORT</code></td>
+                            <td>พอร์ตของ QA Agent Database (pgvector)</td>
+                            <td><code>8123</code></td>
+                        </tr>
+                        <tr>
+                            <td><code>AUTH_DB_PORT</code></td>
+                            <td>พอร์ตของ User Authentication & Audit Database</td>
+                            <td><code>8124</code></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Step 3: Build and Run -->
+    <div class="step-card">
+        <div class="step-header">
+            <div class="step-number">3</div>
+            <div class="step-title-group">
+                <h2>Build Image & เริ่มทำงาน Container ด้วย Docker Compose</h2>
+                <p>สร้าง Container ทั้งหมดและเริ่มทำงานในโหมด Background</p>
+            </div>
+        </div>
+        <div class="step-content">
+            <p>สั่งให้ Docker Compose คอมไพล์ Frontend, ติดตั้ง Dependencies ของ Backend และเริ่มรัน Services ทั้งหมด:</p>
+
+            <div class="code-container">
+                <div class="code-header">
+                    <span>bash</span>
+                    <button class="copy-btn" onclick="copyCode(this)">📋 คัดลอกคำสั่ง</button>
+                </div>
+                <pre><code><span class="c-comment"># สั่ง Build และ Start Container ในโหมด Detached</span>
+docker compose up -d --build</code></pre>
+            </div>
+
+            <p>ตรวจสอบสถานะของ Container ทั้งหมดว่าขึ้นเป็น <code>Up (healthy)</code> หรือไม่:</p>
+
+            <div class="code-container">
+                <div class="code-header">
+                    <span>bash</span>
+                    <button class="copy-btn" onclick="copyCode(this)">📋 คัดลอกคำสั่ง</button>
+                </div>
+                <pre><code>docker compose ps</code></pre>
+            </div>
+
+            <div class="notice notice-success">
+                <div class="notice-icon">✅</div>
+                <div>
+                    เมื่อคำสั่งเสร็จสิ้น จะมี Container ทำงานอยู่ 5 ตัว:
+                    <br>• <code>qa_agent_db</code> &bull; <code>spectra_auth_db</code> &bull; <code>spectra_backend</code> &bull; <code>spectra_frontend</code> &bull; <code>spectra_mcp_server</code>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Step 4: Bootstrap Database -->
+    <div class="step-card">
+        <div class="step-header">
+            <div class="step-number">4</div>
+            <div class="step-title-group">
+                <h2>สร้างโครงสร้าง Database เริ่มต้น (Bootstrap Script)</h2>
+                <p>รันสคริปต์อัตโนมัติเพื่อเปิดใช้งาน Vector Extension, สร้างตารางทั้งหมด และบัญชีผู้ดูแลระบบ</p>
+            </div>
+        </div>
+        <div class="step-content">
+            <p>รันคำสั่ง Bootstrap Database ภายใน Container Backend:</p>
+
+            <div class="code-container">
+                <div class="code-header">
+                    <span>bash</span>
+                    <button class="copy-btn" onclick="copyCode(this)">📋 คัดลอกคำสั่ง</button>
+                </div>
+                <pre><code><span class="c-comment"># เรียกสคริปต์สร้าง Database Schema และ Admin User</span>
+docker compose exec backend python scripts/init_production_db.py</code></pre>
+            </div>
+
+            <div class="notice notice-info">
+                <div class="notice-icon">🔑</div>
+                <div>
+                    <strong>ข้อมูลเข้าสู่ระบบเริ่มต้น (Default Admin Credentials):</strong>
+                    <br>• <strong>Username / Email:</strong> <code>admin@domain.com</code>
+                    <br>• <strong>Password:</strong> <code>password123</code>
+                    <br><em>(⚠️ แนะนำให้เปลี่ยนรหัสผ่านทันทีในหน้า Profile หลังเข้าใช้งานครั้งแรก)</em>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Step 5: Verify & Access -->
+    <div class="step-card">
+        <div class="step-header">
+            <div class="step-number">5</div>
+            <div class="step-title-group">
+                <h2>ทดสอบการเข้าใช้งาน & ตรวจสอบ Log</h2>
+                <p>เปิดเข้าใช้งานระบบผ่านเบราว์เซอร์และทดสอบความสมบูรณ์</p>
+            </div>
+        </div>
+        <div class="step-content">
+            <p>1. เปิดเบราว์เซอร์แล้วเข้าใช้งานผ่าน URL:</p>
+            <div class="code-container">
+                <pre><code>http://&lt;IP_SERVER_ของคุณ&gt;:5173</code></pre>
+            </div>
+
+            <p>2. ตรวจสอบ Endpoint สุขภาพของ Backend (Healthcheck API):</p>
+            <div class="code-container">
+                <pre><code># ตรวจสอบตรงผ่าน Backend (Port 8125)
+http://&lt;IP_SERVER_ของคุณ&gt;:8125/api/health
+
+# หรือตรวจสอบผ่าน Web Frontend Proxy (Port 5173)
+http://&lt;IP_SERVER_ของคุณ&gt;:5173/api/health</code></pre>
+            </div>
+
+            <p>3. หากต้องการดู Live Log ของระบบเพื่อตรวจสอบความผิดพลาด:</p>
+            <div class="code-container">
+                <div class="code-header">
+                    <span>bash</span>
+                    <button class="copy-btn" onclick="copyCode(this)">📋 คัดลอกคำสั่ง</button>
+                </div>
+                <pre><code><span class="c-comment"># ดู Log ทั้งหมดแบบ Realtime</span>
+docker compose logs -f
+
+<span class="c-comment"># ดูเฉพาะ Log ของ Backend API</span>
+docker compose logs -f backend
+
+<span class="c-comment"># ดูเฉพาะ Log ของ MCP Server</span>
+docker compose logs -f mcp_server</code></pre>
+            </div>
+        </div>
+    </div>
+
+    <!-- Step 6: Connect Claude to Server MCP -->
+    <div class="step-card">
+        <div class="step-header">
+            <div class="step-number">6</div>
+            <div class="step-title-group">
+                <h2>เชื่อมต่อ Claude Desktop เข้ากับ Server ผ่าน MCP SSE</h2>
+                <p>กำหนดค่า Claude Desktop บนคอมพิวเตอร์ของคุณให้เชื่อมต่อกับ MCP Server บน Linux</p>
+            </div>
+        </div>
+        <div class="step-content">
+            <p>เปิดไฟล์ <code>%APPDATA%\Claude\claude_desktop_config.json</code> บนเครื่องคอมพิวเตอร์ของคุณ แล้วเพิ่ม MCP Server ชี้ไปยัง Server IP:</p>
+
+            <div class="code-container">
+                <div class="code-header">
+                    <span>json (claude_desktop_config.json)</span>
+                    <button class="copy-btn" onclick="copyCode(this)">📋 คัดลอก JSON</button>
+                </div>
+                <pre><code>{
+  "mcpServers": {
+    "spectra-qa-remote": {
+      "command": "node",
+      "args": [
+        "d:/OCR-Github/OCR-Document/mcp-proxy/mcp-proxy.js",
+        "http://&lt;IP_SERVER_ของคุณ&gt;:8000/sse"
+      ]
+    }
+  }
+}</code></pre>
+            </div>
+        </div>
+    </div>
+
+    <!-- Maintenance & Useful Commands -->
+    <div class="step-card">
+        <div class="step-header">
+            <div class="step-number">7</div>
+            <div class="step-title-group">
+                <h2>คำสั่งที่เป็นประโยชน์ในการดูแลระบบ (Maintenance Commands)</h2>
+                <p>คำสั่งสำหรับการอัปเดตโค้ด, การสำรองข้อมูล Database และการ Restart Service</p>
+            </div>
+        </div>
+        <div class="step-content">
+            <div class="code-container">
+                <div class="code-header">
+                    <span>bash (Maintenance Cheat Sheet)</span>
+                    <button class="copy-btn" onclick="copyCode(this)">📋 คัดลอกคำสั่ง</button>
+                </div>
+                <pre><code><span class="c-comment"># ── 1. อัปเดตโค้ดใหม่จาก Git และ Rebuild ──</span>
+git pull origin main
+docker compose up -d --build
+
+<span class="c-comment"># ── 2. สั่ง Restart ทุก Service ──</span>
+docker compose restart
+
+<span class="c-comment"># ── 3. ปิดระบบทั้งหมด (ข้อมูลยังคงอยู่บน Volume) ──</span>
+docker compose down
+
+<span class="c-comment"># ── 4. สำรองข้อมูล Database (Backup pgvector & Auth) ──</span>
+docker compose exec qa_agent_db pg_dump -U qa_admin qa_agent_db > backup_qa_$(date +%Y%m%d).sql
+docker compose exec spectra_auth_db pg_dump -U postgres postgres > backup_auth_$(date +%Y%m%d).sql
+
+<span class="c-comment"># ── 5. ล้าง Cache ขยะของ Docker ที่ไม่ได้ใช้งาน ──</span>
+docker system prune -f</code></pre>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer>
+        <p>Spectra QA & Thai OCR Document Analysis System &bull; Production Server Deployment Guide &bull; 2026</p>
+    </footer>
+
+</div>
+
+<script>
+function copyCode(btn) {
+    const codeBlock = btn.closest('.code-container').querySelector('code');
+    const text = codeBlock.innerText;
+    
+    navigator.clipboard.writeText(text).then(() => {
+        const originalText = btn.innerHTML;
+        btn.innerHTML = '✓ คัดลอกแล้ว!';
+        btn.classList.add('copied');
+        
+        setTimeout(() => {
+            btn.innerHTML = originalText;
+            btn.classList.remove('copied');
+        }, 2200);
+    }).catch(err => {
+        console.error('Failed to copy: ', err);
+    });
+}
+</script>
+
+</body>
+</html>

@@ -53,7 +53,8 @@ CORS(app)
 # ตั้งค่า upload
 BASE_DIR = Path(__file__).parent.parent
 UPLOAD_FOLDER = BASE_DIR / 'uploads'
-FRONTEND_FOLDER = BASE_DIR / 'frontend'
+SVELTE_DIST = BASE_DIR / 'svelte-app' / 'dist'
+FRONTEND_FOLDER = SVELTE_DIST if SVELTE_DIST.exists() else (BASE_DIR / 'frontend')
 ALLOWED_EXTENSIONS = {'pdf'}
 MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50 MB
 

@@ -32,10 +32,9 @@ RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTr
 COPY backend/ ./backend/
 COPY data/ ./data/
 COPY fonts/ ./fonts/
-COPY frontend/ ./frontend/
 
-# สร้าง directories ที่ต้องการ
-RUN mkdir -p uploads/cache
+# สร้าง directories ที่ต้องการสำหรับ runtime
+RUN mkdir -p uploads/cache uploads/attachments uploads/avatars uploads/kb_images uploads/wireframes reports
 
 # ตั้งค่า POPPLER_PATH สำหรับ Linux (poppler-utils ติดตั้งใน /usr/bin)
 ENV POPPLER_PATH=/usr/bin
@@ -50,4 +49,6 @@ EXPOSE 5000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:5000/api/health || exit 1
 
-CMD ["python", "app.py"]
+# สามารถรันผ่าน Gunicorn สำหรับ Production หรือ python app.py
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "2", "--threads", "4", "--timeout", "180", "app:app"]
+

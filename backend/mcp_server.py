@@ -227,7 +227,7 @@ def get_qa_skills(skill_id: str = None) -> str:
         
         if skill_id:
             cur.execute(
-                "SELECT skill_id, skill_name, description, markdown_instructions, target_doc_type "
+                "SELECT skill_id, skill_name, skill_description, markdown_instructions, target_doc_type "
                 "FROM agent_skills WHERE skill_id::text = %s OR skill_name ILIKE %s LIMIT 1",
                 (skill_id, f"%{skill_id}%")
             )
@@ -244,7 +244,7 @@ def get_qa_skills(skill_id: str = None) -> str:
                 res = {"status": "NOT_FOUND", "message": f"Skill '{skill_id}' not found."}
         else:
             cur.execute(
-                "SELECT skill_id, skill_name, description, target_doc_type "
+                "SELECT skill_id, skill_name, skill_description, target_doc_type "
                 "FROM agent_skills WHERE is_active = TRUE ORDER BY skill_name ASC;"
             )
             rows = cur.fetchall()

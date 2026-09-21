@@ -21,7 +21,18 @@ backend_startup.log
 uploads/*
 !uploads/.gitkeep
 out.txt
+backend/temp/
+scratch/
+test_ollama.py
 
+# Generated Reports
+reports/*
+!reports/.gitkeep
+
+# Executables and Binaries
+*.exe
+ngrok
+ngrok.exe
 
 # JavaScript / Node
 node_modules/
