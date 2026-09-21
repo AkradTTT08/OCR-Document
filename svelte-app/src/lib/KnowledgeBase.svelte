@@ -10,7 +10,7 @@
     { value: 'Inactive', label: 'Inactive', icon: '🔴' }
   ];
 
-  const API = 'http://localhost:5000/api';
+  const API = '/api';
 
   // ── State ──
   let stats = null;
@@ -66,7 +66,7 @@
 
   async function submitAIFeedback() {
     try {
-      const res = await fetch("http://127.0.0.1:5000/api/kb/feedback", {
+      const res = await fetch("/api/kb/feedback", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -853,7 +853,7 @@
                       <div style="position: relative; background: #fff; padding: 4px; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
                         <div style="position: absolute; top: 8px; left: 8px; background: rgba(0,0,0,0.6); color: #fff; font-size: 11px; padding: 2px 6px; border-radius: 4px; backdrop-filter: blur(4px);">หน้า {i + 1}</div>
                         <img 
-                          src={`http://localhost:5000/api/kb/view/${docDetail.document.id}/${i + 1}`} 
+                          src={`/api/kb/view/${docDetail.document.id}/${i + 1}`} 
                           alt={`หน้า ${i + 1}`} 
                           style="width: 100%; border-radius: 4px; display: block;"
                         />

@@ -111,6 +111,12 @@ function installFetchInterceptor(token) {
   }
 
   window.fetch = function (input, init = {}) {
+    if (typeof input === 'string') {
+      input = input.replace(/^http:\/\/(localhost|127\.0\.0\.1):5000/i, '');
+    } else if (input instanceof Request) {
+      const cleanUrl = input.url.replace(/^http:\/\/(localhost|127\.0\.0\.1):5000/i, '');
+      input = new Request(cleanUrl, input);
+    }
     // Merge Authorization header
     const headers = new Headers(init.headers || {});
     if (!headers.has('Authorization')) {

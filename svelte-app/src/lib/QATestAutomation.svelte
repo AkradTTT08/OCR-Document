@@ -15,7 +15,7 @@
   
   onMount(async () => {
     try {
-      const res = await fetch('http://127.0.0.1:5000/api/projects');
+      const res = await fetch('/api/projects');
       if (res.ok) {
         const data = await res.json();
         projects = data.projects || [];
@@ -44,7 +44,7 @@
   async function loadFlowAnalysis(projectId) {
     flowAnalysisData = null;
     try {
-      const res = await fetch(`http://localhost:5000/api/agent/flow_analysis?project_id=${projectId}`);
+      const res = await fetch(`/api/agent/flow_analysis?project_id=${projectId}`);
       if (res.ok) {
         const data = await res.json();
         if (data.success && data.analysis) {
@@ -59,7 +59,7 @@
   async function loadRequirements(projectId) {
     isLoading = true;
     try {
-      const res = await fetch(`http://127.0.0.1:5000/api/requirements?project_id=${projectId}`);
+      const res = await fetch(`/api/requirements?project_id=${projectId}`);
       if (res.ok) {
         const data = await res.json();
         requirements = data.requirements || [];
@@ -73,7 +73,7 @@
 
   async function loadProjectDocuments(projectId) {
     try {
-      const res = await fetch(`http://127.0.0.1:5000/api/kb/documents?project_id=${projectId}`);
+      const res = await fetch(`/api/kb/documents?project_id=${projectId}`);
       if (res.ok) {
         const data = await res.json();
         projectDocuments = data.documents || [];
@@ -90,7 +90,7 @@
     isSyncingReqs = true;
     try {
       toast("กำลังสกัดและซิงค์ Requirement จากเอกสารในโครงการ...", "info");
-      const res = await fetch("http://127.0.0.1:5000/api/requirements/sync-from-project", {
+      const res = await fetch("/api/requirements/sync-from-project", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ project_id: pid })
@@ -146,7 +146,7 @@
     
     try {
       const pid = $selectedProjectStore?.id || $selectedProjectStore?.project_id;
-      const res = await fetch('http://127.0.0.1:5000/api/agent/explore', {
+      const res = await fetch('/api/agent/explore', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -188,7 +188,7 @@
     alignError = null;
     try {
       const pid = $selectedProjectStore?.id || $selectedProjectStore?.project_id;
-      const res = await fetch('http://127.0.0.1:5000/api/agent/align', {
+      const res = await fetch('/api/agent/align', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -221,7 +221,7 @@
     generateError = null;
     try {
       const pid = $selectedProjectStore?.id || $selectedProjectStore?.project_id;
-      const res = await fetch('http://127.0.0.1:5000/api/agent/generate-test', {
+      const res = await fetch('/api/agent/generate-test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -250,7 +250,7 @@
   function downloadAllTests() {
     const pid = $selectedProjectStore?.id || $selectedProjectStore?.project_id;
     if (pid) {
-      window.open(`http://127.0.0.1:5000/api/agent/download-tests/${pid}`, '_blank');
+      window.open(`/api/agent/download-tests/${pid}`, '_blank');
     }
   }
 
@@ -274,7 +274,7 @@
     healResult = null;
     healError = null;
     try {
-      const res = await fetch('http://127.0.0.1:5000/api/agent/run-test', {
+      const res = await fetch('/api/agent/run-test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ file_name: selectedTestSuite?.saved_path || generateResult?.file_name })
@@ -299,7 +299,7 @@
     healResult = null;
     healError = null;
     try {
-      const res = await fetch('http://127.0.0.1:5000/api/agent/heal-test', {
+      const res = await fetch('/api/agent/heal-test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 

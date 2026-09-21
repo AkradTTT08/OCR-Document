@@ -8,7 +8,7 @@
     { value: 'Inactive', label: 'Inactive', icon: '🔴' }
   ];
 
-  const API = 'http://localhost:5000/api';
+  const API = '/api';
 
   let projects = [];
   let documents = [];

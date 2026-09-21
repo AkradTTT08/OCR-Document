@@ -24,7 +24,7 @@
 
   onMount(async () => {
     try {
-      const resProjects = await fetch("http://127.0.0.1:5000/api/projects");
+      const resProjects = await fetch("/api/projects");
       if (resProjects.ok) {
         const pData = await resProjects.json();
         projects = pData.projects || [];
@@ -143,7 +143,7 @@
     try {
       const projectId = selectedProjectObj.id || selectedProjectObj.project_id;
       
-      const response = await fetch("http://127.0.0.1:5000/api/research/chat", {
+      const response = await fetch("/api/research/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         signal: abortController.signal,

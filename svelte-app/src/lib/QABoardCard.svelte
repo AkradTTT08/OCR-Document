@@ -18,7 +18,7 @@
 
   onMount(async () => {
     try {
-      const res = await fetch("http://127.0.0.1:5000/api/projects");
+      const res = await fetch("/api/projects");
       if (res.ok) {
         const data = await res.json();
         projects = data.projects || [];
@@ -94,7 +94,7 @@
     if (!selectedProjectId) return;
     isLoadingLive = true;
     try {
-      const res = await fetch(`http://localhost:5000/api/projects/${selectedProjectId}/cards/live`);
+      const res = await fetch(`/api/projects/${selectedProjectId}/cards/live`);
       const data = await res.json();
       if (data.success) {
         liveCards = data.cards || [];
@@ -123,7 +123,7 @@
     if (!selectedProjectId) return;
     isLoadingSaved = true;
     try {
-      const res = await fetch(`http://localhost:5000/api/projects/${selectedProjectId}/cards`);
+      const res = await fetch(`/api/projects/${selectedProjectId}/cards`);
       const data = await res.json();
       if (data.success) {
         savedCards = data.cards || [];
@@ -194,7 +194,7 @@
     isSavingSelected = true;
     toast(`กำลังบันทึก ${chosenCards.length} Card เข้าโครงการ & RAG...`, "info");
     try {
-      const res = await fetch(`http://localhost:5000/api/projects/${selectedProjectId}/cards/save-selected`, {
+      const res = await fetch(`/api/projects/${selectedProjectId}/cards/save-selected`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cards: chosenCards })
@@ -219,7 +219,7 @@
     isSavingSelected = true;
     toast(`กำลังบันทึก "${card.title}" เข้าโครงการ & RAG...`, "info");
     try {
-      const res = await fetch(`http://localhost:5000/api/projects/${selectedProjectId}/cards/save-selected`, {
+      const res = await fetch(`/api/projects/${selectedProjectId}/cards/save-selected`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cards: [card] })
@@ -251,7 +251,7 @@
 
     const cardId = card.saved_id || card.id;
     try {
-      const res = await fetch(`http://localhost:5000/api/projects/${selectedProjectId}/cards/${cardId}`, {
+      const res = await fetch(`/api/projects/${selectedProjectId}/cards/${cardId}`, {
         method: "DELETE"
       });
       const data = await res.json();
@@ -276,7 +276,7 @@
       return;
     }
     try {
-      const res = await fetch(`http://localhost:5000/api/projects/${selectedProjectId}/cards/clear-all`, {
+      const res = await fetch(`/api/projects/${selectedProjectId}/cards/clear-all`, {
         method: "POST"
       });
       const data = await res.json();
@@ -318,7 +318,7 @@
   async function fetchBoardIntegration() {
     if (!selectedProjectId) return;
     try {
-      const res = await fetch(`http://localhost:5000/api/projects/${selectedProjectId}/board-integration`);
+      const res = await fetch(`/api/projects/${selectedProjectId}/board-integration`);
       const data = await res.json();
       if (data.success && data.integration) {
         currentIntegration = data.integration;
@@ -350,7 +350,7 @@
         github_owner: githubOwner,
         github_repo: githubRepo
       };
-      const res = await fetch(`http://localhost:5000/api/projects/${selectedProjectId}/board-integration/test`, {
+      const res = await fetch(`/api/projects/${selectedProjectId}/board-integration/test`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -382,7 +382,7 @@
         github_owner: githubOwner,
         github_repo: githubRepo
       };
-      const res = await fetch(`http://localhost:5000/api/projects/${selectedProjectId}/board-integration`, {
+      const res = await fetch(`/api/projects/${selectedProjectId}/board-integration`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -671,7 +671,7 @@
 
     const processUrl = (url) => {
       if (url.includes('trello.com/') || url.includes('trello-attachments.s3.amazonaws.com/')) {
-        return `http://localhost:5000/api/projects/${pId}/attachment-proxy?url=${encodeURIComponent(url)}`;
+        return `/api/projects/${pId}/attachment-proxy?url=${encodeURIComponent(url)}`;
       }
       return url;
     };
@@ -753,7 +753,7 @@
       const formData = new FormData();
       formData.append('file', file, file.name || fallbackFilename);
 
-      const res = await fetch(`http://localhost:5000/api/projects/${selectedProjectId}/cards/upload-attachment`, {
+      const res = await fetch(`/api/projects/${selectedProjectId}/cards/upload-attachment`, {
         method: 'POST',
         body: formData
       });
@@ -865,7 +865,7 @@
     const cardId = selectedCard.saved_id || selectedCard.id;
     isSendingComment = true;
     try {
-      const res = await fetch(`http://localhost:5000/api/projects/${selectedProjectId}/cards/${cardId}/comments`, {
+      const res = await fetch(`/api/projects/${selectedProjectId}/cards/${cardId}/comments`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
@@ -965,7 +965,7 @@
 
     // Sync to backend & Trello / GitHub
     try {
-      const res = await fetch(`http://localhost:5000/api/projects/${selectedProjectId}/cards/${cardId}/move`, {
+      const res = await fetch(`/api/projects/${selectedProjectId}/cards/${cardId}/move`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

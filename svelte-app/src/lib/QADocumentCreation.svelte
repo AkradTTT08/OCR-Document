@@ -69,7 +69,7 @@
 
   async function fetchProjects() {
     try {
-      const res = await fetch('http://127.0.0.1:5000/api/projects');
+      const res = await fetch('/api/projects');
       if (res.ok) {
         const data = await res.json();
         projects = data.projects || [];
@@ -85,7 +85,7 @@
 
   async function fetchSkills() {
     try {
-      const res = await fetch('http://localhost:5000/api/skills');
+      const res = await fetch('/api/skills');
       const data = await res.json();
       if (res.ok) {
         skills = data.skills || [];
@@ -98,7 +98,7 @@
   async function fetchKbDocuments(projectId) {
     if (!projectId) return;
     try {
-      const res = await fetch(`http://localhost:5000/api/kb/documents?project_id=${projectId}`);
+      const res = await fetch(`/api/kb/documents?project_id=${projectId}`);
       const data = await res.json();
       if (data.success) {
         kbDocuments = data.documents || [];
@@ -114,7 +114,7 @@
   async function fetchHistory(projectId) {
     if (!projectId) return;
     try {
-      const res = await fetch(`http://localhost:5000/api/agent/generated_documents?project_id=${projectId}`);
+      const res = await fetch(`/api/agent/generated_documents?project_id=${projectId}`);
       const data = await res.json();
       if (data.success) {
         generatedHistory = data.documents || [];
@@ -214,7 +214,7 @@
 
     isSavingToProject = true;
     try {
-      const res = await fetch('http://localhost:5000/api/agent/save_generated_doc_to_project', {
+      const res = await fetch('/api/agent/save_generated_doc_to_project', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -272,7 +272,7 @@
         custom_prompt: customPrompt.trim()
       };
 
-      const res = await fetch('http://localhost:5000/api/agent/create_document', {
+      const res = await fetch('/api/agent/create_document', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -297,7 +297,7 @@
 
   function downloadFile(doc, format = 'pdf') {
     if (doc.status !== 'Completed') return;
-    window.location.href = `http://localhost:5000/api/agent/download_generated_document/${doc.id}?format=${format}`;
+    window.location.href = `/api/agent/download_generated_document/${doc.id}?format=${format}`;
   }
 </script>
 

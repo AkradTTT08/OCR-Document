@@ -74,7 +74,7 @@ export const allGroups = derived(
 
 export async function loadQAHistoryFromDB() {
   try {
-    const res = await fetch("http://127.0.0.1:5000/api/qa_transactions");
+    const res = await fetch("/api/qa_transactions");
     if (res.ok) {
       const data = await res.json();
       if (data.success && data.transactions) {
@@ -92,7 +92,7 @@ export async function loadQAHistoryFromDB() {
 
 export async function loadQAGroupsFromDB() {
   try {
-    const res = await fetch("http://127.0.0.1:5000/api/qa_groups");
+    const res = await fetch("/api/qa_groups");
     if (res.ok) {
       const data = await res.json();
       if (data.success && data.groups) {

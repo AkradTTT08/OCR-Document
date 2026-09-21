@@ -29,7 +29,7 @@
 
         isLoading = true;
         try {
-            const res = await (window.originalFetch || window.fetch)('http://localhost:5000/api/login', {
+            const res = await (window.originalFetch || window.fetch)('/api/login', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ username: email, password })

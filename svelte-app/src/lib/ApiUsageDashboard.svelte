@@ -18,7 +18,7 @@
         error = null;
         try {
             const token = localStorage.getItem('jwt_token');
-            const res = await fetch(`http://127.0.0.1:5000/api/admin/usage?time_filter=${timeFilter}`, {
+            const res = await fetch(`/api/admin/usage?time_filter=${timeFilter}`, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             const data = await res.json();
@@ -30,7 +30,7 @@
             }
             
             // Fetch credit
-            const creditRes = await fetch('http://127.0.0.1:5000/api/admin/credit', {
+            const creditRes = await fetch('/api/admin/credit', {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             if (creditRes.ok) {
@@ -48,7 +48,7 @@
     async function updateCredit() {
         try {
             const token = localStorage.getItem('jwt_token');
-            const res = await fetch('http://127.0.0.1:5000/api/admin/credit', {
+            const res = await fetch('/api/admin/credit', {
                 method: 'POST',
                 headers: { 
                     'Authorization': `Bearer ${token}`,

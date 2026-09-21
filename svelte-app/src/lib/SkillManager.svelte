@@ -62,7 +62,7 @@
   async function fetchSkills() {
     loading = true;
     try {
-      let url = 'http://localhost:5000/api/skills?';
+      let url = '/api/skills?';
       if (search) url += `search=${encodeURIComponent(search)}&`;
       if (filterDocType) url += `target_doc_type=${encodeURIComponent(filterDocType)}&`;
 
@@ -130,7 +130,7 @@
     saving = true;
     try {
       const isNew = !form.skill_id;
-      const url = isNew ? 'http://localhost:5000/api/skills' : `http://localhost:5000/api/skills/${form.skill_id}`;
+      const url = isNew ? '/api/skills' : `/api/skills/${form.skill_id}`;
       const method = isNew ? 'POST' : 'PUT';
 
       const res = await fetch(url, {
@@ -162,7 +162,7 @@
     if (!confirm(`คุณต้องการลบ Skill "${form.skill_name}" ใช่หรือไม่?`)) return;
 
     try {
-      const res = await fetch(`http://localhost:5000/api/skills/${form.skill_id}`, {
+      const res = await fetch(`/api/skills/${form.skill_id}`, {
         method: 'DELETE'
       });
       const data = await res.json();

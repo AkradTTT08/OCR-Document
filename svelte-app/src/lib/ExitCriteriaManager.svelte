@@ -66,7 +66,7 @@
   async function fetchTemplates() {
     loading = true;
     try {
-      let url = 'http://localhost:5000/api/exit-criteria/templates';
+      let url = '/api/exit-criteria/templates';
       const res = await fetch(url);
       const data = await res.json();
       if (res.ok && data.success) {
@@ -88,7 +88,7 @@
   async function selectTemplate(templateId) {
     loading = true;
     try {
-      const res = await fetch(`http://localhost:5000/api/exit-criteria/templates/${templateId}`);
+      const res = await fetch(`/api/exit-criteria/templates/${templateId}`);
       const data = await res.json();
       if (res.ok && data.success) {
         activeTemplate = data.template;
@@ -174,8 +174,8 @@
     try {
       const isNew = !form.template_id;
       const url = isNew 
-        ? 'http://localhost:5000/api/exit-criteria/templates'
-        : `http://localhost:5000/api/exit-criteria/templates/${form.template_id}`;
+        ? '/api/exit-criteria/templates'
+        : `/api/exit-criteria/templates/${form.template_id}`;
       
       const method = isNew ? 'POST' : 'PUT';
 
@@ -234,7 +234,7 @@
       onConfirm: async () => {
         loading = true;
         try {
-          const res = await fetch('http://localhost:5000/api/exit-criteria/reset-universal', { method: 'POST' });
+          const res = await fetch('/api/exit-criteria/reset-universal', { method: 'POST' });
           const data = await res.json();
           if (res.ok && data.success) {
             toast('รีเซ็ตเกณฑ์มาตรฐานกลางเรียบร้อยแล้ว!', 'success');
@@ -259,7 +259,7 @@
       type: 'danger',
       onConfirm: async () => {
         try {
-          const res = await fetch(`http://localhost:5000/api/exit-criteria/templates/${templateId}`, { method: 'DELETE' });
+          const res = await fetch(`/api/exit-criteria/templates/${templateId}`, { method: 'DELETE' });
           const data = await res.json();
           if (res.ok && data.success) {
             toast('ลบ Template เรียบร้อยแล้ว', 'success');

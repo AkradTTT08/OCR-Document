@@ -275,7 +275,7 @@
     checkingSpell = true;
     try {
       toast(`เริ่มตรวจสอบคำผิดหน้า ${activePage.page_number}...`, "info", 2000);
-      const API = "http://localhost:5000/api";
+      const API = "/api";
       const res = await fetch(`${API}/spellcheck`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -340,7 +340,7 @@
     else saveForm.doc_type = 'Other';
     showSaveModal = true;
     try {
-      const res = await fetch("http://localhost:5000/api/projects");
+      const res = await fetch("/api/projects");
       if (res.ok) {
         const data = await res.json();
         projects = data.projects || [];
@@ -362,7 +362,7 @@
     isSaving = true;
     try {
       const markdownText = result.pages.map((p) => p.text).join("\n\n");
-      const res = await fetch("http://localhost:5000/api/kb/ingest", {
+      const res = await fetch("/api/kb/ingest", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -598,7 +598,7 @@
           {#if activePage}
             <div class="page-wrap">
               <img
-                src="http://localhost:5000/api/view/{activePage.session_id}/{activePage.page_number}"
+                src="/api/view/{activePage.session_id}/{activePage.page_number}"
                 alt="Page {activePage.page_number}"
                 class="page-img"
               />

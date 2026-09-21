@@ -18,7 +18,7 @@
     { value: '400', label: '400 DPI (ละเอียด)', icon: '🔍' }
   ];
 
-  const API = 'http://localhost:5000/api';
+  const API = '/api';
 
   // ── State ──
   /** @type {any} */

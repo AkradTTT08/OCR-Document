@@ -38,7 +38,7 @@
 
   onMount(async () => {
     try {
-      const resProjects = await fetch("http://127.0.0.1:5000/api/projects");
+      const resProjects = await fetch("/api/projects");
       if (resProjects.ok) {
         const pData = await resProjects.json();
         projects = pData.projects || [];
@@ -85,7 +85,7 @@
         payload.github_url = githubUrl;
       }
       
-      const response = await fetch("http://127.0.0.1:5000/api/qa/security/scan", {
+      const response = await fetch("/api/qa/security/scan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)

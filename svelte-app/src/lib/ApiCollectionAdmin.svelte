@@ -44,7 +44,7 @@
 
   async function fetchProjects() {
     try {
-      const res = await fetch("http://127.0.0.1:5000/api/projects");
+      const res = await fetch("/api/projects");
       if (res.ok) {
         const data = await res.json();
         projects = data.projects || [];
@@ -67,7 +67,7 @@
     if (!projectId) return;
     isLoading = true;
     try {
-      const res = await fetch(`http://127.0.0.1:5000/api/projects/${projectId}/api-collections`);
+      const res = await fetch(`/api/projects/${projectId}/api-collections`);
       if (res.ok) {
         const data = await res.json();
         apiCollections = data.collections || [];
@@ -110,7 +110,7 @@
       formData.append("file", uploadFile);
       formData.append("project_id", selectedProjectId);
 
-      const res = await fetch("http://127.0.0.1:5000/api/api-collections/upload", {
+      const res = await fetch("/api/api-collections/upload", {
         method: "POST",
         body: formData
       });
@@ -144,7 +144,7 @@
   async function executeDelete() {
     if (itemToDelete) {
       try {
-        const res = await fetch(`http://127.0.0.1:5000/api/api-collections/${itemToDelete}`, {
+        const res = await fetch(`/api/api-collections/${itemToDelete}`, {
           method: "DELETE"
         });
         if (res.ok) {
@@ -175,7 +175,7 @@
     toast(`🚀 กำลังส่ง Ping / Connection Test ไปยัง "${col.name}"...`, "info");
     
     try {
-      const res = await fetch(`http://127.0.0.1:5000/api/api-collections/${col.id}/test`, {
+      const res = await fetch(`/api/api-collections/${col.id}/test`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({})
@@ -265,7 +265,7 @@
     }
 
     try {
-      const res = await fetch("http://127.0.0.1:5000/api/api-collections/manual", {
+      const res = await fetch("/api/api-collections/manual", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -294,14 +294,14 @@
 
   // --- Web API Sniffer / Scraper State ---
   let showSnifferModal = false;
-  let targetSniffUrl = "http://127.0.0.1:5000";
+  let targetSniffUrl = window.location.origin;
   let isSniffing = false;
   let sniffedEndpoints = [];
   let selectedSniffIds = [];
 
   function openSnifferModal() {
     showSnifferModal = true;
-    targetSniffUrl = window.location.origin || "http://127.0.0.1:5000";
+    targetSniffUrl = window.location.origin || "";
     sniffedEndpoints = [];
     selectedSniffIds = [];
     isSniffing = false;
@@ -320,7 +320,7 @@
     toast("🔍 กำลังสแกนหา API Endpoints ที่พร้อมใช้งาน...", "info");
 
     try {
-      const res = await fetch("http://127.0.0.1:5000/api/api-collections/sniff", {
+      const res = await fetch("/api/api-collections/sniff", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -351,7 +351,7 @@
     }
 
     try {
-      const res = await fetch("http://127.0.0.1:5000/api/api-collections/save-sniffed", {
+      const res = await fetch("/api/api-collections/save-sniffed", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

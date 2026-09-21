@@ -62,7 +62,7 @@
     loadOCRHistory();
     // Load projects for sidebar group mapping
     try {
-      const res = await fetch('http://127.0.0.1:5000/api/projects');
+      const res = await fetch('/api/projects');
       if (res.ok) {
         const data = await res.json();
         sidebarProjects = data.projects || [];
@@ -74,7 +74,7 @@
     // Health check polling
     setInterval(async () => {
       try {
-        const res = await fetch('http://127.0.0.1:5000/api/projects', { method: 'GET' });
+        const res = await fetch('/api/projects', { method: 'GET' });
         systemReady = res.ok;
       } catch (e) {
         systemReady = false;
@@ -110,7 +110,7 @@
       return;
     }
     try {
-      const res = await fetch("http://127.0.0.1:5000/api/qa_groups/delete", {
+      const res = await fetch("/api/qa_groups/delete", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -142,7 +142,7 @@
       return;
     }
     try {
-      const res = await fetch(`http://127.0.0.1:5000/api/qa_transactions/${item.id}`, {
+      const res = await fetch(`/api/qa_transactions/${item.id}`, {
         method: "DELETE"
       });
       if (res.ok) {
@@ -241,14 +241,14 @@
         line_id: ''
       };
       myProfileAvatarFile = null;
-      myProfileAvatarPreview = currentAvatar ? `http://localhost:5000${currentAvatar}` : null;
+      myProfileAvatarPreview = currentAvatar ? `${currentAvatar}` : null;
       activeProfileTab = 'general';
 
       const userId = getUserIdFromToken();
       if (userId) {
         try {
           const token = localStorage.getItem('jwt_token');
-          const res = await fetch(`http://localhost:5000/api/users/${userId}`, {
+          const res = await fetch(`/api/users/${userId}`, {
             headers: { 'Authorization': `Bearer ${token}` }
           });
           if (res.ok) {
@@ -261,7 +261,7 @@
               myProfileFormData.linkedin_url = data.user.linkedin_url || '';
               myProfileFormData.line_id = data.user.line_id || '';
               if (data.user.avatar_path) {
-                myProfileAvatarPreview = `http://localhost:5000${data.user.avatar_path}`;
+                myProfileAvatarPreview = `${data.user.avatar_path}`;
               }
             }
           }
@@ -305,7 +305,7 @@
           const token = localStorage.getItem('jwt_token');
           const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` };
           
-          const res = await fetch(`http://localhost:5000/api/users/${userId}`, {
+          const res = await fetch(`/api/users/${userId}`, {
               method: 'PUT',
               headers,
               body: JSON.stringify(myProfileFormData)
@@ -317,7 +317,7 @@
               if (myProfileAvatarFile) {
                   const fd = new FormData();
                   fd.append('avatar', myProfileAvatarFile);
-                  const avaRes = await fetch(`http://localhost:5000/api/users/${userId}/avatar`, {
+                  const avaRes = await fetch(`/api/users/${userId}/avatar`, {
                       method: 'POST',
                       headers: { 'Authorization': `Bearer ${token}` },
                       body: fd
@@ -755,7 +755,7 @@
             </div>
             <div class="avatar" title="{$authDisplayName || $authUser} ({$authRole})">
               {#if $authAvatar}
-                <img src={`http://localhost:5000${$authAvatar}`} alt="Profile" />
+                <img src={`${$authAvatar}`} alt="Profile" />
               {:else}
                 {$authDisplayName ? $authDisplayName.charAt(0).toUpperCase() : ($authUser ? $authUser.charAt(0).toUpperCase() : 'A')}
               {/if}

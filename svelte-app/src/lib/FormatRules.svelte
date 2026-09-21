@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { toast } from './toastStore.js';
   import CustomSelect from './CustomSelect.svelte';
-  const API = 'http://localhost:5000/api';
+  const API = '/api';
 
   const formatRuleOptions = [
     { value: 'preceded_by_space', label: 'ต้องมีช่องว่างข้างหน้า (Preceded by Space)', icon: '⬅️' },

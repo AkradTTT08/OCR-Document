@@ -16,7 +16,7 @@
   async function testNotification() {
     isTesting = true;
     try {
-      const res = await fetch("http://127.0.0.1:5000/api/notifications/test-webhook", {
+      const res = await fetch("/api/notifications/test-webhook", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

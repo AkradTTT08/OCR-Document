@@ -18,7 +18,7 @@
       path: "/api/projects", 
       status: 200, 
       time: "14:28:10",
-      curl: "curl -X GET \"http://localhost:5000/api/projects\" -H \"Authorization: Bearer token_sample\"",
+      curl: "curl -X GET \"/api/projects\" -H \"Authorization: Bearer token_sample\"",
       responseBody: "{\n  \"success\": true,\n  \"projects\": [\n    {\n      \"id\": 1,\n      \"project_code\": \"69A - TIFFA-RGP\",\n      \"name\": \"TIFFA Cargo Import System\"\n    }\n  ]\n}"
     },
     { 
@@ -26,7 +26,7 @@
       path: "/api/login", 
       status: 200, 
       time: "14:28:15",
-      curl: "curl -X POST \"http://localhost:5000/api/login\" -H \"Content-Type: application/json\" -d '{\"username\":\"admin@domain.com\",\"password\":\"••••••••\"}'",
+      curl: "curl -X POST \"/api/login\" -H \"Content-Type: application/json\" -d '{\"username\":\"admin@domain.com\",\"password\":\"••••••••\"}'",
       responseBody: "{\n  \"success\": true,\n  \"token\": \"eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9...\",\n  \"user\": {\n    \"username\": \"admin@domain.com\",\n    \"role\": \"admin\"\n  }\n}"
     },
     { 
@@ -34,7 +34,7 @@
       path: "/api/upload", 
       status: 200, 
       time: "14:28:22",
-      curl: "curl -X POST \"http://localhost:5000/api/upload\" -H \"Content-Type: multipart/form-data\"",
+      curl: "curl -X POST \"/api/upload\" -H \"Content-Type: multipart/form-data\"",
       responseBody: "{\n  \"success\": true,\n  \"filename\": \"cargo_manifest.pdf\",\n  \"pages_processed\": 4\n}"
     },
     { 
@@ -42,7 +42,7 @@
       path: "/api/users", 
       status: 200, 
       time: "14:28:30",
-      curl: "curl -X GET \"http://localhost:5000/api/users\" -H \"Authorization: Bearer token_sample\"",
+      curl: "curl -X GET \"/api/users\" -H \"Authorization: Bearer token_sample\"",
       responseBody: "{\n  \"success\": true,\n  \"users\": [\n    {\n      \"user_id\": 1,\n      \"username\": \"admin@domain.com\",\n      \"role\": \"admin\"\n    }\n  ]\n}"
     }
   ];

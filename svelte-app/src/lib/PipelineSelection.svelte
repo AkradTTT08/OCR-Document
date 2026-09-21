@@ -12,7 +12,7 @@
   async function fetchPipelines() {
     loading = true;
     try {
-      const res = await fetch(`http://127.0.0.1:5000/api/workflows?project_id=${projectId}`);
+      const res = await fetch(`/api/workflows?project_id=${projectId}`);
       if (res.ok) {
         const data = await res.json();
         pipelines = data.workflows || [];
@@ -46,7 +46,7 @@
     if (!confirm(`Are you sure you want to delete pipeline "${pl.name}"?`)) return;
     
     try {
-      const res = await fetch(`http://127.0.0.1:5000/api/workflows/${pl.id}`, {
+      const res = await fetch(`/api/workflows/${pl.id}`, {
         method: 'DELETE'
       });
       if (res.ok) {

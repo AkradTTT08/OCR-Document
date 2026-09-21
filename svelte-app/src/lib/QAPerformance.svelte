@@ -47,7 +47,7 @@
     if ($selectedProjectStore) {
       const pid = $selectedProjectStore.project_id || $selectedProjectStore.id;
       try {
-        const res = await fetch(`http://127.0.0.1:5000/api/kb/documents?project_id=${pid}`);
+        const res = await fetch(`/api/kb/documents?project_id=${pid}`);
         if (res.ok) {
           const data = await res.json();
           kbDocuments = data.documents || [];
@@ -59,7 +59,7 @@
     
     if (analyticSkills.length === 0) {
       try {
-        const res = await fetch(`http://127.0.0.1:5000/api/skills`);
+        const res = await fetch(`/api/skills`);
         if (res.ok) {
           const data = await res.json();
           analyticSkills = data.skills || [];
@@ -281,7 +281,7 @@
 
   onMount(async () => {
     try {
-      const res = await fetch("http://localhost:5000/api/projects");
+      const res = await fetch("/api/projects");
       if (res.ok) {
         const data = await res.json();
         projects = data.projects || [];
@@ -369,7 +369,7 @@
 };`;
     
     let defaultFuncCode = `export default function () {
-  const BASE_URL = 'http://localhost:5000';\n`;
+  const BASE_URL = 'http://localhost:8125';\n`;
 
     if (isScenario) {
       defaultFuncCode += `  // Scenario: Execute multiple endpoints sequentially\n`;

@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte';
-  const API = 'http://localhost:5000/api';
+  const API = '/api';
 
   let stats = null;
   let loading = true;

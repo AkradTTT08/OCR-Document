@@ -56,7 +56,7 @@
     
     currentScreenMockup.wireframe_type = mode;
     try {
-      await fetch('http://localhost:5000/api/agent/update_screen_wireframe', {
+      await fetch('/api/agent/update_screen_wireframe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -86,7 +86,7 @@
     activeWireframeTab = 'figma';
 
     try {
-      const res = await fetch('http://localhost:5000/api/agent/update_screen_wireframe', {
+      const res = await fetch('/api/agent/update_screen_wireframe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -113,7 +113,7 @@
     }
     isSyncingFigma = true;
     try {
-      const res = await fetch('http://localhost:5000/api/agent/figma/sync_frame', {
+      const res = await fetch('/api/agent/figma/sync_frame', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -153,7 +153,7 @@
       formData.append('screen_id', currentScreenMockup.screen_id);
       formData.append('file', file);
 
-      const res = await fetch('http://localhost:5000/api/agent/upload_wireframe_image', {
+      const res = await fetch('/api/agent/upload_wireframe_image', {
         method: 'POST',
         body: formData
       });
@@ -184,7 +184,7 @@
     currentScreenMockup.wireframe_type = 'ai';
     activeWireframeTab = 'ai';
     try {
-      await fetch('http://localhost:5000/api/agent/update_screen_wireframe', {
+      await fetch('/api/agent/update_screen_wireframe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -229,7 +229,7 @@
 
   async function fetchProjects() {
     try {
-      const res = await fetch('http://127.0.0.1:5000/api/projects');
+      const res = await fetch('/api/projects');
       if (res.ok) {
         const data = await res.json();
         projects = data.projects || [];
@@ -246,7 +246,7 @@
   async function fetchAnalysis(projectId) {
     if (!projectId) return;
     try {
-      const res = await fetch(`http://localhost:5000/api/agent/flow_analysis?project_id=${projectId}`);
+      const res = await fetch(`/api/agent/flow_analysis?project_id=${projectId}`);
       const data = await res.json();
       if (data.success && data.analysis) {
         flowData = data.analysis;
@@ -275,7 +275,7 @@
         custom_instructions: customInstructions.trim()
       };
 
-      const res = await fetch('http://localhost:5000/api/agent/generate_flow_analysis', {
+      const res = await fetch('/api/agent/generate_flow_analysis', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -812,7 +812,7 @@
                           </div>
                         </div>
                         <div class="image-display-area" on:click={() => lightboxImage = currentScreenMockup.image_url}>
-                          <img src={`http://localhost:5000${currentScreenMockup.image_url}`} alt="Screen Wireframe Mockup" class="wireframe-img-render" />
+                          <img src={`${currentScreenMockup.image_url}`} alt="Screen Wireframe Mockup" class="wireframe-img-render" />
                         </div>
                       </div>
                     {:else}
@@ -1151,7 +1151,7 @@
           <button class="lightbox-close" on:click={() => lightboxImage = null}>✕ ปิดหน้าต่าง</button>
         </div>
         <div class="lightbox-body">
-          <img src={`http://localhost:5000${lightboxImage}`} alt="Full Resolution Mockup" class="lightbox-img" />
+          <img src={`${lightboxImage}`} alt="Full Resolution Mockup" class="lightbox-img" />
         </div>
       </div>
     </div>

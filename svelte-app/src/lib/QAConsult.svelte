@@ -25,8 +25,8 @@
     try {
       isCheckingCriteria = true;
       const url = projectId 
-        ? `http://127.0.0.1:5000/api/exit-criteria/templates?project_id=${projectId}` 
-        : `http://127.0.0.1:5000/api/exit-criteria/templates`;
+        ? `/api/exit-criteria/templates?project_id=${projectId}` 
+        : `/api/exit-criteria/templates`;
       const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
@@ -48,7 +48,7 @@
   onMount(async () => {
     // Load Skills (separate try/catch so failure won't block projects)
     try {
-      const resSkills = await fetch("http://127.0.0.1:5000/api/skills");
+      const resSkills = await fetch("/api/skills");
       if (resSkills.ok) {
         const data = await resSkills.json();
         skills = (data.skills || []).filter(s =>
@@ -66,7 +66,7 @@
 
     // Load Projects — must always run independently
     try {
-      const resProjects = await fetch("http://127.0.0.1:5000/api/projects");
+      const resProjects = await fetch("/api/projects");
       if (resProjects.ok) {
         const pData = await resProjects.json();
         projects = pData.projects || [];
@@ -140,7 +140,7 @@
     } else {
       const baseName = item.filename ? item.filename.replace(/\.[^/.]+$/, "") : "";
       const safeName = baseName.replace(/[^\w\-.]/g, '_');
-      const computedExcelUrl = `http://127.0.0.1:5000/api/qa_report/download/QA_Report_${safeName}_${item.id}.xlsx`;
+      const computedExcelUrl = `/api/qa_report/download/QA_Report_${safeName}_${item.id}.xlsx`;
 
       scanResult = {
         status: 'success',
@@ -168,7 +168,7 @@
 
   async function loadDocTypes(projectId = null) {
     try {
-      let url = "http://127.0.0.1:5000/api/doc_types";
+      let url = "/api/doc_types";
       if (projectId) url += `?project_id=${projectId}`;
       const res = await fetch(url);
       if (res.ok) {
@@ -292,7 +292,7 @@
     
     // Save to DB via API
     try {
-      const res = await fetch("http://127.0.0.1:5000/api/qa_groups", {
+      const res = await fetch("/api/qa_groups", {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -414,7 +414,7 @@
 
     try {
       // Create a stream request
-      const response = await fetch("http://127.0.0.1:5000/api/qa_consult", {
+      const response = await fetch("/api/qa_consult", {
         method: "POST",
         body: formData,
       });
@@ -490,7 +490,7 @@
   async function executeSendEmail() {
     isSendingEmail = true;
     try {
-      const response = await fetch("http://127.0.0.1:5000/api/qa_send_email", {
+      const response = await fetch("/api/qa_send_email", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

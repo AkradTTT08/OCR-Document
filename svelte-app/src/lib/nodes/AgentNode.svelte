@@ -14,7 +14,7 @@
   onMount(async () => {
     // Load Skills
     try {
-      const resSkills = await fetch("http://127.0.0.1:5000/api/skills");
+      const resSkills = await fetch("/api/skills");
       if (resSkills.ok) {
         const d = await resSkills.json();
         skills = d.skills || [];
@@ -23,7 +23,7 @@
 
     // Load Doc Types
     try {
-      let url = "http://127.0.0.1:5000/api/doc_types";
+      let url = "/api/doc_types";
       if ($selectedProjectStore) {
         const pid = $selectedProjectStore.id || $selectedProjectStore.project_id;
         url += `?project_id=${pid}`;

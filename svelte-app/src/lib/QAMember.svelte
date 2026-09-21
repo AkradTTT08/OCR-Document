@@ -96,7 +96,7 @@
     async function fetchUsers() {
         isLoading = true;
         try {
-            const res = await fetch('http://localhost:5000/api/users', {
+            const res = await fetch('/api/users', {
                 headers: getAuthHeaders()
             });
             const data = await res.json();
@@ -114,7 +114,7 @@
 
     async function fetchProjects() {
         try {
-            const res = await fetch('http://localhost:5000/api/projects');
+            const res = await fetch('/api/projects');
             const data = await res.json();
             if (res.ok && data.success) {
                 allProjects = data.projects || [];
@@ -127,7 +127,7 @@
     async function handleToggleStatus(user) {
         const newStatus = !user.is_active;
         try {
-            const res = await fetch(`http://localhost:5000/api/users/${user.user_id}`, {
+            const res = await fetch(`/api/users/${user.user_id}`, {
                 method: 'PUT',
                 headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
                 body: JSON.stringify({ is_active: newStatus })
@@ -159,7 +159,7 @@
                 confirmModal.show = false;
                 try {
                     const defaultMenus = (newRole === 'admin' ? ADMIN_MENUS : USER_MENUS).map(m => m.id);
-                    const res = await fetch(`http://localhost:5000/api/users/${user.user_id}`, {
+                    const res = await fetch(`/api/users/${user.user_id}`, {
                         method: 'PUT',
                         headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
                         body: JSON.stringify({ 
@@ -195,7 +195,7 @@
             action: async () => {
                 confirmModal.show = false;
                 try {
-                    const res = await fetch(`http://localhost:5000/api/users/${user.user_id}`, {
+                    const res = await fetch(`/api/users/${user.user_id}`, {
                         method: 'DELETE',
                         headers: getAuthHeaders()
                     });
@@ -263,7 +263,7 @@
             allowed_projects: Array.isArray(user.allowed_projects) && user.allowed_projects.length > 0 ? user.allowed_projects : ['all']
         };
         avatarFile = null;
-        avatarPreview = user.avatar_path ? `http://localhost:5000${user.avatar_path}` : null;
+        avatarPreview = user.avatar_path ? `${user.avatar_path}` : null;
         showModal = true;
     }
 
@@ -354,7 +354,7 @@
             return;
         }
 
-        const url = isEditMode ? `http://localhost:5000/api/users/${formData.user_id}` : 'http://localhost:5000/api/users';
+        const url = isEditMode ? `/api/users/${formData.user_id}` : '/api/users';
         const method = isEditMode ? 'PUT' : 'POST';
         
         try {
@@ -372,7 +372,7 @@
                     uploadData.append('avatar', avatarFile);
                     try {
                         const token = localStorage.getItem('jwt_token');
-                        await fetch(`http://localhost:5000/api/users/${userId}/avatar`, {
+                        await fetch(`/api/users/${userId}/avatar`, {
                             method: 'POST',
                             headers: { 'Authorization': `Bearer ${token}` },
                             body: uploadData
@@ -528,7 +528,7 @@
                                 <div class="user-cell">
                                     <div class="avatar" class:online={user.is_active}>
                                         {#if user.avatar_path}
-                                            <img src={`http://localhost:5000${user.avatar_path}`} alt="Avatar" style="width: 100%; height: 100%; object-fit: cover; border-radius: 50%;" />
+                                            <img src={`${user.avatar_path}`} alt="Avatar" style="width: 100%; height: 100%; object-fit: cover; border-radius: 50%;" />
                                         {:else}
                                             {user.display_name ? user.display_name.charAt(0).toUpperCase() : user.username.charAt(0).toUpperCase()}
                                         {/if}

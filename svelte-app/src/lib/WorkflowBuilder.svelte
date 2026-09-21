@@ -39,7 +39,7 @@
 
   onMount(async () => {
     try {
-      const resProjects = await fetch("http://127.0.0.1:5000/api/projects");
+      const resProjects = await fetch("/api/projects");
       if (resProjects.ok) {
         const pData = await resProjects.json();
         projects = pData.projects || [];
@@ -182,7 +182,7 @@
         edges: edges.map(e => ({ source: e.source, target: e.target }))
       };
       
-      const res = await fetch('http://127.0.0.1:5000/api/workflow/execute', {
+      const res = await fetch('/api/workflow/execute', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -209,10 +209,10 @@
         nodes: nodes.map(n => ({ id: n.id, type: n.type, data: n.data, position: n.position })),
         edges: edges.map(e => ({ source: e.source, target: e.target }))
       };
-      let url = 'http://127.0.0.1:5000/api/workflows';
+      let url = '/api/workflows';
       let method = 'POST';
       if (currentWorkflowId) {
-        url = `http://127.0.0.1:5000/api/workflows/${currentWorkflowId}`;
+        url = `/api/workflows/${currentWorkflowId}`;
         method = 'PUT';
       }
       const res = await fetch(url, {
