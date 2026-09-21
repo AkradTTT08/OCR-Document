@@ -280,8 +280,9 @@
   function removeMyAvatar() {
       myProfileAvatarFile = null;
       myProfileAvatarPreview = null;
+      myProfileFormData.avatar_path = '';
       previewImageError = false;
-      toast('ลบรูปภาพโปรไฟล์เรียบร้อยแล้ว', 'info');
+      toast('ลบรูปภาพโปรไฟล์เรียบร้อยแล้ว (กดบันทึกเพื่อยืนยัน)', 'info');
   }
 
   function handleAvatarDrop(e) {
@@ -311,6 +312,31 @@
           const token = localStorage.getItem('jwt_token');
           const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` };
           
+          let newAvatarPath = myProfileFormData.avatar_path;
+
+          // 1) หากผู้ใช้อัปโหลดรูปใหม่ ให้ส่งไฟล์ไปยัง /api/users/:id/avatar ก่อน
+          if (myProfileAvatarFile) {
+              const fd = new FormData();
+              fd.append('avatar', myProfileAvatarFile);
+              const avaRes = await fetch(`/api/users/${userId}/avatar`, {
+                  method: 'POST',
+                  headers: { 'Authorization': `Bearer ${token}` },
+                  body: fd
+              });
+              const avaData = await avaRes.json();
+              if (avaRes.ok && avaData.success) {
+                  newAvatarPath = avaData.avatar_path;
+              } else {
+                  toast(avaData.error || 'Failed to upload avatar image', 'error');
+                  return;
+              }
+          }
+
+          if (newAvatarPath !== undefined) {
+              myProfileFormData.avatar_path = newAvatarPath;
+          }
+          
+          // 2) บันทึกข้อมูลโปรไฟล์ทั้งหมด
           const res = await fetch(`/api/users/${userId}`, {
               method: 'PUT',
               headers,
@@ -319,27 +345,15 @@
           const data = await res.json();
           
           if (res.ok && data.success) {
-              let newAvatarPath = data.user.avatar_path;
-              if (myProfileAvatarFile) {
-                  const fd = new FormData();
-                  fd.append('avatar', myProfileAvatarFile);
-                  const avaRes = await fetch(`/api/users/${userId}/avatar`, {
-                      method: 'POST',
-                      headers: { 'Authorization': `Bearer ${token}` },
-                      body: fd
-                  });
-                  const avaData = await avaRes.json();
-                  if (avaRes.ok && avaData.success) {
-                      newAvatarPath = avaData.avatar_path;
-                  }
-              }
-              
-              localStorage.setItem('auth_display_name', data.user.display_name);
-              if (newAvatarPath) {
-                  localStorage.setItem('auth_avatar_path', newAvatarPath);
+              const finalAvatar = data.user.avatar_path || newAvatarPath;
+              localStorage.setItem('auth_display_name', data.user.display_name || myProfileFormData.display_name);
+              if (finalAvatar) {
+                  localStorage.setItem('auth_avatar_path', finalAvatar);
+              } else {
+                  localStorage.removeItem('auth_avatar_path');
               }
               toast('บันทึกข้อมูลส่วนตัวเรียบร้อยแล้ว!', 'success');
-              setTimeout(() => { window.location.reload(); }, 800);
+              setTimeout(() => { window.location.reload(); }, 600);
           } else {
               toast(data.error || 'Failed to update profile', 'error');
           }

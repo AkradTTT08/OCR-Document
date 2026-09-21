@@ -686,7 +686,7 @@ def upload_avatar(user_id):
         filepath = AVATARS_FOLDER / filename
         file.save(filepath)
         
-        avatar_path = f"/api/avatars/{filename}"
+        avatar_path = f"/uploads/avatars/{filename}"
         
         try:
             from db_ingestion import get_auth_db_connection
