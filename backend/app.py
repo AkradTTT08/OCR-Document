@@ -3987,13 +3987,12 @@ def download_generated_document(doc_id):
             # If pdf_path is missing or not found on disk, generate on-the-fly
             if not file_path or not os.path.exists(file_path):
                 if markdown_content and markdown_content.strip():
-                    from agent_6_doc_creator import render_html_to_pdf
+                    from agent_6_doc_creator import render_html_to_pdf, simple_markdown_to_html
                     import uuid
                     upload_dir = os.path.join(os.getcwd(), 'uploads', 'qa_generated')
                     os.makedirs(upload_dir, exist_ok=True)
                     gen_pdf_path = os.path.join(upload_dir, f"{safe_name}_{uuid.uuid4().hex[:6]}.pdf")
-                    import markdown as md_lib
-                    rendered_body = md_lib.markdown(markdown_content, extensions=['tables'])
+                    rendered_body = simple_markdown_to_html(markdown_content)
                     html_content = f"""<!DOCTYPE html><html><head><meta charset='utf-8'><title>{doc_name}</title><style>body{{font-family:'Segoe UI',Tahoma,sans-serif;padding:24px;font-size:12px;color:#1e293b;line-height:1.5;}} h1{{color:#1e3a8a;border-bottom:2px solid #3b82f6;padding-bottom:6px;}} table{{width:100%;border-collapse:collapse;margin:12px 0;}} th,td{{border:1px solid #cbd5e1;padding:6px 10px;vertical-align:top;}} th{{background:#f1f5f9;font-weight:600;text-align:left;}}</style></head><body>{rendered_body}</body></html>"""
                     if render_html_to_pdf(html_content, gen_pdf_path) and os.path.exists(gen_pdf_path):
                         file_path = gen_pdf_path

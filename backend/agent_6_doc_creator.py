@@ -107,8 +107,83 @@ def render_html_to_pdf(html_content: str, output_path: str):
             with open(output_path, 'wb') as f:
                 f.write(b"%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Count 1/Kids[3 0 R]>>endobj\n3 0 obj<</Type/Page/MediaBox[0 0 595 842]/Parent 2 0 R>>endobj\nxref\n0 4\n0000000000 65535 f \n0000000009 00000 n \n0000000052 00000 n \n0000000101 00000 n \ntrailer<</Size 4/Root 1 0 R>>\nstartxref\n168\n%%EOF")
             return True
-        except:
-            return False
+def simple_markdown_to_html(md_text: str) -> str:
+    """Renders Markdown to HTML with graceful built-in fallback if markdown package is missing."""
+    try:
+        import markdown
+        return markdown.markdown(md_text, extensions=['tables', 'fenced_code', 'toc'])
+    except Exception:
+        pass
+    
+    import re, html
+    lines = md_text.split('\n')
+    html_lines = []
+    in_code_block = False
+    in_table = False
+    
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith('```'):
+            if in_code_block:
+                html_lines.append('</code></pre>')
+                in_code_block = False
+            else:
+                html_lines.append('<pre><code>')
+                in_code_block = True
+            continue
+            
+        if in_code_block:
+            html_lines.append(html.escape(line))
+            continue
+            
+        if stripped.startswith('|') and stripped.endswith('|'):
+            if '---' in stripped:
+                continue
+            cells = [c.strip() for c in stripped.strip('|').split('|')]
+            if not in_table:
+                html_lines.append('<table><thead><tr>')
+                for c in cells:
+                    html_lines.append(f'<th>{html.escape(c)}</th>')
+                html_lines.append('</tr></thead><tbody>')
+                in_table = True
+            else:
+                html_lines.append('<tr>')
+                for c in cells:
+                    html_lines.append(f'<td>{html.escape(c)}</td>')
+                html_lines.append('</tr>')
+            continue
+        elif in_table:
+            html_lines.append('</tbody></table>')
+            in_table = False
+            
+        if stripped.startswith('# '):
+            html_lines.append(f'<h1>{html.escape(stripped[2:])}</h1>')
+        elif stripped.startswith('## '):
+            html_lines.append(f'<h2>{html.escape(stripped[3:])}</h2>')
+        elif stripped.startswith('### '):
+            html_lines.append(f'<h3>{html.escape(stripped[4:])}</h3>')
+        elif stripped.startswith('#### '):
+            html_lines.append(f'<h4>{html.escape(stripped[5:])}</h4>')
+        elif stripped.startswith('- ') or stripped.startswith('* '):
+            html_lines.append(f'<ul><li>{html.escape(stripped[2:])}</li></ul>')
+        elif re.match(r'^\d+\.\s', stripped):
+            item_text = re.sub(r'^\d+\.\s', '', stripped)
+            html_lines.append(f'<ol><li>{html.escape(item_text)}</li></ol>')
+        elif stripped:
+            formatted = html.escape(stripped)
+            formatted = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', formatted)
+            formatted = re.sub(r'\*(.+?)\*', r'<em>\1</em>', formatted)
+            formatted = re.sub(r'`(.+?)`', r'<code>\1</code>', formatted)
+            html_lines.append(f'<p>{formatted}</p>')
+        else:
+            html_lines.append('<br>')
+            
+    if in_code_block:
+        html_lines.append('</code></pre>')
+    if in_table:
+        html_lines.append('</tbody></table>')
+        
+    return '\n'.join(html_lines)
 
 
 def parse_id_list(val):
@@ -288,6 +363,36 @@ The user has provided the following specific guidelines, scenarios, or custom in
 {custom_prompt.strip()}
 """
 
+        # Build prompt for synchronous generation
+        prompt = f"""
+You are an expert Software Architect, Senior Business Analyst, and Technical Writer.
+Your task is to generate a comprehensive, professional {doc_type} document for Project '{project_name}' ({project_code}) named '{doc_name}'.
+You MUST analyze, cross-reference, and synthesize ALL provided Project Knowledge Base documents (TOR, SRS, SDD, previous tests, specs) to ensure 100% technical accuracy and depth.
+
+# Target Document Information
+- Document Name: {doc_name}
+- Document Type: {doc_type}
+- Project: {project_name} ({project_code})
+
+# Framework & Guidelines (Skill: {skill_name})
+Please follow these structure and formatting instructions strictly:
+{instructions}
+
+{custom_prompt_section}
+
+{primary_ref_context}
+
+{all_docs_section}
+
+{structured_reqs_section}
+
+# Generation & Content Instructions:
+1. Synthesize all documents in the project knowledge base to create a complete, in-depth, production-grade {doc_type}.
+2. Use professional Markdown formatting with title, executive overview, detailed sections, numbered requirement tables, user stories/use cases, workflows, data specifications, non-functional requirements, and testability criteria.
+3. DO NOT leave placeholder text or brief outlines — write the full, comprehensive content in clear Thai / English as appropriate.
+4. Output the complete document directly in clean, structured Markdown.
+"""
+
         # 3. Call Gemini
         doc_content, usage_metadata = call_gemini(prompt)
         
@@ -298,7 +403,7 @@ The user has provided the following specific guidelines, scenarios, or custom in
             except Exception as log_err:
                 logger.warning(f"Failed to log API usage in Agent 6: {log_err}")
 
-        doc_content = doc_content.strip()
+        doc_content = (doc_content or "").strip()
         
         if doc_content.startswith("```markdown"):
             doc_content = doc_content[11:]
@@ -336,19 +441,27 @@ def create_qa_document_async(gen_id: str, project_id: str, doc_type: str, doc_na
         target_skill_ids = parse_id_list(skill_id)
         skill_rows = []
         if not target_skill_ids:
-            cursor.execute("SELECT skill_name, target_doc_type, markdown_instructions FROM agent_skills LIMIT 1")
-            skill_rows = cursor.fetchall()
+            try:
+                cursor.execute("SELECT skill_name, target_doc_type, markdown_instructions FROM agent_skills LIMIT 1")
+                skill_rows = cursor.fetchall()
+            except Exception:
+                conn.rollback()
         else:
             try:
                 cursor.execute(
                     "SELECT skill_name, target_doc_type, markdown_instructions FROM agent_skills "
                     "WHERE skill_id::text = ANY(%s) OR skill_name = ANY(%s)", 
-                    (target_skill_ids, target_skill_ids)
+                    (list(target_skill_ids), list(target_skill_ids))
                 )
                 skill_rows = cursor.fetchall()
-            except Exception:
-                cursor.execute("SELECT skill_name, target_doc_type, markdown_instructions FROM agent_skills LIMIT 1")
-                skill_rows = cursor.fetchall()
+            except Exception as skill_err:
+                conn.rollback()
+                logger.warning(f"Note: error querying skills {target_skill_ids}: {skill_err}")
+                try:
+                    cursor.execute("SELECT skill_name, target_doc_type, markdown_instructions FROM agent_skills LIMIT 1")
+                    skill_rows = cursor.fetchall()
+                except Exception:
+                    conn.rollback()
 
         if not skill_rows:
             skill_name = "Default QA Framework"
@@ -813,8 +926,7 @@ Please follow these structure and formatting instructions strictly:
             wb.save(excel_file_path)
 
             # Generate HTML for PDF
-            import markdown as md_lib
-            rendered_markdown = md_lib.markdown(doc_markdown, extensions=['tables', 'fenced_code', 'toc'])
+            rendered_markdown = simple_markdown_to_html(doc_markdown)
 
             html_body = f"""
             <!DOCTYPE html>
