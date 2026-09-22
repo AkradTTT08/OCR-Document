@@ -529,7 +529,20 @@
                     {:else if doc.status === 'Cancelled'}
                       <span style="color: #94a3b8;">🚫 ยกเลิกแล้ว</span>
                     {:else if doc.status === 'Failed'}
-                      <span style="color: #f87171;">❌ ล้มเหลว</span>
+                      <div style="display: flex; align-items: center; gap: 4px;">
+                        <span style="color: #f87171; font-weight: 600;" title={doc.error_message || 'เกิดข้อผิดพลาดในการประมวลผล'}>
+                          ❌ ล้มเหลว
+                        </span>
+                        {#if doc.error_message}
+                          <button 
+                            style="background: transparent; border: none; color: #fca5a5; cursor: pointer; padding: 2px; font-size: 11px;"
+                            title={doc.error_message}
+                            on:click={() => toast(`ข้อผิดพลาด: ${doc.error_message}`, 'error', 8000)}
+                          >
+                            ℹ️
+                          </button>
+                        {/if}
+                      </div>
                     {:else}
                       <span>{doc.status}</span>
                     {/if}

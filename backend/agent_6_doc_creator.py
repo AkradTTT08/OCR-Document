@@ -1476,7 +1476,12 @@ Please follow these structure and formatting instructions strictly:
         if conn and cursor:
             try:
                 conn.rollback()
-                cursor.execute("UPDATE qa_generated_documents SET status = 'Failed' WHERE id = %s::uuid AND status != 'Cancelled'", (gen_id,))
+                cursor.execute("""
+                    ALTER TABLE qa_generated_documents ADD COLUMN IF NOT EXISTS error_message TEXT;
+                    UPDATE qa_generated_documents 
+                    SET status = 'Failed', error_message = %s 
+                    WHERE id = %s::uuid AND status != 'Cancelled'
+                """, (str(e), gen_id))
                 conn.commit()
             except Exception as update_err:
                 logger.error(f"Failed to update failed status in DB: {update_err}")

@@ -3881,6 +3881,7 @@ def get_generated_documents():
             );
             ALTER TABLE qa_generated_documents ADD COLUMN IF NOT EXISTS markdown_content TEXT;
             ALTER TABLE qa_generated_documents ADD COLUMN IF NOT EXISTS pdf_url VARCHAR(255);
+            ALTER TABLE qa_generated_documents ADD COLUMN IF NOT EXISTS error_message TEXT;
             ALTER TABLE qa_generated_documents ADD COLUMN IF NOT EXISTS is_saved_to_project BOOLEAN DEFAULT FALSE;
             ALTER TABLE qa_generated_documents ADD COLUMN IF NOT EXISTS saved_doc_id UUID;
             ALTER TABLE qa_generated_documents ALTER COLUMN skill_id TYPE VARCHAR(500);
@@ -3892,7 +3893,7 @@ def get_generated_documents():
         skills_map = {str(r[0]): r[1] for r in cursor.fetchall()}
 
         cursor.execute("""
-            SELECT q.id, q.doc_name, q.doc_type, q.skill_id, q.status, q.file_url, q.pdf_url, q.is_saved_to_project, q.saved_doc_id, q.created_at, q.project_id
+            SELECT q.id, q.doc_name, q.doc_type, q.skill_id, q.status, q.file_url, q.pdf_url, q.is_saved_to_project, q.saved_doc_id, q.created_at, q.project_id, q.error_message
             FROM qa_generated_documents q
             WHERE q.project_id = %s::uuid
             ORDER BY q.created_at DESC
@@ -3932,7 +3933,8 @@ def get_generated_documents():
                 'is_saved_to_project': bool(row[7]) if row[7] is not None else False,
                 'saved_doc_id': str(row[8]) if row[8] else None,
                 'created_at': row[9].isoformat() if row[9] else None,
-                'project_id': str(row[10]) if row[10] else str(project_id)
+                'project_id': str(row[10]) if row[10] else str(project_id),
+                'error_message': row[11] if len(row) > 11 else None
             })
             
         cursor.close()
