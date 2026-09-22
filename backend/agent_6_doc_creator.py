@@ -201,21 +201,29 @@ The following documents contain additional project domain knowledge, specificati
 """
 
     # 3. Fetch Structured Requirements (if available)
-    cursor.execute("""
-        SELECT req_code, title, description, steps, expected_results
-        FROM structured_requirements
-        WHERE project_id = %s::uuid
-    """, (project_id,))
-    reqs = cursor.fetchall()
     formatted_reqs = []
-    for req in reqs:
-        formatted_reqs.append({
-            "req_code": req[0],
-            "title": req[1],
-            "description": req[2],
-            "steps": req[3],
-            "expected_results": req[4]
-        })
+    try:
+        cursor.execute("""
+            SELECT req_code, title, description, steps, expected_results
+            FROM structured_requirements
+            WHERE project_id = %s::uuid
+        """, (project_id,))
+        reqs = cursor.fetchall()
+        for req in reqs:
+            formatted_reqs.append({
+                "req_code": req[0],
+                "title": req[1],
+                "description": req[2],
+                "steps": req[3],
+                "expected_results": req[4]
+            })
+    except Exception as req_err:
+        logger.info(f"Structured requirements not present or table missing: {req_err}")
+        try:
+            if hasattr(cursor, 'connection') and cursor.connection:
+                cursor.connection.rollback()
+        except Exception:
+            pass
 
     structured_reqs_section = ""
     if formatted_reqs:
@@ -879,10 +887,11 @@ Please follow these structure and formatting instructions strictly:
         logger.error(f"Error in create_qa_document_async: {e}", exc_info=True)
         if conn and cursor:
             try:
+                conn.rollback()
                 cursor.execute("UPDATE qa_generated_documents SET status = 'Failed' WHERE id = %s::uuid AND status != 'Cancelled'", (gen_id,))
                 conn.commit()
-            except:
-                pass
+            except Exception as update_err:
+                logger.error(f"Failed to update failed status in DB: {update_err}")
     finally:
         if cursor: cursor.close()
         if conn: conn.close()

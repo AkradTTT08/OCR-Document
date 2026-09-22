@@ -173,9 +173,6 @@
       const res = await fetch(url);
       if (res.ok) {
         docTypes = await res.json();
-        if (docTypes.length > 0 && !docTypes.includes(docType)) {
-          docType = docTypes[0];
-        }
       }
     } catch (err) {
       console.error("Failed to load doc types:", err);
