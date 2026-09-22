@@ -731,6 +731,12 @@ Please follow these structure and formatting instructions strictly:
         render_html_to_pdf(html_body, pdf_file_path)
 
         # 6. Update DB with file_url (Excel), pdf_url (PDF), markdown_content
+        cursor.execute("SELECT status FROM qa_generated_documents WHERE id = %s::uuid", (gen_id,))
+        status_row = cursor.fetchone()
+        if status_row and status_row[0] == 'Cancelled':
+            logger.info(f"Document generation {gen_id} was cancelled by user. Discarding output.")
+            return
+
         cursor.execute("""
             UPDATE qa_generated_documents 
             SET status = 'Completed', 
@@ -738,7 +744,7 @@ Please follow these structure and formatting instructions strictly:
                 pdf_url = %s, 
                 markdown_content = %s, 
                 is_saved_to_project = FALSE 
-            WHERE id = %s::uuid
+            WHERE id = %s::uuid AND status != 'Cancelled'
         """, (excel_file_path, pdf_file_path, doc_markdown, gen_id))
         conn.commit()
         logger.info(f"Successfully generated QA document (Excel: {excel_file_path}, PDF: {pdf_file_path})")
@@ -747,7 +753,7 @@ Please follow these structure and formatting instructions strictly:
         logger.error(f"Error in create_qa_document_async: {e}", exc_info=True)
         if conn and cursor:
             try:
-                cursor.execute("UPDATE qa_generated_documents SET status = 'Failed' WHERE id = %s::uuid", (gen_id,))
+                cursor.execute("UPDATE qa_generated_documents SET status = 'Failed' WHERE id = %s::uuid AND status != 'Cancelled'", (gen_id,))
                 conn.commit()
             except:
                 pass

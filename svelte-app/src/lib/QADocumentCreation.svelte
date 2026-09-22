@@ -342,6 +342,54 @@
     if (doc.status !== 'Completed') return;
     window.location.href = `/api/agent/download_generated_document/${doc.id}?format=${format}`;
   }
+
+  async function cancelDocument(doc) {
+    if (!doc || !doc.id) return;
+    try {
+      const res = await fetch(`/api/agent/cancel_generated_document/${doc.id}?action=cancel`, {
+        method: 'POST'
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        toast('ยกเลิกการสร้างเอกสารเรียบร้อยแล้ว', 'info');
+        doc.status = 'Cancelled';
+        generatedHistory = [...generatedHistory];
+        if ($selectedProjectStore) {
+          fetchHistory($selectedProjectStore.id || $selectedProjectStore.project_id);
+        }
+      } else {
+        toast(data.error || 'ไม่สามารถยกเลิกได้', 'error');
+      }
+    } catch(err) {
+      console.error('Cancel error:', err);
+      toast('เกิดข้อผิดพลาดในการส่งคำขอยกเลิก', 'error');
+    }
+  }
+
+  async function deleteDocument(doc) {
+    if (!doc || !doc.id) return;
+    if (!confirm(`คุณแน่ใจหรือไม่ว่าต้องการลบรายการ "${doc.doc_name}" ออกจากประวัติ?`)) {
+      return;
+    }
+    try {
+      const res = await fetch(`/api/agent/delete_generated_document/${doc.id}?action=delete`, {
+        method: 'DELETE'
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        toast('ลบรายการเรียบร้อยแล้ว', 'success');
+        generatedHistory = generatedHistory.filter(d => d.id !== doc.id);
+        if ($selectedProjectStore) {
+          fetchHistory($selectedProjectStore.id || $selectedProjectStore.project_id);
+        }
+      } else {
+        toast(data.error || 'ไม่สามารถลบรายการได้', 'error');
+      }
+    } catch(err) {
+      console.error('Delete error:', err);
+      toast('เกิดข้อผิดพลาดในการลบรายการ', 'error');
+    }
+  }
 </script>
 
 <div class="panel-container" in:fade>
@@ -467,6 +515,8 @@
                       </div>
                     {:else if doc.status === 'Completed'}
                       <span style="color: #4ade80;">✅ เสร็จสมบูรณ์</span>
+                    {:else if doc.status === 'Cancelled'}
+                      <span style="color: #94a3b8;">🚫 ยกเลิกแล้ว</span>
                     {:else if doc.status === 'Failed'}
                       <span style="color: #f87171;">❌ ล้มเหลว</span>
                     {:else}
@@ -474,8 +524,15 @@
                     {/if}
                   </td>
                   <td>
-                    {#if doc.status === 'Completed'}
-                      <div class="actions-group">
+                    <div class="actions-group">
+                      {#if doc.status === 'Generating'}
+                        <button class="btn-action btn-cancel-action" title="ยกเลิกการวิเคราะห์/สร้างเอกสาร" on:click={() => cancelDocument(doc)}>
+                          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" fill="currentColor" viewBox="0 0 16 16">
+                            <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z"/>
+                          </svg>
+                          ยกเลิก
+                        </button>
+                      {:else if doc.status === 'Completed'}
                         <button class="btn-action btn-pdf" title="ดาวน์โหลดไฟล์ PDF" on:click={() => downloadFile(doc, 'pdf')}>
                           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16">
                             <path d="M14 14V4.5L9.5 0H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2zM9.5 3A1.5 1.5 0 0 0 11 4.5h2V14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1h5.5v2z"/>
@@ -509,8 +566,22 @@
                             บันทึกเข้า Project
                           </button>
                         {/if}
-                      </div>
-                    {/if}
+                        <button class="btn-action btn-delete" title="ลบประวัติรายการนี้" on:click={() => deleteDocument(doc)}>
+                          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" fill="currentColor" viewBox="0 0 16 16">
+                            <path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z"/>
+                            <path fill-rule="evenodd" d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1v1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"/>
+                          </svg>
+                        </button>
+                      {:else}
+                        <button class="btn-action btn-delete" title="ลบประวัติรายการนี้" on:click={() => deleteDocument(doc)}>
+                          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" fill="currentColor" viewBox="0 0 16 16">
+                            <path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z"/>
+                            <path fill-rule="evenodd" d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1v1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"/>
+                          </svg>
+                          ลบ
+                        </button>
+                      {/if}
+                    </div>
                   </td>
                 </tr>
               {/each}
@@ -884,6 +955,33 @@
     cursor: pointer;
     transition: all 0.2s ease;
     border: 1px solid transparent;
+  }
+
+  .btn-cancel-action {
+    background: rgba(239, 68, 68, 0.15);
+    border-color: rgba(239, 68, 68, 0.4);
+    color: #fca5a5;
+  }
+
+  .btn-cancel-action:hover {
+    background: rgba(239, 68, 68, 0.3);
+    border-color: rgba(239, 68, 68, 0.7);
+    color: #ffffff;
+    box-shadow: 0 0 10px rgba(239, 68, 68, 0.35);
+  }
+
+  .btn-delete {
+    background: rgba(148, 163, 184, 0.1);
+    border-color: rgba(148, 163, 184, 0.2);
+    color: #94a3b8;
+    padding: 6px 9px;
+  }
+
+  .btn-delete:hover {
+    background: rgba(239, 68, 68, 0.2);
+    border-color: rgba(239, 68, 68, 0.5);
+    color: #fca5a5;
+    box-shadow: 0 0 8px rgba(239, 68, 68, 0.25);
   }
 
   .btn-pdf {

@@ -4088,6 +4088,30 @@ def save_generated_doc_to_project():
         logger.error(f"Error saving generated doc to project: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/agent/cancel_generated_document/<string:doc_id>', methods=['POST', 'DELETE'])
+@app.route('/api/agent/delete_generated_document/<string:doc_id>', methods=['POST', 'DELETE'])
+def cancel_or_delete_generated_document(doc_id):
+    try:
+        from db_ingestion import get_db_connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        action = request.args.get('action', 'cancel')
+        if action == 'delete' or request.method == 'DELETE' or 'delete' in request.path:
+            cursor.execute("DELETE FROM qa_generated_documents WHERE id = %s::uuid", (doc_id,))
+        else:
+            cursor.execute("UPDATE qa_generated_documents SET status = 'Cancelled' WHERE id = %s::uuid AND status = 'Generating'", (doc_id,))
+            if cursor.rowcount == 0:
+                cursor.execute("DELETE FROM qa_generated_documents WHERE id = %s::uuid", (doc_id,))
+                
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return jsonify({'success': True, 'message': 'ยกเลิก / ลบรายการสำเร็จ'})
+    except Exception as e:
+        logger.error(f"Error cancelling/deleting generated document: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
 
 @app.route('/api/agent/flow_analysis', methods=['GET'])
 def get_flow_analysis():
