@@ -78,11 +78,31 @@ def render_html_to_pdf(html_content: str, output_path: str):
             return False
 
 
+def parse_id_list(val):
+    """Helper to parse a single ID, list of IDs, JSON stringified array, or comma-separated string."""
+    if not val:
+        return []
+    if isinstance(val, (list, tuple, set)):
+        return [str(x).strip() for x in val if x and str(x).strip() and str(x).strip() not in ['undefined', 'null']]
+    if isinstance(val, str):
+        val = val.strip()
+        if not val or val in ['undefined', 'null']:
+            return []
+        if val.startswith('['):
+            try:
+                parsed = json.loads(val)
+                if isinstance(parsed, list):
+                    return [str(x).strip() for x in parsed if x and str(x).strip() and str(x).strip() not in ['undefined', 'null']]
+            except Exception:
+                pass
+        return [x.strip() for x in val.split(',') if x.strip() and x.strip() not in ['undefined', 'null']]
+    return [str(val).strip()]
+
 def fetch_comprehensive_project_context(cursor, project_id: str, reference_document_id=None):
     """
     Retrieves ALL available project knowledge:
     1. Project info (code, name, description)
-    2. Primary reference document (if specified)
+    2. Primary reference document(s) (if specified, supports multiple)
     3. ALL other project documents in Knowledge Base (TOR/SOW, SRS, SDD, Test Cases, Manuals, etc.)
     4. Structured requirements (if available)
     """
@@ -93,6 +113,9 @@ def fetch_comprehensive_project_context(cursor, project_id: str, reference_docum
     project_name = p_row[1] if p_row and p_row[1] else project_code
     project_desc = p_row[2] if p_row and p_row[2] else ""
 
+    # Parse target reference document IDs (support multiple)
+    target_ref_ids = set(parse_id_list(reference_document_id))
+
     # 2. Fetch ALL Active Documents in this Project
     cursor.execute("""
         SELECT doc_id, original_filename, doc_category, doc_type, full_markdown_content
@@ -102,8 +125,7 @@ def fetch_comprehensive_project_context(cursor, project_id: str, reference_docum
     """, (project_id,))
     doc_rows = cursor.fetchall()
 
-    primary_ref_context = ""
-    primary_doc_id_str = str(reference_document_id) if reference_document_id else ""
+    primary_ref_context_list = []
     all_docs_context_list = []
 
     for d in doc_rows:
@@ -113,17 +135,15 @@ def fetch_comprehensive_project_context(cursor, project_id: str, reference_docum
         d_doctype = d[3] or "Document"
         d_content = (d[4] or "").strip()
 
-        if primary_doc_id_str and d_id == primary_doc_id_str:
-            primary_ref_context = f"""
-# PRIMARY REFERENCE DOCUMENT (Selected as Main Source)
-- **Filename:** {d_filename}
-- **Category:** {d_category} | **Type:** {d_doctype}
+        if target_ref_ids and d_id in target_ref_ids:
+            primary_ref_context_list.append(f"""
+### Selected Reference Document: {d_filename} [Category: {d_category} | Type: {d_doctype}]
 --- Content Start ---
 {d_content}
 --- Content End ---
-"""
+""")
         else:
-            # Include project documents, truncating extremely long single files to keep balanced
+            # Include other project documents, truncating extremely long single files to keep balanced
             snippet = d_content[:15000] if len(d_content) > 15000 else d_content
             if snippet:
                 all_docs_context_list.append(f"""
@@ -131,11 +151,19 @@ def fetch_comprehensive_project_context(cursor, project_id: str, reference_docum
 {snippet}
 """)
 
+    primary_ref_context = ""
+    if primary_ref_context_list:
+        primary_ref_context = f"""
+# PRIMARY REFERENCE DOCUMENTS (Selected as Main Sources - High Priority)
+The user has specifically designated the following {len(primary_ref_context_list)} document(s) as primary reference sources:
+{''.join(primary_ref_context_list)}
+"""
+
     all_docs_section = ""
     if all_docs_context_list:
         all_docs_section = f"""
 # Comprehensive Project Knowledge Base ({len(all_docs_context_list)} Documents in Project: {project_code})
-The following documents contain the complete project domain knowledge, specifications, architecture, and requirements. You MUST analyze and synthesize across ALL of them to generate the most accurate, thorough, and complete document:
+The following documents contain additional project domain knowledge, specifications, architecture, and requirements. You MUST analyze and synthesize across ALL of them to generate the most accurate, thorough, and complete document:
 {''.join(all_docs_context_list)}
 """
 
@@ -174,7 +202,7 @@ The following documents contain the complete project domain knowledge, specifica
     }
 
 
-def create_qa_document(project_id: str, doc_type: str, doc_name: str, skill_id: str, reference_document_id=None, custom_prompt: str = ""):
+def create_qa_document(project_id: str, doc_type: str, doc_name: str, skill_id, reference_document_id=None, custom_prompt: str = ""):
     """
     Agent 6: QA Document Creator (Synchronous version returning raw text)
     """
@@ -190,17 +218,26 @@ def create_qa_document(project_id: str, doc_type: str, doc_name: str, skill_id: 
         all_docs_section = ctx["all_docs_section"]
         structured_reqs_section = ctx["structured_reqs_section"]
             
-        # 2. Fetch Skill Instructions
-        cursor.execute("SELECT skill_name, target_doc_type, markdown_instructions FROM agent_skills WHERE skill_id::text = %s::text", (str(skill_id),))
-        skill_res = cursor.fetchone()
+        # 2. Fetch Skill Instructions (supporting multiple skills)
+        target_skill_ids = parse_id_list(skill_id)
+        if not target_skill_ids:
+            cursor.execute("SELECT skill_name, target_doc_type, markdown_instructions FROM agent_skills LIMIT 1")
+            skill_rows = cursor.fetchall()
+        else:
+            cursor.execute("SELECT skill_name, target_doc_type, markdown_instructions FROM agent_skills WHERE skill_id::text = ANY(%s)", (target_skill_ids,))
+            skill_rows = cursor.fetchall()
 
         cursor.close()
         conn.close()
 
-        if not skill_res:
-            return False, "Selected skill not found in database."
-            
-        skill_name, target_doc_type, instructions = skill_res
+        if not skill_rows:
+            skill_name = "Default QA Framework"
+            target_doc_type = doc_type
+            instructions = "Produce a comprehensive, structured QA document."
+        else:
+            skill_name = " + ".join([r[0] for r in skill_rows])
+            target_doc_type = skill_rows[0][1] or doc_type
+            instructions = "\n\n".join([f"### Skill / Framework Guideline: {r[0]} ({r[1] or 'General'})\n{r[2]}" for r in skill_rows])
         
         custom_prompt_section = ""
         if custom_prompt and custom_prompt.strip():
@@ -246,7 +283,7 @@ Please follow these instructions strictly to structure and format the document:
 3. Produce high quality, ready-to-use content without placeholders like "Insert here".
 4. Generate the complete document in standard Markdown format.
 """
-        logger.info(f"Generating document '{doc_name}' ({doc_type}) using skill '{skill_name}' across {ctx['total_docs_count']} project documents...")
+        logger.info(f"Generating document '{doc_name}' ({doc_type}) using skills '{skill_name}' across {ctx['total_docs_count']} project documents...")
         resp = model.generate_content(prompt)
         
         if hasattr(resp, 'usage_metadata') and resp.usage_metadata:
@@ -272,7 +309,7 @@ Please follow these instructions strictly to structure and format the document:
         return False, str(e)
 
 
-def create_qa_document_async(gen_id: str, project_id: str, doc_type: str, doc_name: str, skill_id: str, reference_document_id=None, custom_prompt: str = ""):
+def create_qa_document_async(gen_id: str, project_id: str, doc_type: str, doc_name: str, skill_id, reference_document_id=None, custom_prompt: str = ""):
     """
     Async background version of QA Document Creator that generates Excel, PDF, and Markdown.
     """
@@ -290,12 +327,23 @@ def create_qa_document_async(gen_id: str, project_id: str, doc_type: str, doc_na
         all_docs_section = ctx["all_docs_section"]
         structured_reqs_section = ctx["structured_reqs_section"]
             
-        # 2. Fetch Skill
-        cursor.execute("SELECT skill_name, target_doc_type, markdown_instructions FROM agent_skills WHERE skill_id::text = %s::text", (str(skill_id),))
-        skill_res = cursor.fetchone()
-        if not skill_res:
-            raise ValueError(f"Skill '{skill_id}' not found.")
-        skill_name, target_doc_type, instructions = skill_res
+        # 2. Fetch Skill (supporting multiple skills)
+        target_skill_ids = parse_id_list(skill_id)
+        if not target_skill_ids:
+            cursor.execute("SELECT skill_name, target_doc_type, markdown_instructions FROM agent_skills LIMIT 1")
+            skill_rows = cursor.fetchall()
+        else:
+            cursor.execute("SELECT skill_name, target_doc_type, markdown_instructions FROM agent_skills WHERE skill_id::text = ANY(%s)", (target_skill_ids,))
+            skill_rows = cursor.fetchall()
+
+        if not skill_rows:
+            skill_name = "Default QA Framework"
+            target_doc_type = doc_type
+            instructions = "Produce a comprehensive, structured QA document."
+        else:
+            skill_name = " + ".join([r[0] for r in skill_rows])
+            target_doc_type = skill_rows[0][1] or doc_type
+            instructions = "\n\n".join([f"### Skill / Framework Guideline: {r[0]} ({r[1] or 'General'})\n{r[2]}" for r in skill_rows])
 
         custom_prompt_section = ""
         if custom_prompt and custom_prompt.strip():

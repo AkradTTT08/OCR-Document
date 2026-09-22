@@ -5,6 +5,7 @@
   import { fade, slide } from 'svelte/transition';
   import ProjectSelection from './ProjectSelection.svelte';
   import CustomSelect from './CustomSelect.svelte';
+  import CustomMultiSelect from './CustomMultiSelect.svelte';
 
   import { MASTER_DOC_TYPES } from './constants.js';
 
@@ -38,7 +39,7 @@
   }));
   
   let skills = [];
-  let selectedSkillId = "";
+  let selectedSkillIds = [];
   
   let isGenerating = false;
 
@@ -65,12 +66,20 @@
   }
 
   let kbDocuments = [];
-  let selectedKbDocId = "";
+  let selectedKbDocIds = [];
   
   let projects = [];
 
-  $: skillOptions = skills.length === 0 ? [{value: "", label: "-- ไม่พบ Skill ในระบบ --"}] : skills.map(skill => ({ value: String(skill.skill_id || skill.id), label: `${skill.skill_name} (${skill.target_doc_type || 'General'})`, icon: '💡' }));
-  $: kbDocOptions = [{value: "", label: "-- ไม่ระบุเอกสารอ้างอิง (AI จะดึงเอกสารทั้งหมดใน Knowledge Base ของโครงการมาวิเคราะห์รวมกัน) --", icon: '🌐'}].concat(kbDocuments.map(doc => ({ value: String(doc.doc_id || doc.id), label: `${doc.original_filename || doc.name} (${doc.doc_category || 'General'})`, icon: '📄' })));
+  $: skillOptions = skills.map(skill => ({ 
+    value: String(skill.skill_id || skill.id), 
+    label: `${skill.skill_name} (${skill.target_doc_type || 'General'})`, 
+    icon: '💡' 
+  }));
+  $: kbDocOptions = kbDocuments.map(doc => ({ 
+    value: String(doc.doc_id || doc.id), 
+    label: `${doc.original_filename || doc.name} (${doc.doc_category || 'General'})`, 
+    icon: '📄' 
+  }));
 
   $: {
     if ($selectedProjectStore) {
@@ -174,9 +183,12 @@
         return sTarget === cleanDocType || sName.includes(cleanDocType) || (cleanDocType === 'testcase' && (sName.includes('test') || sTarget.includes('test')));
       });
       if (matched) {
-        selectedSkillId = String(matched.skill_id || matched.id);
-      } else if (!selectedSkillId) {
-        selectedSkillId = String(skills[0]?.skill_id || skills[0]?.id || "");
+        const matchedId = String(matched.skill_id || matched.id);
+        if (!selectedSkillIds.includes(matchedId)) {
+          selectedSkillIds = [matchedId];
+        }
+      } else if (selectedSkillIds.length === 0 && skills[0]) {
+        selectedSkillIds = [String(skills[0]?.skill_id || skills[0]?.id)];
       }
     }
   }
@@ -298,8 +310,8 @@
         project_id: $selectedProjectStore.id || $selectedProjectStore.project_id,
         doc_type: docType,
         doc_name: docName.trim(),
-        skill_id: selectedSkillId || null,
-        reference_document_id: selectedKbDocId || null,
+        skill_id: selectedSkillIds,
+        reference_document_id: selectedKbDocIds,
         custom_prompt: customPrompt.trim()
       };
 
@@ -369,16 +381,28 @@
         </div>
 
         <div class="form-group half-width">
-          <label for="skillSelect">เลือก AI Skill (โครงสร้างและแนวทางสร้างเอกสาร):</label>
-          <CustomSelect id="skillSelect" bind:value={selectedSkillId} options={skillOptions} disabled={skills.length === 0} />
-          <span style="font-size: 11px; color: #94a3b8; margin-top: 4px; display: block;">กำหนดโครงสร้าง, มาตรฐานหัวข้อ, และกรอบการสร้างเอกสาร</span>
+          <label for="skillSelect">เลือก AI Skill / Framework (เลือกได้มากกว่า 1):</label>
+          <CustomMultiSelect 
+            id="skillSelect" 
+            bind:values={selectedSkillIds} 
+            options={skillOptions} 
+            placeholder="เลือก AI Skill (เลือกได้มากกว่า 1)..." 
+            disabled={skills.length === 0} 
+          />
+          <span style="font-size: 11px; color: #94a3b8; margin-top: 4px; display: block;">สามารถเลือกหลาย Skill พร้อมกันเพื่อผสาน Framework และโครงสร้างมาตรฐานในการสร้างเอกสาร</span>
         </div>
       </div>
 
       <div class="form-group" style="z-index: 70;">
-        <label for="kbDocSelect">เอกสารอ้างอิงหลักในระบบ (Reference Document) - <i>Optional</i>:</label>
-        <CustomSelect id="kbDocSelect" bind:value={selectedKbDocId} options={kbDocOptions} disabled={kbDocuments.length === 0} />
-        <span style="font-size: 11px; color: #60a5fa; margin-top: 4px; display: block;">💡 หากไม่ระบุเอกสารอ้างอิง AI จะรวบรวมเอกสารทุกฉบับใน Knowledge Base ของโครงการนี้มาวิเคราะห์ประมวลผลรวมกันทั้งหมด</span>
+        <label for="kbDocSelect">อ้างอิงเอกสารในระบบ (Reference Documents) - <i>Optional (เลือกได้มากกว่า 1)</i>:</label>
+        <CustomMultiSelect 
+          id="kbDocSelect" 
+          bind:values={selectedKbDocIds} 
+          options={kbDocOptions} 
+          placeholder="เลือกเอกสารอ้างอิง (เลือกได้มากกว่า 1 หรือเว้นว่างเพื่อดึงทั้งหมด)..." 
+          disabled={kbDocuments.length === 0} 
+        />
+        <span style="font-size: 11px; color: #60a5fa; margin-top: 4px; display: block;">💡 เลือกเอกสารเฉพาะที่ต้องการอ้างอิง หรือหากเว้นว่างไว้ AI จะรวบรวมเอกสารทุกฉบับใน Knowledge Base ของโครงการมาวิเคราะห์ร่วมกันทั้งหมด</span>
       </div>
 
       <div class="form-group">

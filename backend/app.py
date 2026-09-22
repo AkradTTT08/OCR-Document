@@ -3794,12 +3794,12 @@ def create_document():
     project_id = data.get('project_id')
     doc_type = data.get('doc_type')
     doc_name = data.get('doc_name')
-    skill_id = data.get('skill_id')
-    reference_document_id = data.get('reference_document_id')
+    skill_id = data.get('skill_id') # Single ID or list of IDs
+    reference_document_id = data.get('reference_document_id') # Single ID or list of IDs
     custom_prompt = data.get('custom_prompt', '')
     
-    if not all([project_id, doc_type, doc_name, skill_id]):
-        return jsonify({'error': 'Missing required fields (project_id, doc_type, doc_name, skill_id)'}), 400
+    if not all([project_id, doc_type, doc_name]):
+        return jsonify({'error': 'Missing required fields (project_id, doc_type, doc_name)'}), 400
         
     try:
         from db_ingestion import get_db_connection
@@ -3813,19 +3813,26 @@ def create_document():
                 project_id UUID REFERENCES projects(project_id) ON DELETE CASCADE,
                 doc_name VARCHAR(255),
                 doc_type VARCHAR(255),
-                skill_id VARCHAR(255),
+                skill_id VARCHAR(500),
                 status VARCHAR(50) DEFAULT 'Generating',
                 file_url VARCHAR(255),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+            ALTER TABLE qa_generated_documents ALTER COLUMN skill_id TYPE VARCHAR(500);
         """)
         
+        # Serialize skill_id for storage
+        if isinstance(skill_id, (list, tuple)):
+            skill_id_str = ','.join([str(x).strip() for x in skill_id if x and str(x).strip()])
+        else:
+            skill_id_str = str(skill_id).strip() if skill_id else ''
+
         # Insert initial record
         cursor.execute("""
             INSERT INTO qa_generated_documents (project_id, doc_name, doc_type, skill_id, status)
             VALUES (%s::uuid, %s, %s, %s, 'Generating')
             RETURNING id
-        """, (project_id, doc_name, doc_type, str(skill_id)))
+        """, (project_id, doc_name, doc_type, skill_id_str))
         gen_id = cursor.fetchone()[0]
         conn.commit()
         cursor.close()
@@ -3834,7 +3841,7 @@ def create_document():
         # Run generation in background
         from agent_6_doc_creator import create_qa_document_async
         import threading
-        thread = threading.Thread(target=create_qa_document_async, args=(gen_id, project_id, doc_type, doc_name, str(skill_id), reference_document_id, custom_prompt))
+        thread = threading.Thread(target=create_qa_document_async, args=(gen_id, project_id, doc_type, doc_name, skill_id, reference_document_id, custom_prompt))
         thread.daemon = True
         thread.start()
         
@@ -3862,7 +3869,7 @@ def get_generated_documents():
                 project_id UUID REFERENCES projects(project_id) ON DELETE CASCADE,
                 doc_name VARCHAR(255),
                 doc_type VARCHAR(255),
-                skill_id VARCHAR(255),
+                skill_id VARCHAR(500),
                 status VARCHAR(50) DEFAULT 'Generating',
                 file_url VARCHAR(255),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -3871,13 +3878,17 @@ def get_generated_documents():
             ALTER TABLE qa_generated_documents ADD COLUMN IF NOT EXISTS pdf_url VARCHAR(255);
             ALTER TABLE qa_generated_documents ADD COLUMN IF NOT EXISTS is_saved_to_project BOOLEAN DEFAULT FALSE;
             ALTER TABLE qa_generated_documents ADD COLUMN IF NOT EXISTS saved_doc_id UUID;
+            ALTER TABLE qa_generated_documents ALTER COLUMN skill_id TYPE VARCHAR(500);
         """)
         conn.commit()
 
+        # Fetch skills lookup map
+        cursor.execute("SELECT skill_id, skill_name FROM agent_skills")
+        skills_map = {str(r[0]): r[1] for r in cursor.fetchall()}
+
         cursor.execute("""
-            SELECT q.id, q.doc_name, q.doc_type, s.skill_name, q.status, q.file_url, q.pdf_url, q.is_saved_to_project, q.saved_doc_id, q.created_at, q.project_id
+            SELECT q.id, q.doc_name, q.doc_type, q.skill_id, q.status, q.file_url, q.pdf_url, q.is_saved_to_project, q.saved_doc_id, q.created_at, q.project_id
             FROM qa_generated_documents q
-            LEFT JOIN agent_skills s ON q.skill_id::text = s.skill_id::text
             WHERE q.project_id = %s::uuid
             ORDER BY q.created_at DESC
         """, (project_id,))
@@ -3885,11 +3896,31 @@ def get_generated_documents():
         rows = cursor.fetchall()
         docs = []
         for row in rows:
+            raw_skill = str(row[3] or '')
+            resolved_names = []
+            if raw_skill:
+                skill_keys = []
+                if raw_skill.startswith('['):
+                    try:
+                        parsed = json.loads(raw_skill)
+                        if isinstance(parsed, list):
+                            skill_keys = [str(x).strip() for x in parsed]
+                    except:
+                        pass
+                if not skill_keys:
+                    skill_keys = [x.strip() for x in raw_skill.split(',') if x.strip()]
+                
+                for k in skill_keys:
+                    if k in skills_map:
+                        resolved_names.append(skills_map[k])
+                    elif k and k not in ['undefined', 'null']:
+                        resolved_names.append(k)
+
             docs.append({
                 'id': str(row[0]),
                 'doc_name': row[1],
                 'doc_type': row[2],
-                'skill_name': row[3] or 'Unknown Skill',
+                'skill_name': ', '.join(resolved_names) if resolved_names else 'General Framework',
                 'status': row[4],
                 'file_url': row[5],
                 'pdf_url': row[6],
