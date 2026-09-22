@@ -1066,7 +1066,7 @@ def retrieve_comprehensive_qa_context(project_id: str, query: str, history: list
         if conn: conn.close()
 
 def init_qa_transactions():
-    """Initializes the qa_transactions table in the database."""
+    """Initializes the qa_transactions table and all required columns in the database."""
     conn = None
     cursor = None
     try:
@@ -1086,39 +1086,22 @@ def init_qa_transactions():
                 qa_report TEXT,
                 total_pages INTEGER,
                 email VARCHAR(255),
+                qa_findings JSONB,
+                exit_criteria_eval JSONB,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+            ALTER TABLE qa_transactions ADD COLUMN IF NOT EXISTS group_name VARCHAR(255);
+            ALTER TABLE qa_transactions ADD COLUMN IF NOT EXISTS group_type VARCHAR(100);
+            ALTER TABLE qa_transactions ADD COLUMN IF NOT EXISTS filename VARCHAR(255);
+            ALTER TABLE qa_transactions ADD COLUMN IF NOT EXISTS doc_type VARCHAR(255);
+            ALTER TABLE qa_transactions ADD COLUMN IF NOT EXISTS extracted_text TEXT;
+            ALTER TABLE qa_transactions ADD COLUMN IF NOT EXISTS qa_report TEXT;
+            ALTER TABLE qa_transactions ADD COLUMN IF NOT EXISTS total_pages INTEGER;
+            ALTER TABLE qa_transactions ADD COLUMN IF NOT EXISTS email VARCHAR(255);
+            ALTER TABLE qa_transactions ADD COLUMN IF NOT EXISTS qa_findings JSONB;
+            ALTER TABLE qa_transactions ADD COLUMN IF NOT EXISTS exit_criteria_eval JSONB;
+            ALTER TABLE qa_transactions ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
         """)
-        try:
-            cursor.execute("ALTER TABLE qa_transactions ADD COLUMN group_name VARCHAR(255);")
-        except Exception:
-            pass 
-            
-        try:
-            cursor.execute("ALTER TABLE qa_transactions ADD COLUMN group_type VARCHAR(100);")
-        except Exception:
-            pass 
-            
-        try:
-            cursor.execute("ALTER TABLE qa_transactions ADD COLUMN total_pages INTEGER;")
-        except Exception:
-            pass
-            
-        try:
-            cursor.execute("ALTER TABLE qa_transactions ADD COLUMN email VARCHAR(255);")
-        except Exception:
-            pass
-            
-        try:
-            cursor.execute("ALTER TABLE qa_transactions ADD COLUMN qa_findings JSONB;")
-        except Exception:
-            pass
-            
-        try:
-            cursor.execute("ALTER TABLE qa_transactions ADD COLUMN exit_criteria_eval JSONB;")
-        except Exception:
-            pass
-            
         logger.info("Checked/Created qa_transactions table.")
     except Exception as e:
         logger.error(f"Error initializing qa_transactions table: {e}", exc_info=True)
@@ -1368,284 +1351,6 @@ def delete_qa_group(project_id: str, group_name: str, delete_history: bool = Tru
         if conn: conn.rollback()
         logger.error(f"Error deleting QA group {group_name}: {e}", exc_info=True)
         return False, str(e)
-    finally:
-        if cursor: cursor.close()
-        if conn: conn.close()
-
-def init_qa_transactions():
-    """Initializes the qa_transactions table in the database."""
-    conn = None
-    cursor = None
-    try:
-        conn = get_db_connection()
-        conn.autocommit = True
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS qa_transactions (
-                transaction_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                project_id UUID REFERENCES projects(project_id) ON DELETE CASCADE,
-                group_name VARCHAR(255) NOT NULL,
-                group_type VARCHAR(100) NOT NULL,
-                filename VARCHAR(255),
-                doc_type VARCHAR(100),
-                extracted_text TEXT,
-                qa_report TEXT,
-                total_pages INTEGER,
-                email VARCHAR(255),
-                qa_findings JSONB,
-                exit_criteria_eval JSONB,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        """)
-        
-        try:
-            cursor.execute("ALTER TABLE qa_transactions ADD COLUMN qa_findings JSONB;")
-        except Exception:
-            pass
-            
-        try:
-            cursor.execute("ALTER TABLE qa_transactions ADD COLUMN exit_criteria_eval JSONB;")
-        except Exception:
-            pass
-            
-        logger.info("Checked/Created qa_transactions table.")
-    except Exception as e:
-        logger.error(f"Error initializing qa_transactions table: {e}", exc_info=True)
-    finally:
-        if cursor: cursor.close()
-        if conn: conn.close()
-
-def init_api_usage_logs():
-    """Initializes the api_usage_logs table for tracking Gemini token usage."""
-    conn = None
-    cursor = None
-    try:
-        conn = get_ocr_db_connection()
-        conn.autocommit = True
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS api_usage_logs (
-                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                endpoint VARCHAR(255) NOT NULL,
-                model_name VARCHAR(255) NOT NULL,
-                prompt_tokens INTEGER DEFAULT 0,
-                completion_tokens INTEGER DEFAULT 0,
-                total_tokens INTEGER DEFAULT 0,
-                estimated_cost_usd NUMERIC(10, 6) DEFAULT 0,
-                filename VARCHAR(255),
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        """)
-        
-        try:
-            cursor.execute("ALTER TABLE api_usage_logs ADD COLUMN filename VARCHAR(255);")
-        except Exception:
-            pass
-            
-        # Create QA Generated Documents Table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS qa_generated_documents (
-                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                project_id UUID REFERENCES projects(project_id) ON DELETE CASCADE,
-                doc_name VARCHAR(255),
-                doc_type VARCHAR(255),
-                skill_id VARCHAR(255),
-                status VARCHAR(50) DEFAULT 'Generating',
-                file_url VARCHAR(255),
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        """)
-        
-        logger.info("Database schemas checked/created successfully.")
-    except Exception as e:
-        logger.error(f"Error initializing api_usage_logs table: {e}", exc_info=True)
-    finally:
-        if cursor: cursor.close()
-        if conn: conn.close()
-
-def save_qa_transaction(project_id, group_name, group_type, filename, doc_type, extracted_text, qa_report, total_pages=None, email=None, qa_findings=None, exit_criteria_eval=None):
-    """Saves a QA consult transaction to the database."""
-    import json
-    conn = None
-    cursor = None
-    try:
-        if not project_id:
-            logger.warning("No project_id provided, skipping saving QA transaction.")
-            return False
-            
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        qf_json = json.dumps(qa_findings) if qa_findings is not None else None
-        ece_json = json.dumps(exit_criteria_eval) if exit_criteria_eval is not None else None
-        
-        cursor.execute("""
-            INSERT INTO qa_transactions (project_id, group_name, group_type, filename, doc_type, extracted_text, qa_report, total_pages, email, qa_findings, exit_criteria_eval)
-            VALUES (%s::uuid, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)
-            RETURNING transaction_id
-        """, (project_id, group_name, group_type, filename, doc_type, extracted_text, qa_report, total_pages, email, qf_json, ece_json))
-        transaction_id = cursor.fetchone()[0]
-        conn.commit()
-        logger.info(f"Saved QA transaction for {filename} in project {project_id}.")
-        return str(transaction_id)
-    except Exception as e:
-        if conn: conn.rollback()
-        logger.error(f"Error saving QA transaction: {e}", exc_info=True)
-        return False
-    finally:
-        if cursor: cursor.close()
-        if conn: conn.close()
-
-def update_qa_transaction_results(transaction_id, qa_findings, exit_criteria_eval):
-    """Updates the JSON columns of an existing QA transaction."""
-    import json
-    conn = None
-    cursor = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        qf_json = json.dumps(qa_findings) if qa_findings is not None else None
-        ece_json = json.dumps(exit_criteria_eval) if exit_criteria_eval is not None else None
-        
-        cursor.execute("""
-            UPDATE qa_transactions
-            SET qa_findings = %s::jsonb, exit_criteria_eval = %s::jsonb
-            WHERE transaction_id = %s::uuid
-        """, (qf_json, ece_json, transaction_id))
-        conn.commit()
-        return True
-    except Exception as e:
-        if conn: conn.rollback()
-        logger.error(f"Error updating QA transaction results: {e}", exc_info=True)
-        return False
-    finally:
-        if cursor: cursor.close()
-        if conn: conn.close()
-
-def get_latest_qa_transaction(project_id, filename):
-    """Retrieves the latest QA transaction for a given project and filename."""
-    conn = None
-    cursor = None
-    try:
-        if not project_id:
-            return None
-            
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT extracted_text, qa_report, created_at
-            FROM qa_transactions
-            WHERE project_id = %s::uuid AND filename = %s
-            ORDER BY created_at DESC
-            LIMIT 1
-        """, (project_id, filename))
-        row = cursor.fetchone()
-        if row:
-            return {
-                'extracted_text': row[0],
-                'qa_report': row[1],
-                'created_at': row[2].isoformat() if row[2] else None
-            }
-        return None
-    except Exception as e:
-        logger.error(f"Error retrieving latest QA transaction: {e}", exc_info=True)
-        return None
-    finally:
-        if cursor: cursor.close()
-        if conn: conn.close()
-
-def init_qa_groups_table():
-    """Initializes the qa_groups table in the database."""
-    conn = None
-    cursor = None
-    try:
-        conn = get_db_connection()
-        conn.autocommit = True
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS qa_groups (
-                group_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                project_id UUID REFERENCES projects(project_id) ON DELETE CASCADE,
-                group_name VARCHAR(255) NOT NULL,
-                group_type VARCHAR(100) NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(project_id, group_name)
-            );
-        """)
-        logger.info("Checked/Created qa_groups table.")
-    except Exception as e:
-        logger.error(f"Error initializing qa_groups table: {e}", exc_info=True)
-    finally:
-        if cursor: cursor.close()
-        if conn: conn.close()
-
-def save_qa_group(project_id, group_name, group_type):
-    """Saves a QA group to the database."""
-    conn = None
-    cursor = None
-    try:
-        if not project_id or not group_name:
-            return False, "project_id and group_name are required"
-            
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        # Insert or ignore (using ON CONFLICT DO NOTHING)
-        cursor.execute("""
-            INSERT INTO qa_groups (project_id, group_name, group_type)
-            VALUES (%s::uuid, %s, %s)
-            ON CONFLICT (project_id, group_name) DO NOTHING
-            RETURNING group_id
-        """, (project_id, group_name, group_type))
-        conn.commit()
-        return True, "Group saved"
-    except Exception as e:
-        if conn: conn.rollback()
-        logger.error(f"Error saving QA group: {e}", exc_info=True)
-        return False, str(e)
-    finally:
-        if cursor: cursor.close()
-        if conn: conn.close()
-
-def get_qa_groups(project_id=None):
-    """Retrieves all QA groups, optionally filtered by project."""
-    conn = None
-    cursor = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        sql = """
-            SELECT g.group_id, g.project_id, g.group_name, g.group_type, g.created_at, p.project_code
-            FROM qa_groups g
-            LEFT JOIN projects p ON g.project_id = p.project_id
-        """
-        params = []
-        if project_id:
-            sql += " WHERE g.project_id = %s::uuid"
-            params.append(project_id)
-            
-        sql += " ORDER BY g.created_at DESC"
-        
-        cursor.execute(sql, params)
-        rows = cursor.fetchall()
-        groups = []
-        for r in rows:
-            groups.append({
-                'group_id': str(r[0]),
-                'project_id': str(r[1]),
-                'group_name': r[2],
-                'group_type': r[3],
-                'created_at': r[4].isoformat() if r[4] else None,
-                'project_code': r[5] or 'Unknown'
-            })
-        return groups
-    except Exception as e:
-        logger.error(f"Error retrieving QA groups: {e}", exc_info=True)
-        return []
     finally:
         if cursor: cursor.close()
         if conn: conn.close()
