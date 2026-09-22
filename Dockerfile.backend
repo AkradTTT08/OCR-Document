@@ -10,11 +10,17 @@ LABEL description="Thai OCR Spell Check - Flask Backend"
 # poppler-utils  → pdf2image ใช้แปลง PDF → Image
 # libgl1         → OpenCV (cv2) ต้องการ
 # libglib2.0-0   → OpenCV dependency
+# fonts-thai-*   → ฟอนต์ภาษาไทยสำหรับการ Generate PDF
 RUN apt-get update && apt-get install -y --no-install-recommends \
     poppler-utils \
     libgl1 \
     libglib2.0-0 \
     curl \
+    fontconfig \
+    fonts-thai-tlwg \
+    fonts-noto-cjk \
+    fonts-liberation \
+    fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -22,8 +28,9 @@ WORKDIR /app
 # Copy requirements ก่อนเพื่อ cache layer
 COPY requirements.txt .
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Install Python dependencies & Playwright Chromium with browser dependencies
+RUN pip install --no-cache-dir -r requirements.txt \
+    && playwright install --with-deps chromium
 
 # Pre-download sentence-transformer model ตอน build เพื่อไม่ต้อง download ตอน run
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')"

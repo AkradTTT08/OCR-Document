@@ -26,7 +26,16 @@ def render_html_to_pdf(html_content: str, output_path: str):
     try:
         from playwright.sync_api import sync_playwright
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
+            browser = p.chromium.launch(
+                headless=True,
+                args=[
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-gpu',
+                    '--font-render-hinting=none'
+                ]
+            )
             page = browser.new_page()
             page.set_content(html_content, wait_until="load", timeout=30000)
             page.pdf(
@@ -53,7 +62,7 @@ def render_html_to_pdf(html_content: str, output_path: str):
     except Exception:
         pass
 
-    # 3. Fallback: ReportLab PDF Generator (Clean text parsing without raw CSS/scripts)
+    # 3. Fallback: ReportLab PDF Generator (Clean text parsing with Thai font support)
     try:
         from reportlab.lib.pagesizes import A4
         from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
@@ -62,14 +71,22 @@ def render_html_to_pdf(html_content: str, output_path: str):
         from reportlab.pdfbase.ttfonts import TTFont
         from reportlab.lib import colors
 
+        local_project_font = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', 'fonts', 'THSarabun.ttf'))
         font_candidates = [
+            local_project_font,
+            '/app/fonts/THSarabun.ttf',
             'C:/Windows/Fonts/tahoma.ttf',
             'C:/Windows/Fonts/segoeui.ttf',
             'C:/Windows/Fonts/arial.ttf',
+            '/usr/share/fonts/truetype/thai/THSarabun.ttf',
+            '/usr/share/fonts/truetype/tlwg/Waree.ttf',
+            '/usr/share/fonts/truetype/tlwg/Loma.ttf',
+            '/usr/share/fonts/truetype/tlwg/Garuda.ttf',
+            '/usr/share/fonts/truetype/tlwg/Norasi.ttf',
+            '/usr/share/fonts/opentype/noto/NotoSansThai-Regular.ttf',
             '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
             '/usr/share/fonts/dejavu/DejaVuSans.ttf',
-            '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf',
-            '/usr/share/fonts/thai-scalable/Waree.ttf'
+            '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf'
         ]
         font_registered = False
         for font_path in font_candidates:
@@ -215,19 +232,20 @@ def build_generic_document_html(doc_name: str, doc_type: str, project_name: str,
 <meta charset="utf-8">
 <title>{doc_name} - {doc_type}</title>
 <style>
-    @page {{
+    @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700;800&family=Prompt:wght@400;600;700&display=swap');
+    @page {
         size: A4 portrait;
         margin: 16mm 14mm 16mm 14mm;
-        @bottom-right {{
+        @bottom-right {
             content: counter(page);
             font-size: 9px;
             color: #64748b;
-            font-family: 'Segoe UI', Tahoma, sans-serif;
-        }}
-    }}
-    *, *:before, *:after {{ box-sizing: border-box; }}
-    body {{
-        font-family: 'Segoe UI', Tahoma, 'Sarabun', Arial, sans-serif;
+            font-family: 'Sarabun', 'Segoe UI', Tahoma, sans-serif;
+        }
+    }
+    *, *:before, *:after { box-sizing: border-box; }
+    body {
+        font-family: 'Sarabun', 'Prompt', 'TH Sarabun PSK', 'THSarabun', 'Waree', 'Loma', 'Segoe UI', Tahoma, Arial, sans-serif;
         font-size: 11.5px;
         color: #1e293b;
         background: #ffffff;
@@ -235,7 +253,7 @@ def build_generic_document_html(doc_name: str, doc_type: str, project_name: str,
         padding: 0;
         line-height: 1.65;
         -webkit-font-smoothing: antialiased;
-    }}
+    }
 
     /* System Header Bar */
     .system-header-bar {{
@@ -615,18 +633,19 @@ def build_testcase_document_html(doc_name: str, doc_type: str, project_name: str
 <meta charset="utf-8">
 <title>{doc_name} - Test Specification</title>
 <style>
-    @page {{
+    @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700;800&family=Prompt:wght@400;600;700&display=swap');
+    @page {
         size: A4 landscape;
         margin: 12mm 10mm 12mm 10mm;
-        @bottom-right {{
+        @bottom-right {
             content: counter(page);
             font-size: 8.5px;
             color: #64748b;
-        }}
-    }}
-    *, *:before, *:after {{ box-sizing: border-box; }}
-    body {{
-        font-family: 'Segoe UI', Tahoma, 'Sarabun', Arial, sans-serif;
+        }
+    }
+    *, *:before, *:after { box-sizing: border-box; }
+    body {
+        font-family: 'Sarabun', 'Prompt', 'TH Sarabun PSK', 'THSarabun', 'Waree', 'Loma', 'Segoe UI', Tahoma, Arial, sans-serif;
         font-size: 10.5px;
         color: #1e293b;
         background: #ffffff;
@@ -634,7 +653,7 @@ def build_testcase_document_html(doc_name: str, doc_type: str, project_name: str
         padding: 0;
         line-height: 1.45;
         -webkit-font-smoothing: antialiased;
-    }}
+    }
     .system-header-bar {{
         display: flex;
         justify-content: space-between;
