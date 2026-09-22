@@ -150,14 +150,12 @@ async def explore_and_capture(url: str, project_id: str = None, username: str = 
             if api_key:
                 try:
                     logger.info("Sending aggregated data to Gemini for Semantic Analysis...")
-                    import google.generativeai as genai
-                    genai.configure(api_key=api_key)
+                    from gemini_utils import call_gemini
                     
                     model_name = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
                     if "flash" in model_name: 
                         model_name = "gemini-2.5-pro" # Pro is better for complex structured JSON analysis
                         
-                    model = genai.GenerativeModel(model_name)
                     prompt = f"""
                     You are an expert QA Automation Engineer and System Analyst.
                     I have crawled a web application and extracted its main navigation menus and structural elements.
@@ -183,16 +181,16 @@ async def explore_and_capture(url: str, project_id: str = None, username: str = 
                     }}
                     Return ONLY valid JSON. Do not use Markdown formatting blocks like ```json.
                     """
-                    resp = model.generate_content(prompt)
+                    text_val, usage_metadata = call_gemini(prompt, model_name=model_name)
                     
-                    if hasattr(resp, 'usage_metadata') and resp.usage_metadata:
+                    if usage_metadata:
                         try:
                             from db_ingestion import log_api_usage
-                            log_api_usage("Agent_2_Web_Explorer", os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"), resp.usage_metadata)
+                            log_api_usage("Agent_2_Web_Explorer", model_name, usage_metadata)
                         except Exception as log_err:
                             logger.warning(f"Failed to log API usage in Agent 2: {log_err}")
 
-                    text_val = resp.text.strip()
+                    text_val = text_val.strip()
                     if text_val.startswith('```json'):
                         text_val = text_val.strip('```json').strip('```').strip()
                     if text_val.startswith('```'):

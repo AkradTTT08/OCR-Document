@@ -2,13 +2,11 @@ import subprocess
 import os
 import json
 import logging
-import google.generativeai as genai
+from gemini_utils import call_gemini
 from dotenv import load_dotenv
 
 load_dotenv()
 logger = logging.getLogger(__name__)
-
-genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
 
 def initialize_playwright_env(tests_dir: str):
     """
@@ -106,17 +104,16 @@ Respond strictly in JSON format as follows:
     "fix_explanation": "What was changed to fix it",
     "fixed_code": "The complete revised TypeScript code (do not wrap in markdown code blocks, just raw code string)"
 }}
-"""
-        response = model.generate_content(prompt)
+        text_response, usage_metadata = call_gemini(prompt)
         
-        if hasattr(response, 'usage_metadata') and response.usage_metadata:
+        if usage_metadata:
             try:
                 from db_ingestion import log_api_usage
-                log_api_usage("Agent_5_Test_Runner", os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"), response.usage_metadata)
+                log_api_usage("Agent_5_Test_Runner", os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"), usage_metadata)
             except Exception as log_err:
                 logger.warning(f"Failed to log API usage in Agent 5: {log_err}")
 
-        text_response = response.text.strip()
+        text_response = text_response.strip()
         
         if text_response.startswith('```json'):
             text_response = text_response.strip('```json').strip('```').strip()

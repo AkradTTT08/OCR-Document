@@ -12,8 +12,8 @@ if os.path.exists(env_path):
 else:
     load_dotenv(override=True)
 
-import google.generativeai as genai
 from db_ingestion import get_db_connection
+from gemini_utils import call_gemini
 
 logger = logging.getLogger(__name__)
 
@@ -248,52 +248,16 @@ The user has provided the following specific guidelines, scenarios, or custom in
 """
 
         # 3. Call Gemini
-        api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-        if not api_key:
-            return False, "GEMINI_API_KEY or GOOGLE_API_KEY is not configured in .env."
-            
-        genai.configure(api_key=api_key)
-        model_name = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
-        model = genai.GenerativeModel(model_name)
+        doc_content, usage_metadata = call_gemini(prompt)
         
-        prompt = f"""
-You are an expert QA Automation Engineer, Business Analyst, and Technical Writer.
-Your task is to generate a professional, production-grade {doc_type} document based on the provided Project Knowledge Base, Skill Instructions, Reference Documents, and User Custom Prompts.
-
-# Target Document Information
-- Document Name: {doc_name}
-- Document Type: {doc_type}
-- Project: {project_name} ({project_code})
-
-# Framework & Structural Instructions (Skill: {skill_name})
-Please follow these instructions strictly to structure and format the document:
-{instructions}
-
-{custom_prompt_section}
-
-{primary_ref_context}
-
-{all_docs_section}
-
-{structured_reqs_section}
-
-# Generation Instructions
-1. Synthesize all provided project context and documents to ensure maximum accuracy and completeness.
-2. Structure the document clearly with headings, detailed explanations, bullet points, tables, and test/verification matrices where appropriate.
-3. Produce high quality, ready-to-use content without placeholders like "Insert here".
-4. Generate the complete document in standard Markdown format.
-"""
-        logger.info(f"Generating document '{doc_name}' ({doc_type}) using skills '{skill_name}' across {ctx['total_docs_count']} project documents...")
-        resp = model.generate_content(prompt)
-        
-        if hasattr(resp, 'usage_metadata') and resp.usage_metadata:
+        if usage_metadata:
             try:
                 from db_ingestion import log_api_usage
-                log_api_usage("Agent_6_Doc_Creator", os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"), resp.usage_metadata, filename=doc_name)
+                log_api_usage("Agent_6_Doc_Creator", os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"), usage_metadata, filename=doc_name)
             except Exception as log_err:
                 logger.warning(f"Failed to log API usage in Agent 6: {log_err}")
 
-        doc_content = resp.text.strip()
+        doc_content = doc_content.strip()
         
         if doc_content.startswith("```markdown"):
             doc_content = doc_content[11:]
@@ -354,14 +318,6 @@ The user has provided the following specific guidelines, scenarios, or custom in
 """
         
         # 3. Call Gemini
-        api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-        if not api_key:
-            raise ValueError("GEMINI_API_KEY or GOOGLE_API_KEY is not configured in .env.")
-            
-        genai.configure(api_key=api_key)
-        model_name = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
-        model = genai.GenerativeModel(model_name)
-        
         today_str = datetime.datetime.now().strftime("%d/%m/%Y")
         
         if doc_type in ["Test Case", "TestCase"]:
@@ -444,16 +400,16 @@ Please follow these structure and formatting instructions strictly:
 """
 
         logger.info(f"Generating document async '{doc_name}' ({doc_type})...")
-        resp = model.generate_content(prompt)
+        doc_content, usage_metadata = call_gemini(prompt)
         
-        if hasattr(resp, 'usage_metadata') and resp.usage_metadata:
+        if usage_metadata:
             try:
                 from db_ingestion import log_api_usage
-                log_api_usage("Agent_6_Doc_Creator", os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"), resp.usage_metadata, filename=doc_name)
+                log_api_usage("Agent_6_Doc_Creator", os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"), usage_metadata, filename=doc_name)
             except Exception as log_err:
                 logger.warning(f"Failed to log API usage in Agent 6 (async): {log_err}")
 
-        doc_content = resp.text.strip()
+        doc_content = doc_content.strip()
         
         # Clean JSON
         if doc_content.startswith("```json"): doc_content = doc_content[7:]

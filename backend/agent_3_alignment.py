@@ -1,15 +1,12 @@
 import json
 import logging
 from db_ingestion import get_db_connection
-import google.generativeai as genai
+from gemini_utils import call_gemini
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
 logger = logging.getLogger(__name__)
-
-# Configure Gemini API
-genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
 
 def run_alignment_analysis(project_id: str, web_state_file: str):
     """
@@ -108,17 +105,14 @@ Please provide a detailed Gap Analysis Report. Format your response strictly in 
     ],
     "recommendation": "Next steps for automation or development"
 }}
-"""
-        response = model.generate_content(prompt)
+        text_response, usage_metadata = call_gemini(prompt)
         
-        if hasattr(response, 'usage_metadata') and response.usage_metadata:
+        if usage_metadata:
             try:
                 from db_ingestion import log_api_usage
-                log_api_usage("Agent_3_Alignment", os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"), response.usage_metadata)
+                log_api_usage("Agent_3_Alignment", os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"), usage_metadata)
             except Exception as log_err:
                 logger.warning(f"Failed to log API usage in Agent 3: {log_err}")
-
-        text_response = response.text
         
         # Clean up markdown JSON block if present
         if text_response.startswith('```json'):

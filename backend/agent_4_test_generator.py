@@ -1,16 +1,13 @@
 import json
 import logging
 from db_ingestion import get_db_connection
-import google.generativeai as genai
+from gemini_utils import call_gemini
 import os
 from dotenv import load_dotenv
 import uuid
 
 load_dotenv()
 logger = logging.getLogger(__name__)
-
-# Configure Gemini API
-genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
 
 def generate_playwright_script(project_id: str, gap_analysis_data: dict, web_state_file: str):
     """
@@ -105,17 +102,17 @@ You MUST respond strictly in JSON format matching this schema:
   ]
 }}
 """
-        # Call Gemini (we might need to increase timeout or use a model with larger output)
-        response = model.generate_content(prompt)
+        # Call Gemini
+        text_response, usage_metadata = call_gemini(prompt)
         
-        if hasattr(response, 'usage_metadata') and response.usage_metadata:
+        if usage_metadata:
             try:
                 from db_ingestion import log_api_usage
-                log_api_usage("Agent_4_Test_Generator", os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"), response.usage_metadata)
+                log_api_usage("Agent_4_Test_Generator", os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"), usage_metadata)
             except Exception as log_err:
                 logger.warning(f"Failed to log API usage in Agent 4: {log_err}")
 
-        text_response = response.text.strip()
+        text_response = text_response.strip()
         
         # Clean up markdown if model still included it
         if text_response.startswith('```json'):

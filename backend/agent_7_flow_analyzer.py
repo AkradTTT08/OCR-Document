@@ -11,8 +11,8 @@ if os.path.exists(env_path):
 else:
     load_dotenv(override=True)
 
-import google.generativeai as genai
 from db_ingestion import get_db_connection
+from gemini_utils import call_gemini
 
 logger = logging.getLogger(__name__)
 
@@ -344,16 +344,16 @@ Make sure:
 """
 
         logger.info(f"Agent 7: Generating flow analysis & diagrams for project {project_name} ({project_id})...")
-        resp = model.generate_content(prompt)
+        raw_text, usage_metadata = call_gemini(prompt)
         
-        if hasattr(resp, 'usage_metadata') and resp.usage_metadata:
+        if usage_metadata:
             try:
                 from db_ingestion import log_api_usage
-                log_api_usage("Agent_7_Flow_Analyzer", os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"), resp.usage_metadata)
+                log_api_usage("Agent_7_Flow_Analyzer", os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"), usage_metadata)
             except Exception as log_err:
                 logger.warning(f"Failed to log API usage in Agent 7: {log_err}")
 
-        raw_text = resp.text.strip()
+        raw_text = raw_text.strip()
 
         # Clean JSON wrappers if any
         if raw_text.startswith("```json"):

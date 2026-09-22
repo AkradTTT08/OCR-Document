@@ -1,8 +1,8 @@
 import os
 import json
 import logging
-import google.generativeai as genai
 from db_ingestion import get_db_connection
+from gemini_utils import call_gemini
 
 logger = logging.getLogger(__name__)
 
@@ -47,14 +47,9 @@ def extract_requirements_from_text(text: str, project_id: str, doc_id: int):
     if not text or not text.strip():
         return False, "Empty text provided"
 
-    genai.configure(api_key=os.environ.get("GOOGLE_API_KEY"))
-    
-    # We use Gemini 3.1 Pro (simulated via gemini-2.5-pro or gemini-2.5-flash as default)
     model_name = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
     if "flash" in model_name: 
         model_name = "gemini-2.5-pro" # For complex structured extraction, Pro is better
-
-    model = genai.GenerativeModel(model_name)
     
     prompt = f"""
     Analyze the following project requirement document and extract ALL distinct business requirements, user stories, or test scenarios.
@@ -79,17 +74,17 @@ def extract_requirements_from_text(text: str, project_id: str, doc_id: int):
     """
 
     try:
-        response = model.generate_content(prompt)
+        raw_json, usage_metadata = call_gemini(prompt, model_name=model_name)
         
         # Log API Token Usage
-        if hasattr(response, 'usage_metadata') and response.usage_metadata:
+        if usage_metadata:
             try:
                 from db_ingestion import log_api_usage
-                log_api_usage("Agent_1_Ingestion", os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"), response.usage_metadata)
+                log_api_usage("Agent_1_Ingestion", model_name, usage_metadata)
             except Exception as log_err:
                 logger.warning(f"Failed to log API usage in Agent 1: {log_err}")
 
-        raw_json = response.text.strip()
+        raw_json = raw_json.strip()
         
         # Clean up markdown if AI added it
         if raw_json.startswith("```json"):
