@@ -5,11 +5,17 @@ from typing import Tuple, Any
 logger = logging.getLogger(__name__)
 
 def get_gemini_api_key():
-    return (
+    raw = (
         os.environ.get("GEMINI_API_KEY") 
         or os.environ.get("GOOGLE_API_KEY")
+        or os.environ.get("GOOGLE_API_KEYS")
         or os.environ.get("GOOGLE_API_KEY_1")
-    )
+        or ""
+    ).strip().strip('"').strip("'")
+    if ',' in raw:
+        keys = [k.strip() for k in raw.split(',') if k.strip()]
+        return keys[0] if keys else ""
+    return raw
 
 def call_gemini(
     prompt: str, 
@@ -26,9 +32,9 @@ def call_gemini(
     if not api_key:
         raise ValueError("ไม่พบ GEMINI_API_KEY หรือ GOOGLE_API_KEY ใน environment variables")
 
-    preferred_model = model_name or os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+    preferred_model = model_name or os.environ.get("GEMINI_MODEL", "gemini-3.1-pro")
     candidate_models = [preferred_model]
-    for fallback in ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.5-flash"]:
+    for fallback in ["gemini-3.1-pro", "gemini-2.5-pro", "gemini-1.5-pro", "gemini-3.1-flash", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]:
         if fallback not in candidate_models:
             candidate_models.append(fallback)
 

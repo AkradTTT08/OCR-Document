@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 def render_html_to_pdf(html_content: str, output_path: str):
     """
     Renders HTML content to a PDF file using Playwright (Chromium headless)
-    with a fallback to ReportLab if Playwright encounters any issue.
+    with a graceful fallback to WeasyPrint or ReportLab if Playwright encounters an issue.
     """
     # 1. Try Playwright
     try:
@@ -28,7 +28,7 @@ def render_html_to_pdf(html_content: str, output_path: str):
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             page = browser.new_page()
-            page.set_content(html_content, wait_until="networkidle")
+            page.set_content(html_content, wait_until="load", timeout=30000)
             page.pdf(
                 path=output_path,
                 format="A4",
@@ -52,21 +52,23 @@ def render_html_to_pdf(html_content: str, output_path: str):
     except Exception:
         pass
 
-    # 3. Fallback: ReportLab PDF Generator
+    # 3. Fallback: ReportLab PDF Generator (Clean text parsing without raw CSS/scripts)
     try:
         from reportlab.lib.pagesizes import A4
         from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
         from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
         from reportlab.pdfbase import pdfmetrics
         from reportlab.pdfbase.ttfonts import TTFont
+        from reportlab.lib import colors
 
         font_candidates = [
+            'C:/Windows/Fonts/tahoma.ttf',
+            'C:/Windows/Fonts/segoeui.ttf',
+            'C:/Windows/Fonts/arial.ttf',
             '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
             '/usr/share/fonts/dejavu/DejaVuSans.ttf',
             '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf',
-            '/usr/share/fonts/thai-scalable/Waree.ttf',
-            'C:/Windows/Fonts/tahoma.ttf',
-            'C:/Windows/Fonts/arial.ttf'
+            '/usr/share/fonts/thai-scalable/Waree.ttf'
         ]
         font_registered = False
         for font_path in font_candidates:
@@ -80,22 +82,37 @@ def render_html_to_pdf(html_content: str, output_path: str):
 
         font_name = 'UnicodeFont' if font_registered else 'Helvetica'
 
-        doc = SimpleDocTemplate(output_path, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
+        doc = SimpleDocTemplate(output_path, pagesize=A4, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
         styles = getSampleStyleSheet()
-        normal_style = ParagraphStyle('NormalUni', fontName=font_name, fontSize=10, leading=14)
-        title_style = ParagraphStyle('TitleUni', fontName=font_name, fontSize=16, leading=20, alignment=1)
+        normal_style = ParagraphStyle('NormalUni', fontName=font_name, fontSize=10, leading=15, textColor=colors.HexColor('#1e293b'))
+        h1_style = ParagraphStyle('H1Uni', fontName=font_name, fontSize=15, leading=19, textColor=colors.HexColor('#1e3a8a'), spaceAfter=8, keepWithNext=True)
+        h2_style = ParagraphStyle('H2Uni', fontName=font_name, fontSize=12.5, leading=16, textColor=colors.HexColor('#1e3a8a'), spaceAfter=6, keepWithNext=True)
+        title_style = ParagraphStyle('TitleUni', fontName=font_name, fontSize=17, leading=21, alignment=1, textColor=colors.HexColor('#1e3a8a'), spaceAfter=12)
 
-        import re
-        clean_text = re.sub('<[^<]+?>', ' ', html_content)
-        lines = [l.strip() for l in clean_text.split('\n') if l.strip()]
+        import re, html
+        # Strip all <head>, <style>, <script> and their inner contents
+        clean_html = re.sub(r'<(head|style|script)[^>]*>[\s\S]*?</\1>', '', html_content, flags=re.IGNORECASE)
+        # Convert break and block tags to newlines
+        clean_html = re.sub(r'<(h[1-6]|p|div|tr|li|br)[^>]*>', '\n', clean_html, flags=re.IGNORECASE)
+        # Strip all other remaining HTML tags
+        clean_text = re.sub(r'<[^<]+?>', '', clean_html)
+        clean_text = html.unescape(clean_text)
 
-        story = [
-            Paragraph(lines[0] if lines else "Document", title_style),
-            Spacer(1, 15)
-        ]
-        for l in lines[1:50]:
-            story.append(Paragraph(l[:200], normal_style))
-            story.append(Spacer(1, 6))
+        raw_lines = [l.strip() for l in clean_text.split('\n') if l.strip()]
+
+        story = []
+        if raw_lines:
+            story.append(Paragraph(html.escape(raw_lines[0]), title_style))
+            story.append(Spacer(1, 14))
+
+        for l in raw_lines[1:]:
+            safe_l = html.escape(l)
+            if len(l) < 80 and any(l.startswith(prefix) for prefix in ['#', '1.', '2.', '3.', '4.', '5.', '6.', '7.', '8.', '9.', 'Section', 'Module']):
+                story.append(Spacer(1, 8))
+                story.append(Paragraph(safe_l, h2_style))
+            else:
+                story.append(Paragraph(safe_l, normal_style))
+                story.append(Spacer(1, 4))
 
         doc.build(story)
         logger.info(f"ReportLab fallback PDF generated at {output_path}")
@@ -187,6 +204,621 @@ def simple_markdown_to_html(md_text: str) -> str:
         html_lines.append('</tbody></table>')
         
     return '\n'.join(html_lines)
+
+
+def build_generic_document_html(doc_name: str, doc_type: str, project_name: str, project_code: str, skill_name: str, today_str: str, rendered_markdown: str) -> str:
+    """Builds an enterprise-grade HTML document for SRS, SDD, TOR, UAT, Manuals, etc."""
+    return f"""<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<title>{doc_name} - {doc_type}</title>
+<style>
+    @page {{
+        size: A4 portrait;
+        margin: 16mm 14mm 16mm 14mm;
+        @bottom-right {{
+            content: counter(page);
+            font-size: 9px;
+            color: #64748b;
+            font-family: 'Segoe UI', Tahoma, sans-serif;
+        }}
+    }}
+    *, *:before, *:after {{ box-sizing: border-box; }}
+    body {{
+        font-family: 'Segoe UI', Tahoma, 'Sarabun', Arial, sans-serif;
+        font-size: 11.5px;
+        color: #1e293b;
+        background: #ffffff;
+        margin: 0;
+        padding: 0;
+        line-height: 1.65;
+        -webkit-font-smoothing: antialiased;
+    }}
+
+    /* System Header Bar */
+    .system-header-bar {{
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding-bottom: 8px;
+        margin-bottom: 14px;
+        border-bottom: 1.5px solid #e2e8f0;
+        font-size: 9.5px;
+        font-weight: 700;
+        color: #64748b;
+        letter-spacing: 0.8px;
+        text-transform: uppercase;
+    }}
+    .system-logo {{
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        color: #0f172a;
+    }}
+    .system-logo-badge {{
+        background: linear-gradient(135deg, #1e3a8a, #3b82f6);
+        color: #ffffff;
+        padding: 2px 7px;
+        border-radius: 4px;
+        font-size: 9.5px;
+        font-weight: 800;
+        letter-spacing: 0.5px;
+    }}
+
+    /* Executive Hero Card */
+    .doc-hero-card {{
+        background: linear-gradient(145deg, #0f172a 0%, #1e293b 60%, #1e3a8a 100%);
+        color: #ffffff;
+        border-radius: 8px;
+        padding: 18px 22px;
+        margin-bottom: 16px;
+        page-break-inside: avoid;
+    }}
+    .doc-hero-top {{
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 16px;
+        margin-bottom: 12px;
+    }}
+    .doc-hero-title {{
+        font-size: 19px;
+        font-weight: 800;
+        line-height: 1.3;
+        margin: 0;
+        color: #f8fafc;
+        letter-spacing: -0.2px;
+    }}
+    .doc-hero-badge {{
+        background: rgba(255, 255, 255, 0.15);
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        color: #ffffff;
+        padding: 4px 10px;
+        border-radius: 6px;
+        font-weight: 700;
+        font-size: 11px;
+        white-space: nowrap;
+    }}
+    .doc-meta-grid {{
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 10px 14px;
+        border-top: 1px solid rgba(255, 255, 255, 0.15);
+        padding-top: 12px;
+        font-size: 10.5px;
+    }}
+    .doc-meta-item {{
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+    }}
+    .doc-meta-label {{
+        font-size: 8.5px;
+        font-weight: 700;
+        color: #94a3b8;
+        text-transform: uppercase;
+        letter-spacing: 0.6px;
+    }}
+    .doc-meta-value {{
+        color: #f1f5f9;
+        font-weight: 600;
+        word-break: break-word;
+    }}
+
+    /* Document Control Box */
+    .doc-control-card {{
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 6px;
+        padding: 10px 14px;
+        margin-bottom: 18px;
+        page-break-inside: avoid;
+    }}
+    .doc-control-title {{
+        font-size: 10px;
+        font-weight: 700;
+        color: #0f172a;
+        margin-bottom: 6px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }}
+    .doc-control-table {{
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 9.5px;
+    }}
+    .doc-control-table th {{
+        background: #e2e8f0;
+        color: #334155;
+        font-weight: 700;
+        padding: 4px 8px;
+        text-align: left;
+        border: 1px solid #cbd5e1;
+    }}
+    .doc-control-table td {{
+        padding: 4px 8px;
+        border: 1px solid #cbd5e1;
+        color: #334155;
+    }}
+
+    /* Body Typography */
+    .doc-body {{
+        margin-top: 8px;
+    }}
+    h1 {{
+        color: #0f2744;
+        font-size: 14.5px;
+        font-weight: 800;
+        border-left: 4px solid #2563eb;
+        background: #f8fafc;
+        padding: 7px 12px;
+        border-radius: 0 4px 4px 0;
+        margin-top: 22px;
+        margin-bottom: 10px;
+        page-break-after: avoid;
+        page-break-inside: avoid;
+    }}
+    h2 {{
+        color: #1e3a8a;
+        font-size: 13px;
+        font-weight: 700;
+        border-bottom: 1.5px solid #e2e8f0;
+        padding-bottom: 4px;
+        margin-top: 16px;
+        margin-bottom: 8px;
+        page-break-after: avoid;
+        page-break-inside: avoid;
+    }}
+    h3 {{
+        color: #2563eb;
+        font-size: 11.5px;
+        font-weight: 700;
+        margin-top: 12px;
+        margin-bottom: 5px;
+        page-break-after: avoid;
+        page-break-inside: avoid;
+    }}
+    h4 {{
+        color: #475569;
+        font-size: 11px;
+        font-weight: 700;
+        margin-top: 8px;
+        margin-bottom: 3px;
+    }}
+    p {{
+        margin: 0 0 8px 0;
+        color: #1e293b;
+        text-align: justify;
+    }}
+
+    /* Tables */
+    table {{
+        width: 100%;
+        border-collapse: collapse;
+        margin: 12px 0;
+        font-size: 10px;
+        page-break-inside: avoid;
+        background: #ffffff;
+    }}
+    th {{
+        background: #1e3a8a;
+        color: #ffffff;
+        font-weight: 700;
+        text-align: left;
+        padding: 7px 9px;
+        border: 1px solid #1e3a8a;
+        font-size: 9.5px;
+    }}
+    td {{
+        border: 1px solid #cbd5e1;
+        padding: 6px 9px;
+        vertical-align: top;
+        color: #1e293b;
+    }}
+    tr:nth-child(even) {{
+        background-color: #f8fafc;
+    }}
+
+    /* Lists */
+    ul, ol {{
+        margin: 4px 0 10px 18px;
+        padding: 0;
+    }}
+    li {{
+        margin-bottom: 4px;
+        color: #1e293b;
+    }}
+
+    /* Code & Terminal */
+    code {{
+        background: #f1f5f9;
+        color: #0f172a;
+        padding: 2px 5px;
+        border-radius: 4px;
+        font-family: 'Consolas', 'Courier New', monospace;
+        font-size: 10px;
+        border: 1px solid #e2e8f0;
+    }}
+    pre {{
+        background: #0f172a;
+        color: #38bdf8;
+        padding: 12px 14px;
+        border-radius: 6px;
+        overflow-x: auto;
+        font-size: 10px;
+        line-height: 1.45;
+        border: 1px solid #1e293b;
+        page-break-inside: avoid;
+        margin: 10px 0;
+    }}
+    pre code {{
+        background: none;
+        color: inherit;
+        padding: 0;
+        border: none;
+        font-size: inherit;
+    }}
+
+    /* Blockquotes */
+    blockquote {{
+        border-left: 4px solid #3b82f6;
+        background: #eff6ff;
+        color: #1e40af;
+        margin: 10px 0;
+        padding: 8px 12px;
+        border-radius: 0 5px 5px 0;
+        page-break-inside: avoid;
+    }}
+    blockquote p {{
+        margin: 0;
+        color: #1e40af;
+    }}
+
+    /* Badges */
+    .badge {{
+        display: inline-block;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 9px;
+        font-weight: 700;
+        text-transform: uppercase;
+    }}
+    .badge-success {{ background: #dcfce7; color: #15803d; }}
+
+    /* Footer Stamp */
+    .doc-footer {{
+        margin-top: 24px;
+        padding-top: 10px;
+        border-top: 1.5px solid #e2e8f0;
+        display: flex;
+        justify-content: space-between;
+        font-size: 8.5px;
+        color: #94a3b8;
+        page-break-inside: avoid;
+    }}
+</style>
+</head>
+<body>
+    <div class="system-header-bar">
+        <div class="system-logo">
+            <span class="system-logo-badge">SPECTRA</span>
+            <span>Autonomous QA & Test Synthesis Platform</span>
+        </div>
+        <div>CONFIDENTIAL &bull; SPECIFICATION BASELINE</div>
+    </div>
+
+    <div class="doc-hero-card">
+        <div class="doc-hero-top">
+            <h1 class="doc-hero-title" style="background:none;border:none;padding:0;margin:0;color:#ffffff;">{doc_name}</h1>
+            <div class="doc-hero-badge">{doc_type}</div>
+        </div>
+        <div class="doc-meta-grid">
+            <div class="doc-meta-item">
+                <span class="doc-meta-label">Project</span>
+                <span class="doc-meta-value">{project_name} ({project_code})</span>
+            </div>
+            <div class="doc-meta-item">
+                <span class="doc-meta-label">Document Type</span>
+                <span class="doc-meta-value">{doc_type}</span>
+            </div>
+            <div class="doc-meta-item">
+                <span class="doc-meta-label">Framework / Skill</span>
+                <span class="doc-meta-value">{skill_name}</span>
+            </div>
+            <div class="doc-meta-item">
+                <span class="doc-meta-label">Generated Date</span>
+                <span class="doc-meta-value">{today_str}</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="doc-control-card">
+        <div class="doc-control-title">📋 Document Control & Metadata</div>
+        <table class="doc-control-table">
+            <thead>
+                <tr>
+                    <th style="width: 15%;">Version</th>
+                    <th style="width: 20%;">Date</th>
+                    <th style="width: 30%;">Author / Engine</th>
+                    <th style="width: 20%;">Status</th>
+                    <th style="width: 15%;">Classification</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><strong>1.0.0</strong></td>
+                    <td>{today_str}</td>
+                    <td>Spectra AI (Gemini 3.1 Pro)</td>
+                    <td><span class="badge badge-success">Approved Baseline</span></td>
+                    <td>Internal Spec</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="doc-body">
+        {rendered_markdown}
+    </div>
+
+    <div class="doc-footer">
+        <div>Spectra QA Platform &bull; Automated Document Synthesis</div>
+        <div>Generated with Gemini 3.1 Pro &bull; {today_str}</div>
+    </div>
+</body>
+</html>"""
+
+
+def build_testcase_document_html(doc_name: str, doc_type: str, project_name: str, project_code: str, module_val: str, tester_val: str, today_str: str, test_cases: list) -> str:
+    """Builds a high-density, professional landscape HTML document for Test Cases."""
+    rows_html = ""
+    for tc in test_cases:
+        res_val = str(tc.get("Result (Pass/Fail)", "PASS")).upper()
+        badge_class = "pass" if res_val == "PASS" else ("fail" if res_val == "FAIL" else "blocked")
+        proc_html = str(tc.get("Test Description / Procedure", "")).replace("\n", "<br>")
+        rows_html += f"""
+        <tr>
+            <td style="font-weight: 700; text-align: center; color: #1e3a8a;">{tc.get("Test Case ID", "")}</td>
+            <td style="font-weight: 600;">{tc.get("Test case Objective", "")}</td>
+            <td>{proc_html}</td>
+            <td>{tc.get("Test Data", "-")}</td>
+            <td>{tc.get("Expected Result", "")}</td>
+            <td style="text-align: center;"><span class="badge {badge_class}">{res_val}</span></td>
+            <td style="text-align: center; font-weight: 600;">{tc.get("Req No.", "-")}</td>
+        </tr>
+        """
+
+    return f"""<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<title>{doc_name} - Test Specification</title>
+<style>
+    @page {{
+        size: A4 landscape;
+        margin: 12mm 10mm 12mm 10mm;
+        @bottom-right {{
+            content: counter(page);
+            font-size: 8.5px;
+            color: #64748b;
+        }}
+    }}
+    *, *:before, *:after {{ box-sizing: border-box; }}
+    body {{
+        font-family: 'Segoe UI', Tahoma, 'Sarabun', Arial, sans-serif;
+        font-size: 10.5px;
+        color: #1e293b;
+        background: #ffffff;
+        margin: 0;
+        padding: 0;
+        line-height: 1.45;
+        -webkit-font-smoothing: antialiased;
+    }}
+    .system-header-bar {{
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding-bottom: 6px;
+        margin-bottom: 10px;
+        border-bottom: 1.5px solid #e2e8f0;
+        font-size: 9px;
+        font-weight: 700;
+        color: #64748b;
+        text-transform: uppercase;
+        letter-spacing: 0.6px;
+    }}
+    .system-logo {{
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        color: #0f172a;
+    }}
+    .system-logo-badge {{
+        background: linear-gradient(135deg, #1e3a8a, #3b82f6);
+        color: #ffffff;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 9px;
+        font-weight: 800;
+    }}
+    .doc-hero-card {{
+        background: linear-gradient(145deg, #0f172a 0%, #1e293b 60%, #1e3a8a 100%);
+        color: #ffffff;
+        border-radius: 6px;
+        padding: 14px 18px;
+        margin-bottom: 12px;
+        page-break-inside: avoid;
+    }}
+    .doc-hero-top {{
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 10px;
+    }}
+    .doc-hero-title {{
+        font-size: 17px;
+        font-weight: 800;
+        margin: 0;
+        color: #f8fafc;
+    }}
+    .doc-hero-badge {{
+        background: rgba(255, 255, 255, 0.15);
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        color: #ffffff;
+        padding: 3px 8px;
+        border-radius: 4px;
+        font-weight: 700;
+        font-size: 10px;
+    }}
+    .doc-meta-grid {{
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 8px 12px;
+        border-top: 1px solid rgba(255, 255, 255, 0.15);
+        padding-top: 10px;
+        font-size: 10px;
+    }}
+    .doc-meta-item {{
+        display: flex;
+        flex-direction: column;
+    }}
+    .doc-meta-label {{
+        font-size: 8px;
+        font-weight: 700;
+        color: #94a3b8;
+        text-transform: uppercase;
+    }}
+    .doc-meta-value {{
+        color: #f1f5f9;
+        font-weight: 600;
+    }}
+    table {{
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 10px;
+        page-break-inside: auto;
+    }}
+    tr {{
+        page-break-inside: avoid;
+        page-break-after: auto;
+    }}
+    th {{
+        background: #1e3a8a;
+        color: #ffffff;
+        font-weight: 700;
+        text-align: left;
+        padding: 6px 8px;
+        border: 1px solid #1e3a8a;
+        font-size: 9.5px;
+    }}
+    td {{
+        border: 1px solid #cbd5e1;
+        padding: 5px 8px;
+        vertical-align: top;
+        color: #1e293b;
+    }}
+    tr:nth-child(even) {{
+        background-color: #f8fafc;
+    }}
+    .badge {{
+        display: inline-block;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-weight: 700;
+        font-size: 9px;
+    }}
+    .pass {{ background: #dcfce7; color: #15803d; border: 1px solid #86efac; }}
+    .fail {{ background: #fee2e2; color: #b91c1c; border: 1px solid #fca5a5; }}
+    .blocked {{ background: #fef3c7; color: #b45309; border: 1px solid #fde68a; }}
+    .doc-footer {{
+        margin-top: 16px;
+        padding-top: 8px;
+        border-top: 1.5px solid #e2e8f0;
+        display: flex;
+        justify-content: space-between;
+        font-size: 8px;
+        color: #94a3b8;
+        page-break-inside: avoid;
+    }}
+</style>
+</head>
+<body>
+    <div class="system-header-bar">
+        <div class="system-logo">
+            <span class="system-logo-badge">SPECTRA</span>
+            <span>Autonomous QA Platform &bull; Test Matrix</span>
+        </div>
+        <div>CONFIDENTIAL &bull; QA EXECUTION SPECIFICATION</div>
+    </div>
+
+    <div class="doc-hero-card">
+        <div class="doc-hero-top">
+            <div class="doc-hero-title">{doc_name}</div>
+            <div class="doc-hero-badge">{doc_type}</div>
+        </div>
+        <div class="doc-meta-grid">
+            <div class="doc-meta-item">
+                <span class="doc-meta-label">Project</span>
+                <span class="doc-meta-value">{project_name} ({project_code})</span>
+            </div>
+            <div class="doc-meta-item">
+                <span class="doc-meta-label">Module / Function</span>
+                <span class="doc-meta-value">{module_val}</span>
+            </div>
+            <div class="doc-meta-item">
+                <span class="doc-meta-label">Tester / Author</span>
+                <span class="doc-meta-value">{tester_val}</span>
+            </div>
+            <div class="doc-meta-item">
+                <span class="doc-meta-label">Execution Date</span>
+                <span class="doc-meta-value">{today_str}</span>
+            </div>
+        </div>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th style="width: 8%; text-align: center;">Test ID</th>
+                <th style="width: 20%;">Objective</th>
+                <th style="width: 28%;">Description / Procedure</th>
+                <th style="width: 14%;">Test Data</th>
+                <th style="width: 18%;">Expected Result</th>
+                <th style="width: 6%; text-align: center;">Result</th>
+                <th style="width: 6%; text-align: center;">Req No.</th>
+            </tr>
+        </thead>
+        <tbody>
+            {rows_html}
+        </tbody>
+    </table>
+
+    <div class="doc-footer">
+        <div>Spectra QA Platform &bull; Automated Test Execution Spec</div>
+        <div>Engine: Gemini 3.1 Pro &bull; Date: {today_str}</div>
+    </div>
+</body>
+</html>"""
 
 
 def parse_id_list(val):
@@ -396,13 +1028,14 @@ Please follow these structure and formatting instructions strictly:
 4. Output the complete document directly in clean, structured Markdown.
 """
 
-        # 3. Call Gemini
-        doc_content, usage_metadata = call_gemini(prompt)
+        # 3. Call Gemini with Gemini 3.1 Pro
+        model_to_use = os.environ.get("GEMINI_DOC_MODEL", "gemini-3.1-pro")
+        doc_content, usage_metadata = call_gemini(prompt, model_name=model_to_use)
         
         if usage_metadata:
             try:
                 from db_ingestion import log_api_usage
-                log_api_usage("Agent_6_Doc_Creator", os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"), usage_metadata, filename=doc_name)
+                log_api_usage("Agent_6_Doc_Creator", model_to_use, usage_metadata, filename=doc_name)
             except Exception as log_err:
                 logger.warning(f"Failed to log API usage in Agent 6: {log_err}")
 
@@ -564,12 +1197,13 @@ Please follow these structure and formatting instructions strictly:
 """
 
         logger.info(f"Generating document async '{doc_name}' ({doc_type})...")
-        doc_content, usage_metadata = call_gemini(prompt)
+        model_to_use = os.environ.get("GEMINI_DOC_MODEL", "gemini-3.1-pro")
+        doc_content, usage_metadata = call_gemini(prompt, model_name=model_to_use)
         
         if usage_metadata:
             try:
                 from db_ingestion import log_api_usage
-                log_api_usage("Agent_6_Doc_Creator", os.environ.get("GEMINI_MODEL", "gemini-2.0-flash"), usage_metadata, filename=doc_name)
+                log_api_usage("Agent_6_Doc_Creator", model_to_use, usage_metadata, filename=doc_name)
             except Exception as log_err:
                 logger.warning(f"Failed to log API usage in Agent 6 (async): {log_err}")
 
@@ -583,11 +1217,9 @@ Please follow these structure and formatting instructions strictly:
         unique_suffix = uuid.uuid4().hex[:8]
         safe_name = "".join([c if c.isalnum() or c in (' ', '_', '-') else '_' for c in doc_name]).strip().replace(' ', '_')
         
-        excel_file_name = f"{safe_name}_{unique_suffix}.xlsx"
-        excel_file_path = os.path.join(upload_dir, excel_file_name)
-        
         pdf_file_name = f"{safe_name}_{unique_suffix}.pdf"
         pdf_file_path = os.path.join(upload_dir, pdf_file_name)
+        excel_file_path = None
 
         doc_markdown = ""
         html_body = ""
@@ -615,7 +1247,6 @@ Please follow these structure and formatting instructions strictly:
                         pass
 
             if not data or not isinstance(data, dict):
-                # Fallback structure if JSON parse failed
                 data = {
                     "metadata": {"project_name": project_name, "tester_name": "AI Agent", "module_function": doc_name},
                     "test_cases": [
@@ -633,45 +1264,52 @@ Please follow these structure and formatting instructions strictly:
                     ]
                 }
 
-            import openpyxl
-            from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
-            
-            wb = openpyxl.Workbook()
-            ws = wb.active
-            ws.title = "Test Case"
-            
-            # Styles
-            header_fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
-            bold_font = Font(bold=True)
-            center_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
-            left_align = Alignment(horizontal="left", vertical="center", wrap_text=True)
-            thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
-            pass_fill = PatternFill(start_color="00FF00", end_color="00FF00", fill_type="solid")
-            fail_fill = PatternFill(start_color="FF0000", end_color="FF0000", fill_type="solid")
-            
-            # Row 1: Title
-            ws.merge_cells('A1:I1')
-            ws['A1'] = "Test Case Specification"
-            ws['A1'].font = Font(bold=True, size=14)
-            ws['A1'].alignment = center_align
-            
-            # Row 3-6: Metadata
             meta = data.get("metadata", {})
             tester_val = meta.get("tester_name", "AI Agent")
             module_val = meta.get("module_function", doc_name)
-            project_val = meta.get("project_name", project_code)
+            test_cases = data.get("test_cases", [])
+
+            # Generate formatted Excel file specifically for Test Case
+            import openpyxl
+            from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
             
+            excel_file_name = f"{safe_name}_{unique_suffix}.xlsx"
+            excel_file_path = os.path.join(upload_dir, excel_file_name)
+
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "Test Cases"
+            
+            header_fill = PatternFill(start_color="1E3A8A", end_color="1E3A8A", fill_type="solid")
+            sub_fill = PatternFill(start_color="F1F5F9", end_color="F1F5F9", fill_type="solid")
+            white_bold = Font(bold=True, color="FFFFFF", size=11)
+            bold_font = Font(bold=True, size=10)
+            center_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            left_align = Alignment(horizontal="left", vertical="center", wrap_text=True)
+            thin_border = Border(left=Side(style='thin', color='CBD5E1'), right=Side(style='thin', color='CBD5E1'), top=Side(style='thin', color='CBD5E1'), bottom=Side(style='thin', color='CBD5E1'))
+            pass_fill = PatternFill(start_color="DCFCE7", end_color="DCFCE7", fill_type="solid")
+            fail_fill = PatternFill(start_color="FEE2E2", end_color="FEE2E2", fill_type="solid")
+            
+            # Title
+            ws.merge_cells('A1:I1')
+            ws['A1'] = f"SPECTRA QA PLATFORM - {doc_name} ({doc_type})"
+            ws['A1'].fill = header_fill
+            ws['A1'].font = white_bold
+            ws['A1'].alignment = center_align
+            ws.row_dimensions[1].height = 28
+            
+            # Metadata
             metadata_map = [
-                ("Project Name :", project_val, "Create Date :", today_str),
-                ("Project ID:", project_code, "Start Test Date :", today_str),
-                ("Tester Name :", tester_val, "Finish Test Date :", today_str),
-                ("Project Release / Version :", "-", "Module / Function:", module_val)
+                ("Project Name :", f"{project_name} ({project_code})", "Create Date :", today_str),
+                ("Module / Function:", module_val, "Test Engine:", "Spectra AI (Gemini 3.1 Pro)"),
+                ("Tester Name :", tester_val, "Status :", "Baseline Specification")
             ]
             
             row_idx = 3
             for r_data in metadata_map:
                 ws.cell(row=row_idx, column=2).value = r_data[0]
                 ws.cell(row=row_idx, column=2).font = bold_font
+                ws.cell(row=row_idx, column=2).fill = sub_fill
                 ws.cell(row=row_idx, column=2).alignment = Alignment(horizontal="right")
                 
                 ws.merge_cells(start_row=row_idx, start_column=3, end_row=row_idx, end_column=4)
@@ -679,56 +1317,58 @@ Please follow these structure and formatting instructions strictly:
                 
                 ws.cell(row=row_idx, column=6).value = r_data[2]
                 ws.cell(row=row_idx, column=6).font = bold_font
+                ws.cell(row=row_idx, column=6).fill = sub_fill
                 ws.cell(row=row_idx, column=6).alignment = Alignment(horizontal="right")
                 
                 ws.merge_cells(start_row=row_idx, start_column=7, end_row=row_idx, end_column=8)
                 ws.cell(row=row_idx, column=7).value = r_data[3]
                 
-                for col in range(1, 10):
-                    ws.cell(row=row_idx, column=col).fill = header_fill
+                for col in range(2, 9):
+                    ws.cell(row=row_idx, column=col).border = thin_border
                 row_idx += 1
                 
-            # Row 7: Functional Requirements
-            ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=4)
-            ws.cell(row=row_idx, column=1).value = "FUNCTIONAL REQUIREMENTS (Requirements No.) :"
-            ws.cell(row=row_idx, column=1).font = bold_font
-            ws.cell(row=row_idx, column=1).alignment = center_align
-            
-            ws.merge_cells(start_row=row_idx, start_column=5, end_row=row_idx, end_column=9)
-            ws.cell(row=row_idx, column=5).value = "-"
-            for col in range(1, 10):
-                ws.cell(row=row_idx, column=col).fill = header_fill
-            row_idx += 1
-            
-            # Row 8: Table Headers
-            headers = ["Test Case ID", "Test case Objective", "Test Description / Procedure", "Test Data", 
-                       "Expected Result", "Actual Result", "Result (Pass/Fail)", "Req No.", "Update by"]
-            row_idx += 1
+            # Headers
+            headers = ["Test ID", "Test Objective", "Test Description / Procedure", "Test Data", 
+                       "Expected Result", "Actual Result", "Result (Pass/Fail)", "Req No.", "Updated By"]
+            row_idx += 2
             for col_idx, h in enumerate(headers, 1):
                 cell = ws.cell(row=row_idx, column=col_idx, value=h)
-                cell.font = bold_font
+                cell.font = white_bold
                 cell.fill = header_fill
                 cell.alignment = center_align
                 cell.border = thin_border
+            ws.row_dimensions[row_idx].height = 24
                 
-            widths = [15, 30, 40, 20, 30, 25, 15, 10, 20]
+            widths = [14, 28, 40, 20, 30, 22, 16, 12, 18]
             for i, w in enumerate(widths, 1):
                 ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = w
                 
             # Data Rows
-            test_cases = data.get("test_cases", [])
+            header_keys = [
+                ("Test Case ID", "Test ID"),
+                ("Test case Objective", "Test Objective"),
+                ("Test Description / Procedure", "Test Description / Procedure"),
+                ("Test Data", "Test Data"),
+                ("Expected Result", "Expected Result"),
+                ("Actual Result", "Actual Result"),
+                ("Result (Pass/Fail)", "Result (Pass/Fail)"),
+                ("Req No.", "Req No."),
+                ("Update by", "Updated By")
+            ]
+            
             row_idx += 1
             for tc in test_cases:
-                for col_idx, h in enumerate(headers, 1):
-                    val = tc.get(h, "")
+                for col_idx, (k1, k2) in enumerate(header_keys, 1):
+                    val = tc.get(k1, tc.get(k2, ""))
                     cell = ws.cell(row=row_idx, column=col_idx, value=val)
                     cell.border = thin_border
                     cell.alignment = center_align if col_idx in [1, 7, 8, 9] else left_align
                     
-                    if h == "Result (Pass/Fail)":
-                        if str(val).upper() == "PASS":
+                    if col_idx == 7:
+                        res_str = str(val).upper()
+                        if res_str == "PASS":
                             cell.fill = pass_fill
-                        elif str(val).upper() == "FAIL":
+                        elif res_str == "FAIL":
                             cell.fill = fail_fill
                 row_idx += 1
                 
@@ -770,83 +1410,7 @@ Please follow these structure and formatting instructions strictly:
                 md_lines.append("")
 
             doc_markdown = "\n".join(md_lines)
-
-            # Construct HTML for PDF
-            rows_html = ""
-            for tc in test_cases:
-                res_val = str(tc.get("Result (Pass/Fail)", "")).upper()
-                badge_class = "badge pass" if res_val == "PASS" else ("badge fail" if res_val == "FAIL" else "badge")
-                proc_html = str(tc.get("Test Description / Procedure", "")).replace("\n", "<br>")
-                rows_html += f"""
-                <tr>
-                    <td style="font-weight: 600; text-align: center;">{tc.get("Test Case ID", "")}</td>
-                    <td>{tc.get("Test case Objective", "")}</td>
-                    <td>{proc_html}</td>
-                    <td>{tc.get("Test Data", "")}</td>
-                    <td>{tc.get("Expected Result", "")}</td>
-                    <td style="text-align: center;"><span class="{badge_class}">{res_val}</span></td>
-                    <td style="text-align: center;">{tc.get("Req No.", "")}</td>
-                </tr>
-                """
-
-            html_body = f"""
-            <!DOCTYPE html>
-            <html>
-            <head>
-            <meta charset="utf-8">
-            <title>{doc_name}</title>
-            <style>
-                @page {{ size: A4 landscape; margin: 12mm; }}
-                body {{ font-family: 'Segoe UI', Tahoma, sans-serif; font-size: 11px; color: #1e293b; margin: 0; padding: 0; line-height: 1.4; }}
-                .header-card {{ background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px 18px; margin-bottom: 16px; }}
-                .title-row {{ display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #3b82f6; padding-bottom: 8px; margin-bottom: 10px; }}
-                .doc-title {{ font-size: 18px; font-weight: bold; color: #1e3a8a; margin: 0; }}
-                .type-badge {{ background: #dbeafe; color: #1d4ed8; padding: 4px 10px; border-radius: 6px; font-weight: 600; font-size: 11px; }}
-                .meta-grid {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; font-size: 11px; }}
-                .meta-item {{ display: flex; flex-direction: column; }}
-                .meta-label {{ font-weight: 600; color: #64748b; font-size: 10px; text-transform: uppercase; }}
-                .meta-val {{ color: #0f172a; font-weight: 500; }}
-                table {{ width: 100%; border-collapse: collapse; margin-top: 10px; }}
-                th, td {{ border: 1px solid #cbd5e1; padding: 6px 8px; vertical-align: top; font-size: 10.5px; }}
-                th {{ background-color: #f1f5f9; color: #334155; font-weight: 600; text-align: left; }}
-                tr:nth-child(even) {{ background-color: #f8fafc; }}
-                .badge {{ display: inline-block; padding: 2px 6px; border-radius: 4px; font-weight: 700; font-size: 9.5px; }}
-                .pass {{ background: #dcfce7; color: #15803d; }}
-                .fail {{ background: #fee2e2; color: #b91c1c; }}
-            </style>
-            </head>
-            <body>
-                <div class="header-card">
-                    <div class="title-row">
-                        <div class="doc-title">{doc_name}</div>
-                        <div class="type-badge">{doc_type}</div>
-                    </div>
-                    <div class="meta-grid">
-                        <div class="meta-item"><span class="meta-label">Project</span><span class="meta-val">{project_val} ({project_code})</span></div>
-                        <div class="meta-item"><span class="meta-label">Module / Function</span><span class="meta-val">{module_val}</span></div>
-                        <div class="meta-item"><span class="meta-label">Tester</span><span class="meta-val">{tester_val}</span></div>
-                        <div class="meta-item"><span class="meta-label">Date</span><span class="meta-val">{today_str}</span></div>
-                    </div>
-                </div>
-                <table>
-                    <thead>
-                        <tr>
-                            <th style="width: 8%; text-align: center;">Test ID</th>
-                            <th style="width: 22%;">Objective</th>
-                            <th style="width: 28%;">Description / Procedure</th>
-                            <th style="width: 14%;">Test Data</th>
-                            <th style="width: 18%;">Expected Result</th>
-                            <th style="width: 5%; text-align: center;">Result</th>
-                            <th style="width: 5%; text-align: center;">Req No.</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {rows_html}
-                    </tbody>
-                </table>
-            </body>
-            </html>
-            """
+            html_body = build_testcase_document_html(doc_name, doc_type, project_name, project_code, module_val, tester_val, today_str, test_cases)
 
         else:
             # Generic Document Types (SRS, SDD, TOR, UAT, User Manual, Admin Manual, etc.)
@@ -859,132 +1423,21 @@ Please follow these structure and formatting instructions strictly:
                 clean_md = clean_md[:-3]
             doc_markdown = clean_md.strip()
 
-            # Generate Excel Document Structure
-            import openpyxl
-            from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
-
-            wb = openpyxl.Workbook()
-            ws_overview = wb.active
-            ws_overview.title = "Document Overview"
-
-            header_fill = PatternFill(start_color="1E3A8A", end_color="1E3A8A", fill_type="solid")
-            sub_fill = PatternFill(start_color="E2E8F0", end_color="E2E8F0", fill_type="solid")
-            white_bold = Font(bold=True, color="FFFFFF", size=13)
-            bold_font = Font(bold=True, size=11)
-            thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
-
-            ws_overview.merge_cells('A1:D1')
-            ws_overview['A1'] = f"{doc_name} ({doc_type})"
-            ws_overview['A1'].fill = header_fill
-            ws_overview['A1'].font = white_bold
-            ws_overview['A1'].alignment = Alignment(horizontal="center", vertical="center")
-            ws_overview.row_dimensions[1].height = 30
-
-            meta_rows = [
-                ("Project Code:", project_code, "Date:", today_str),
-                ("Project Name:", project_name, "Document Type:", doc_type),
-                ("Skill / Framework:", skill_name, "Generated By:", "AI Agent 6")
-            ]
-            for r_i, (k1, v1, k2, v2) in enumerate(meta_rows, 3):
-                ws_overview.cell(row=r_i, column=1, value=k1).font = bold_font
-                ws_overview.cell(row=r_i, column=2, value=v1)
-                ws_overview.cell(row=r_i, column=3, value=k2).font = bold_font
-                ws_overview.cell(row=r_i, column=4, value=v2)
-                for c in range(1, 5):
-                    ws_overview.cell(row=r_i, column=c).border = thin_border
-
-            # Parse Headings & Sections into Excel
-            ws_content = wb.create_sheet(title="Document Sections")
-            ws_content.cell(row=1, column=1, value="Section / Heading").font = bold_font
-            ws_content.cell(row=1, column=1).fill = sub_fill
-            ws_content.cell(row=1, column=2, value="Content Details").font = bold_font
-            ws_content.cell(row=1, column=2).fill = sub_fill
-
-            c_row = 2
-            current_section = "Overview"
-            current_body = []
-            for line in doc_markdown.split("\n"):
-                if line.startswith("#"):
-                    if current_body:
-                        ws_content.cell(row=c_row, column=1, value=current_section).border = thin_border
-                        ws_content.cell(row=c_row, column=2, value="\n".join(current_body)).border = thin_border
-                        c_row += 1
-                        current_body = []
-                    current_section = line.lstrip("#").strip()
-                else:
-                    if line.strip():
-                        current_body.append(line.strip())
-
-            if current_body:
-                ws_content.cell(row=c_row, column=1, value=current_section).border = thin_border
-                ws_content.cell(row=c_row, column=2, value="\n".join(current_body)).border = thin_border
-
-            ws_overview.column_dimensions['A'].width = 20
-            ws_overview.column_dimensions['B'].width = 35
-            ws_overview.column_dimensions['C'].width = 20
-            ws_overview.column_dimensions['D'].width = 35
-            ws_content.column_dimensions['A'].width = 35
-            ws_content.column_dimensions['B'].width = 80
-
-            wb.save(excel_file_path)
-
-            # Generate HTML for PDF
+            # Generate HTML for PDF using System Template
             rendered_markdown = simple_markdown_to_html(doc_markdown)
-
-            html_body = f"""
-            <!DOCTYPE html>
-            <html>
-            <head>
-            <meta charset="utf-8">
-            <title>{doc_name}</title>
-            <style>
-                @page {{ size: A4; margin: 18mm; }}
-                body {{ font-family: 'Segoe UI', Tahoma, sans-serif; font-size: 11.5px; color: #1e293b; margin: 0; padding: 0; line-height: 1.6; }}
-                .header-card {{ background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px 20px; margin-bottom: 20px; }}
-                .title-row {{ display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #3b82f6; padding-bottom: 10px; margin-bottom: 12px; }}
-                .doc-title {{ font-size: 20px; font-weight: bold; color: #1e3a8a; margin: 0; }}
-                .type-badge {{ background: #dbeafe; color: #1d4ed8; padding: 4px 12px; border-radius: 6px; font-weight: 600; font-size: 12px; }}
-                h1, h2, h3, h4 {{ color: #1e3a8a; margin-top: 18px; margin-bottom: 8px; }}
-                h1 {{ font-size: 16px; border-bottom: 1px solid #cbd5e1; padding-bottom: 4px; }}
-                h2 {{ font-size: 14px; }}
-                h3 {{ font-size: 12.5px; }}
-                p {{ margin: 0 0 8px 0; }}
-                table {{ width: 100%; border-collapse: collapse; margin: 12px 0; }}
-                th, td {{ border: 1px solid #cbd5e1; padding: 6px 10px; vertical-align: top; font-size: 11px; }}
-                th {{ background-color: #f1f5f9; color: #334155; font-weight: 600; text-align: left; }}
-                tr:nth-child(even) {{ background-color: #f8fafc; }}
-                code {{ background: #f1f5f9; padding: 2px 5px; border-radius: 4px; font-family: monospace; font-size: 11px; }}
-                pre {{ background: #0f172a; color: #f8fafc; padding: 12px; border-radius: 6px; overflow-x: auto; }}
-                pre code {{ background: none; color: inherit; }}
-                ul, ol {{ margin: 4px 0 10px 20px; padding: 0; }}
-                li {{ margin-bottom: 4px; }}
-                blockquote {{ border-left: 4px solid #3b82f6; margin: 8px 0; padding: 6px 12px; background: #eff6ff; color: #1e40af; }}
-            </style>
-            </head>
-            <body>
-                <div class="header-card">
-                    <div class="title-row">
-                        <div class="doc-title">{doc_name}</div>
-                        <div class="type-badge">{doc_type}</div>
-                    </div>
-                    <div><b>Project:</b> {project_name} ({project_code}) | <b>Framework:</b> {skill_name} | <b>Date:</b> {today_str}</div>
-                </div>
-                <div class="doc-body">
-                    {rendered_markdown}
-                </div>
-            </body>
-            </html>
-            """
+            html_body = build_generic_document_html(doc_name, doc_type, project_name, project_code, skill_name, today_str, rendered_markdown)
 
         # Render PDF
         render_html_to_pdf(html_body, pdf_file_path)
 
-        # 6. Update DB with file_url (Excel), pdf_url (PDF), markdown_content
+        # 6. Update DB with file_url (Excel for Test Case / PDF for others), pdf_url (PDF), markdown_content
         cursor.execute("SELECT status FROM qa_generated_documents WHERE id = %s::uuid", (gen_id,))
         status_row = cursor.fetchone()
         if status_row and status_row[0] == 'Cancelled':
             logger.info(f"Document generation {gen_id} was cancelled by user. Discarding output.")
             return
+
+        final_file_url = excel_file_path if excel_file_path else pdf_file_path
 
         cursor.execute("""
             UPDATE qa_generated_documents 
@@ -994,9 +1447,9 @@ Please follow these structure and formatting instructions strictly:
                 markdown_content = %s, 
                 is_saved_to_project = FALSE 
             WHERE id = %s::uuid AND status != 'Cancelled'
-        """, (excel_file_path, pdf_file_path, doc_markdown, gen_id))
+        """, (final_file_url, pdf_file_path, doc_markdown, gen_id))
         conn.commit()
-        logger.info(f"Successfully generated QA document (Excel: {excel_file_path}, PDF: {pdf_file_path})")
+        logger.info(f"Successfully generated QA document (File: {final_file_url}, PDF: {pdf_file_path})")
 
     except Exception as e:
         logger.error(f"Error in create_qa_document_async: {e}", exc_info=True)
