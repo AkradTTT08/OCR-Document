@@ -42,9 +42,10 @@ def render_html_to_pdf(html_content: str, output_path: str):
     except Exception as pw_err:
         logger.warning(f"Playwright PDF generation failed ({pw_err}), attempting fallback...")
 
-    # 2. Try WeasyPrint if available
+    # 2. Try WeasyPrint if available (dynamic import to avoid static linter warnings on systems without GTK/WeasyPrint)
     try:
-        import weasyprint
+        import importlib
+        weasyprint = importlib.import_module("weasyprint")
         weasyprint.HTML(string=html_content).write_pdf(output_path)
         if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
             logger.info(f"WeasyPrint PDF generated successfully at {output_path}")
