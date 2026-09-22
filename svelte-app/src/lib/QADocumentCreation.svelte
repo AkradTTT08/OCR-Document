@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { selectedProjectStore } from './qaHistoryStore.js';
   import { toast } from './toastStore.js';
-  import { fade, slide } from 'svelte/transition';
+  import { fade, slide, scale } from 'svelte/transition';
   import ProjectSelection from './ProjectSelection.svelte';
   import CustomSelect from './CustomSelect.svelte';
   import CustomMultiSelect from './CustomMultiSelect.svelte';
@@ -366,19 +366,33 @@
     }
   }
 
-  async function deleteDocument(doc) {
-    if (!doc || !doc.id) return;
-    if (!confirm(`คุณแน่ใจหรือไม่ว่าต้องการลบรายการ "${doc.doc_name}" ออกจากประวัติ?`)) {
-      return;
-    }
+  let showDeleteModal = false;
+  let docToDelete = null;
+  let isDeleting = false;
+
+  function openDeleteModal(doc) {
+    docToDelete = doc;
+    showDeleteModal = true;
+  }
+
+  function closeDeleteModal() {
+    if (isDeleting) return;
+    showDeleteModal = false;
+    docToDelete = null;
+  }
+
+  async function handleDeleteConfirmed() {
+    if (!docToDelete || !docToDelete.id) return;
+    isDeleting = true;
     try {
-      const res = await fetch(`/api/agent/delete_generated_document/${doc.id}?action=delete`, {
+      const res = await fetch(`/api/agent/delete_generated_document/${docToDelete.id}?action=delete`, {
         method: 'DELETE'
       });
       const data = await res.json();
       if (res.ok && data.success) {
         toast('ลบรายการเรียบร้อยแล้ว', 'success');
-        generatedHistory = generatedHistory.filter(d => d.id !== doc.id);
+        generatedHistory = generatedHistory.filter(d => d.id !== docToDelete.id);
+        closeDeleteModal();
         if ($selectedProjectStore) {
           fetchHistory($selectedProjectStore.id || $selectedProjectStore.project_id);
         }
@@ -388,6 +402,8 @@
     } catch(err) {
       console.error('Delete error:', err);
       toast('เกิดข้อผิดพลาดในการลบรายการ', 'error');
+    } finally {
+      isDeleting = false;
     }
   }
 </script>
@@ -566,14 +582,14 @@
                             บันทึกเข้า Project
                           </button>
                         {/if}
-                        <button class="btn-action btn-delete" title="ลบประวัติรายการนี้" on:click={() => deleteDocument(doc)}>
+                        <button class="btn-action btn-delete" title="ลบประวัติรายการนี้" on:click={() => openDeleteModal(doc)}>
                           <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" fill="currentColor" viewBox="0 0 16 16">
                             <path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z"/>
                             <path fill-rule="evenodd" d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1v1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"/>
                           </svg>
                         </button>
                       {:else}
-                        <button class="btn-action btn-delete" title="ลบประวัติรายการนี้" on:click={() => deleteDocument(doc)}>
+                        <button class="btn-action btn-delete" title="ลบประวัติรายการนี้" on:click={() => openDeleteModal(doc)}>
                           <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" fill="currentColor" viewBox="0 0 16 16">
                             <path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z"/>
                             <path fill-rule="evenodd" d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1v1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"/>
@@ -608,13 +624,65 @@
   {/if}
 </div>
 
+<!-- ── Delete Confirmation Modal ── -->
+{#if showDeleteModal && docToDelete}
+  <div class="modal-backdrop" on:click|self={closeDeleteModal} in:fade={{ duration: 150 }}>
+    <div class="modal-content modal-delete-content" on:click|stopPropagation in:scale={{ duration: 200, start: 0.95 }}>
+      <button class="modal-close-btn" on:click={closeDeleteModal} title="ปิด">✕</button>
+      
+      <div class="delete-icon-wrapper">
+        <div class="delete-icon-pulse"></div>
+        <svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" fill="currentColor" viewBox="0 0 16 16" class="delete-svg-icon">
+          <path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z"/>
+          <path fill-rule="evenodd" d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1v1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"/>
+        </svg>
+      </div>
+
+      <div class="modal-delete-header">
+        <h3>ยืนยันการลบเอกสาร</h3>
+        <p class="modal-delete-desc">
+          คุณแน่ใจหรือไม่ว่าต้องการลบเอกสาร <span class="highlight-docname">"{docToDelete.doc_name}"</span> ออกจากประวัติ?
+        </p>
+        <div class="modal-delete-subdesc">
+          ⚠️ การกระทำนี้ไม่สามารถย้อนกลับได้ และไฟล์ที่สร้างไว้จะถูกลบออกจากระบบ
+        </div>
+      </div>
+
+      <div class="modal-actions" style="margin-top: 24px; justify-content: center; gap: 12px;">
+        <button class="btn-cancel" on:click={closeDeleteModal} disabled={isDeleting}>
+          ยกเลิก
+        </button>
+        <button class="btn-confirm-delete" on:click={handleDeleteConfirmed} disabled={isDeleting}>
+          {#if isDeleting}
+            <span class="spinner-micro"></span> กำลังลบ...
+          {:else}
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16">
+              <path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z"/>
+              <path fill-rule="evenodd" d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1v1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"/>
+            </svg>
+            ยืนยันลบเอกสาร
+          {/if}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
 <!-- ── Save to Project Modal ── -->
 {#if showSaveModal}
   <div class="modal-backdrop" on:click|self={() => showSaveModal = false} in:fade={{ duration: 150 }}>
-    <div class="modal-content" on:click|stopPropagation>
-      <h3>บันทึกเอกสารเข้า Project</h3>
+    <div class="modal-content" on:click|stopPropagation in:scale={{ duration: 200, start: 0.95 }}>
+      <button class="modal-close-btn" on:click={() => showSaveModal = false} title="ปิด">✕</button>
       
-      <div class="form-group">
+      <div class="modal-title-bar">
+        <div class="modal-icon-badge">📁</div>
+        <div>
+          <h3>บันทึกเอกสารเข้า Project</h3>
+          <p class="modal-subtitle">บันทึกเนื้อหาเอกสารเข้าสู่ Knowledge Base ประจำโครงการ</p>
+        </div>
+      </div>
+      
+      <div class="form-group" style="margin-top: 16px;">
         <label for="save-filename">ชื่อไฟล์</label>
         <input id="save-filename" type="text" bind:value={saveForm.filename} class="form-input" />
       </div>
@@ -639,8 +707,11 @@
         />
       </div>
 
-      <div class="form-group toggle-group" style="margin: 16px 0; background: rgba(255,255,255,0.05); padding: 12px; border-radius: 8px; display: flex; flex-direction: row; justify-content: space-between; align-items: center;">
-        <span class="label-text">กำหนดเป็น Golden Data</span>
+      <div class="form-group toggle-group" style="margin: 16px 0; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); padding: 12px 14px; border-radius: 10px; display: flex; flex-direction: row; justify-content: space-between; align-items: center;">
+        <div>
+          <span class="label-text" style="font-weight: 600; display: block;">กำหนดเป็น Golden Data</span>
+          <span style="font-size: 11.5px; color: #94a3b8;">เอกสารหลักที่มีความน่าเชื่อถือสูงสำหรับ AI ใช้อ้างอิง</span>
+        </div>
         <label class="toggle-wrap">
           <input type="checkbox" bind:checked={saveForm.is_golden_data}/>
           <span class="toggle-track"><span class="toggle-thumb"></span></span>
@@ -657,7 +728,7 @@
           {#if isSavingToProject}
             <span class="spinner-micro"></span> กำลังบันทึก...
           {:else}
-            💾 บันทึก
+            💾 บันทึกเข้า Project
           {/if}
         </button>
       </div>
@@ -1050,34 +1121,187 @@
     animation: spin 0.8s linear infinite;
   }
 
-  /* ── Save Modal Styles ── */
+  /* ── Modal Backdrop & Card Styles ── */
   .modal-backdrop {
     position: fixed;
     top: 0; left: 0; right: 0; bottom: 0;
-    background: rgba(10, 15, 30, 0.7);
-    backdrop-filter: blur(6px);
+    background: rgba(8, 12, 22, 0.75);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
     display: flex;
     align-items: center;
     justify-content: center;
     z-index: 9999;
+    padding: 20px;
   }
 
   .modal-content {
-    background: #0f172a;
-    border: 1px solid #334155;
-    border-radius: 12px;
-    padding: 24px;
-    width: 420px;
-    max-width: 90vw;
-    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+    background: linear-gradient(145deg, #111827 0%, #0b0f19 100%);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 16px;
+    padding: 26px 28px;
+    width: 440px;
+    max-width: 92vw;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7), 0 0 30px rgba(59, 130, 246, 0.1);
+    color: #f8fafc;
+    position: relative;
+    box-sizing: border-box;
+  }
+
+  .modal-close-btn {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #94a3b8;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .modal-close-btn:hover {
+    background: rgba(239, 68, 68, 0.2);
+    border-color: rgba(239, 68, 68, 0.4);
+    color: #fca5a5;
+  }
+
+  .modal-title-bar {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    margin-bottom: 18px;
+  }
+
+  .modal-icon-badge {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    background: rgba(59, 130, 246, 0.15);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    flex-shrink: 0;
+  }
+
+  .modal-title-bar h3 {
+    margin: 0;
+    font-size: 1.15rem;
+    font-weight: 600;
     color: #f8fafc;
   }
 
-  .modal-content h3 {
-    margin: 0 0 18px 0;
-    font-size: 1.15rem;
-    color: #f8fafc;
+  .modal-subtitle {
+    margin: 4px 0 0 0;
+    font-size: 12.5px;
+    color: #94a3b8;
+    line-height: 1.4;
+  }
+
+  /* ── Delete Modal Styles ── */
+  .modal-delete-content {
+    width: 420px;
+    text-align: center;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.75), 0 0 35px rgba(239, 68, 68, 0.18);
+    border-color: rgba(239, 68, 68, 0.3);
+  }
+
+  .delete-icon-wrapper {
+    position: relative;
+    width: 60px;
+    height: 60px;
+    margin: 4px auto 16px auto;
+    border-radius: 50%;
+    background: rgba(239, 68, 68, 0.12);
+    border: 1px solid rgba(239, 68, 68, 0.35);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #ef4444;
+  }
+
+  .delete-icon-pulse {
+    position: absolute;
+    inset: -5px;
+    border-radius: 50%;
+    border: 2px solid rgba(239, 68, 68, 0.25);
+    animation: pulse-ring 2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+  }
+
+  @keyframes pulse-ring {
+    0% { transform: scale(0.95); opacity: 0.8; }
+    50% { transform: scale(1.12); opacity: 0.2; }
+    100% { transform: scale(0.95); opacity: 0.8; }
+  }
+
+  .modal-delete-header h3 {
+    margin: 0 0 10px 0;
+    font-size: 1.25rem;
     font-weight: 600;
+    color: #f8fafc;
+  }
+
+  .modal-delete-desc {
+    font-size: 14px;
+    color: #cbd5e1;
+    margin: 0 0 12px 0;
+    line-height: 1.5;
+  }
+
+  .highlight-docname {
+    font-weight: 600;
+    color: #fca5a5;
+    background: rgba(239, 68, 68, 0.15);
+    padding: 2px 6px;
+    border-radius: 4px;
+    border: 1px solid rgba(239, 68, 68, 0.25);
+    word-break: break-word;
+  }
+
+  .modal-delete-subdesc {
+    font-size: 12px;
+    color: #fca5a5;
+    margin: 0;
+    background: rgba(239, 68, 68, 0.08);
+    padding: 9px 12px;
+    border-radius: 8px;
+    border: 1px solid rgba(239, 68, 68, 0.18);
+    line-height: 1.4;
+  }
+
+  .btn-confirm-delete {
+    background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+    border: 1px solid rgba(239, 68, 68, 0.6);
+    color: #ffffff;
+    padding: 9px 20px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    transition: all 0.2s ease;
+    box-shadow: 0 4px 14px rgba(239, 68, 68, 0.4);
+  }
+
+  .btn-confirm-delete:hover:not(:disabled) {
+    background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
+    box-shadow: 0 6px 20px rgba(239, 68, 68, 0.55);
+    transform: translateY(-1px);
+  }
+
+  .btn-confirm-delete:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
   }
 
   .form-input {
@@ -1139,27 +1363,28 @@
   }
 
   .btn-cancel {
-    background: transparent;
-    border: 1px solid #475569;
-    color: #94a3b8;
-    padding: 8px 16px;
-    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: #cbd5e1;
+    padding: 8px 18px;
+    border-radius: 8px;
     cursor: pointer;
     font-size: 14px;
     transition: all 0.2s;
   }
 
   .btn-cancel:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.05);
-    color: #f8fafc;
+    background: rgba(255, 255, 255, 0.1);
+    color: #ffffff;
+    border-color: rgba(255, 255, 255, 0.25);
   }
 
   .btn-save {
-    background: #3b82f6;
-    border: none;
+    background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+    border: 1px solid rgba(59, 130, 246, 0.5);
     color: white;
-    padding: 8px 18px;
-    border-radius: 6px;
+    padding: 8px 20px;
+    border-radius: 8px;
     cursor: pointer;
     font-size: 14px;
     font-weight: 500;
@@ -1167,11 +1392,13 @@
     align-items: center;
     gap: 6px;
     transition: all 0.2s;
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.35);
   }
 
   .btn-save:hover:not(:disabled) {
-    background: #2563eb;
-    box-shadow: 0 0 12px rgba(59, 130, 246, 0.4);
+    background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+    box-shadow: 0 6px 18px rgba(59, 130, 246, 0.5);
+    transform: translateY(-1px);
   }
 
   .btn-save:disabled {
