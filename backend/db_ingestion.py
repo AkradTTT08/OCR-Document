@@ -1987,7 +1987,18 @@ def save_ocr_history(filename, result_json):
     cursor = None
     try:
         conn = get_ocr_db_connection()
+        conn.autocommit = True
         cursor = conn.cursor()
+        
+        # Ensure table exists
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS ocr_history (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                filename VARCHAR(255),
+                result_json JSONB,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
         
         rj = json.dumps(result_json) if result_json is not None else None
         
@@ -1998,10 +2009,8 @@ def save_ocr_history(filename, result_json):
         """, (filename, rj))
         
         row = cursor.fetchone()
-        conn.commit()
         return {'id': str(row[0]), 'created_at': row[1].isoformat()} if row else None
     except Exception as e:
-        if conn: conn.rollback()
         logger.error(f"Error saving ocr history: {e}", exc_info=True)
         return None
     finally:
@@ -2015,7 +2024,19 @@ def get_ocr_history():
     try:
         from psycopg2.extras import RealDictCursor
         conn = get_ocr_db_connection()
+        conn.autocommit = True
         cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Ensure table exists
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS ocr_history (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                filename VARCHAR(255),
+                result_json JSONB,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        
         cursor.execute("""
             SELECT id, filename, result_json, created_at
             FROM ocr_history
@@ -2041,12 +2062,11 @@ def delete_ocr_history(history_id):
     cursor = None
     try:
         conn = get_ocr_db_connection()
+        conn.autocommit = True
         cursor = conn.cursor()
         cursor.execute("DELETE FROM ocr_history WHERE id = %s::uuid", (history_id,))
-        conn.commit()
         return True
     except Exception as e:
-        if conn: conn.rollback()
         logger.error(f"Error deleting ocr history: {e}", exc_info=True)
         return False
     finally:

@@ -71,6 +71,29 @@ AVATARS_FOLDER.mkdir(exist_ok=True, parents=True)
 WIREFRAMES_FOLDER = BASE_DIR / 'uploads' / 'wireframes'
 WIREFRAMES_FOLDER.mkdir(exist_ok=True, parents=True)
 
+# ── Auto-initialize essential DB tables (Runs under both Gunicorn and standalone) ──
+def _auto_init_tables():
+    try:
+        from db_ingestion import init_qa_transactions, init_api_usage_logs, init_billing_credit, init_ocr_history
+        init_ocr_history()
+        init_qa_transactions()
+        init_api_usage_logs()
+        init_billing_credit()
+        try:
+            from agent_1_ingestion import init_requirements_table
+            init_requirements_table()
+        except Exception:
+            pass
+        try:
+            from agent_7_flow_analyzer import init_flow_diagrams_table
+            init_flow_diagrams_table()
+        except Exception:
+            pass
+    except Exception as e:
+        logger.warning(f"Could not auto-initialize DB tables on startup: {e}")
+
+_auto_init_tables()
+
 
 def enrich_errors_with_boxes(errors: List[Dict], words_map: List[Dict]) -> List[Dict]:
     """จับคู่กล่อง (Box) กับข้อผิดพลาดเพื่อให้ Frontend แสดง Highlight ได้แม่นยำ"""

@@ -182,7 +182,10 @@
   async function handleResult(event) {
     scanResult = event.detail;
     if (scanResult && !scanResult.id) {
-        await saveOCRResult(scanResult);
+        const saved = await saveOCRResult(scanResult);
+        if (saved && saved.id) {
+            scanResult = { ...scanResult, id: saved.id, date: saved.date };
+        }
     }
   }
   function handleProcessing(event) {

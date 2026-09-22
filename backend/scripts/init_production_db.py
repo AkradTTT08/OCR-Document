@@ -220,6 +220,12 @@ def init_qa_database():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS ocr_history (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                filename VARCHAR(255),
+                result_json JSONB,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
         """)
 
         cur.close()

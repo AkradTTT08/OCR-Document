@@ -86,8 +86,15 @@
 
   const categorySelectOptions = [
     { value: 'Reference', label: 'เอกสารอ้างอิง (Reference)', icon: '📚' },
+    { value: 'TOR/SOW', label: 'TOR/SOW', icon: '📄' },
+    { value: 'SRS', label: 'SRS', icon: '📝' },
+    { value: 'SDD', label: 'SDD', icon: '🏗️' },
     { value: 'TestCase', label: 'TestCase', icon: '🧪' },
     { value: 'Requirements', label: 'Requirements', icon: '📋' },
+    { value: 'UAT', label: 'UAT', icon: '✅' },
+    { value: 'Usermanual', label: 'Usermanual', icon: '📖' },
+    { value: 'Admin manual', label: 'Admin manual', icon: '⚙️' },
+    { value: 'Installation system', label: 'Installation system', icon: '💻' },
     { value: 'Other', label: 'อื่นๆ (Other)', icon: '📁' }
   ];
 

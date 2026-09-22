@@ -115,7 +115,7 @@ def retrieve_srs_requirements(project_id: str, card_info: dict, max_chunks: int 
                 FROM document_chunks dc
                 JOIN documents d ON dc.doc_id = d.doc_id
                 WHERE d.project_id = %s
-                  AND (d.doc_category IN ('Requirements', 'Test Cases', 'QA Report') OR d.original_filename ILIKE '%%SRS%%' OR d.original_filename ILIKE '%%REQ%%')
+                  AND (d.doc_category IN ('Requirements', 'Test Cases', 'TestCase', 'QA Report', 'TOR/SOW', 'SRS', 'SDD', 'UAT', 'Usermanual', 'Admin manual', 'Installation system') OR d.original_filename ILIKE '%%SRS%%' OR d.original_filename ILIKE '%%REQ%%')
                   AND ({sql_or_clauses})
                 LIMIT %s
             """
@@ -135,7 +135,7 @@ def retrieve_srs_requirements(project_id: str, card_info: dict, max_chunks: int 
                 FROM document_chunks dc
                 JOIN documents d ON dc.doc_id = d.doc_id
                 WHERE d.project_id = %s
-                  AND (d.doc_category IN ('Requirements', 'Test Cases') OR d.original_filename ILIKE '%%SRS%%')
+                  AND (d.doc_category IN ('Requirements', 'Test Cases', 'TestCase', 'TOR/SOW', 'SRS', 'SDD', 'UAT', 'Usermanual', 'Admin manual', 'Installation system') OR d.original_filename ILIKE '%%SRS%%')
                 LIMIT 3
             """, (project_id,))
             rows = cursor.fetchall()

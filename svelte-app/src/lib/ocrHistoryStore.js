@@ -1,6 +1,20 @@
 import { writable } from 'svelte/store';
 
-export const ocrHistory = writable([]);
+const STORAGE_KEY = 'spectra_ocr_history';
+
+// Initialize from localStorage for instant display
+function getInitialHistory() {
+    try {
+        const cached = localStorage.getItem(STORAGE_KEY);
+        if (cached) {
+            const parsed = JSON.parse(cached);
+            if (Array.isArray(parsed)) return parsed;
+        }
+    } catch (e) {}
+    return [];
+}
+
+export const ocrHistory = writable(getInitialHistory());
 
 const API_BASE = '/api';
 
@@ -17,14 +31,21 @@ export async function loadOCRHistory() {
                 ...(row.result_json || {}) // Spread the result back so it acts like the original scanResult
             }));
             ocrHistory.set(formattedResults);
+            try {
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(formattedResults.slice(0, 30)));
+            } catch (e) {}
             return formattedResults;
         }
     } catch (e) {
-        console.error("Failed to load OCR history from DB:", e);
+        console.error("Failed to load OCR history from DB, using cached history:", e);
     }
+    return getInitialHistory();
 }
 
 export async function saveOCRResult(result) {
+    if (!result) return null;
+    
+    let savedItem = null;
     try {
         const payload = {
             filename: result.filename || 'Unknown Document',
@@ -39,31 +60,56 @@ export async function saveOCRResult(result) {
         
         if (response.ok) {
             const data = await response.json();
-            // Update local store with ID and date
-            const item = {
+            savedItem = {
                 ...result,
                 id: data.id,
                 date: data.created_at
             };
-            ocrHistory.update(list => [item, ...list]);
-            return item;
+        } else {
+            console.warn("Server returned non-ok status for OCR history save:", response.status);
         }
     } catch (e) {
-        console.error("Failed to save OCR result to DB:", e);
+        console.error("Failed to save OCR result to DB, falling back to local storage:", e);
     }
+    
+    // If backend save failed, create a persistent local record
+    if (!savedItem) {
+        savedItem = {
+            ...result,
+            id: result.id || `local_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+            date: result.date || new Date().toISOString()
+        };
+    }
+    
+    // Update store and localStorage
+    ocrHistory.update(list => {
+        const filtered = list.filter(item => item.id !== savedItem.id);
+        const updated = [savedItem, ...filtered];
+        try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(updated.slice(0, 30)));
+        } catch (e) {}
+        return updated;
+    });
+    
+    return savedItem;
 }
 
 export async function deleteOCRHistory(id) {
     try {
-        const response = await fetch(`${API_BASE}/ocr_history/${id}`, {
+        await fetch(`${API_BASE}/ocr_history/${id}`, {
             method: 'DELETE'
         });
-        
-        if (response.ok) {
-            ocrHistory.update(list => list.filter(item => item.id !== id));
-            return true;
-        }
     } catch (e) {
         console.error("Failed to delete OCR history from DB:", e);
     }
+    
+    // Always update local store and storage
+    ocrHistory.update(list => {
+        const updated = list.filter(item => item.id !== id);
+        try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(updated.slice(0, 30)));
+        } catch (e) {}
+        return updated;
+    });
+    return true;
 }
