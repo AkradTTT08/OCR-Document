@@ -182,26 +182,6 @@
     }
   }
 
-  // Auto-select matching AI Skill when docType changes
-  $: {
-    if (docType && skills.length > 0) {
-      const cleanDocType = docType.toLowerCase().replace(/[^a-z0-9]/g, '');
-      const matched = skills.find(s => {
-        const sTarget = (s.target_doc_type || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-        const sName = (s.skill_name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-        return sTarget === cleanDocType || sName.includes(cleanDocType) || (cleanDocType === 'testcase' && (sName.includes('test') || sTarget.includes('test')));
-      });
-      if (matched) {
-        const matchedId = String(matched.skill_id || matched.id);
-        if (!selectedSkillIds.includes(matchedId)) {
-          selectedSkillIds = [matchedId];
-        }
-      } else if (selectedSkillIds.length === 0 && skills[0]) {
-        selectedSkillIds = [String(skills[0]?.skill_id || skills[0]?.id)];
-      }
-    }
-  }
-
   let showSaveModal = false;
   let selectedDocForSave = null;
   let isSavingToProject = false;

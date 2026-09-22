@@ -57,19 +57,29 @@
   }
 
   function removeValue(e, optVal) {
-    e.stopPropagation();
+    if (e) {
+      e.stopPropagation();
+      e.preventDefault();
+    }
     const valStr = String(optVal);
     values = values.map(String).filter(v => v !== valStr);
     dispatch('change', { values });
   }
 
-  function selectAll() {
+  function selectAll(e) {
+    if (e) {
+      e.stopPropagation();
+      e.preventDefault();
+    }
     values = normalizedOptions.map(o => String(o.value)).filter(v => v !== "");
     dispatch('change', { values });
   }
 
   function clearAll(e) {
-    if (e) e.stopPropagation();
+    if (e) {
+      e.stopPropagation();
+      e.preventDefault();
+    }
     values = [];
     dispatch('change', { values: [] });
   }
@@ -116,7 +126,7 @@
               <button 
                 type="button" 
                 class="badge-remove-btn" 
-                on:click={(e) => removeValue(e, opt.value)}
+                on:click|stopPropagation|preventDefault={(e) => removeValue(e, opt.value)}
                 title="ลบรายการนี้"
               >
                 ×
@@ -139,7 +149,7 @@
         <button 
           type="button" 
           class="clear-all-btn" 
-          on:click={clearAll}
+          on:click|stopPropagation|preventDefault={clearAll}
           title="ล้างการเลือกทั้งหมด"
         >
           ✕
