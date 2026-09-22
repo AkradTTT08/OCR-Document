@@ -375,24 +375,28 @@
     showDeleteModal = true;
   }
 
-  function closeDeleteModal() {
-    if (isDeleting) return;
+  function closeDeleteModal(force = false) {
+    if (isDeleting && !force) return;
     showDeleteModal = false;
     docToDelete = null;
   }
 
   async function handleDeleteConfirmed() {
-    if (!docToDelete || !docToDelete.id) return;
+    if (!docToDelete || !docToDelete.id) {
+      showDeleteModal = false;
+      docToDelete = null;
+      return;
+    }
+    const targetId = docToDelete.id;
     isDeleting = true;
     try {
-      const res = await fetch(`/api/agent/delete_generated_document/${docToDelete.id}?action=delete`, {
+      const res = await fetch(`/api/agent/delete_generated_document/${targetId}?action=delete`, {
         method: 'DELETE'
       });
       const data = await res.json();
       if (res.ok && data.success) {
         toast('ลบรายการเรียบร้อยแล้ว', 'success');
-        generatedHistory = generatedHistory.filter(d => d.id !== docToDelete.id);
-        closeDeleteModal();
+        generatedHistory = generatedHistory.filter(d => d.id !== targetId);
         if ($selectedProjectStore) {
           fetchHistory($selectedProjectStore.id || $selectedProjectStore.project_id);
         }
@@ -404,6 +408,8 @@
       toast('เกิดข้อผิดพลาดในการลบรายการ', 'error');
     } finally {
       isDeleting = false;
+      showDeleteModal = false;
+      docToDelete = null;
     }
   }
 </script>
