@@ -105,6 +105,7 @@ Please provide a detailed Gap Analysis Report. Format your response strictly in 
     ],
     "recommendation": "Next steps for automation or development"
 }}
+"""
         text_response, usage_metadata = call_gemini(prompt)
         
         if usage_metadata:

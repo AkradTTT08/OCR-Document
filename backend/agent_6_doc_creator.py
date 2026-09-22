@@ -107,6 +107,9 @@ def render_html_to_pdf(html_content: str, output_path: str):
             with open(output_path, 'wb') as f:
                 f.write(b"%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Count 1/Kids[3 0 R]>>endobj\n3 0 obj<</Type/Page/MediaBox[0 0 595 842]/Parent 2 0 R>>endobj\nxref\n0 4\n0000000000 65535 f \n0000000009 00000 n \n0000000052 00000 n \n0000000101 00000 n \ntrailer<</Size 4/Root 1 0 R>>\nstartxref\n168\n%%EOF")
             return True
+        except Exception as fallback_err:
+            logger.error(f"Minimal PDF fallback also failed: {fallback_err}")
+            return False
 def simple_markdown_to_html(md_text: str) -> str:
     """Renders Markdown to HTML with graceful built-in fallback if markdown package is missing."""
     try:
