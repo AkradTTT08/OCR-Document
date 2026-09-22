@@ -710,13 +710,13 @@ def upload_avatar(user_id):
 @app.route('/api/avatars/<path:filename>')
 @app.route('/uploads/avatars/<path:filename>')
 @app.route('/uploads/<path:filename>')
+@app.route('/api/uploads/<path:filename>')
 def serve_avatar(filename):
-    if filename.startswith('avatars/'):
-        filename = filename.replace('avatars/', '', 1)
+    clean_filename = filename.replace('avatars/', '', 1) if filename.startswith('avatars/') else filename
         
-    avatar_file = AVATARS_FOLDER / filename
+    avatar_file = AVATARS_FOLDER / clean_filename
     if avatar_file.exists() and avatar_file.is_file():
-        return send_from_directory(str(AVATARS_FOLDER), filename)
+        return send_from_directory(str(AVATARS_FOLDER), clean_filename)
         
     upload_file = UPLOAD_FOLDER / filename
     if upload_file.exists() and upload_file.is_file():

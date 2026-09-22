@@ -1,12 +1,15 @@
 <!DOCTYPE html>
 <html lang="th">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>คู่มือการ Deploy ระบบ Thai OCR & Spectra QA Consult ขึ้น Linux Server</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Prompt:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Prompt:wght@300;400;500;600;700&display=swap"
+        rel="stylesheet">
     <style>
         :root {
             --bg-base: #090d16;
@@ -40,7 +43,7 @@
             color: var(--text-main);
             line-height: 1.7;
             min-height: 100vh;
-            background-image: 
+            background-image:
                 radial-gradient(circle at 15% 15%, rgba(56, 189, 248, 0.12) 0px, transparent 40%),
                 radial-gradient(circle at 85% 75%, rgba(129, 140, 248, 0.1) 0px, transparent 45%),
                 linear-gradient(to bottom, rgba(9, 13, 22, 0.95), var(--bg-base));
@@ -84,9 +87,23 @@
             backdrop-filter: blur(10px);
         }
 
-        .badge-blue { background: rgba(56, 189, 248, 0.12); color: #38bdf8; border-color: rgba(56, 189, 248, 0.3); }
-        .badge-purple { background: rgba(129, 140, 248, 0.12); color: #a5b4fc; border-color: rgba(129, 140, 248, 0.3); }
-        .badge-green { background: rgba(16, 185, 129, 0.12); color: #34d399; border-color: rgba(16, 185, 129, 0.3); }
+        .badge-blue {
+            background: rgba(56, 189, 248, 0.12);
+            color: #38bdf8;
+            border-color: rgba(56, 189, 248, 0.3);
+        }
+
+        .badge-purple {
+            background: rgba(129, 140, 248, 0.12);
+            color: #a5b4fc;
+            border-color: rgba(129, 140, 248, 0.3);
+        }
+
+        .badge-green {
+            background: rgba(16, 185, 129, 0.12);
+            color: #34d399;
+            border-color: rgba(16, 185, 129, 0.3);
+        }
 
         h1 {
             font-size: 2.6rem;
@@ -187,7 +204,7 @@
             padding: 32px;
             margin-bottom: 30px;
             backdrop-filter: blur(16px);
-            box-shadow: 0 10px 30px -10px rgba(0,0,0,0.5);
+            box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5);
             transition: border-color 0.25s ease;
             position: relative;
         }
@@ -248,7 +265,7 @@
             overflow: hidden;
             border: 1px solid var(--code-border);
             background: var(--code-bg);
-            box-shadow: 0 8px 24px -6px rgba(0,0,0,0.6);
+            box-shadow: 0 8px 24px -6px rgba(0, 0, 0, 0.6);
         }
 
         .code-header {
@@ -388,79 +405,213 @@
         }
 
         /* Syntax colors */
-        .c-cmd { color: #38bdf8; font-weight: 600; }
-        .c-arg { color: #f472b6; }
-        .c-comment { color: #64748b; font-style: italic; }
-        .c-val { color: #34d399; }
+        .c-cmd {
+            color: #38bdf8;
+            font-weight: 600;
+        }
+
+        .c-arg {
+            color: #f472b6;
+        }
+
+        .c-comment {
+            color: #64748b;
+            font-style: italic;
+        }
+
+        .c-val {
+            color: #34d399;
+        }
     </style>
 </head>
+
 <body>
 
-<div class="container">
+    <div class="container">
 
-    <!-- Header Section -->
-    <header>
-        <div class="badge-group">
-            <span class="badge badge-blue">🚀 Production Deployment</span>
-            <span class="badge badge-purple">🐳 Docker Compose v2</span>
-            <span class="badge badge-green">🧠 Spectra QA Consult MCP</span>
-        </div>
-        <h1>คู่มือการ Deploy ระบบ Thai OCR & Spectra QA Consult</h1>
-        <p class="subtitle">แนวทางการติดตั้ง รัน Service และคอนฟิก Production Linux Server (Ubuntu 22.04 / 24.04 หรือ Debian 12) แบบครบวงจร</p>
-    </header>
+        <!-- Header Section -->
+        <header>
+            <div class="badge-group">
+                <span class="badge badge-blue">🚀 Production Deployment</span>
+                <span class="badge badge-purple">🐳 Docker Compose v2</span>
+                <span class="badge badge-green">🧠 Spectra QA Consult MCP</span>
+            </div>
+            <h1>คู่มือการ Deploy ระบบ Spectra QA Consult</h1>
+            <p class="subtitle">แนวทางการติดตั้ง รัน Service และคอนฟิก Production Linux Server (Ubuntu 22.04 / 24.04
+                หรือ Debian 12) แบบครบวงจร</p>
+        </header>
 
-    <!-- Architecture Overview -->
-    <div class="arch-grid">
-        <div class="arch-node">
-            <div class="node-icon">🌐</div>
-            <h4>Frontend (Nginx)</h4>
-            <p>Svelte 5 SPA เสิร์ฟผ่าน Nginx ทำ Reverse Proxy และแคช Asset</p>
-            <span class="node-port">Port 5173</span>
-        </div>
-        <div class="arch-node">
-            <div class="node-icon">⚙️</div>
-            <h4>Backend API</h4>
-            <p>Flask API รันด้วย Gunicorn (2 Workers, 4 Threads) พร้อมโมดูล OCR/QA</p>
-            <span class="node-port">Port 8125</span>
-        </div>
-        <div class="arch-node">
-            <div class="node-icon">🗄️</div>
-            <h4>QA Agent DB</h4>
-            <p>PostgreSQL 16 + pgvector สำหรับเก็บ Golden Reference และ Semantic Search RAG</p>
-            <span class="node-port">Port 8123:5432</span>
-        </div>
-        <div class="arch-node">
-            <div class="node-icon">🔐</div>
-            <h4>Auth DB</h4>
-            <p>PostgreSQL 16 สำหรับจัดการข้อมูลผู้ใช้, สิทธิ์เข้าถึง, และ Audit Logs</p>
-            <span class="node-port">Port 8124:5432</span>
-        </div>
-        <div class="arch-node">
-            <div class="node-icon">🤖</div>
-            <h4>MCP Server</h4>
-            <p>Spectra QA Consult Server ผ่านมาตรฐาน FastMCP SSE Transport</p>
-            <span class="node-port">Port 8000 (SSE)</span>
-        </div>
-    </div>
-
-    <!-- Step 1: Server Prep -->
-    <div class="step-card">
-        <div class="step-header">
-            <div class="step-number">1</div>
-            <div class="step-title-group">
-                <h2>เตรียมความพร้อม Linux Server & ติดตั้ง Docker</h2>
-                <p>ติดตั้ง Docker Engine, Docker Compose Plugin และเปิดพอร์ต Firewall ที่จำเป็น</p>
+        <!-- Architecture Overview -->
+        <div class="arch-grid">
+            <div class="arch-node">
+                <div class="node-icon">🌐</div>
+                <h4>Frontend (Nginx)</h4>
+                <p>Svelte 5 SPA เสิร์ฟผ่าน Nginx ทำ Reverse Proxy และแคช Asset</p>
+                <span class="node-port">Port 5173</span>
+            </div>
+            <div class="arch-node">
+                <div class="node-icon">⚙️</div>
+                <h4>Backend API</h4>
+                <p>Flask API รันด้วย Gunicorn (2 Workers, 4 Threads) พร้อมโมดูล OCR/QA</p>
+                <span class="node-port">Port 8125</span>
+            </div>
+            <div class="arch-node">
+                <div class="node-icon">🗄️</div>
+                <h4>QA Agent DB</h4>
+                <p>PostgreSQL 16 + pgvector สำหรับเก็บ Golden Reference และ Semantic Search RAG</p>
+                <span class="node-port">Port 8123:5432</span>
+            </div>
+            <div class="arch-node">
+                <div class="node-icon">🔐</div>
+                <h4>Auth DB</h4>
+                <p>PostgreSQL 16 สำหรับจัดการข้อมูลผู้ใช้, สิทธิ์เข้าถึง, และ Audit Logs</p>
+                <span class="node-port">Port 8124:5432</span>
+            </div>
+            <div class="arch-node">
+                <div class="node-icon">🤖</div>
+                <h4>MCP Server</h4>
+                <p>Spectra QA Consult Server ผ่านมาตรฐาน FastMCP SSE Transport</p>
+                <span class="node-port">Port 9008 (SSE)</span>
             </div>
         </div>
-        <div class="step-content">
-            <p>เชื่อมต่อไปยัง Linux Server ของคุณผ่าน SSH แล้วรันคำสั่งติดตั้ง Docker Engine อย่างเป็นทางการ:</p>
-            
-            <div class="code-container">
-                <div class="code-header">
-                    <span>bash (SSH Terminal)</span>
-                    <button class="copy-btn" onclick="copyCode(this)">📋 คัดลอกคำสั่ง</button>
+
+        <!-- System Requirements Section -->
+        <div class="step-card"
+            style="border-color: rgba(56, 189, 248, 0.35); background: linear-gradient(180deg, rgba(15, 23, 42, 0.85) 0%, rgba(9, 13, 22, 0.95) 100%);">
+            <div class="step-header">
+                <div class="step-number"
+                    style="background: linear-gradient(135deg, #38bdf8, #818cf8); font-size: 1.2rem;">📋</div>
+                <div class="step-title-group">
+                    <h2>ข้อกำหนดทางเทคนิคและความต้องการของระบบ (System Requirements)</h2>
+                    <p>สเปกฮาร์ดแวร์สำหรับ Linux Server และเวอร์ชันซอฟต์แวร์ฝั่ง Client ที่รองรับการเชื่อมต่อ</p>
                 </div>
-                <pre><code><span class="c-comment"># 1. อัปเดตแพ็กเกจระบบ</span>
+            </div>
+            <div class="step-content">
+                <h3
+                    style="color: #38bdf8; margin-bottom: 12px; font-size: 1.15rem; display: flex; align-items: center; gap: 8px;">
+                    🖥️ 1. สเปกเครื่อง Server (Linux Host)</h3>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th style="width: 25%;">รายการทรัพยากร</th>
+                                <th style="width: 35%;">สเปกขั้นต่ำ (Minimum)</th>
+                                <th style="width: 40%;">สเปกที่แนะนำ (Recommended for Production)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><strong>CPU</strong></td>
+                                <td>2 vCPU (x86_64 / amd64)</td>
+                                <td>4 vCPU ขึ้นไป (รองรับงาน OCR และ Vector Search พร้อมกัน)</td>
+                            </tr>
+                            <tr>
+                                <td><strong>RAM</strong></td>
+                                <td>4 GB (+ แนะนำเปิด Swap 2 GB)</td>
+                                <td>8 GB - 16 GB ขึ้นไป (เพื่อประสิทธิภาพในการแคชโมเดล OCR และ Buffer)</td>
+                            </tr>
+                            <tr>
+                                <td><strong>พื้นที่จัดเก็บ (Disk)</strong></td>
+                                <td>30 GB SSD</td>
+                                <td>60 - 100 GB NVMe SSD (สำหรับ Docker Images, Postgres Data, เอกสาร PDF และ OCR Cache)
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><strong>ระบบปฏิบัติการ (OS)</strong></td>
+                                <td>Ubuntu 22.04 LTS / Debian 12</td>
+                                <td>Ubuntu 24.04 / 22.04 LTS, Debian 12, Rocky Linux 9, AlmaLinux 9</td>
+                            </tr>
+                            <tr>
+                                <td><strong>ซอฟต์แวร์หลัก</strong></td>
+                                <td>Docker Engine 24.0+ & Docker Compose v2.20+</td>
+                                <td>Docker Engine เวอร์ชันล่าสุด พร้อมเปิดพอร์ต Firewall (5173, 8125, 8123, 8124, 9008)
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><strong>เน็ตเวิร์ก (Network)</strong></td>
+                                <td>Static IP หรือ Public IP ในเครือข่าย</td>
+                                <td>Bandwidth 100 Mbps+ สำหรับการเชื่อมต่อ FastMCP SSE แบบต่อเนื่อง</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <h3
+                    style="color: #34d399; margin-top: 28px; margin-bottom: 12px; font-size: 1.15rem; display: flex; align-items: center; gap: 8px;">
+                    💻 2. ข้อกำหนดสำหรับเครื่อง Client (เครื่องผู้ใช้ที่จะเชื่อมต่อ Claude Desktop & MCP)</h3>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th style="width: 25%;">รายการ</th>
+                                <th style="width: 35%;">เวอร์ชันที่รองรับ</th>
+                                <th style="width: 40%;">รายละเอียดและเหตุผลทางเทคนิค</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><strong>Node.js Version</strong></td>
+                                <td><code
+                                        style="color: #34d399; font-weight: 700;">Node.js v18.0.0 ขึ้นไป</code><br><span
+                                        style="font-size: 0.85em; color: #a5b4fc;">(แนะนำอย่างยิ่ง: v20.x หรือ v22.x
+                                        LTS)</span></td>
+                                <td><strong>สำคัญมาก:</strong> แพ็กเกจ <code>mcp-remote</code> และ
+                                    <code>@modelcontextprotocol/sdk</code> ต้องใช้ Native Fetch, Web Streams API และ ES
+                                    Modules สมัยใหม่ ซึ่งมีใน <strong>Node.js 18 ขึ้นไปเท่านั้น</strong> <em>(หากใช้
+                                        Node.js v14 หรือ v16 การเชื่อมต่อจะหลุดและขึ้น Server disconnected ทันที)</em>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><strong>Package Runner</strong></td>
+                                <td><code>npx</code> (ติดตั้งมาพร้อมกับ Node.js)</td>
+                                <td>ต้องลงทะเบียนอยู่ใน System PATH สามารถรันคำสั่ง <code>npx</code> ผ่าน Command Prompt
+                                    หรือ Terminal ได้</td>
+                            </tr>
+                            <tr>
+                                <td><strong>Claude Desktop</strong></td>
+                                <td>เวอร์ชันล่าสุด (Windows / macOS)</td>
+                                <td>โปรแกรม Claude Desktop อย่างเป็นทางการที่รองรับส่วนขยาย MCP</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="notice notice-warning">
+                    <div class="notice-icon">⚠️</div>
+                    <div>
+                        <strong>วิธีตรวจสอบเวอร์ชัน Node.js บนเครื่อง Client:</strong><br>
+                        เปิด Command Prompt (CMD) หรือ PowerShell แล้วพิมพ์คำสั่ง:
+                        <div class="code-container" style="margin: 8px 0;">
+                            <pre><code>node -v   <span class="c-comment"># ต้องได้เลขเวอร์ชันตั้งแต่ v18.0.0 ขึ้นไป เช่น v20.19.4</span>
+npx -v    <span class="c-comment"># ตรวจสอบว่า npx พร้อมใช้งาน</span></code></pre>
+                        </div>
+                        หากเวอร์ชันต่ำกว่า v18 หรือยังไม่ได้ติดตั้ง ให้ดาวน์โหลดตัวติดตั้ง LTS จาก <a
+                            href="https://nodejs.org" target="_blank"
+                            style="color: #38bdf8; text-decoration: underline;">nodejs.org</a> แล้วรีสตาร์ต Claude
+                        Desktop
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 1: Server Prep -->
+        <div class="step-card">
+            <div class="step-header">
+                <div class="step-number">1</div>
+                <div class="step-title-group">
+                    <h2>เตรียมความพร้อม Linux Server & ติดตั้ง Docker</h2>
+                    <p>ติดตั้ง Docker Engine, Docker Compose Plugin และเปิดพอร์ต Firewall ที่จำเป็น</p>
+                </div>
+            </div>
+            <div class="step-content">
+                <p>เชื่อมต่อไปยัง Linux Server ของคุณผ่าน SSH แล้วรันคำสั่งติดตั้ง Docker Engine อย่างเป็นทางการ:</p>
+
+                <div class="code-container">
+                    <div class="code-header">
+                        <span>bash (SSH Terminal)</span>
+                        <button class="copy-btn" onclick="copyCode(this)">📋 คัดลอกคำสั่ง</button>
+                    </div>
+                    <pre><code><span class="c-comment"># 1. อัปเดตแพ็กเกจระบบ</span>
 sudo apt-get update && sudo apt-get upgrade -y
 
 <span class="c-comment"># 2. ติดตั้งเครื่องมือพื้นฐาน</span>
@@ -476,57 +627,60 @@ newgrp docker
 
 <span class="c-comment"># 5. ทดสอบว่า Docker พร้อมใช้งาน</span>
 docker compose version</code></pre>
-            </div>
+                </div>
 
-            <div class="notice notice-info">
-                <div class="notice-icon">🛡️</div>
-                <div>
-                    <strong>การตั้งค่า Firewall:</strong> เปิดพอร์ตที่จำเป็นตามระบบปฏิบัติการของ Server (รันในฐานะ root ไม่ต้องพิมพ์ sudo):
-                    
-                    <p style="margin: 8px 0 4px; font-weight: 600; color: #38bdf8;">แบบที่ A: สำหรับ CentOS / AlmaLinux / Rocky Linux / RHEL (ใช้ firewall-cmd)</p>
-                    <div class="code-container" style="margin: 4px 0 12px;">
-                        <pre><code>firewall-cmd --permanent --add-port=5173/tcp  <span class="c-comment"># Web Frontend UI</span>
+                <div class="notice notice-info">
+                    <div class="notice-icon">🛡️</div>
+                    <div>
+                        <strong>การตั้งค่า Firewall:</strong> เปิดพอร์ตที่จำเป็นตามระบบปฏิบัติการของ Server (รันในฐานะ
+                        root ไม่ต้องพิมพ์ sudo):
+
+                        <p style="margin: 8px 0 4px; font-weight: 600; color: #38bdf8;">แบบที่ A: สำหรับ CentOS /
+                            AlmaLinux / Rocky Linux / RHEL (ใช้ firewall-cmd)</p>
+                        <div class="code-container" style="margin: 4px 0 12px;">
+                            <pre><code>firewall-cmd --permanent --add-port=5173/tcp  <span class="c-comment"># Web Frontend UI</span>
 firewall-cmd --permanent --add-port=8125/tcp  <span class="c-comment"># Backend API (Direct / Healthcheck)</span>
 firewall-cmd --permanent --add-port=8123/tcp  <span class="c-comment"># QA Agent DB (pgvector)</span>
 firewall-cmd --permanent --add-port=8124/tcp  <span class="c-comment"># Spectra Auth DB</span>
-firewall-cmd --permanent --add-port=8000/tcp  <span class="c-comment"># MCP SSE Endpoint</span>
+firewall-cmd --permanent --add-port=9008/tcp  <span class="c-comment"># MCP SSE Endpoint</span>
 firewall-cmd --reload
 firewall-cmd --list-ports                     <span class="c-comment"># ตรวจสอบพอร์ตที่เปิด</span></code></pre>
-                    </div>
+                        </div>
 
-                    <p style="margin: 8px 0 4px; font-weight: 600; color: #34d399;">แบบที่ B: สำหรับ Ubuntu / Debian (ใช้ UFW)</p>
-                    <div class="code-container" style="margin: 4px 0 0;">
-                        <pre><code><span class="c-comment"># หากเครื่องยังไม่มี ufw ให้ติดตั้งก่อน: apt install -y ufw</span>
+                        <p style="margin: 8px 0 4px; font-weight: 600; color: #34d399;">แบบที่ B: สำหรับ Ubuntu / Debian
+                            (ใช้ UFW)</p>
+                        <div class="code-container" style="margin: 4px 0 0;">
+                            <pre><code><span class="c-comment"># หากเครื่องยังไม่มี ufw ให้ติดตั้งก่อน: apt install -y ufw</span>
 ufw allow 22/tcp    <span class="c-comment"># SSH (อย่าลืมเปิดก่อน enable)</span>
 ufw allow 5173/tcp  <span class="c-comment"># Web Frontend UI</span>
 ufw allow 8125/tcp  <span class="c-comment"># Backend API (Direct / Healthcheck)</span>
 ufw allow 8123/tcp  <span class="c-comment"># QA Agent DB (pgvector)</span>
 ufw allow 8124/tcp  <span class="c-comment"># Spectra Auth DB</span>
-ufw allow 8000/tcp  <span class="c-comment"># MCP SSE Endpoint</span>
+ufw allow 9008/tcp  <span class="c-comment"># MCP SSE Endpoint</span>
 ufw enable
 ufw status</code></pre>
+                        </div>
                     </div>
                 </div>
             </div>
         </div>
-    </div>
 
-    <!-- Step 2: Clone & Env Setup -->
-    <div class="step-card">
-        <div class="step-header">
-            <div class="step-number">2</div>
-            <div class="step-title-group">
-                <h2>Clone Repository & ตั้งค่า Environment (.env)</h2>
-                <p>ดึงซอร์สโค้ดจาก Git และสร้างไฟล์ตั้งค่าความปลอดภัยของระบบ</p>
-            </div>
-        </div>
-        <div class="step-content">
-            <div class="code-container">
-                <div class="code-header">
-                    <span>bash</span>
-                    <button class="copy-btn" onclick="copyCode(this)">📋 คัดลอกคำสั่ง</button>
+        <!-- Step 2: Clone & Env Setup -->
+        <div class="step-card">
+            <div class="step-header">
+                <div class="step-number">2</div>
+                <div class="step-title-group">
+                    <h2>Clone Repository & ตั้งค่า Environment (.env)</h2>
+                    <p>ดึงซอร์สโค้ดจาก Git และสร้างไฟล์ตั้งค่าความปลอดภัยของระบบ</p>
                 </div>
-                <pre><code><span class="c-comment"># 1. Clone โปรเจกต์ลงมายัง Server</span>
+            </div>
+            <div class="step-content">
+                <div class="code-container">
+                    <div class="code-header">
+                        <span>bash</span>
+                        <button class="copy-btn" onclick="copyCode(this)">📋 คัดลอกคำสั่ง</button>
+                    </div>
+                    <pre><code><span class="c-comment"># 1. Clone โปรเจกต์ลงมายัง Server</span>
 git clone https://github.com/AkradTTT08/OCR-Document.git
 cd OCR-Document
 
@@ -535,175 +689,179 @@ cp .env.example .env
 
 <span class="c-comment"># 3. เปิดไฟล์ .env ขึ้นมาแก้ไข</span>
 nano .env</code></pre>
-            </div>
-
-            <p><strong>ตัวแปรสำคัญในไฟล์ <code>.env</code> ที่ต้องกำหนดค่าจริง:</strong></p>
-            <div class="table-wrap">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>ชื่อตัวแปร (Key)</th>
-                            <th>คำอธิบาย</th>
-                            <th>ตัวอย่างค่า</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr>
-                            <td><code>GOOGLE_API_KEY</code></td>
-                            <td>API Key ของ Gemini จาก Google AI Studio (จำเป็นสำหรับ Vision OCR & QA Reasoning)</td>
-                            <td><code>AIzaSy...</code></td>
-                        </tr>
-                        <tr>
-                            <td><code>GEMINI_MODEL</code></td>
-                            <td>โมเดล Gemini ที่ต้องการใช้งาน</td>
-                            <td><code>gemini-2.5-flash</code></td>
-                        </tr>
-                        <tr>
-                            <td><code>GMAIL_USER</code></td>
-                            <td>อีเมล Gmail สำหรับส่งรายงานผล QA อัตโนมัติ</td>
-                            <td><code>your_email@gmail.com</code></td>
-                        </tr>
-                        <tr>
-                            <td><code>GMAIL_APP_PASSWORD</code></td>
-                            <td>App Password 16 ตัวอักษร (สร้างจาก Google Account Security)</td>
-                            <td><code>xxxx yyyy zzzz wwww</code></td>
-                        </tr>
-                        <tr>
-                            <td><code>SECRET_KEY</code></td>
-                            <td>คีย์สำหรับเข้ารหัส Session ของ Flask Authentication</td>
-                            <td>สร้าง string สุ่มยาว 32+ ตัว</td>
-                        </tr>
-                        <tr>
-                            <td><code>FRONTEND_PORT</code></td>
-                            <td>พอร์ตของ Web Frontend UI (เข้าใช้งานผ่าน Browser)</td>
-                            <td><code>5173</code></td>
-                        </tr>
-                        <tr>
-                            <td><code>BACKEND_PORT</code></td>
-                            <td>พอร์ตของ Backend API Service (Flask / Gunicorn)</td>
-                            <td><code>8125</code></td>
-                        </tr>
-                        <tr>
-                            <td><code>DB_PORT</code></td>
-                            <td>พอร์ตของ QA Agent Database (pgvector)</td>
-                            <td><code>8123</code></td>
-                        </tr>
-                        <tr>
-                            <td><code>AUTH_DB_PORT</code></td>
-                            <td>พอร์ตของ User Authentication & Audit Database</td>
-                            <td><code>8124</code></td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    </div>
-
-    <!-- Step 3: Build and Run -->
-    <div class="step-card">
-        <div class="step-header">
-            <div class="step-number">3</div>
-            <div class="step-title-group">
-                <h2>Build Image & เริ่มทำงาน Container ด้วย Docker Compose</h2>
-                <p>สร้าง Container ทั้งหมดและเริ่มทำงานในโหมด Background</p>
-            </div>
-        </div>
-        <div class="step-content">
-            <p>สั่งให้ Docker Compose คอมไพล์ Frontend, ติดตั้ง Dependencies ของ Backend และเริ่มรัน Services ทั้งหมด:</p>
-
-            <div class="code-container">
-                <div class="code-header">
-                    <span>bash</span>
-                    <button class="copy-btn" onclick="copyCode(this)">📋 คัดลอกคำสั่ง</button>
                 </div>
-                <pre><code><span class="c-comment"># สั่ง Build และ Start Container ในโหมด Detached</span>
+
+                <p><strong>ตัวแปรสำคัญในไฟล์ <code>.env</code> ที่ต้องกำหนดค่าจริง:</strong></p>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>ชื่อตัวแปร (Key)</th>
+                                <th>คำอธิบาย</th>
+                                <th>ตัวอย่างค่า</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><code>GOOGLE_API_KEY</code></td>
+                                <td>API Key ของ Gemini จาก Google AI Studio (จำเป็นสำหรับ Vision OCR & QA Reasoning)
+                                </td>
+                                <td><code>AIzaSy...</code></td>
+                            </tr>
+                            <tr>
+                                <td><code>GEMINI_MODEL</code></td>
+                                <td>โมเดล Gemini ที่ต้องการใช้งาน</td>
+                                <td><code>gemini-2.5-flash</code></td>
+                            </tr>
+                            <tr>
+                                <td><code>GMAIL_USER</code></td>
+                                <td>อีเมล Gmail สำหรับส่งรายงานผล QA อัตโนมัติ</td>
+                                <td><code>your_email@gmail.com</code></td>
+                            </tr>
+                            <tr>
+                                <td><code>GMAIL_APP_PASSWORD</code></td>
+                                <td>App Password 16 ตัวอักษร (สร้างจาก Google Account Security)</td>
+                                <td><code>xxxx yyyy zzzz wwww</code></td>
+                            </tr>
+                            <tr>
+                                <td><code>SECRET_KEY</code></td>
+                                <td>คีย์สำหรับเข้ารหัส Session ของ Flask Authentication</td>
+                                <td>สร้าง string สุ่มยาว 32+ ตัว</td>
+                            </tr>
+                            <tr>
+                                <td><code>FRONTEND_PORT</code></td>
+                                <td>พอร์ตของ Web Frontend UI (เข้าใช้งานผ่าน Browser)</td>
+                                <td><code>5173</code></td>
+                            </tr>
+                            <tr>
+                                <td><code>BACKEND_PORT</code></td>
+                                <td>พอร์ตของ Backend API Service (Flask / Gunicorn)</td>
+                                <td><code>8125</code></td>
+                            </tr>
+                            <tr>
+                                <td><code>DB_PORT</code></td>
+                                <td>พอร์ตของ QA Agent Database (pgvector)</td>
+                                <td><code>8123</code></td>
+                            </tr>
+                            <tr>
+                                <td><code>AUTH_DB_PORT</code></td>
+                                <td>พอร์ตของ User Authentication & Audit Database</td>
+                                <td><code>8124</code></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 3: Build and Run -->
+        <div class="step-card">
+            <div class="step-header">
+                <div class="step-number">3</div>
+                <div class="step-title-group">
+                    <h2>Build Image & เริ่มทำงาน Container ด้วย Docker Compose</h2>
+                    <p>สร้าง Container ทั้งหมดและเริ่มทำงานในโหมด Background</p>
+                </div>
+            </div>
+            <div class="step-content">
+                <p>สั่งให้ Docker Compose คอมไพล์ Frontend, ติดตั้ง Dependencies ของ Backend และเริ่มรัน Services
+                    ทั้งหมด:</p>
+
+                <div class="code-container">
+                    <div class="code-header">
+                        <span>bash</span>
+                        <button class="copy-btn" onclick="copyCode(this)">📋 คัดลอกคำสั่ง</button>
+                    </div>
+                    <pre><code><span class="c-comment"># สั่ง Build และ Start Container ในโหมด Detached</span>
 docker compose up -d --build</code></pre>
-            </div>
-
-            <p>ตรวจสอบสถานะของ Container ทั้งหมดว่าขึ้นเป็น <code>Up (healthy)</code> หรือไม่:</p>
-
-            <div class="code-container">
-                <div class="code-header">
-                    <span>bash</span>
-                    <button class="copy-btn" onclick="copyCode(this)">📋 คัดลอกคำสั่ง</button>
                 </div>
-                <pre><code>docker compose ps</code></pre>
-            </div>
 
-            <div class="notice notice-success">
-                <div class="notice-icon">✅</div>
-                <div>
-                    เมื่อคำสั่งเสร็จสิ้น จะมี Container ทำงานอยู่ 5 ตัว:
-                    <br>• <code>qa_agent_db</code> &bull; <code>spectra_auth_db</code> &bull; <code>spectra_backend</code> &bull; <code>spectra_frontend</code> &bull; <code>spectra_mcp_server</code>
+                <p>ตรวจสอบสถานะของ Container ทั้งหมดว่าขึ้นเป็น <code>Up (healthy)</code> หรือไม่:</p>
+
+                <div class="code-container">
+                    <div class="code-header">
+                        <span>bash</span>
+                        <button class="copy-btn" onclick="copyCode(this)">📋 คัดลอกคำสั่ง</button>
+                    </div>
+                    <pre><code>docker compose ps</code></pre>
+                </div>
+
+                <div class="notice notice-success">
+                    <div class="notice-icon">✅</div>
+                    <div>
+                        เมื่อคำสั่งเสร็จสิ้น จะมี Container ทำงานอยู่ 5 ตัว:
+                        <br>• <code>qa_agent_db</code> &bull; <code>spectra_auth_db</code> &bull;
+                        <code>spectra_backend</code> &bull; <code>spectra_frontend</code> &bull;
+                        <code>spectra_mcp_server</code>
+                    </div>
                 </div>
             </div>
         </div>
-    </div>
 
-    <!-- Step 4: Bootstrap Database -->
-    <div class="step-card">
-        <div class="step-header">
-            <div class="step-number">4</div>
-            <div class="step-title-group">
-                <h2>สร้างโครงสร้าง Database เริ่มต้น (Bootstrap Script)</h2>
-                <p>รันสคริปต์อัตโนมัติเพื่อเปิดใช้งาน Vector Extension, สร้างตารางทั้งหมด และบัญชีผู้ดูแลระบบ</p>
-            </div>
-        </div>
-        <div class="step-content">
-            <p>รันคำสั่ง Bootstrap Database ภายใน Container Backend:</p>
-
-            <div class="code-container">
-                <div class="code-header">
-                    <span>bash</span>
-                    <button class="copy-btn" onclick="copyCode(this)">📋 คัดลอกคำสั่ง</button>
+        <!-- Step 4: Bootstrap Database -->
+        <div class="step-card">
+            <div class="step-header">
+                <div class="step-number">4</div>
+                <div class="step-title-group">
+                    <h2>สร้างโครงสร้าง Database เริ่มต้น (Bootstrap Script)</h2>
+                    <p>รันสคริปต์อัตโนมัติเพื่อเปิดใช้งาน Vector Extension, สร้างตารางทั้งหมด และบัญชีผู้ดูแลระบบ</p>
                 </div>
-                <pre><code><span class="c-comment"># เรียกสคริปต์สร้าง Database Schema และ Admin User</span>
+            </div>
+            <div class="step-content">
+                <p>รันคำสั่ง Bootstrap Database ภายใน Container Backend:</p>
+
+                <div class="code-container">
+                    <div class="code-header">
+                        <span>bash</span>
+                        <button class="copy-btn" onclick="copyCode(this)">📋 คัดลอกคำสั่ง</button>
+                    </div>
+                    <pre><code><span class="c-comment"># เรียกสคริปต์สร้าง Database Schema และ Admin User</span>
 docker compose exec backend python scripts/init_production_db.py</code></pre>
-            </div>
+                </div>
 
-            <div class="notice notice-info">
-                <div class="notice-icon">🔑</div>
-                <div>
-                    <strong>ข้อมูลเข้าสู่ระบบเริ่มต้น (Default Admin Credentials):</strong>
-                    <br>• <strong>Username / Email:</strong> <code>admin@domain.com</code>
-                    <br>• <strong>Password:</strong> <code>password123</code>
-                    <br><em>(⚠️ แนะนำให้เปลี่ยนรหัสผ่านทันทีในหน้า Profile หลังเข้าใช้งานครั้งแรก)</em>
+                <div class="notice notice-info">
+                    <div class="notice-icon">🔑</div>
+                    <div>
+                        <strong>ข้อมูลเข้าสู่ระบบเริ่มต้น (Default Admin Credentials):</strong>
+                        <br>• <strong>Username / Email:</strong> <code>admin@domain.com</code>
+                        <br>• <strong>Password:</strong> <code>password123</code>
+                        <br><em>(⚠️ แนะนำให้เปลี่ยนรหัสผ่านทันทีในหน้า Profile หลังเข้าใช้งานครั้งแรก)</em>
+                    </div>
                 </div>
             </div>
         </div>
-    </div>
 
-    <!-- Step 5: Verify & Access -->
-    <div class="step-card">
-        <div class="step-header">
-            <div class="step-number">5</div>
-            <div class="step-title-group">
-                <h2>ทดสอบการเข้าใช้งาน & ตรวจสอบ Log</h2>
-                <p>เปิดเข้าใช้งานระบบผ่านเบราว์เซอร์และทดสอบความสมบูรณ์</p>
+        <!-- Step 5: Verify & Access -->
+        <div class="step-card">
+            <div class="step-header">
+                <div class="step-number">5</div>
+                <div class="step-title-group">
+                    <h2>ทดสอบการเข้าใช้งาน & ตรวจสอบ Log</h2>
+                    <p>เปิดเข้าใช้งานระบบผ่านเบราว์เซอร์และทดสอบความสมบูรณ์</p>
+                </div>
             </div>
-        </div>
-        <div class="step-content">
-            <p>1. เปิดเบราว์เซอร์แล้วเข้าใช้งานผ่าน URL:</p>
-            <div class="code-container">
-                <pre><code>http://&lt;IP_SERVER_ของคุณ&gt;:5173</code></pre>
-            </div>
+            <div class="step-content">
+                <p>1. เปิดเบราว์เซอร์แล้วเข้าใช้งานผ่าน URL:</p>
+                <div class="code-container">
+                    <pre><code>http://&lt;IP_SERVER_ของคุณ&gt;:5173</code></pre>
+                </div>
 
-            <p>2. ตรวจสอบ Endpoint สุขภาพของ Backend (Healthcheck API):</p>
-            <div class="code-container">
-                <pre><code># ตรวจสอบตรงผ่าน Backend (Port 8125)
+                <p>2. ตรวจสอบ Endpoint สุขภาพของ Backend (Healthcheck API):</p>
+                <div class="code-container">
+                    <pre><code># ตรวจสอบตรงผ่าน Backend (Port 8125)
 http://&lt;IP_SERVER_ของคุณ&gt;:8125/api/health
 
 # หรือตรวจสอบผ่าน Web Frontend Proxy (Port 5173)
 http://&lt;IP_SERVER_ของคุณ&gt;:5173/api/health</code></pre>
-            </div>
-
-            <p>3. หากต้องการดู Live Log ของระบบเพื่อตรวจสอบความผิดพลาด:</p>
-            <div class="code-container">
-                <div class="code-header">
-                    <span>bash</span>
-                    <button class="copy-btn" onclick="copyCode(this)">📋 คัดลอกคำสั่ง</button>
                 </div>
-                <pre><code><span class="c-comment"># ดู Log ทั้งหมดแบบ Realtime</span>
+
+                <p>3. หากต้องการดู Live Log ของระบบเพื่อตรวจสอบความผิดพลาด:</p>
+                <div class="code-container">
+                    <div class="code-header">
+                        <span>bash</span>
+                        <button class="copy-btn" onclick="copyCode(this)">📋 คัดลอกคำสั่ง</button>
+                    </div>
+                    <pre><code><span class="c-comment"># ดู Log ทั้งหมดแบบ Realtime</span>
 docker compose logs -f
 
 <span class="c-comment"># ดูเฉพาะ Log ของ Backend API</span>
@@ -711,28 +869,30 @@ docker compose logs -f backend
 
 <span class="c-comment"># ดูเฉพาะ Log ของ MCP Server</span>
 docker compose logs -f mcp_server</code></pre>
-            </div>
-        </div>
-    </div>
-
-    <!-- Step 6: Connect Claude to Server MCP -->
-    <div class="step-card">
-        <div class="step-header">
-            <div class="step-number">6</div>
-            <div class="step-title-group">
-                <h2>เชื่อมต่อ Claude Desktop เข้ากับ Server ผ่าน MCP SSE</h2>
-                <p>กำหนดค่า Claude Desktop บนคอมพิวเตอร์ของคุณให้เชื่อมต่อกับ MCP Server บน Linux</p>
-            </div>
-        </div>
-        <div class="step-content">
-            <p>เปิดไฟล์ <code>%APPDATA%\Claude\claude_desktop_config.json</code> บนเครื่องคอมพิวเตอร์ของคุณ แล้วเพิ่ม MCP Server ชี้ไปยัง Server IP (ขอเพียงแค่มี Node.js ติดตั้งบนเครื่อง โดยไม่ต้องก๊อปปี้ไฟล์โค้ดใดๆ เพิ่มเติม):</p>
-
-            <div class="code-container">
-                <div class="code-header">
-                    <span>json (claude_desktop_config.json)</span>
-                    <button class="copy-btn" onclick="copyCode(this)">📋 คัดลอก JSON</button>
                 </div>
-                <pre><code>{
+            </div>
+        </div>
+
+        <!-- Step 6: Connect Claude to Server MCP -->
+        <div class="step-card">
+            <div class="step-header">
+                <div class="step-number">6</div>
+                <div class="step-title-group">
+                    <h2>เชื่อมต่อ Claude Desktop เข้ากับ Server ผ่าน MCP SSE</h2>
+                    <p>กำหนดค่า Claude Desktop บนคอมพิวเตอร์ของคุณให้เชื่อมต่อกับ MCP Server บน Linux</p>
+                </div>
+            </div>
+            <div class="step-content">
+                <p>เปิดไฟล์ <code>%APPDATA%\Claude\claude_desktop_config.json</code> บนเครื่องคอมพิวเตอร์ของคุณ
+                    แล้วเพิ่ม MCP Server ชี้ไปยัง Server IP (ขอเพียงแค่มี Node.js ติดตั้งบนเครื่อง
+                    โดยไม่ต้องก๊อปปี้ไฟล์โค้ดใดๆ เพิ่มเติม):</p>
+
+                <div class="code-container">
+                    <div class="code-header">
+                        <span>json (claude_desktop_config.json)</span>
+                        <button class="copy-btn" onclick="copyCode(this)">📋 คัดลอก JSON</button>
+                    </div>
+                    <pre><code>{
   "mcpServers": {
     "spectra-qa-remote": {
       "command": "npx",
@@ -745,29 +905,54 @@ docker compose logs -f mcp_server</code></pre>
     }
   }
 }</code></pre>
-            </div>
-            <div class="alert-info" style="margin-top: 15px;">
-                <strong>💡 ข้อสังเกต:</strong> อย่าลืมใส่ <code>/sse</code> ต่อท้าย URL และแฟล็ก <code>--allow-http</code> จำเป็นต้องใส่เสมอเมื่อเชื่อมต่อผ่าน HTTP IP Address (ที่ไม่ใช่ localhost)
-            </div>
-        </div>
-    </div>
-
-    <!-- Maintenance & Useful Commands -->
-    <div class="step-card">
-        <div class="step-header">
-            <div class="step-number">7</div>
-            <div class="step-title-group">
-                <h2>คำสั่งที่เป็นประโยชน์ในการดูแลระบบ (Maintenance Commands)</h2>
-                <p>คำสั่งสำหรับการอัปเดตโค้ด, การสำรองข้อมูล Database และการ Restart Service</p>
-            </div>
-        </div>
-        <div class="step-content">
-            <div class="code-container">
-                <div class="code-header">
-                    <span>bash (Maintenance Cheat Sheet)</span>
-                    <button class="copy-btn" onclick="copyCode(this)">📋 คัดลอกคำสั่ง</button>
                 </div>
-                <pre><code><span class="c-comment"># ── 1. อัปเดตโค้ดใหม่จาก Git และ Rebuild ──</span>
+                <div class="notice notice-info" style="margin-top: 18px;">
+                    <div class="notice-icon">💡</div>
+                    <div>
+                        <strong>ข้อสังเกตสำคัญเกี่ยวกับการตั้งค่า:</strong>
+                        <ul style="margin: 6px 0 0 18px; line-height: 1.6;">
+                            <li><strong>URL Endpoint:</strong> ต้องใส่ <code>/sse</code> ต่อท้าย URL เสมอ เช่น
+                                <code>http://203.151.56.27:5173/sse</code>
+                            </li>
+                            <li><strong>แฟล็ก <code>--allow-http</code>:</strong> จำเป็นต้องใส่เสมอเมื่อเชื่อมต่อผ่าน
+                                HTTP IP Address (ที่ไม่ใช่ localhost)</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="notice notice-warning" style="margin-top: 12px;">
+                    <div class="notice-icon">🚨</div>
+                    <div>
+                        <strong>ข้อกำหนดเวอร์ชัน Node.js บนเครื่อง Client (จุดที่พบบ่อย):</strong>
+                        <p style="margin-top: 4px;">เครื่องของคนที่จะเชื่อมต่อต้องใช้ <strong>Node.js เวอร์ชัน 18.0.0
+                                ขึ้นไป</strong> (แนะนำ <code>v20.x LTS</code> หรือ <code>v22.x LTS</code>)
+                            ตรวจสอบด้วยคำสั่ง <code>node -v</code> ใน CMD</p>
+                        <p style="margin-top: 4px; font-size: 0.88em; color: #fde68a;">* หากใช้ Node.js เวอร์ชันเก่า
+                            (เช่น v14 หรือ v16) หรือยังไม่ได้ปิด Claude Desktop จาก System Tray (Quit) ตัว
+                            <code>mcp-remote</code> จะทำงานไม่สำเร็จ และ Claude จะขึ้นสถานะ <strong>Server
+                                disconnected</strong> ทันที
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Maintenance & Useful Commands -->
+        <div class="step-card">
+            <div class="step-header">
+                <div class="step-number">7</div>
+                <div class="step-title-group">
+                    <h2>คำสั่งที่เป็นประโยชน์ในการดูแลระบบ (Maintenance Commands)</h2>
+                    <p>คำสั่งสำหรับการอัปเดตโค้ด, การสำรองข้อมูล Database และการ Restart Service</p>
+                </div>
+            </div>
+            <div class="step-content">
+                <div class="code-container">
+                    <div class="code-header">
+                        <span>bash (Maintenance Cheat Sheet)</span>
+                        <button class="copy-btn" onclick="copyCode(this)">📋 คัดลอกคำสั่ง</button>
+                    </div>
+                    <pre><code><span class="c-comment"># ── 1. อัปเดตโค้ดใหม่จาก Git และ Rebuild ──</span>
 git pull origin main
 docker compose up -d --build
 
@@ -783,36 +968,37 @@ docker compose exec spectra_auth_db pg_dump -U postgres postgres > backup_auth_$
 
 <span class="c-comment"># ── 5. ล้าง Cache ขยะของ Docker ที่ไม่ได้ใช้งาน ──</span>
 docker system prune -f</code></pre>
+                </div>
             </div>
         </div>
+
+        <!-- Footer -->
+        <footer>
+            <p>Spectra QA & Thai OCR Document Analysis System &bull; Production Server Deployment Guide &bull; 2026</p>
+        </footer>
+
     </div>
 
-    <!-- Footer -->
-    <footer>
-        <p>Spectra QA & Thai OCR Document Analysis System &bull; Production Server Deployment Guide &bull; 2026</p>
-    </footer>
+    <script>
+        function copyCode(btn) {
+            const codeBlock = btn.closest('.code-container').querySelector('code');
+            const text = codeBlock.innerText;
 
-</div>
+            navigator.clipboard.writeText(text).then(() => {
+                const originalText = btn.innerHTML;
+                btn.innerHTML = '✓ คัดลอกแล้ว!';
+                btn.classList.add('copied');
 
-<script>
-function copyCode(btn) {
-    const codeBlock = btn.closest('.code-container').querySelector('code');
-    const text = codeBlock.innerText;
-    
-    navigator.clipboard.writeText(text).then(() => {
-        const originalText = btn.innerHTML;
-        btn.innerHTML = '✓ คัดลอกแล้ว!';
-        btn.classList.add('copied');
-        
-        setTimeout(() => {
-            btn.innerHTML = originalText;
-            btn.classList.remove('copied');
-        }, 2200);
-    }).catch(err => {
-        console.error('Failed to copy: ', err);
-    });
-}
-</script>
+                setTimeout(() => {
+                    btn.innerHTML = originalText;
+                    btn.classList.remove('copied');
+                }, 2200);
+            }).catch(err => {
+                console.error('Failed to copy: ', err);
+            });
+        }
+    </script>
 
 </body>
+
 </html>

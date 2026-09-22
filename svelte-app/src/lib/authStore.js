@@ -74,6 +74,25 @@ export function login(token, user, role, displayName, avatarPath, allowedMenus, 
 }
 
 /**
+ * Dynamically updates the user's display name and/or avatar path in both
+ * reactive stores and localStorage without requiring a full re-login.
+ */
+export function updateAuthProfile(displayName, avatarPath) {
+  if (displayName) {
+    _displayName.set(displayName);
+    localStorage.setItem('auth_display_name', displayName);
+  }
+  if (avatarPath !== undefined) {
+    _avatarPath.set(avatarPath || '');
+    if (avatarPath) {
+      localStorage.setItem('auth_avatar_path', avatarPath);
+    } else {
+      localStorage.removeItem('auth_avatar_path');
+    }
+  }
+}
+
+/**
  * Clears all auth state and removes the fetch interceptor.
  */
 export function logout() {

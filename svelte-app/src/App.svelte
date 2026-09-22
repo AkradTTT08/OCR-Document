@@ -30,7 +30,7 @@
   import NotificationDropdown from "./lib/NotificationDropdown.svelte";
   import NotificationConfigModal from "./lib/NotificationConfigModal.svelte";
   import { unreadCount } from "./lib/notificationStore.js";
-  import { showLogin, authRole, authUser, authDisplayName, authAvatar, authAllowedMenus, authAllowedProjects, DEFAULT_USER_MENUS, DEFAULT_ADMIN_MENUS, logout } from "./lib/authStore.js";
+  import { showLogin, authRole, authUser, authDisplayName, authAvatar, authAllowedMenus, authAllowedProjects, DEFAULT_USER_MENUS, DEFAULT_ADMIN_MENUS, logout, updateAuthProfile } from "./lib/authStore.js";
   import { globalSearchQuery, triggerGlobalSearch } from "./lib/globalStore.js";
   import { onMount } from "svelte";
   import { toast } from "./lib/toastStore.js";
@@ -346,12 +346,10 @@
           
           if (res.ok && data.success) {
               const finalAvatar = data.user.avatar_path || newAvatarPath;
-              localStorage.setItem('auth_display_name', data.user.display_name || myProfileFormData.display_name);
-              if (finalAvatar) {
-                  localStorage.setItem('auth_avatar_path', finalAvatar);
-              } else {
-                  localStorage.removeItem('auth_avatar_path');
-              }
+              const finalName = data.user.display_name || myProfileFormData.display_name;
+              updateAuthProfile(finalName, finalAvatar);
+              topbarAvatarError = false;
+              previewImageError = false;
               toast('บันทึกข้อมูลส่วนตัวเรียบร้อยแล้ว!', 'success');
               setTimeout(() => { window.location.reload(); }, 600);
           } else {
