@@ -233,18 +233,18 @@ def build_generic_document_html(doc_name: str, doc_type: str, project_name: str,
 <title>{doc_name} - {doc_type}</title>
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700;800&family=Prompt:wght@400;600;700&display=swap');
-    @page {
+    @page {{
         size: A4 portrait;
         margin: 16mm 14mm 16mm 14mm;
-        @bottom-right {
+        @bottom-right {{
             content: counter(page);
             font-size: 9px;
             color: #64748b;
             font-family: 'Sarabun', 'Segoe UI', Tahoma, sans-serif;
-        }
-    }
-    *, *:before, *:after { box-sizing: border-box; }
-    body {
+        }}
+    }}
+    *, *:before, *:after {{ box-sizing: border-box; }}
+    body {{
         font-family: 'Sarabun', 'Prompt', 'TH Sarabun PSK', 'THSarabun', 'Waree', 'Loma', 'Segoe UI', Tahoma, Arial, sans-serif;
         font-size: 11.5px;
         color: #1e293b;
@@ -253,7 +253,7 @@ def build_generic_document_html(doc_name: str, doc_type: str, project_name: str,
         padding: 0;
         line-height: 1.65;
         -webkit-font-smoothing: antialiased;
-    }
+    }}
 
     /* System Header Bar */
     .system-header-bar {{
@@ -634,17 +634,17 @@ def build_testcase_document_html(doc_name: str, doc_type: str, project_name: str
 <title>{doc_name} - Test Specification</title>
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700;800&family=Prompt:wght@400;600;700&display=swap');
-    @page {
+    @page {{
         size: A4 landscape;
         margin: 12mm 10mm 12mm 10mm;
-        @bottom-right {
+        @bottom-right {{
             content: counter(page);
             font-size: 8.5px;
             color: #64748b;
-        }
-    }
-    *, *:before, *:after { box-sizing: border-box; }
-    body {
+        }}
+    }}
+    *, *:before, *:after {{ box-sizing: border-box; }}
+    body {{
         font-family: 'Sarabun', 'Prompt', 'TH Sarabun PSK', 'THSarabun', 'Waree', 'Loma', 'Segoe UI', Tahoma, Arial, sans-serif;
         font-size: 10.5px;
         color: #1e293b;
@@ -653,7 +653,7 @@ def build_testcase_document_html(doc_name: str, doc_type: str, project_name: str
         padding: 0;
         line-height: 1.45;
         -webkit-font-smoothing: antialiased;
-    }
+    }}
     .system-header-bar {{
         display: flex;
         justify-content: space-between;
