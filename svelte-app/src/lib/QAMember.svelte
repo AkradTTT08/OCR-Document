@@ -12,13 +12,13 @@
 
     const USER_MENUS = [
         { id: 'qa_consult', label: 'QA Consult', icon: '💬', desc: 'ให้คำปรึกษาและวิเคราะห์เอกสาร QA' },
-        { id: 'qa_performance', label: 'QA Performance', icon: '⚡', desc: 'ทดสอบประสิทธิภาพ & k6 Script' },
-        { id: 'qa_research', label: 'QA Research', icon: '🔍', desc: 'ค้นคว้าและสรุปข้อมูล QA' },
-        { id: 'qa_security', label: 'QA Security', icon: '🛡️', desc: 'ตรวจสอบความปลอดภัย & OWASP' },
-        { id: 'qa_automate', label: 'QA Test Automation', icon: '⚙️', desc: 'สร้าง & รันสคริปต์ Automated Test' },
         { id: 'qa_doc_creation', label: 'QA Document Creation', icon: '📄', desc: 'สร้างเอกสาร QA & Test Scenarios' },
         { id: 'qa_analysis_diagram', label: 'QA Analysis Diagram', icon: '📊', desc: 'ผัง Flow, Sitemap, Wireframe & Matrix' },
         { id: 'qa_board', label: 'QA Board Card', icon: '📋', desc: 'จัดการและตรวจสอบการ์ด Trello' },
+        { id: 'qa_automate', label: 'QA Test Automation', icon: '⚙️', desc: 'สร้าง & รันสคริปต์ Automated Test' },
+        { id: 'qa_performance', label: 'QA Performance', icon: '⚡', desc: 'ทดสอบประสิทธิภาพ & k6 Script' },
+        { id: 'qa_security', label: 'QA Security', icon: '🛡️', desc: 'ตรวจสอบความปลอดภัย & OWASP' },
+        { id: 'qa_research', label: 'QA Research', icon: '🔍', desc: 'ค้นคว้าและสรุปข้อมูล QA' },
         { id: 'master_agent', label: 'Master Agent', icon: '🤖', desc: 'AI ศูนย์กลางประสานงาน' },
         { id: 'workflow_builder', label: 'AI Workflow Builder', icon: '🔗', desc: 'สร้าง Flow การทำงานอัตโนมัติ' }
     ];

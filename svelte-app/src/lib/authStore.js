@@ -10,8 +10,9 @@ function parseStoredJson(key, defaultVal) {
 }
 
 export const DEFAULT_USER_MENUS = [
-  'qa_consult', 'qa_performance', 'qa_research', 'qa_security',
-  'qa_automate', 'qa_doc_creation', 'qa_analysis_diagram', 'qa_board', 'master_agent', 'workflow_builder'
+  'qa_consult', 'qa_doc_creation', 'qa_analysis_diagram', 'qa_board',
+  'qa_automate', 'qa_performance', 'qa_security', 'qa_research',
+  'master_agent', 'workflow_builder'
 ];
 
 export const DEFAULT_ADMIN_MENUS = [

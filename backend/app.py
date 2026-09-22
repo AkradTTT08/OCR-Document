@@ -187,8 +187,9 @@ def token_required(f):
     return decorated
 
 DEFAULT_USER_MENUS = [
-    "qa_consult", "qa_performance", "qa_research", "qa_security", 
-    "qa_automate", "qa_doc_creation", "qa_board", "master_agent", "workflow_builder"
+    "qa_consult", "qa_doc_creation", "qa_analysis_diagram", "qa_board",
+    "qa_automate", "qa_performance", "qa_security", "qa_research",
+    "master_agent", "workflow_builder"
 ]
 
 DEFAULT_ADMIN_MENUS = [
