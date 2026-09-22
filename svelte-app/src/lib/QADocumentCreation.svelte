@@ -81,12 +81,18 @@
     icon: '📄' 
   }));
 
+  let lastLoadedProjectId = null;
   $: {
-    if ($selectedProjectStore) {
-      fetchKbDocuments($selectedProjectStore.id || $selectedProjectStore.project_id);
-      fetchHistory($selectedProjectStore.id || $selectedProjectStore.project_id);
-      startPolling();
+    const currentPId = $selectedProjectStore ? ($selectedProjectStore.id || $selectedProjectStore.project_id) : null;
+    if (currentPId) {
+      if (currentPId !== lastLoadedProjectId) {
+        lastLoadedProjectId = currentPId;
+        fetchKbDocuments(currentPId);
+        fetchHistory(currentPId);
+        startPolling();
+      }
     } else {
+      lastLoadedProjectId = null;
       stopPolling();
     }
   }
@@ -161,7 +167,10 @@
     stopPolling();
     pollingInterval = setInterval(() => {
       if ($selectedProjectStore) {
-        fetchHistory($selectedProjectStore.id || $selectedProjectStore.project_id);
+        const hasGenerating = generatedHistory.some(d => d.status === 'Generating');
+        if (hasGenerating) {
+          fetchHistory($selectedProjectStore.id || $selectedProjectStore.project_id);
+        }
       }
     }, 3000);
   }
