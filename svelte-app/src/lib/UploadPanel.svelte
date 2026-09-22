@@ -162,6 +162,7 @@
               finalData.pages = pages;
               finalData.filename = file.name;
               finalData.success = true;
+              finalData.total_pages = data.total_pages || data.summary?.total_pages || pages.length;
             }
             else if (data.type === 'error') {
               throw new Error(data.message);

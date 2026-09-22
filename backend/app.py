@@ -989,7 +989,7 @@ def process():
         filename = secure_filename(file.filename)
 
         # OCR แต่ละหน้า
-        pages = ocr_pdf_bytes(pdf_bytes, dpi=dpi, lang=lang)
+        pages = ocr_pdf_bytes(pdf_bytes, dpi=dpi, lang=lang, filename=filename)
 
         # Spell check แต่ละหน้า
         for page in pages:
@@ -1210,6 +1210,7 @@ def process_stream():
             
             final_data = {
                 'type': 'complete',
+                'total_pages': len(pages),
                 'summary': {
                     'total_pages': len(pages),
                     'total_thai_tokens': total_tokens,
@@ -1663,7 +1664,7 @@ def kb_delete_document(doc_id):
 # ===================================================================
 
 def ensure_skills_table():
-    """Ensure agent_skills table exists in PostgreSQL."""
+    """Ensure agent_skills table exists in PostgreSQL and seed standard skills if empty."""
     conn = None
     try:
         from db_ingestion import get_db_connection
@@ -1682,6 +1683,91 @@ def ensure_skills_table():
                 created_at TIMESTAMP DEFAULT NOW()
             );
         """)
+        
+        # Check if table is empty
+        cursor.execute("SELECT COUNT(*) FROM agent_skills WHERE skill_name NOT ILIKE '%Exit Criteria%';")
+        count = cursor.fetchone()[0]
+        if count == 0:
+            logger.info("Seeding standard AI skills for QA document creation...")
+            seed_skills = [
+                ("Standard Test Case Specification", "โครงสร้างสร้าง Test Case มาตรฐานระดับสากล ครอบคลุม Positive, Negative, Boundary Value และ Edge Cases", "Test Case", """# มาตรฐานการสร้าง Test Case
+1. **Header Information**: ระบุ Module/Feature, Pre-conditions, และ Test Environment
+2. **Test Cases Breakdown**:
+   - Test Case ID (เช่น TC-001, TC-002)
+   - Test Objective (วัตถุประสงค์การทดสอบ)
+   - Pre-conditions (เงื่อนไขก่อนทดสอบ)
+   - Step-by-Step Procedure (ขั้นตอนการทดสอบอย่างละเอียด)
+   - Test Data (ข้อมูลตัวอย่างที่ใช้ทดสอบ)
+   - Expected Result (ผลลัพธ์ที่คาดหวังแบบชัดเจน วัดผลได้)
+   - Priority (High/Medium/Low)
+3. **Coverage Requirement**: ต้องครอบคลุมทั้ง Positive Flow, Validation Error, Authorization Check, Boundary Value และ Exception Handling"""),
+                ("Software Requirements Specification (SRS)", "โครงสร้างเอกสารข้อกำหนดความต้องการระบบตามมาตรฐาน IEEE 830 สำหรับวิศวกรรมซอฟต์แวร์", "SRS", """# โครงสร้างเอกสาร SRS มาตรฐาน
+1. **Introduction**: วัตถุประสงค์ของระบบ, ขอบเขตโครงการ (Scope), คำจำกัดความ (Definitions)
+2. **Overall Description**: ภาพรวมการทำงาน, สิทธิ์ผู้ใช้งาน (User Persona/Roles), ข้อจำกัดทั่วไป (General Constraints)
+3. **Functional Requirements**: ข้อกำหนดเชิงฟังก์ชัน แบ่งตามโมดูลอย่างละเอียด ระบุ Input/Process/Output และ Business Rules
+4. **Non-Functional Requirements**: ประสิทธิภาพ (Performance), ความปลอดภัย (Security), ความพร้อมใช้งาน (Availability)
+5. **External Interface Requirements**: User Interface, Hardware/Software Interfaces, API Contracts"""),
+                ("Software Design Document (SDD)", "โครงสร้างการออกแบบสถาปัตยกรรมระบบ, โครงสร้างฐานข้อมูล, API และ Integration Flow", "SDD", """# โครงสร้างเอกสาร SDD มาตรฐาน
+1. **Architecture Overview**: สถาปัตยกรรมระบบ (System Architecture), Tech Stack และ Component Diagrams
+2. **Database Design & Schema**: โครงสร้างตาราง (Entity Relationships), Data Dictionary, Indexing และ Constraints
+3. **API & Interface Specifications**: RESTful / GraphQL Endpoints, Request/Response Payloads, Status Codes
+4. **Data Flow & Sequence Logic**: แผนภาพลำดับการทำงาน (Sequence Flow) ของ Core Features
+5. **Security & Error Handling Strategy**: Authentication/Authorization Flow, Logging, Fallback & Exception Handling"""),
+                ("Terms of Reference & Scope of Work (TOR/SOW)", "โครงสร้างเอกสารขอบเขตงานและข้อกำหนดการส่งมอบงานโครงการอย่างเป็นทางการ", "TOR/SOW", """# โครงสร้างเอกสาร TOR / SOW มาตรฐาน
+1. **ความเป็นมาและวัตถุประสงค์ (Background & Objectives)**: เหตุผลความจำเป็นและเป้าหมายโครงการ
+2. **ขอบเขตของงาน (Scope of Work)**: รายละเอียดฟังก์ชันและระบบงานที่ต้องพัฒนาให้แล้วเสร็จ
+3. **คุณสมบัติและข้อกำหนดทางเทคนิค (Technical Specifications)**: เทคโนโลยี, มาตรฐานความปลอดภัย และข้อกำหนดโครงสร้างพื้นฐาน
+4. **งวดงานและการส่งมอบ (Deliverables & Milestones)**: รายการสิ่งส่งมอบในแต่ละงวดงาน
+5. **เกณฑ์การตรวจรับงาน (Acceptance Criteria & SLA)**: ตัวชี้วัดคุณภาพและเงื่อนไขการตรวจรับ"""),
+                ("User Acceptance Testing (UAT) Framework", "แผนการทดสอบยอมรับสำหรับผู้ใช้งานและลูกค้า พร้อมเกณฑ์ Sign-off ทางธุรกิจ", "UAT", """# โครงสร้างเอกสาร UAT มาตรฐาน
+1. **UAT Scope & Objectives**: วัตถุประสงค์การทดสอบทางธุรกิจและขอบเขตที่ครอบคลุม
+2. **Business Scenario Matrix**: ตารางจำลองสถานการณ์การใช้งานจริงจากมุมมอง End-User / Customer
+3. **Step-by-Step Test Procedure**: ขั้นตอนการทดสอบตาม User Journey พร้อมข้อมูลทดสอบ
+4. **Acceptance Criteria & Evaluation**: เกณฑ์การตัดสินผ่าน/ไม่ผ่านสำหรับแต่ละ Scenario
+5. **UAT Sign-off Form**: แบบฟอร์มสรุปผลการยอมรับและลงนามตรวจรับระบบ"""),
+                ("User Manual Standard Guide", "แนวทางการเขียนคู่มือการใช้งานสำหรับผู้ใช้งานทั่วไป อ่านง่าย ชัดเจน พร้อมตัวอย่างการทำงาน", "User Manual", """# โครงสร้างคู่มือการใช้งาน (User Manual)
+1. **บทนำและเริ่มต้นใช้งาน (Getting Started)**: วิธีเข้าสู่ระบบ, การตั้งค่าเริ่มต้น, และภาพรวมหน้าจอหลัก
+2. **ฟังก์ชันการทำงานหลัก (Core Features Step-by-Step)**: วิธีการใช้งานแต่ละเมนูอย่างละเอียดทีละขั้นตอน
+3. **ตัวอย่างการใช้งานจริง (Use Case Walkthrough)**: Scenario จำลองพร้อมรูปภาพประกอบและคำแนะนำ
+4. **ข้อควรระวังและ FAQ**: ปัญหาที่พบบ่อยและแนวทางแก้ไขเบื้องต้น
+5. **ช่องทางการติดต่อสนับสนุน (Support & Contact)**"""),
+                ("Admin & Operations Manual", "คู่มือการบริหารจัดการระบบ การจัดการสิทธิ์ผู้ใช้งาน และการตรวจสอบ Audit Logs", "Admin Manual", """# โครงสร้างคู่มือผู้ดูแลระบบ (Admin Manual)
+1. **Admin Dashboard Overview**: เมนูและเครื่องมือสำหรับผู้ดูแลระบบ
+2. **User & Role Management**: การจัดการผู้ใช้, การกำหนดสิทธิ์ (RBAC), และการเปิด/ปิดสิทธิ์เข้าถึง
+3. **System Configuration**: การตั้งค่าพารามิเตอร์ระบบ, API Keys, และ Environment Settings
+4. **Monitoring & Audit Logs**: การตรวจสอบประวัติการใช้งาน (Audit Trails) และรายงานข้อผิดพลาด
+5. **Security & Backup Procedures**: รอบการสำรองข้อมูล (Backup) และขั้นตอนการกู้คืน (Disaster Recovery)"""),
+                ("System Installation & Deployment Guide", "คู่มือการติดตั้ง Deploy ระบบ ซอฟต์แวร์พื้นฐาน ฐานข้อมูล และการตั้งค่าเน็ตเวิร์ก", "Installation System", """# โครงสร้างคู่มือการติดตั้งระบบ (Installation Guide)
+1. **System Requirements & Prerequisites**: ข้อกำหนด Hardware, OS, Docker/Node.js/Python Versions
+2. **Pre-installation Steps**: การเตรียม Environment, พอร์ตไฟร์วอลล์, และ Network Configuration
+3. **Step-by-step Installation**: คำสั่งติดตั้ง Service, Database Setup, Docker Compose Commands
+4. **Configuration & Verification**: การตั้งค่าไฟล์ .env, การทดสอบการเชื่อมต่อ (Healthcheck)
+5. **Troubleshooting**: แนวทางแก้ไขข้อผิดพลาดระหว่างการติดตั้งและการ Rollback"""),
+                ("Comprehensive QA Summary Report", "รายงานสรุปผลการประกันคุณภาพ การทดสอบระบบ และการประเมินความพร้อมก่อนปล่อยสู่ Production", "QA Report", """# โครงสร้างรายงานผลการทดสอบ QA (QA Report)
+1. **Executive Summary**: สรุปภาพรวมผลการทดสอบและสถานะความพร้อม (Go / No-Go Verdict)
+2. **Test Execution Statistics**: สถิติจำนวน Test Case ทั้งหมด, ผ่าน (Pass), ไม่ผ่าน (Fail), รอดำเนินการ (Block)
+3. **Defect & Bug Analysis**: รายการข้อบกพร่องที่พบ แยกตามระดับความรุนแรง (Critical, Major, Minor)
+4. **Risk Assessment**: การประเมินความเสี่ยงที่ยังคงค้างและมาตรการรับมือ
+5. **Recommendations & Sign-off**: ข้อเสนอแนะในการปรับปรุงและการลงนามอนุมัติปล่อยระบบ"""),
+                ("Security Assessment & Test Plan", "แผนและเกณฑ์การทดสอบความปลอดภัย การตรวจสอบช่องโหว่ OWASP Top 10 และ Data Protection", "Security Plan", """# โครงสร้างแผนการทดสอบความปลอดภัย (Security Test Plan)
+1. **Security Testing Objectives**: เป้าหมายและขอบเขตการประเมินความปลอดภัย
+2. **Threat Modeling & Risk Areas**: จุดเสี่ยงที่ต้องทดสอบ (Auth, Injection, Broken Access Control)
+3. **Security Test Cases**: กรณีทดสอบเฉพาะทางตามแนวทาง OWASP Top 10
+4. **Data Privacy & Encryption Compliance**: การตรวจสอบการเข้ารหัสข้อมูล (At-rest / In-transit)
+5. **Vulnerability Reporting & Remediation SLA**: ขั้นตอนการรายงานและกำหนดระยะเวลาแก้ไขช่องโหว่"""),
+                ("Performance & Load Testing Strategy", "กลยุทธ์การทดสอบประสิทธิภาพ Stress Test, Concurrency, Latency และ Throughput", "Performance Plan", """# โครงสร้างแผนการทดสอบประสิทธิภาพ (Performance Plan)
+1. **Performance Objectives & Baseline**: ค่าเป้าหมาย SLA (Response Time < 2s, TPS, 95th Percentile)
+2. **Test Scenarios**: แผนการทดสอบ Load Test, Stress Test, Endurance Test และ Spike Test
+3. **Virtual User (VU) Configuration**: การจำลองจำนวนผู้ใช้งานพร้อมกัน (Concurrent Users)
+4. **Resource Monitoring**: การตรวจสอบ CPU, Memory, DB Connection Pool และ Network IO
+5. **Bottleneck Analysis & Optimization Guidelines**: แนวทางการระบุคอขวดและเกณฑ์การปรับแต่ง""")
+            ]
+            for s_name, s_desc, s_doc_type, s_instructions in seed_skills:
+                cursor.execute("""
+                    INSERT INTO agent_skills (skill_name, skill_description, target_doc_type, markdown_instructions, created_by)
+                    VALUES (%s, %s, %s, %s, 'System Seed');
+                """, (s_name, s_desc, s_doc_type, s_instructions))
+        
         conn.commit()
         cursor.close()
     except Exception as e:
@@ -2192,6 +2278,7 @@ def qa_consult_api():
                     pass
 
         # Read file bytes before generator starts to avoid I/O on closed file
+        doc_filename = secure_filename(file.filename) if file and file.filename else 'document.pdf'
         pdf_bytes = file.read()
 
         def generate():
@@ -2201,7 +2288,7 @@ def qa_consult_api():
                 # 1. OCR
                 from ocr_engine import ocr_pdf_bytes
                 
-                ocr_results = ocr_pdf_bytes(pdf_bytes)
+                ocr_results = ocr_pdf_bytes(pdf_bytes, filename=doc_filename)
                 extracted_text = ''
                 total_pages = len(ocr_results)
                 

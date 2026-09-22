@@ -174,20 +174,20 @@ def init_qa_database():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
             CREATE TABLE IF NOT EXISTS api_usage_logs (
-                id SERIAL PRIMARY KEY,
-                service_name VARCHAR(50) NOT NULL,
+                log_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                endpoint_name VARCHAR(100),
                 model_name VARCHAR(100),
-                input_tokens INTEGER DEFAULT 0,
-                output_tokens INTEGER DEFAULT 0,
+                filename VARCHAR(255),
+                prompt_tokens INTEGER DEFAULT 0,
+                completion_tokens INTEGER DEFAULT 0,
                 total_tokens INTEGER DEFAULT 0,
-                cost_usd NUMERIC(12,6) DEFAULT 0,
-                status_code INTEGER DEFAULT 200,
+                estimated_cost_usd NUMERIC(12,6) DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
             CREATE TABLE IF NOT EXISTS billing_credit (
                 id SERIAL PRIMARY KEY,
-                balance NUMERIC(12,4) DEFAULT 100.0,
-                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                total_credit_thb DECIMAL(12, 2) DEFAULT 0.00,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
             CREATE TABLE IF NOT EXISTS qa_groups (
                 group_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -1,15 +1,20 @@
 // Standardized Document Types across all menus and modules
 export const MASTER_DOC_TYPES = [
-  'Project Plan',
+  'Test Case',
   'SRS',
   'SDD',
+  'TOR/SOW',
   'UAT',
-  'Test Case',
+  'User Manual',
+  'Admin Manual',
+  'Installation System',
+  'QA Report',
+  'Security Plan',
+  'Performance Plan',
+  'Project Plan',
   'Technical Spec',
   'SOP',
   'Contract',
-  'Project Proposal',
-  'Summary Report',
   'General'
 ];
 

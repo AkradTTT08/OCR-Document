@@ -10,8 +10,32 @@
 
   let docName = "";
   let docType = "Test Case"; // Default
-  let docTypes = MASTER_DOC_TYPES;
   let customPrompt = "";
+  
+  const docTypeMetadata = {
+    'Test Case': { label: 'Test Case (แบบทดสอบและกรณีทดสอบ)', icon: '🧪' },
+    'SRS': { label: 'SRS (Software Requirements Specification / ข้อกำหนดความต้องการ)', icon: '📝' },
+    'SDD': { label: 'SDD (Software Design Document / สถาปัตยกรรมและออกแบบระบบ)', icon: '🏗️' },
+    'TOR/SOW': { label: 'TOR / SOW (ขอบเขตงานและข้อกำหนดโครงการ)', icon: '📄' },
+    'UAT': { label: 'UAT (User Acceptance Testing / แผนและเกณฑ์การทดสอบยอมรับ)', icon: '✅' },
+    'User Manual': { label: 'User Manual (คู่มือการใช้งานสำหรับผู้ใช้ทั่วไป)', icon: '📖' },
+    'Admin Manual': { label: 'Admin Manual (คู่มือสำหรับผู้ดูแลระบบ)', icon: '⚙️' },
+    'Installation System': { label: 'Installation System (คู่มือการติดตั้งและ Deploy ระบบ)', icon: '💻' },
+    'QA Report': { label: 'QA Report (รายงานสรุปผลการทดสอบและการประกันคุณภาพ)', icon: '📊' },
+    'Security Plan': { label: 'Security Plan (แผนการทดสอบความปลอดภัย)', icon: '🛡️' },
+    'Performance Plan': { label: 'Performance Plan (แผนการทดสอบประสิทธิภาพ)', icon: '⚡' },
+    'Project Plan': { label: 'Project Plan (แผนงานโครงการ)', icon: '📅' },
+    'Technical Spec': { label: 'Technical Spec (ข้อกำหนดทางเทคนิค)', icon: '📐' },
+    'SOP': { label: 'SOP (Standard Operating Procedure)', icon: '📋' },
+    'Contract': { label: 'Contract (สัญญาและข้อตกลง)', icon: '📜' },
+    'General': { label: 'General (เอกสารทั่วไป)', icon: '📁' }
+  };
+
+  $: docTypeOptions = MASTER_DOC_TYPES.map(t => ({
+    value: t,
+    label: docTypeMetadata[t]?.label || t,
+    icon: docTypeMetadata[t]?.icon || '📄'
+  }));
   
   let skills = [];
   let selectedSkillId = "";
@@ -45,8 +69,8 @@
   
   let projects = [];
 
-  $: skillOptions = skills.length === 0 ? [{value: "", label: "-- ไม่พบ Skill ในระบบ --"}] : skills.map(skill => ({ value: String(skill.skill_id || skill.id), label: `${skill.skill_name} (${skill.target_doc_type || 'General'})` }));
-  $: kbDocOptions = [{value: "", label: "-- ไม่ระบุเอกสารอ้างอิง (Use general project knowledge) --"}].concat(kbDocuments.map(doc => ({ value: String(doc.doc_id || doc.id), label: `${doc.original_filename || doc.name} (${doc.doc_category || 'General'})` })));
+  $: skillOptions = skills.length === 0 ? [{value: "", label: "-- ไม่พบ Skill ในระบบ --"}] : skills.map(skill => ({ value: String(skill.skill_id || skill.id), label: `${skill.skill_name} (${skill.target_doc_type || 'General'})`, icon: '💡' }));
+  $: kbDocOptions = [{value: "", label: "-- ไม่ระบุเอกสารอ้างอิง (AI จะดึงเอกสารทั้งหมดใน Knowledge Base ของโครงการมาวิเคราะห์รวมกัน) --", icon: '🌐'}].concat(kbDocuments.map(doc => ({ value: String(doc.doc_id || doc.id), label: `${doc.original_filename || doc.name} (${doc.doc_category || 'General'})`, icon: '📄' })));
 
   $: {
     if ($selectedProjectStore) {
@@ -140,13 +164,18 @@
     }
   }
 
-  // Auto-select a skill if it matches the docType (basic heuristic)
+  // Auto-select matching AI Skill when docType changes
   $: {
     if (docType && skills.length > 0) {
-      const matched = skills.find(s => s.target_doc_type === docType || (s.skill_name && s.skill_name.includes(docType)));
+      const cleanDocType = docType.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const matched = skills.find(s => {
+        const sTarget = (s.target_doc_type || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        const sName = (s.skill_name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        return sTarget === cleanDocType || sName.includes(cleanDocType) || (cleanDocType === 'testcase' && (sName.includes('test') || sTarget.includes('test')));
+      });
       if (matched) {
         selectedSkillId = String(matched.skill_id || matched.id);
-      } else {
+      } else if (!selectedSkillId) {
         selectedSkillId = String(skills[0]?.skill_id || skills[0]?.id || "");
       }
     }
@@ -190,28 +219,27 @@
     
     // Set default project strictly to currently selected project
     const activeProj = $selectedProjectStore;
-    const activeProjId = activeProj ? String(activeProj.id || activeProj.project_id || '') : '';
-    const docProjId = doc && doc.project_id ? String(doc.project_id) : '';
-    const fallbackProjId = projects.length > 0 ? String(projects[0].id || projects[0].project_id || '') : '';
-    
-    saveForm.project_id = activeProjId || docProjId || fallbackProjId;
-    saveForm.doc_type = doc.doc_type || 'Test Case';
-    
-    if (doc.doc_type === 'Test Case' || doc.doc_type === 'UAT') {
+    if (activeProj) {
+      saveForm.project_id = String(activeProj.id || activeProj.project_id || '');
+    } else {
+      saveForm.project_id = projects.length > 0 ? String(projects[0].id || projects[0].project_id || '') : '';
+    }
+
+    if (doc.doc_type === 'Test Case') {
       saveForm.doc_category = 'TestCase';
-    } else if (doc.doc_type === 'SRS') {
+    } else if (doc.doc_type === 'SRS' || doc.doc_type === 'Requirement') {
       saveForm.doc_category = 'Requirement';
     } else {
-      saveForm.doc_category = 'Reference';
+      saveForm.doc_category = 'QA Generated';
     }
+    saveForm.doc_type = doc.doc_type || 'Test Case';
     saveForm.is_golden_data = false;
     showSaveModal = true;
   }
 
-  async function handleSaveModalSubmit() {
-    if (!selectedDocForSave) return;
+  async function handleSaveToProject() {
     if (!saveForm.project_id) {
-      toast('กรุณาเลือกโครงการ', 'warning');
+      toast('กรุณาเลือกโครงการเป้าหมาย', 'warning');
       return;
     }
     if (!saveForm.filename.trim()) {
@@ -221,61 +249,57 @@
 
     isSavingToProject = true;
     try {
-      const res = await fetch('/api/agent/save_generated_doc_to_project', {
+      const res = await fetch('/api/qa/save_generated_doc', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          doc_id: selectedDocForSave.id,
-          filename: saveForm.filename.trim(),
           project_id: saveForm.project_id,
+          filename: saveForm.filename.trim(),
           doc_category: saveForm.doc_category,
           doc_type: saveForm.doc_type,
-          is_golden_data: saveForm.is_golden_data
+          markdown_content: selectedDocForSave.doc_markdown,
+          is_golden_data: saveForm.is_golden_data,
+          original_doc_name: selectedDocForSave.doc_name
         })
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        toast(data.message || 'บันทึกเอกสารเข้าโครงการสำเร็จ!', 'success');
-        selectedDocForSave.is_saved_to_project = true;
-        generatedHistory = [...generatedHistory];
+        toast(`บันทึกเอกสารเข้า Knowledge Base เรียบร้อยแล้ว (Doc ID: ${data.doc_id})`, 'success', 4000);
         showSaveModal = false;
-        if ($selectedProjectStore) {
-          fetchKbDocuments($selectedProjectStore.id || $selectedProjectStore.project_id);
+        selectedDocForSave = null;
+        if ($selectedProjectStore && String($selectedProjectStore.id || $selectedProjectStore.project_id) === String(saveForm.project_id)) {
+          fetchKbDocuments(saveForm.project_id);
         }
       } else {
-        toast(data.error || 'ไม่สามารถบันทึกเอกสารเข้าโครงการได้', 'error');
+        toast(data.error || 'เกิดข้อผิดพลาดในการบันทึกเข้าโครงการ', 'error');
       }
-    } catch (err) {
+    } catch(err) {
       console.error(err);
-      toast('Network error while saving document to project.', 'error');
+      toast('เกิดข้อผิดพลาดในการเชื่อมต่อเซิร์ฟเวอร์', 'error');
     } finally {
       isSavingToProject = false;
     }
   }
 
   async function handleGenerate() {
-    if (!$selectedProjectStore) {
-      toast('Please select a project first from the top navigation.', 'error');
-      return;
-    }
     if (!docName.trim()) {
-      toast('Please enter a Document Name.', 'error');
+      toast('กรุณาระบุชื่อเอกสาร', 'warning');
       return;
     }
-    if (!selectedSkillId) {
-      toast('Please select an AI Skill.', 'error');
+
+    if (!$selectedProjectStore) {
+      toast('กรุณาเลือกโครงการก่อนสร้างเอกสาร', 'warning');
       return;
     }
 
     isGenerating = true;
-
     try {
       const payload = {
         project_id: $selectedProjectStore.id || $selectedProjectStore.project_id,
         doc_type: docType,
         doc_name: docName.trim(),
-        skill_id: String(selectedSkillId),
-        reference_document_id: selectedKbDocId ? String(selectedKbDocId) : null,
+        skill_id: selectedSkillId || null,
+        reference_document_id: selectedKbDocId || null,
         custom_prompt: customPrompt.trim()
       };
 
@@ -287,7 +311,7 @@
       const data = await res.json();
 
       if (res.ok && data.success) {
-        toast('Generation started in background...', 'success');
+        toast('เริ่มการสร้างเอกสารในเบื้องหลังแล้ว...', 'success');
         fetchHistory($selectedProjectStore.id || $selectedProjectStore.project_id);
         docName = ""; // reset
         customPrompt = ""; // reset
@@ -329,29 +353,32 @@
         <h2>QA Document Creation</h2>
         <span class="badge in-progress">AI Generator</span>
       </div>
-      <p class="desc-text">สร้างเอกสาร QA อัตโนมัติ (เช่น SRS, Test Case, UAT) โดยอ้างอิงจาก Knowledge Base และ Skill ที่กำหนด</p>
+      <p class="desc-text">สร้างเอกสาร QA อัจฉริยะ (เช่น SRS, SDD, TOR, Test Case, UAT, คู่มือ) โดย AI จะดึงและวิเคราะห์ข้อมูลทั้งหมดใน Knowledge Base ของโครงการมาประมวลผลรวมกันอย่างแม่นยำ</p>
 
     <div class="form-container">
       <div class="form-group">
         <label for="docName">ชื่อเอกสาร (Document Name):</label>
-        <input type="text" id="docName" bind:value={docName} placeholder="เช่น Login Flow Test Cases" class="text-input" />
+        <input type="text" id="docName" bind:value={docName} placeholder="เช่น ระบบสั่งอาหารออนไลน์ - Test Case Suite" class="text-input" />
       </div>
 
       <div class="form-row">
         <div class="form-group half-width">
-          <label for="docType">ประเภทเอกสาร (Document Type):</label>
-          <CustomSelect id="docType" bind:value={docType} options={docTypes} />
+          <label for="docType">ประเภทเอกสารที่ต้องการสร้าง (Document Type):</label>
+          <CustomSelect id="docType" bind:value={docType} options={docTypeOptions} />
+          <span style="font-size: 11px; color: #94a3b8; margin-top: 4px; display: block;">ระบุชนิดเอกสารเพื่อให้ AI หยิบและวิเคราะห์ข้อมูลในโครงการมาสร้างได้อย่างตรงเป้าหมาย</span>
         </div>
 
         <div class="form-group half-width">
-          <label for="skillSelect">เลือก AI Skill (Framework):</label>
+          <label for="skillSelect">เลือก AI Skill (โครงสร้างและแนวทางสร้างเอกสาร):</label>
           <CustomSelect id="skillSelect" bind:value={selectedSkillId} options={skillOptions} disabled={skills.length === 0} />
+          <span style="font-size: 11px; color: #94a3b8; margin-top: 4px; display: block;">กำหนดโครงสร้าง, มาตรฐานหัวข้อ, และกรอบการสร้างเอกสาร</span>
         </div>
       </div>
 
       <div class="form-group" style="z-index: 70;">
-        <label for="kbDocSelect">อ้างอิงจากเอกสารในระบบ (Reference Document) - <i>Optional</i>:</label>
+        <label for="kbDocSelect">เอกสารอ้างอิงหลักในระบบ (Reference Document) - <i>Optional</i>:</label>
         <CustomSelect id="kbDocSelect" bind:value={selectedKbDocId} options={kbDocOptions} disabled={kbDocuments.length === 0} />
+        <span style="font-size: 11px; color: #60a5fa; margin-top: 4px; display: block;">💡 หากไม่ระบุเอกสารอ้างอิง AI จะรวบรวมเอกสารทุกฉบับใน Knowledge Base ของโครงการนี้มาวิเคราะห์ประมวลผลรวมกันทั้งหมด</span>
       </div>
 
       <div class="form-group">

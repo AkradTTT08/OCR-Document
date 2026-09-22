@@ -275,7 +275,7 @@ def ocr_image(pil_image: Image.Image, lang: str = 'tha+eng', filename: str = Non
         if response and hasattr(response, 'usage_metadata'):
             try:
                 from db_ingestion import log_api_usage
-                used_model = getattr(response, 'model_version', None) or 'gemini-3.1-flash'
+                used_model = getattr(response, 'model_version', None) or current_model or 'gemini-2.5-flash'
                 log_api_usage("OCR_Scan", used_model, response.usage_metadata, filename=filename)
             except Exception as usage_err:
                 logger.error(f"Failed to log API usage: {usage_err}")

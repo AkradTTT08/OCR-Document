@@ -78,6 +78,102 @@ def render_html_to_pdf(html_content: str, output_path: str):
             return False
 
 
+def fetch_comprehensive_project_context(cursor, project_id: str, reference_document_id=None):
+    """
+    Retrieves ALL available project knowledge:
+    1. Project info (code, name, description)
+    2. Primary reference document (if specified)
+    3. ALL other project documents in Knowledge Base (TOR/SOW, SRS, SDD, Test Cases, Manuals, etc.)
+    4. Structured requirements (if available)
+    """
+    # 1. Project Info
+    cursor.execute("SELECT project_code, project_name, description FROM projects WHERE project_id = %s::uuid", (project_id,))
+    p_row = cursor.fetchone()
+    project_code = p_row[0] if p_row else "Unknown Project"
+    project_name = p_row[1] if p_row and p_row[1] else project_code
+    project_desc = p_row[2] if p_row and p_row[2] else ""
+
+    # 2. Fetch ALL Active Documents in this Project
+    cursor.execute("""
+        SELECT doc_id, original_filename, doc_category, doc_type, full_markdown_content
+        FROM documents
+        WHERE project_id = %s::uuid AND (status = 'Active' OR status IS NULL)
+        ORDER BY created_at ASC
+    """, (project_id,))
+    doc_rows = cursor.fetchall()
+
+    primary_ref_context = ""
+    primary_doc_id_str = str(reference_document_id) if reference_document_id else ""
+    all_docs_context_list = []
+
+    for d in doc_rows:
+        d_id = str(d[0])
+        d_filename = d[1] or "Unnamed Document"
+        d_category = d[2] or "General"
+        d_doctype = d[3] or "Document"
+        d_content = (d[4] or "").strip()
+
+        if primary_doc_id_str and d_id == primary_doc_id_str:
+            primary_ref_context = f"""
+# PRIMARY REFERENCE DOCUMENT (Selected as Main Source)
+- **Filename:** {d_filename}
+- **Category:** {d_category} | **Type:** {d_doctype}
+--- Content Start ---
+{d_content}
+--- Content End ---
+"""
+        else:
+            # Include project documents, truncating extremely long single files to keep balanced
+            snippet = d_content[:15000] if len(d_content) > 15000 else d_content
+            if snippet:
+                all_docs_context_list.append(f"""
+### Project Document: {d_filename} [Category: {d_category} | Type: {d_doctype}]
+{snippet}
+""")
+
+    all_docs_section = ""
+    if all_docs_context_list:
+        all_docs_section = f"""
+# Comprehensive Project Knowledge Base ({len(all_docs_context_list)} Documents in Project: {project_code})
+The following documents contain the complete project domain knowledge, specifications, architecture, and requirements. You MUST analyze and synthesize across ALL of them to generate the most accurate, thorough, and complete document:
+{''.join(all_docs_context_list)}
+"""
+
+    # 3. Fetch Structured Requirements (if available)
+    cursor.execute("""
+        SELECT req_code, title, description, steps, expected_results
+        FROM structured_requirements
+        WHERE project_id = %s::uuid
+    """, (project_id,))
+    reqs = cursor.fetchall()
+    formatted_reqs = []
+    for req in reqs:
+        formatted_reqs.append({
+            "req_code": req[0],
+            "title": req[1],
+            "description": req[2],
+            "steps": req[3],
+            "expected_results": req[4]
+        })
+
+    structured_reqs_section = ""
+    if formatted_reqs:
+        structured_reqs_section = f"""
+# Structured Requirements & Test Scenarios
+{json.dumps(formatted_reqs, ensure_ascii=False, indent=2)}
+"""
+
+    return {
+        "project_code": project_code,
+        "project_name": project_name,
+        "project_desc": project_desc,
+        "primary_ref_context": primary_ref_context,
+        "all_docs_section": all_docs_section,
+        "structured_reqs_section": structured_reqs_section,
+        "total_docs_count": len(doc_rows)
+    }
+
+
 def create_qa_document(project_id: str, doc_type: str, doc_name: str, skill_id: str, reference_document_id=None, custom_prompt: str = ""):
     """
     Agent 6: QA Document Creator (Synchronous version returning raw text)
@@ -86,50 +182,17 @@ def create_qa_document(project_id: str, doc_type: str, doc_name: str, skill_id: 
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # 1. Fetch Project Info
-        cursor.execute("SELECT project_code FROM projects WHERE project_id = %s::uuid", (project_id,))
-        project_res = cursor.fetchone()
-        project_code = project_res[0] if project_res else "Unknown Project"
-
-        # 2. Fetch Knowledge (Phase 1 Requirements)
-        cursor.execute("""
-            SELECT req_code, title, description, steps, expected_results
-            FROM structured_requirements
-            WHERE project_id = %s::uuid
-        """, (project_id,))
-        reqs = cursor.fetchall()
-        
-        formatted_reqs = []
-        for req in reqs:
-            formatted_reqs.append({
-                "req_code": req[0],
-                "title": req[1],
-                "description": req[2],
-                "steps": req[3],
-                "expected_results": req[4]
-            })
-
-        if not formatted_reqs:
-            logger.warning(f"No structured requirements found for project {project_id}.")
+        # 1. Fetch comprehensive multi-doc project context
+        ctx = fetch_comprehensive_project_context(cursor, project_id, reference_document_id)
+        project_code = ctx["project_code"]
+        project_name = ctx["project_name"]
+        primary_ref_context = ctx["primary_ref_context"]
+        all_docs_section = ctx["all_docs_section"]
+        structured_reqs_section = ctx["structured_reqs_section"]
             
-        # 3. Fetch Skill Instructions
+        # 2. Fetch Skill Instructions
         cursor.execute("SELECT skill_name, target_doc_type, markdown_instructions FROM agent_skills WHERE skill_id::text = %s::text", (str(skill_id),))
         skill_res = cursor.fetchone()
-        
-        # 3.5 Fetch Reference Document (if any)
-        reference_context = ""
-        if reference_document_id:
-            cursor.execute("SELECT original_filename, full_markdown_content FROM documents WHERE doc_id = %s::uuid", (reference_document_id,))
-            doc_res = cursor.fetchone()
-            if doc_res:
-                ref_filename, ref_content = doc_res
-                reference_context = f"""
-# Reference Document ({ref_filename})
-You MUST use this document as the primary reference for your analysis and generation. Do not generate content outside the scope defined in this document.
-{ref_content}
-"""
-            else:
-                logger.warning(f"Reference document {reference_document_id} not found.")
 
         cursor.close()
         conn.close()
@@ -147,7 +210,7 @@ The user has provided the following specific guidelines, scenarios, or custom in
 {custom_prompt.strip()}
 """
 
-        # 4. Call Gemini
+        # 3. Call Gemini
         api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
         if not api_key:
             return False, "GEMINI_API_KEY or GOOGLE_API_KEY is not configured in .env."
@@ -158,29 +221,32 @@ The user has provided the following specific guidelines, scenarios, or custom in
         
         prompt = f"""
 You are an expert QA Automation Engineer, Business Analyst, and Technical Writer.
-Your task is to generate a formal QA Document based on the provided System Knowledge, Skill Instructions, Reference Documents, and User Custom Prompts.
+Your task is to generate a professional, production-grade {doc_type} document based on the provided Project Knowledge Base, Skill Instructions, Reference Documents, and User Custom Prompts.
 
 # Target Document Information
 - Document Name: {doc_name}
 - Document Type: {doc_type}
-- Project Code: {project_code}
+- Project: {project_name} ({project_code})
 
-# Framework & Instructions (Skill: {skill_name})
-Please follow these instructions strictly to structure and generate the document:
+# Framework & Structural Instructions (Skill: {skill_name})
+Please follow these instructions strictly to structure and format the document:
 {instructions}
 
 {custom_prompt_section}
 
-{reference_context}
+{primary_ref_context}
 
-# System Knowledge (Phase 1 Structured Requirements)
-{json.dumps(formatted_reqs, ensure_ascii=False, indent=2)}
+{all_docs_section}
 
-# Output Format
-Generate the complete document in standard Markdown format. Use professional formatting, tables if necessary, and clear headings.
-Do NOT wrap the entire response in ```markdown ... ``` blocks unless necessary, just output the raw markdown text directly.
+{structured_reqs_section}
+
+# Generation Instructions
+1. Synthesize all provided project context and documents to ensure maximum accuracy and completeness.
+2. Structure the document clearly with headings, detailed explanations, bullet points, tables, and test/verification matrices where appropriate.
+3. Produce high quality, ready-to-use content without placeholders like "Insert here".
+4. Generate the complete document in standard Markdown format.
 """
-        logger.info(f"Generating document '{doc_name}' ({doc_type}) using skill '{skill_name}'...")
+        logger.info(f"Generating document '{doc_name}' ({doc_type}) using skill '{skill_name}' across {ctx['total_docs_count']} project documents...")
         resp = model.generate_content(prompt)
         
         if hasattr(resp, 'usage_metadata') and resp.usage_metadata:
@@ -216,48 +282,20 @@ def create_qa_document_async(gen_id: str, project_id: str, doc_type: str, doc_na
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # 1. Fetch Project Info
-        cursor.execute("SELECT project_code FROM projects WHERE project_id = %s::uuid", (project_id,))
-        project_res = cursor.fetchone()
-        project_code = project_res[0] if project_res else "Unknown Project"
-
-        # 2. Fetch Knowledge
-        cursor.execute("""
-            SELECT req_code, title, description, steps, expected_results
-            FROM structured_requirements
-            WHERE project_id = %s::uuid
-        """, (project_id,))
-        reqs = cursor.fetchall()
-        
-        formatted_reqs = []
-        for req in reqs:
-            formatted_reqs.append({
-                "req_code": req[0],
-                "title": req[1],
-                "description": req[2],
-                "steps": req[3],
-                "expected_results": req[4]
-            })
+        # 1. Fetch comprehensive multi-doc project context
+        ctx = fetch_comprehensive_project_context(cursor, project_id, reference_document_id)
+        project_code = ctx["project_code"]
+        project_name = ctx["project_name"]
+        primary_ref_context = ctx["primary_ref_context"]
+        all_docs_section = ctx["all_docs_section"]
+        structured_reqs_section = ctx["structured_reqs_section"]
             
-        # 3. Fetch Skill
+        # 2. Fetch Skill
         cursor.execute("SELECT skill_name, target_doc_type, markdown_instructions FROM agent_skills WHERE skill_id::text = %s::text", (str(skill_id),))
         skill_res = cursor.fetchone()
         if not skill_res:
             raise ValueError(f"Skill '{skill_id}' not found.")
         skill_name, target_doc_type, instructions = skill_res
-        
-        # 3.5 Fetch Reference
-        reference_context = ""
-        if reference_document_id:
-            cursor.execute("SELECT original_filename, full_markdown_content FROM documents WHERE doc_id = %s::uuid", (reference_document_id,))
-            doc_res = cursor.fetchone()
-            if doc_res:
-                ref_filename, ref_content = doc_res
-                reference_context = f"""
-# Reference Document ({ref_filename})
-You MUST use this document as the primary reference for your analysis and generation. Do not generate content outside the scope defined in this document.
-{ref_content}
-"""
 
         custom_prompt_section = ""
         if custom_prompt and custom_prompt.strip():
@@ -267,7 +305,7 @@ The user has provided the following specific guidelines, scenarios, or custom in
 {custom_prompt.strip()}
 """
         
-        # 4. Call Gemini
+        # 3. Call Gemini
         api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
         if not api_key:
             raise ValueError("GEMINI_API_KEY or GOOGLE_API_KEY is not configured in .env.")
@@ -278,26 +316,27 @@ The user has provided the following specific guidelines, scenarios, or custom in
         
         today_str = datetime.datetime.now().strftime("%d/%m/%Y")
         
-        if doc_type == "Test Case":
+        if doc_type in ["Test Case", "TestCase"]:
             prompt = f"""
 You are an expert QA Automation Engineer, Business Analyst, and Technical Writer.
-Your task is to generate a formal QA Document based on the provided System Knowledge, Skill Instructions, Reference Documents, and User Custom Prompts.
+Your task is to generate a formal QA Test Case document based on ALL provided Project Knowledge Base documents, Skill Instructions, Reference Documents, and User Custom Prompts.
 
 # Target Document Information
 - Document Name: {doc_name}
 - Document Type: {doc_type}
-- Project Code: {project_code}
+- Project: {project_name} ({project_code})
 
-# Framework & Instructions (Skill: {skill_name})
-Please follow these instructions strictly to structure and generate the document:
+# Framework & Structural Instructions (Skill: {skill_name})
+Please follow these instructions strictly to structure and generate the test cases:
 {instructions}
 
 {custom_prompt_section}
 
-{reference_context}
+{primary_ref_context}
 
-# System Knowledge (Phase 1 Structured Requirements)
-{json.dumps(formatted_reqs, ensure_ascii=False, indent=2)}
+{all_docs_section}
+
+{structured_reqs_section}
 
 # Output Format MUST BE JSON
 You MUST generate the entire document as a strict JSON object with two keys: "metadata" and "test_cases".
@@ -305,7 +344,7 @@ Do NOT include any text outside the JSON.
 Format:
 {{
   "metadata": {{
-    "project_name": "{project_code} (Admin)",
+    "project_name": "{project_name} ({project_code})",
     "tester_name": "AI Agent",
     "module_function": "Determined from requirements"
   }},
@@ -326,30 +365,34 @@ Format:
 """
         else:
             prompt = f"""
-You are an expert QA Automation Engineer, Business Analyst, and Technical Writer.
-Your task is to generate a formal QA Document based on the provided System Knowledge, Skill Instructions, Reference Documents, and User Custom Prompts.
+You are an expert Software Architect, QA Specialist, and Technical Writer.
+Your task is to generate a comprehensive, professional {doc_type} document for Project {project_name} ({project_code}) named '{doc_name}'.
+You MUST analyze, cross-reference, and synthesize ALL provided Project Knowledge Base documents (TOR, SRS, SDD, previous tests, specs) to ensure 100% technical accuracy.
 
 # Target Document Information
 - Document Name: {doc_name}
 - Document Type: {doc_type}
-- Project Code: {project_code}
+- Project: {project_name} ({project_code})
 
-# Framework & Instructions (Skill: {skill_name})
-Please follow these instructions strictly to structure and generate the document:
+# Framework & Guidelines (Skill: {skill_name})
+Please follow these structure and formatting instructions strictly:
 {instructions}
 
 {custom_prompt_section}
 
-{reference_context}
+{primary_ref_context}
 
-# System Knowledge (Phase 1 Structured Requirements)
-{json.dumps(formatted_reqs, ensure_ascii=False, indent=2)}
+{all_docs_section}
 
-# Output Format MUST BE JSON ARRAY
-You MUST generate the entire document as a strict JSON Array of Objects.
-Do NOT include any text outside the JSON array.
-Each object in the array represents a single row or section.
-The keys of the objects will become the headers. Make sure all objects use consistent keys.
+{structured_reqs_section}
+
+# Generation & Content Instructions:
+1. Synthesize all documents in the project knowledge base to create a complete, in-depth, production-grade {doc_type}.
+2. Use professional formatting with Markdown headings, tables, bullet points, checklists, and sequence/architecture diagrams where relevant.
+3. DO NOT leave placeholder text or brief outlines — write the full, comprehensive content.
+4. Output MUST BE a strict JSON Array of sections where each object has:
+   {{"Section": "...", "Title": "...", "Details": "...", "Remarks": "..."}}
+   (The full narrative Markdown document will also be structured from this content).
 """
 
         logger.info(f"Generating document async '{doc_name}' ({doc_type})...")

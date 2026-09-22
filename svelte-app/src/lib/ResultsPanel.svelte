@@ -14,6 +14,7 @@
 
   // ── Derived ──
   $: pages = result?.pages ?? [];
+  $: totalPages = result?.total_pages ?? result?.summary?.total_pages ?? pages.length ?? 0;
   $: activePage = pages[activePageIdx] ?? null;
   $: allErrors = collectAllErrors(pages);
   $: pageErrors = activePage?.spell_check?.errors ?? [];
@@ -237,7 +238,7 @@
   }
   function exportReport() {
     if (!result) return;
-    let r = `=== รายงาน OCR + ตรวจสอบคำ ===\nไฟล์: ${result.filename}\nหน้าทั้งหมด: ${result.total_pages}\n`;
+    let r = `=== รายงาน OCR + ตรวจสอบคำ ===\nไฟล์: ${result.filename}\nหน้าทั้งหมด: ${totalPages}\n`;
     r += `คำไทย: ${totalThai.toLocaleString()} | คำอังกฤษ: ${totalEng.toLocaleString()}\n`;
     r += `คำผิด(ไทย): ${totalThaiErr} | คำผิด(Eng): ${totalEngErr} | อัตรา: ${errRate}%\n`;
     r += `\n${"─".repeat(44)}\n\n`;
@@ -522,7 +523,7 @@
     <div class="stat-bar">
       <div class="stat-card">
         <div class="stat-val" style="color:var(--primary2)">
-          {result.total_pages}
+          {totalPages}
         </div>
         <div class="stat-lbl">หน้า</div>
       </div>

@@ -1651,7 +1651,7 @@ def get_qa_groups(project_id=None):
         if conn: conn.close()
 
 def init_api_usage_logs():
-    """Initializes the api_usage_logs table for tracking Gemini token usage."""
+    """Initializes the api_usage_logs table for tracking Gemini token usage and migrates schema if needed."""
     conn = None
     cursor = None
     try:
@@ -1671,13 +1671,41 @@ def init_api_usage_logs():
                 estimated_cost_usd DECIMAL(10, 6) DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+            
+            -- Ensure all modern columns exist for backward-compatibility
+            ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS log_id UUID DEFAULT gen_random_uuid();
+            ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS endpoint_name VARCHAR(100);
+            ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS model_name VARCHAR(100);
+            ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS filename VARCHAR(255);
+            ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS prompt_tokens INT DEFAULT 0;
+            ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS completion_tokens INT DEFAULT 0;
+            ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS total_tokens INT DEFAULT 0;
+            ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS estimated_cost_usd DECIMAL(10, 6) DEFAULT 0;
+            ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
         """)
         
-        # Add filename column if it doesn't exist (for existing databases)
+        # Migrate legacy column data if present
         try:
-            cursor.execute("ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS filename VARCHAR(255);")
-        except Exception:
-            pass
+            cursor.execute("""
+                DO $$
+                BEGIN
+                    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='api_usage_logs' AND column_name='service_name') THEN
+                        UPDATE api_usage_logs SET endpoint_name = service_name WHERE endpoint_name IS NULL;
+                    END IF;
+                    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='api_usage_logs' AND column_name='input_tokens') THEN
+                        UPDATE api_usage_logs SET prompt_tokens = input_tokens WHERE prompt_tokens IS NULL OR prompt_tokens = 0;
+                    END IF;
+                    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='api_usage_logs' AND column_name='output_tokens') THEN
+                        UPDATE api_usage_logs SET completion_tokens = output_tokens WHERE completion_tokens IS NULL OR completion_tokens = 0;
+                    END IF;
+                    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='api_usage_logs' AND column_name='cost_usd') THEN
+                        UPDATE api_usage_logs SET estimated_cost_usd = cost_usd WHERE estimated_cost_usd IS NULL OR estimated_cost_usd = 0;
+                    END IF;
+                END $$;
+            """)
+        except Exception as mig_err:
+            logger.warning(f"Legacy data sync error (non-fatal): {mig_err}")
+
         logger.info("Checked/Created api_usage_logs table.")
     except Exception as e:
         logger.error(f"Error initializing api_usage_logs table: {e}", exc_info=True)
@@ -1724,24 +1752,45 @@ def log_api_usage(endpoint_name, model_name, usage_metadata, filename=None):
     try:
         conn = get_ocr_db_connection()
         cursor = conn.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS api_usage_logs (
-                log_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                endpoint_name VARCHAR(100),
-                model_name VARCHAR(100),
-                filename VARCHAR(255),
-                prompt_tokens INT DEFAULT 0,
-                completion_tokens INT DEFAULT 0,
-                total_tokens INT DEFAULT 0,
-                estimated_cost_usd DECIMAL(10, 6) DEFAULT 0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        """)
-        cursor.execute("""
+        
+        insert_query = """
             INSERT INTO api_usage_logs (endpoint_name, model_name, filename, prompt_tokens, completion_tokens, total_tokens, estimated_cost_usd)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
-        """, (endpoint_name or 'AI_Agent', model_name or 'gemini-2.5-flash', filename, prompt_tokens, completion_tokens, total_tokens, cost_usd))
-        conn.commit()
+        """
+        params = (endpoint_name or 'AI_Agent', model_name or 'gemini-2.5-flash', filename, prompt_tokens, completion_tokens, total_tokens, cost_usd)
+        
+        try:
+            cursor.execute(insert_query, params)
+            conn.commit()
+            logger.info(f"Logged API usage for {endpoint_name} ({model_name}): {total_tokens} tokens, ${cost_usd:.6f}")
+        except Exception as insert_err:
+            conn.rollback()
+            # If columns missing, perform self-healing migration and retry
+            logger.warning(f"Initial insert into api_usage_logs failed ({insert_err}), self-healing schema...")
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS api_usage_logs (
+                    log_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    endpoint_name VARCHAR(100),
+                    model_name VARCHAR(100),
+                    filename VARCHAR(255),
+                    prompt_tokens INT DEFAULT 0,
+                    completion_tokens INT DEFAULT 0,
+                    total_tokens INT DEFAULT 0,
+                    estimated_cost_usd DECIMAL(10, 6) DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS endpoint_name VARCHAR(100);
+                ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS model_name VARCHAR(100);
+                ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS filename VARCHAR(255);
+                ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS prompt_tokens INT DEFAULT 0;
+                ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS completion_tokens INT DEFAULT 0;
+                ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS total_tokens INT DEFAULT 0;
+                ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS estimated_cost_usd DECIMAL(10, 6) DEFAULT 0;
+            """)
+            conn.commit()
+            cursor.execute(insert_query, params)
+            conn.commit()
+            logger.info(f"Self-healed and logged API usage for {endpoint_name} ({model_name}): {total_tokens} tokens")
     except Exception as e:
         if conn: conn.rollback()
         logger.error(f"Error logging API usage: {e}", exc_info=True)
@@ -1766,7 +1815,7 @@ def get_api_usage_stats(time_filter='all'):
         conn = get_ocr_db_connection()
         cursor = conn.cursor()
         
-        # Ensure table exists
+        # Ensure table exists and has necessary columns
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS api_usage_logs (
                 log_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1779,7 +1828,15 @@ def get_api_usage_stats(time_filter='all'):
                 estimated_cost_usd DECIMAL(10, 6) DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+            ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS endpoint_name VARCHAR(100);
+            ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS model_name VARCHAR(100);
+            ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS filename VARCHAR(255);
+            ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS prompt_tokens INT DEFAULT 0;
+            ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS completion_tokens INT DEFAULT 0;
+            ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS total_tokens INT DEFAULT 0;
+            ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS estimated_cost_usd DECIMAL(10, 6) DEFAULT 0;
         """)
+        conn.commit()
         
         # Build WHERE clause based on time filter
         where_clause = ""
@@ -1800,14 +1857,14 @@ def get_api_usage_stats(time_filter='all'):
             stats['total_cost_usd'] = float(row[1] or 0.0)
         
         # Usage by model
-        cursor.execute(f"SELECT model_name, COUNT(*), COALESCE(SUM(total_tokens), 0), COALESCE(SUM(estimated_cost_usd), 0) FROM api_usage_logs {where_clause} GROUP BY model_name")
+        cursor.execute(f"SELECT COALESCE(model_name, 'gemini-2.5-flash'), COUNT(*), COALESCE(SUM(total_tokens), 0), COALESCE(SUM(estimated_cost_usd), 0) FROM api_usage_logs {where_clause} GROUP BY model_name")
         stats['by_model'] = [
             {'model': r[0], 'requests': r[1], 'tokens': int(r[2] or 0), 'cost_usd': float(r[3] or 0.0)}
             for r in cursor.fetchall()
         ]
         
         # Usage by endpoint
-        cursor.execute(f"SELECT endpoint_name, COUNT(*), COALESCE(SUM(total_tokens), 0), COALESCE(SUM(estimated_cost_usd), 0) FROM api_usage_logs {where_clause} GROUP BY endpoint_name")
+        cursor.execute(f"SELECT COALESCE(endpoint_name, 'AI_Agent'), COUNT(*), COALESCE(SUM(total_tokens), 0), COALESCE(SUM(estimated_cost_usd), 0) FROM api_usage_logs {where_clause} GROUP BY endpoint_name")
         stats['by_endpoint'] = [
             {'endpoint': r[0], 'requests': r[1], 'tokens': int(r[2] or 0), 'cost_usd': float(r[3] or 0.0)}
             for r in cursor.fetchall()
@@ -1816,16 +1873,16 @@ def get_api_usage_stats(time_filter='all'):
         # Document History (Grouped by Document and Day)
         cursor.execute(f"""
             SELECT 
-                filename, 
+                COALESCE(filename, 'Unknown Document') as fname, 
                 MAX(created_at) as latest_date,
-                STRING_AGG(DISTINCT endpoint_name, ', ') as endpoints,
-                STRING_AGG(DISTINCT model_name, ', ') as models,
+                STRING_AGG(DISTINCT COALESCE(endpoint_name, 'AI_Agent'), ', ') as endpoints,
+                STRING_AGG(DISTINCT COALESCE(model_name, 'gemini-2.5-flash'), ', ') as models,
                 COALESCE(SUM(total_tokens), 0) as total_tokens,
                 COALESCE(SUM(estimated_cost_usd), 0) as total_cost,
                 date_trunc('day', created_at) as scan_day
             FROM api_usage_logs 
             {where_clause} 
-            GROUP BY filename, scan_day
+            GROUP BY fname, scan_day
             ORDER BY latest_date DESC 
             LIMIT 100
         """)
@@ -1868,7 +1925,7 @@ def get_api_usage_stats(time_filter='all'):
         ]
         
         cursor.execute(f"""
-            SELECT {date_trunc_expr} as time_group, model_name, COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0), COUNT(*)
+            SELECT {date_trunc_expr} as time_group, COALESCE(model_name, 'gemini-2.5-flash'), COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0), COUNT(*)
             FROM api_usage_logs
             {where_clause}
             GROUP BY time_group, model_name
@@ -1894,7 +1951,7 @@ def get_api_usage_stats(time_filter='all'):
         if conn: conn.close()
 
 def init_billing_credit():
-    """Initializes the billing_credit table."""
+    """Initializes the billing_credit table and migrates schema if needed."""
     conn = None
     cursor = None
     try:
@@ -1908,7 +1965,22 @@ def init_billing_credit():
                 total_credit_thb DECIMAL(12, 2) DEFAULT 0.00,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+            ALTER TABLE billing_credit ADD COLUMN IF NOT EXISTS total_credit_thb DECIMAL(12, 2) DEFAULT 0.00;
+            ALTER TABLE billing_credit ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
         """)
+        
+        # Check if legacy balance column exists
+        try:
+            cursor.execute("""
+                DO $$
+                BEGIN
+                    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='billing_credit' AND column_name='balance') THEN
+                        UPDATE billing_credit SET total_credit_thb = balance WHERE total_credit_thb = 0.00;
+                    END IF;
+                END $$;
+            """)
+        except Exception:
+            pass
         
         # Insert initial row if empty
         cursor.execute("SELECT COUNT(*) FROM billing_credit")
@@ -1928,9 +2000,19 @@ def get_billing_credit():
     try:
         conn = get_ocr_db_connection()
         cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS billing_credit (
+                id SERIAL PRIMARY KEY,
+                total_credit_thb DECIMAL(12, 2) DEFAULT 0.00,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            ALTER TABLE billing_credit ADD COLUMN IF NOT EXISTS total_credit_thb DECIMAL(12, 2) DEFAULT 0.00;
+            ALTER TABLE billing_credit ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+        """)
+        conn.commit()
         cursor.execute("SELECT total_credit_thb FROM billing_credit ORDER BY id DESC LIMIT 1")
         row = cursor.fetchone()
-        return float(row[0]) if row else 0.0
+        return float(row[0]) if row and row[0] is not None else 0.0
     except Exception as e:
         logger.error(f"Error getting billing credit: {e}", exc_info=True)
         return 0.0
@@ -1945,6 +2027,15 @@ def update_billing_credit(new_amount):
         conn = get_ocr_db_connection()
         conn.autocommit = True
         cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS billing_credit (
+                id SERIAL PRIMARY KEY,
+                total_credit_thb DECIMAL(12, 2) DEFAULT 0.00,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            ALTER TABLE billing_credit ADD COLUMN IF NOT EXISTS total_credit_thb DECIMAL(12, 2) DEFAULT 0.00;
+            ALTER TABLE billing_credit ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+        """)
         cursor.execute("UPDATE billing_credit SET total_credit_thb = %s, updated_at = CURRENT_TIMESTAMP WHERE id = (SELECT id FROM billing_credit ORDER BY id DESC LIMIT 1)", (new_amount,))
         if cursor.rowcount == 0:
             cursor.execute("INSERT INTO billing_credit (total_credit_thb) VALUES (%s)", (new_amount,))
