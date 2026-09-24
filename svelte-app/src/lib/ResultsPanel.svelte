@@ -415,14 +415,19 @@
   {#if isProcessing}
     <div class="state-screen">
       <div class="processing-logo-container">
-        <div class="logo-pulse-ring"></div>
-        <div class="logo-pulse-ring delay"></div>
-        <svg class="brand-logo-anim" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-          <polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5 12 2"></polygon>
-          <line x1="12" y1="22" x2="12" y2="15.5"></line>
-          <polyline points="22 8.5 12 15.5 2 8.5"></polyline>
-          <polyline points="2 15.5 12 8.5 22 15.5"></polyline>
-          <line x1="12" y1="2" x2="12" y2="8.5"></line>
+        <div class="concentric-ring ring-3"></div>
+        <div class="concentric-ring ring-2"></div>
+        <div class="concentric-ring ring-1"></div>
+        <svg class="spectra-iso-cube" viewBox="0 0 100 100" fill="none">
+          <polygon points="50,33 69,44 50,55 31,44" fill="rgba(168, 85, 247, 0.3)" />
+          <polygon points="50,10 85,30 85,70 50,90 15,70 15,30" stroke="#ffffff" stroke-width="4.5" stroke-linejoin="round" stroke-linecap="round" />
+          <polygon points="50,33 69,44 50,55 31,44" stroke="#ffffff" stroke-width="4.5" stroke-linejoin="round" stroke-linecap="round" />
+          <line x1="50" y1="10" x2="50" y2="33" stroke="#ffffff" stroke-width="4.5" stroke-linecap="round" />
+          <line x1="85" y1="30" x2="69" y2="44" stroke="#ffffff" stroke-width="4.5" stroke-linecap="round" />
+          <line x1="15" y1="30" x2="31" y2="44" stroke="#ffffff" stroke-width="4.5" stroke-linecap="round" />
+          <line x1="50" y1="55" x2="50" y2="90" stroke="#ffffff" stroke-width="4.5" stroke-linecap="round" />
+          <line x1="69" y1="44" x2="85" y2="70" stroke="#ffffff" stroke-width="4.5" stroke-linecap="round" />
+          <line x1="31" y1="44" x2="15" y2="70" stroke="#ffffff" stroke-width="4.5" stroke-linecap="round" />
         </svg>
       </div>
       <div class="prog-wrap">
@@ -945,44 +950,50 @@
   /* ── Animated Logo ── */
   .processing-logo-container {
     position: relative;
-    width: 80px;
-    height: 80px;
+    width: 140px;
+    height: 140px;
     display: flex;
     align-items: center;
     justify-content: center;
-    margin-bottom: 20px;
+    margin-bottom: 24px;
   }
-  .brand-logo-anim {
-    width: 50px;
-    height: 50px;
-    color: var(--primary2);
-    filter: drop-shadow(0 0 10px var(--primary));
-    animation: float 3s ease-in-out infinite, pulse-glow 2s infinite;
+  .concentric-ring {
+    position: absolute;
+    border-radius: 50%;
+    pointer-events: none;
+  }
+  .concentric-ring.ring-1 {
+    width: 75px;
+    height: 75px;
+    border: 1.5px solid #a855f7;
+    box-shadow: 0 0 16px rgba(168, 85, 247, 0.45);
+    animation: ringGlow 2.5s ease-in-out infinite alternate;
+  }
+  .concentric-ring.ring-2 {
+    width: 105px;
+    height: 105px;
+    border: 1px solid rgba(147, 51, 234, 0.4);
+    animation: ringScale 3s ease-in-out infinite alternate;
+  }
+  .concentric-ring.ring-3 {
+    width: 135px;
+    height: 135px;
+    border: 1px solid rgba(139, 92, 246, 0.2);
+  }
+  .spectra-iso-cube {
+    width: 44px;
+    height: 44px;
+    filter: drop-shadow(0 0 12px rgba(168, 85, 247, 0.85));
+    animation: float 3s ease-in-out infinite;
     z-index: 2;
   }
-  .logo-pulse-ring {
-    position: absolute;
-    width: 100%;
-    height: 100%;
-    border: 2px solid var(--primary);
-    border-radius: 50%;
-    animation: ripple 2s linear infinite;
-    opacity: 0;
+  @keyframes ringGlow {
+    0% { border-color: rgba(168, 85, 247, 0.6); box-shadow: 0 0 10px rgba(168, 85, 247, 0.3); }
+    100% { border-color: #c084fc; box-shadow: 0 0 24px rgba(168, 85, 247, 0.7); }
   }
-  .logo-pulse-ring.delay {
-    animation-delay: 1s;
-  }
-  @keyframes float {
-    0%, 100% { transform: translateY(0); }
-    50% { transform: translateY(-10px); }
-  }
-  @keyframes pulse-glow {
-    0%, 100% { filter: drop-shadow(0 0 10px var(--primary)); }
-    50% { filter: drop-shadow(0 0 25px var(--accent)); color: var(--accent); }
-  }
-  @keyframes ripple {
-    0% { transform: scale(0.8); opacity: 0.8; }
-    100% { transform: scale(2); opacity: 0; }
+  @keyframes ringScale {
+    0% { transform: scale(0.97); opacity: 0.6; }
+    100% { transform: scale(1.03); opacity: 1; }
   }
 
   /* ── Header ── */

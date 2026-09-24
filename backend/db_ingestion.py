@@ -538,14 +538,18 @@ def ingest_markdown_document(filename: str, markdown_text: str, project_id: int 
         if conn: conn.close()
 
 
-def update_markdown_document(doc_id: str, new_markdown_text: str):
+def update_markdown_document(
+    doc_id: str, 
+    new_markdown_text: str = None, 
+    new_category: str = None, 
+    new_filename: str = None, 
+    new_is_golden: bool = None
+):
     """
-    Updates the markdown content of an existing document, and re-generates its chunks and embeddings
+    Updates the document properties (category, filename, golden status, and/or markdown content).
+    If markdown content or category/filename changes, re-generates its chunks and embeddings
     using Semantic Markdown Chunking and Contextual Breadcrumbs.
     """
-    if not new_markdown_text.strip():
-        return False, "Empty markdown text provided."
-
     conn = None
     cursor = None
     try:
@@ -554,55 +558,78 @@ def update_markdown_document(doc_id: str, new_markdown_text: str):
 
         # Fetch doc info and project name for breadcrumb context
         cursor.execute("""
-            SELECT d.original_filename, d.doc_category, d.project_id, p.project_name
+            SELECT d.original_filename, d.doc_category, d.project_id, p.project_name, d.full_markdown_content, d.is_golden_data
             FROM documents d
             LEFT JOIN projects p ON d.project_id = p.project_id
             WHERE d.doc_id = %s
         """, (doc_id,))
         doc_row = cursor.fetchone()
-        filename = doc_row[0] if doc_row else ""
-        category = doc_row[1] if doc_row else "Reference"
-        proj_name = doc_row[3] if (doc_row and len(doc_row) > 3 and doc_row[3]) else ""
+        if not doc_row:
+            return False, "Document not found."
 
-        # 1. Semantic Chunking
-        chunks = semantic_markdown_chunking(
-            text=new_markdown_text,
-            filename=filename,
-            category=category,
-            project_name=proj_name,
-            max_chunk_size=1200
-        )
-        
-        # 2. Embedding
-        embedder = get_model()
-        if embedder is not None:
-            embeddings = [emb.tolist() for emb in embedder.encode(chunks)]
-        else:
-            embeddings = [[0.0] * 384 for _ in chunks]
-        
-        # 3. Compute file hash
-        file_hash = hashlib.sha256(new_markdown_text.encode('utf-8')).hexdigest()
+        cur_filename = doc_row[0] or ""
+        cur_category = doc_row[1] or "Reference"
+        proj_name = doc_row[3] if (len(doc_row) > 3 and doc_row[3]) else ""
+        cur_content = doc_row[4] or ""
+        cur_golden = doc_row[5] if (len(doc_row) > 5 and doc_row[5] is not None) else False
 
-        # Update document
-        cursor.execute(
-            "UPDATE documents SET full_markdown_content = %s, file_hash = %s WHERE doc_id = %s",
-            (new_markdown_text, file_hash, doc_id)
+        final_filename = new_filename.strip() if (new_filename is not None and new_filename.strip()) else cur_filename
+        final_category = new_category.strip() if (new_category is not None and new_category.strip()) else cur_category
+        final_golden = new_is_golden if new_is_golden is not None else cur_golden
+        final_content = new_markdown_text if (new_markdown_text is not None and new_markdown_text.strip()) else cur_content
+
+        need_rechunk = (
+            (new_markdown_text is not None and new_markdown_text.strip() != cur_content) or
+            (new_category is not None and new_category.strip() != cur_category) or
+            (new_filename is not None and new_filename.strip() != cur_filename)
         )
+
+        file_hash = hashlib.sha256(final_content.encode('utf-8')).hexdigest() if final_content else ""
+
+        # Update document record
+        cursor.execute("""
+            UPDATE documents 
+            SET doc_category = %s,
+                original_filename = %s,
+                is_golden_data = %s,
+                full_markdown_content = %s,
+                file_hash = %s
+            WHERE doc_id = %s
+        """, (final_category, final_filename, final_golden, final_content, file_hash, doc_id))
+
         if cursor.rowcount == 0:
-            raise Exception("Document not found.")
+            raise Exception("Document update affected 0 rows.")
 
-        # Delete old chunks
-        cursor.execute("DELETE FROM document_chunks WHERE doc_id = %s", (doc_id,))
-
-        # Insert new chunks
-        for chunk_text, emb in zip(chunks, embeddings):
-            cursor.execute(
-                "INSERT INTO document_chunks (doc_id, chunk_text, embedding) VALUES (%s, %s, %s);",
-                (doc_id, chunk_text, emb)
+        # If content, category or filename changed, re-chunk and re-embed
+        if need_rechunk and final_content.strip():
+            # 1. Semantic Chunking
+            chunks = semantic_markdown_chunking(
+                text=final_content,
+                filename=final_filename,
+                category=final_category,
+                project_name=proj_name,
+                max_chunk_size=1200
             )
+            
+            # 2. Embedding
+            embedder = get_model()
+            if embedder is not None:
+                embeddings = [emb.tolist() for emb in embedder.encode(chunks)]
+            else:
+                embeddings = [[0.0] * 384 for _ in chunks]
+
+            # Delete old chunks
+            cursor.execute("DELETE FROM document_chunks WHERE doc_id = %s", (doc_id,))
+
+            # Insert new chunks
+            for chunk_text, emb in zip(chunks, embeddings):
+                cursor.execute(
+                    "INSERT INTO document_chunks (doc_id, chunk_text, embedding) VALUES (%s, %s, %s);",
+                    (doc_id, chunk_text, emb)
+                )
 
         conn.commit()
-        logger.info(f"Successfully updated document '{doc_id}' with {len(chunks)} contextual chunks.")
+        logger.info(f"Successfully updated document '{doc_id}' (Category: '{final_category}', Filename: '{final_filename}').")
         return True, "Update successful"
 
     except Exception as e:
@@ -1090,6 +1117,7 @@ def init_qa_transactions():
                 exit_criteria_eval JSONB,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+            ALTER TABLE qa_transactions ADD COLUMN IF NOT EXISTS project_id UUID REFERENCES projects(project_id) ON DELETE CASCADE;
             ALTER TABLE qa_transactions ADD COLUMN IF NOT EXISTS group_name VARCHAR(255);
             ALTER TABLE qa_transactions ADD COLUMN IF NOT EXISTS group_type VARCHAR(100);
             ALTER TABLE qa_transactions ADD COLUMN IF NOT EXISTS filename VARCHAR(255);
@@ -1215,7 +1243,7 @@ def init_qa_groups_table():
         conn.autocommit = True
         cursor = conn.cursor()
         
-        cursor.execute("""
+        cursor.execute(r"""
             CREATE TABLE IF NOT EXISTS qa_groups (
                 group_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 project_id UUID REFERENCES projects(project_id) ON DELETE CASCADE,
@@ -1349,6 +1377,8 @@ def delete_qa_group(project_id: str, group_name: str, delete_history: bool = Tru
     conn = None
     cursor = None
     try:
+        init_qa_groups_table()
+        init_qa_transactions()
         import re
         clean_name = re.sub(r'^\[.*?\]\s*', '', str(group_name)).strip()
         conn = get_db_connection()
@@ -1357,17 +1387,20 @@ def delete_qa_group(project_id: str, group_name: str, delete_history: bool = Tru
         # Delete from qa_groups
         cursor.execute("""
             DELETE FROM qa_groups
-            WHERE project_id = %s::uuid 
+            WHERE (project_id = %s::uuid OR project_id IS NULL)
               AND (group_name = %s OR group_name = %s OR TRIM(LOWER(group_name)) = TRIM(LOWER(%s)));
         """, (project_id, group_name, clean_name, clean_name))
         
         # Delete from qa_transactions if requested
         if delete_history:
-            cursor.execute("""
-                DELETE FROM qa_transactions
-                WHERE project_id = %s::uuid 
-                  AND (group_name = %s OR group_name = %s OR TRIM(LOWER(group_name)) = TRIM(LOWER(%s)));
-            """, (project_id, group_name, clean_name, clean_name))
+            try:
+                cursor.execute("""
+                    DELETE FROM qa_transactions
+                    WHERE (project_id = %s::uuid OR project_id IS NULL)
+                      AND (group_name = %s OR group_name = %s OR TRIM(LOWER(group_name)) = TRIM(LOWER(%s)));
+                """, (project_id, group_name, clean_name, clean_name))
+            except Exception as te:
+                logger.warning(f"Note on deleting qa_transactions: {te}")
             
         conn.commit()
         return True, "Group deleted successfully"

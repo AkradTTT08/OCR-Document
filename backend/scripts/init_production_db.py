@@ -165,6 +165,18 @@ def init_qa_database():
         cur.execute("""
             CREATE TABLE IF NOT EXISTS qa_transactions (
                 id SERIAL PRIMARY KEY,
+                transaction_id UUID DEFAULT gen_random_uuid(),
+                project_id UUID REFERENCES projects(project_id) ON DELETE CASCADE,
+                group_name VARCHAR(255),
+                group_type VARCHAR(100),
+                filename VARCHAR(255),
+                doc_type VARCHAR(255),
+                extracted_text TEXT,
+                qa_report TEXT,
+                total_pages INTEGER,
+                email VARCHAR(255),
+                qa_findings JSONB,
+                exit_criteria_eval JSONB,
                 user_id VARCHAR(100),
                 action_type VARCHAR(50),
                 tokens_used INTEGER DEFAULT 0,
@@ -173,6 +185,18 @@ def init_qa_database():
                 metadata JSONB DEFAULT '{}'::jsonb,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+            ALTER TABLE qa_transactions ADD COLUMN IF NOT EXISTS project_id UUID REFERENCES projects(project_id) ON DELETE CASCADE;
+            ALTER TABLE qa_transactions ADD COLUMN IF NOT EXISTS group_name VARCHAR(255);
+            ALTER TABLE qa_transactions ADD COLUMN IF NOT EXISTS group_type VARCHAR(100);
+            ALTER TABLE qa_transactions ADD COLUMN IF NOT EXISTS filename VARCHAR(255);
+            ALTER TABLE qa_transactions ADD COLUMN IF NOT EXISTS doc_type VARCHAR(255);
+            ALTER TABLE qa_transactions ADD COLUMN IF NOT EXISTS extracted_text TEXT;
+            ALTER TABLE qa_transactions ADD COLUMN IF NOT EXISTS qa_report TEXT;
+            ALTER TABLE qa_transactions ADD COLUMN IF NOT EXISTS total_pages INTEGER;
+            ALTER TABLE qa_transactions ADD COLUMN IF NOT EXISTS email VARCHAR(255);
+            ALTER TABLE qa_transactions ADD COLUMN IF NOT EXISTS qa_findings JSONB;
+            ALTER TABLE qa_transactions ADD COLUMN IF NOT EXISTS exit_criteria_eval JSONB;
+
             CREATE TABLE IF NOT EXISTS api_usage_logs (
                 log_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 endpoint_name VARCHAR(100),
@@ -191,10 +215,15 @@ def init_qa_database():
             );
             CREATE TABLE IF NOT EXISTS qa_groups (
                 group_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                group_name VARCHAR(100) NOT NULL,
+                project_id UUID REFERENCES projects(project_id) ON DELETE CASCADE,
+                group_name VARCHAR(255) NOT NULL,
+                group_type VARCHAR(100) DEFAULT 'Project Plan',
                 description TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+            ALTER TABLE qa_groups ADD COLUMN IF NOT EXISTS project_id UUID REFERENCES projects(project_id) ON DELETE CASCADE;
+            ALTER TABLE qa_groups ADD COLUMN IF NOT EXISTS group_name VARCHAR(255);
+            ALTER TABLE qa_groups ADD COLUMN IF NOT EXISTS group_type VARCHAR(100) DEFAULT 'Project Plan';
             CREATE TABLE IF NOT EXISTS board_cards (
                 card_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 project_id UUID REFERENCES projects(project_id) ON DELETE CASCADE,

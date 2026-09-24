@@ -85,18 +85,86 @@
   }
 
   const categorySelectOptions = [
-    { value: 'Reference', label: 'เอกสารอ้างอิง (Reference)', icon: '📚' },
-    { value: 'TOR/SOW', label: 'TOR/SOW', icon: '📄' },
-    { value: 'SRS', label: 'SRS', icon: '📝' },
-    { value: 'SDD', label: 'SDD', icon: '🏗️' },
-    { value: 'TestCase', label: 'TestCase', icon: '🧪' },
-    { value: 'Requirements', label: 'Requirements', icon: '📋' },
-    { value: 'UAT', label: 'UAT', icon: '✅' },
-    { value: 'Usermanual', label: 'Usermanual', icon: '📖' },
-    { value: 'Admin manual', label: 'Admin manual', icon: '⚙️' },
-    { value: 'Installation system', label: 'Installation system', icon: '💻' },
-    { value: 'Other', label: 'อื่นๆ (Other)', icon: '📁' }
+    { value: 'Requirements', label: 'Requirements (ความต้องการของระบบ)', icon: '📋' },
+    { value: 'Requirement', label: 'Requirement (เอกสาร Requirement)', icon: '📋' },
+    { value: 'SRS', label: 'SRS (Software Requirements Specification)', icon: '📝' },
+    { value: 'TOR/SOW', label: 'TOR/SOW (ขอบเขตงาน)', icon: '📄' },
+    { value: 'SDD', label: 'SDD (System/Software Design Document)', icon: '🏗️' },
+    { value: 'TestCase', label: 'TestCase (ชุดทดสอบ / Test Plan)', icon: '🧪' },
+    { value: 'UAT', label: 'UAT (User Acceptance Test)', icon: '✅' },
+    { value: 'MOM', label: 'MOM (รายงานการประชุม)', icon: '👥' },
+    { value: 'Usermanual', label: 'Usermanual (คู่มือการใช้งาน)', icon: '📖' },
+    { value: 'Admin manual', label: 'Admin manual (คู่มือผู้ดูแลระบบ)', icon: '⚙️' },
+    { value: 'Installation system', label: 'Installation system (คู่มือติดตั้งระบบ)', icon: '💻' },
+    { value: 'Reference', label: 'Reference (เอกสารอ้างอิง)', icon: '📚' },
+    { value: 'Other', label: 'อื่นๆ (Other / กำหนดเอง)', icon: '📁' }
   ];
+
+  // ── Edit Document Category & Metadata State ──
+  let showEditDocMetaModal = false;
+  let isUpdatingDocMeta = false;
+  let editingDocForm = {
+    id: '',
+    filename: '',
+    doc_category: 'Requirements',
+    is_golden_data: false,
+    customCategory: ''
+  };
+
+  function openEditDocCategoryModal(doc) {
+    if (!doc) return;
+    const cat = doc.doc_category || doc.category || 'Reference';
+    const knownValues = categorySelectOptions.map(o => o.value);
+    const isKnown = knownValues.includes(cat);
+    editingDocForm = {
+      id: doc.id || doc.doc_id,
+      filename: doc.filename || doc.name || doc.original_filename || '',
+      doc_category: isKnown ? cat : 'Other',
+      customCategory: isKnown ? '' : cat,
+      is_golden_data: !!doc.is_golden_data
+    };
+    showEditDocMetaModal = true;
+  }
+
+  async function saveDocMeta() {
+    if (!editingDocForm.id) return;
+    const targetCategory = (editingDocForm.doc_category === 'Other' && editingDocForm.customCategory.trim())
+      ? editingDocForm.customCategory.trim()
+      : editingDocForm.doc_category;
+
+    if (!editingDocForm.filename.trim()) return toast('กรุณาระบุชื่อเอกสาร', 'warning');
+    if (!targetCategory.trim()) return toast('กรุณาระบุหมวดหมู่', 'warning');
+
+    isUpdatingDocMeta = true;
+    try {
+      const res = await fetch(`${API}/kb/documents/${editingDocForm.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          filename: editingDocForm.filename.trim(),
+          doc_category: targetCategory,
+          is_golden_data: editingDocForm.is_golden_data
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        toast(`✅ อัปเดตหมวดหมู่เป็น "${targetCategory}" สำเร็จ!`, 'success');
+        showEditDocMetaModal = false;
+        
+        // Refresh docs list and detail
+        await loadDocuments(selectedProject);
+        if (selectedDoc === editingDocForm.id) {
+          await loadDocDetail(editingDocForm.id);
+        }
+      } else {
+        toast(data.error || 'อัปเดตไม่สำเร็จ', 'error');
+      }
+    } catch (err) {
+      toast('เกิดข้อผิดพลาดในการเชื่อมต่อ', 'error');
+    } finally {
+      isUpdatingDocMeta = false;
+    }
+  }
 
   $: projectSelectOptions = [
     { value: '', label: '-- เลือกโครงการ --', icon: '📁' },
@@ -680,7 +748,10 @@
                       {/if}
                     </span>
                     <span class="doc-info">
-                      <span class="badge-cat">{doc.doc_category || 'General'}</span>
+                      <span class="badge-cat badge-cat-interactive" on:click|stopPropagation={() => openEditDocCategoryModal(doc)} title="คลิกเพื่อแก้ไขหมวดหมู่">
+                        {doc.doc_category || 'General'}
+                        <span class="badge-edit-pencil">✎</span>
+                      </span>
                       {doc.chunk_count} chunks · {formatDate(doc.created_at)}
                     </span>
                   </div>
@@ -811,13 +882,30 @@
       <!-- Document detail -->
       <div class="content-header">
         <button class="btn-back" on:click={() => { selectedDoc = null; docDetail = null; }}>← กลับ</button>
-        <h2 class="content-title truncate">{docDetail.document.filename || docDetail.document.title || 'เอกสาร'}</h2>
+        <div style="display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0;">
+          <h2 class="content-title truncate" style="margin: 0;">{docDetail.document.filename || docDetail.document.title || 'เอกสาร'}</h2>
+          {#if docDetail.document.is_golden_data}
+            <span class="badge-golden" title="Golden Data">⭐</span>
+          {/if}
+        </div>
+        {#if mode === 'knowledge_base'}
+          <button class="btn-edit-cat" on:click={() => openEditDocCategoryModal(docDetail.document)} title="แก้ไขหมวดหมู่และข้อมูลเอกสาร">
+            🏷️ แก้ไขหมวดหมู่
+          </button>
+        {/if}
       </div>
 
       <div class="doc-detail-wrap">
         <!-- Meta -->
         <div class="detail-meta-grid">
           <div class="meta-chip"><span class="meta-k">ชื่อเอกสาร</span><span class="meta-v">{docDetail.document.filename}</span></div>
+          <div class="meta-chip meta-chip-interactive" on:click={() => openEditDocCategoryModal(docDetail.document)} title="คลิกเพื่อแก้ไขหมวดหมู่">
+            <span class="meta-k">หมวดหมู่</span>
+            <span class="meta-v badge-cat-clickable">
+              <span class="badge-cat-tag">{docDetail.document.doc_category || 'Reference'}</span>
+              <span class="edit-text-hint">✏️ เปลี่ยน</span>
+            </span>
+          </div>
           {#if docDetail.document.project_name}
             <div class="meta-chip"><span class="meta-k">โครงการ</span><span class="meta-v">{docDetail.document.project_name}</span></div>
           {/if}
@@ -1105,6 +1193,66 @@
               <div class="loading-spin" style="width: 14px; height: 14px; margin-right: 6px; border-color: rgba(255,255,255,0.3); border-top-color: #fff; display: inline-block; vertical-align: middle;"></div> กำลังลบ...
             {:else}
               ลบเอกสารถาวร
+            {/if}
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  <!-- ── Edit Document Category & Meta Modal ── -->
+  {#if showEditDocMetaModal}
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="modal-backdrop" on:click={() => { if (!isUpdatingDocMeta) showEditDocMetaModal = false; }} on:keydown={(e) => e.key === 'Escape' && (showEditDocMetaModal = false)} role="presentation">
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="modal-content" on:click|stopPropagation on:keydown|stopPropagation role="dialog" aria-modal="true" aria-label="แก้ไขหมวดหมู่และข้อมูลเอกสาร">
+        <div class="modal-header">
+          <h3 style="display: flex; align-items: center; gap: 8px;">
+            <span>🏷️</span> แก้ไขหมวดหมู่และข้อมูลเอกสาร
+          </h3>
+          <button class="btn-close" on:click={() => { if (!isUpdatingDocMeta) showEditDocMetaModal = false; }}>✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group" style="margin-bottom: 16px;">
+            <label for="edit_doc_name">ชื่อเอกสาร (Filename) <span class="req">*</span></label>
+            <input id="edit_doc_name" type="text" class="form-input" bind:value={editingDocForm.filename} placeholder="ระบุชื่อเอกสาร..." />
+          </div>
+
+          <div class="form-group" style="margin-bottom: 16px;">
+            <label for="edit_doc_cat">หมวดหมู่เอกสาร (Category) <span class="req">*</span></label>
+            <CustomSelect 
+              id="edit_doc_cat" 
+              bind:value={editingDocForm.doc_category} 
+              options={categorySelectOptions} 
+              width="100%"
+            />
+          </div>
+
+          {#if editingDocForm.doc_category === 'Other'}
+            <div class="form-group" style="margin-bottom: 16px;">
+              <label for="edit_custom_cat">ระบุชื่อหมวดหมู่ที่ต้องการ (Custom Category)</label>
+              <input id="edit_custom_cat" type="text" class="form-input" bind:value={editingDocForm.customCategory} placeholder="เช่น Requirement, Meeting Notes, User Journey..." />
+            </div>
+          {/if}
+
+          <div class="form-group toggle-group" style="background: rgba(255,255,255,0.04); padding: 12px 14px; border-radius: 8px; border: 1px solid var(--border2); display: flex; flex-direction: row; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+            <div>
+              <div class="label-text" style="font-weight: 600; color: #f8fafc; font-size: 13.5px;">กำหนดเป็น Golden Data (ข้อมูลอ้างอิงหลัก)</div>
+              <div style="font-size: 12px; color: #94a3b8; margin-top: 2px;">ใช้เป็นข้อมูลมาตรฐานสำหรับ AI ตรวจสอบและอ้างอิง</div>
+            </div>
+            <label class="toggle-wrap">
+              <input type="checkbox" bind:checked={editingDocForm.is_golden_data}/>
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            </label>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn-cancel" on:click={() => showEditDocMetaModal = false} disabled={isUpdatingDocMeta}>ยกเลิก</button>
+          <button class="btn-submit" on:click={saveDocMeta} disabled={isUpdatingDocMeta || !editingDocForm.filename.trim()}>
+            {#if isUpdatingDocMeta}
+              <div class="loading-spin" style="width: 14px; height: 14px; margin-right: 6px; border-color: rgba(255,255,255,0.3); border-top-color: #fff; display: inline-block; vertical-align: middle;"></div> กำลังบันทึก...
+            {:else}
+              💾 บันทึกการแก้ไข
             {/if}
           </button>
         </div>
@@ -1740,6 +1888,83 @@ textarea.form-input { resize: vertical; }
   text-transform: uppercase;
   margin-right: 6px;
   border: 1px solid rgba(108, 142, 251, 0.3);
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.badge-cat-interactive {
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.badge-cat-interactive:hover {
+  background: rgba(147, 51, 234, 0.3);
+  border-color: #a855f7;
+  color: #f3e8ff;
+  transform: translateY(-1px);
+}
+
+.badge-edit-pencil {
+  font-size: 9px;
+  opacity: 0.7;
+}
+
+/* Category Chip in Detail View */
+.btn-edit-cat {
+  background: rgba(147, 51, 234, 0.15);
+  border: 1px solid rgba(168, 85, 247, 0.4);
+  color: #d8b4fe;
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s ease;
+}
+
+.btn-edit-cat:hover {
+  background: rgba(147, 51, 234, 0.35);
+  border-color: #c084fc;
+  color: #ffffff;
+  box-shadow: 0 2px 10px rgba(168, 85, 247, 0.25);
+  transform: translateY(-1px);
+}
+
+.meta-chip-interactive {
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: 1px solid rgba(168, 85, 247, 0.3);
+  background: rgba(168, 85, 247, 0.08);
+}
+
+.meta-chip-interactive:hover {
+  background: rgba(168, 85, 247, 0.18);
+  border-color: rgba(168, 85, 247, 0.6);
+  transform: translateY(-1px);
+}
+
+.badge-cat-clickable {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.badge-cat-tag {
+  color: #e9d5ff;
+  font-weight: 700;
+}
+
+.edit-text-hint {
+  font-size: 10.5px;
+  color: #c084fc;
+  background: rgba(147, 51, 234, 0.2);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-weight: 500;
 }
 
 .doc-item-wrap {

@@ -7,6 +7,7 @@
   import CustomSelect from "./CustomSelect.svelte";
   import ProjectSelection from "./ProjectSelection.svelte";
   import ExtensionSyncModal from "./ExtensionSyncModal.svelte";
+  import SpectraLoading from "./SpectraLoading.svelte";
 
   let projects = [];
   $: selectedProjectId = $selectedProjectStore ? ($selectedProjectStore.id || $selectedProjectStore.project_id) : "";
@@ -721,9 +722,11 @@
       <div class="modal-content">
         {#if isAnalyzing}
           <div class="loading-state">
-            <div class="spinner-large"></div>
-            <h3>AI กำลังวิเคราะห์เอกสาร...</h3>
-            <p>กรุณารอสักครู่ ระบบกำลังสร้างแบบทดสอบตาม Requirement</p>
+            <SpectraLoading 
+              title="AI กำลังวิเคราะห์เอกสาร..." 
+              status="กรุณารอสักครู่ ระบบกำลังสร้างแบบทดสอบตาม Requirement" 
+              size="compact"
+            />
           </div>
         {:else if showAnalyticResult}
           <div class="result-state">

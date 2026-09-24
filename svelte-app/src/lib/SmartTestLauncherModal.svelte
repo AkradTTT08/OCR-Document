@@ -1,6 +1,7 @@
 <script>
   import { createEventDispatcher, onMount } from 'svelte';
   import { fade, scale, slide } from 'svelte/transition';
+  import SpectraLoading from './SpectraLoading.svelte';
 
   export let projectId = '';
   export let projectName = '';
@@ -246,9 +247,11 @@
 
         {#if isLoadingMapping}
           <div class="mapping-loading-state">
-            <div class="spinner-large"></div>
-            <h4>🧠 AI Agent กำลังวิเคราะห์ RAG Knowledge Base & Sitemap...</h4>
-            <p>กำลังจับคู่ Route URL, เมนูหน้าจอ, Use Cases, และเลือก Test Cases ที่เกี่ยวข้อง</p>
+            <SpectraLoading 
+              title="AI Agent กำลังวิเคราะห์ RAG Knowledge Base & Sitemap..." 
+              status="กำลังจับคู่ Route URL, เมนูหน้าจอ, Use Cases, และเลือก Test Cases ที่เกี่ยวข้อง" 
+              size="compact"
+            />
           </div>
 
         {:else if mappingError}

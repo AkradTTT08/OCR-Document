@@ -1598,16 +1598,22 @@ def kb_ingest():
 
 @app.route('/api/kb/documents/<string:doc_id>', methods=['PUT'])
 def kb_update_document(doc_id):
-    """แก้ไขเนื้อหาเอกสาร (Markdown) และทำการ Chunk/Embed ใหม่"""
+    """แก้ไขเนื้อหาเอกสาร (Markdown), หมวดหมู่, ชื่อเอกสาร และทำการ Chunk/Embed ใหม่"""
     try:
-        data = request.get_json()
-        new_markdown = data.get('markdown_text', '')
-        
-        if not new_markdown.strip():
-            return jsonify({'error': 'เนื้อหาเอกสารว่างเปล่า'}), 400
+        data = request.get_json() or {}
+        new_markdown = data.get('markdown_text')
+        new_category = data.get('doc_category')
+        new_filename = data.get('filename')
+        new_is_golden = data.get('is_golden_data')
 
         from db_ingestion import update_markdown_document
-        success, msg = update_markdown_document(doc_id, new_markdown)
+        success, msg = update_markdown_document(
+            doc_id=doc_id, 
+            new_markdown_text=new_markdown,
+            new_category=new_category,
+            new_filename=new_filename,
+            new_is_golden=new_is_golden
+        )
         if success:
             return jsonify({'success': True, 'message': 'อัปเดตเอกสารและ Chunks สำเร็จ'})
         else:

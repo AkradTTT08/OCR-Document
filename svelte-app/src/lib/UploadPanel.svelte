@@ -213,6 +213,10 @@
       สัมผัสประสบการณ์การวิเคราะห์ข้อมูลเชิงลึกด้วยระบบ AI ที่มีความแม่นยำสูง 
       เปลี่ยนเอกสาร<br />ทึบให้เป็นข้อมูลที่มีโครงสร้างในพริบตา
     </p>
+    <div class="header-ai-badge">
+      <span class="pulse-sparkle">✨</span>
+      <span>ขับเคลื่อนด้วยโมเดล AI: <strong class="highlight-model">Google Gemini 2.5 Flash & 3.1 Pro (Vision & Multimodal)</strong></span>
+    </div>
   </div>
 
   <!-- Main Grid -->
@@ -328,6 +332,27 @@
               <span class="toggle-track"><span class="toggle-thumb"></span></span>
             </label>
           </div>
+
+          <!-- AI Model Spec Card -->
+          <div class="ai-engine-info">
+            <div class="ai-engine-header">
+              <div class="ai-indicator-wrap">
+                <span class="ai-online-dot"></span>
+                <span class="ai-engine-title">โมเดล AI ที่ใช้งาน</span>
+              </div>
+              <span class="ai-model-badge">Gemini 2.5 Flash</span>
+            </div>
+            <div class="ai-model-details">
+              <div class="model-spec-row">
+                <span class="spec-label">👁️ OCR Engine:</span>
+                <span class="spec-val">Google Gemini 2.5 Flash (Multimodal)</span>
+              </div>
+              <div class="model-spec-row">
+                <span class="spec-label">✍️ ตรวจคำผิด:</span>
+                <span class="spec-val">Gemini 3.1 Pro / Contextual Dictionary</span>
+              </div>
+            </div>
+          </div>
         </div>
 
         <!-- Process Button -->
@@ -374,12 +399,15 @@
   .header-section {
     text-align: center;
     max-width: 800px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
   }
   .main-title {
     font-size: 32px;
     font-weight: 700;
     color: var(--text-main);
-    margin-bottom: 16px;
+    margin-bottom: 14px;
     font-family: var(--font-en);
     letter-spacing: -0.5px;
   }
@@ -388,6 +416,33 @@
     color: var(--text-dim);
     line-height: 1.6;
     font-family: var(--font-th);
+    margin-bottom: 12px;
+  }
+  .header-ai-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 16px;
+    background: rgba(168, 85, 247, 0.12);
+    border: 1px solid rgba(168, 85, 247, 0.35);
+    border-radius: 20px;
+    font-size: 13px;
+    color: #e9d5ff;
+    backdrop-filter: blur(8px);
+    box-shadow: 0 2px 10px rgba(168, 85, 247, 0.15);
+  }
+  .pulse-sparkle {
+    font-size: 14px;
+    animation: sparklePulse 2s ease-in-out infinite;
+  }
+  .highlight-model {
+    color: #ffffff;
+    font-weight: 600;
+    text-shadow: 0 0 10px rgba(192, 132, 252, 0.6);
+  }
+  @keyframes sparklePulse {
+    0%, 100% { transform: scale(1); opacity: 0.9; }
+    50% { transform: scale(1.2); opacity: 1; }
   }
 
   /* ── Content Grid ── */
@@ -674,6 +729,78 @@
   .toggle-wrap input:checked + .toggle-track .toggle-thumb {
     transform: translateX(20px);
     background: #8b5cf6;
+  }
+
+  /* ── AI Engine Info Card ── */
+  .ai-engine-info {
+    background: linear-gradient(135deg, rgba(168, 85, 247, 0.08), rgba(99, 102, 241, 0.05));
+    border: 1px solid rgba(168, 85, 247, 0.25);
+    border-radius: 14px;
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    backdrop-filter: blur(8px);
+    box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.05);
+  }
+  .ai-engine-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .ai-indicator-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .ai-online-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #10b981;
+    box-shadow: 0 0 8px #10b981;
+    animation: dotPulse 2s infinite;
+  }
+  .ai-engine-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: #e2e8f0;
+    font-family: var(--font-th);
+  }
+  .ai-model-badge {
+    background: rgba(168, 85, 247, 0.25);
+    border: 1px solid rgba(168, 85, 247, 0.45);
+    color: #d8b4fe;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 6px;
+    letter-spacing: 0.2px;
+  }
+  .ai-model-details {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    padding-top: 8px;
+  }
+  .model-spec-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 11.5px;
+    font-family: var(--font-th);
+  }
+  .spec-label {
+    color: #94a3b8;
+  }
+  .spec-val {
+    color: #cbd5e1;
+    font-weight: 500;
+  }
+  @keyframes dotPulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.6; transform: scale(0.85); }
   }
 
   /* Process Button */

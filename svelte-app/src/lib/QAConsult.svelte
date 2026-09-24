@@ -6,6 +6,7 @@
   import { qaHistory, selectedHistory, loadQAHistoryFromDB, selectedProjectStore, qaSessionGroups, activeQAContext, loadQAGroupsFromDB, activeSidebarGroup, activeScanStatus, allGroups } from "./qaHistoryStore.js";
   import GateResultModal from "./GateResultModal.svelte";
   import ProjectSelection from "./ProjectSelection.svelte";
+  import SpectraLoading from "./SpectraLoading.svelte";
   import { MASTER_DOC_TYPES } from "./constants.js";
 
   const dispatch = createEventDispatcher();
@@ -220,9 +221,25 @@
     });
   }
 
-  async function deleteGroupDirect(group) {
+  let showDeleteGroupModal = false;
+  let groupToDelete = null;
+  let isDeletingGroup = false;
+
+  function requestDeleteGroup(group) {
+    groupToDelete = group;
+    showDeleteGroupModal = true;
+  }
+
+  function cancelDeleteGroup() {
+    showDeleteGroupModal = false;
+    groupToDelete = null;
+  }
+
+  async function executeDeleteGroup() {
+    if (!groupToDelete) return;
+    const group = groupToDelete;
     const gName = group.group_name || 'General';
-    if (!confirm(`คุณแน่ใจหรือไม่ว่าต้องการลบกลุ่ม "${gName}" และประวัติการสแกนทั้งหมดในกลุ่มนี้?`)) return;
+    isDeletingGroup = true;
     try {
       const res = await fetch("/api/qa_groups/delete", {
         method: "POST",
@@ -240,6 +257,8 @@
         }
         await loadQAGroupsFromDB();
         await loadQAHistoryFromDB();
+        showDeleteGroupModal = false;
+        groupToDelete = null;
       } else {
         const err = await res.json();
         toast(err.error || "ไม่สามารถลบกลุ่มได้", "error");
@@ -247,6 +266,8 @@
     } catch (e) {
       console.error(e);
       toast("เกิดข้อผิดพลาดในการลบกลุ่ม", "error");
+    } finally {
+      isDeletingGroup = false;
     }
   }
 
@@ -678,7 +699,7 @@
                 <button 
                   class="btn-card-delete" 
                   title="ลบกลุ่มนี้" 
-                  on:click|stopPropagation={() => deleteGroupDirect(group)}
+                  on:click|stopPropagation={() => requestDeleteGroup(group)}
                 >
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                     <polyline points="3 6 5 6 21 6"></polyline>
@@ -829,6 +850,55 @@
               on:click={confirmGroup}
             >
               บันทึกกลุ่มและเข้าสู่หน้าสแกน &rarr;
+            </button>
+          </div>
+        </div>
+      </div>
+    {/if}
+
+    <!-- MODAL: DELETE GROUP CONFIRMATION -->
+    {#if showDeleteGroupModal && groupToDelete}
+      <div class="modal-backdrop" transition:fade={{ duration: 150 }} on:click={cancelDeleteGroup}>
+        <div class="modal-delete-dialog" on:click|stopPropagation>
+          <div class="modal-delete-icon-wrap">
+            <div class="delete-icon-circle">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="28" height="28">
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                <line x1="10" y1="11" x2="10" y2="17"></line>
+                <line x1="14" y1="11" x2="14" y2="17"></line>
+              </svg>
+            </div>
+          </div>
+
+          <div class="modal-delete-content">
+            <h3 class="modal-delete-title">ยืนยันการลบกลุ่มการตรวจสอบ</h3>
+            <p class="modal-delete-desc">
+              คุณต้องการลบกลุ่ม <span class="delete-target-badge">[{groupToDelete.group_type || 'General'}] {groupToDelete.group_name}</span>
+            </p>
+
+            <div class="delete-warning-box">
+              <div class="warning-icon">⚠️</div>
+              <div class="warning-text">
+                ประวัติการสแกนเอกสารและรายงานผล QA ทั้งหมดในกลุ่มนี้จะถูกลบอย่างถาวร
+              </div>
+            </div>
+          </div>
+
+          <div class="modal-delete-actions">
+            <button class="btn-dialog-cancel" on:click={cancelDeleteGroup} disabled={isDeletingGroup}>
+              ยกเลิก
+            </button>
+            <button class="btn-danger-confirm" on:click={executeDeleteGroup} disabled={isDeletingGroup}>
+              {#if isDeletingGroup}
+                <span>กำลังลบ...</span>
+              {:else}
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <polyline points="3 6 5 6 21 6"></polyline>
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                </svg>
+                ยืนยันการลบกลุ่ม
+              {/if}
             </button>
           </div>
         </div>
@@ -1100,29 +1170,13 @@
     </div>
 
   {:else if isProcessing && !scanResult}
-    <!-- LOADING STATE -->
+    <!-- SPECTRA QA LOADING STATE -->
     <div class="loading-state">
-      <div class="spinner-box">
-        <!-- SVG Animation similar to ResultsPanel -->
-        <svg class="pulse-ring" viewBox="0 0 100 100" width="120" height="120">
-          <circle cx="50" cy="50" r="45" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="4"></circle>
-          <circle cx="50" cy="50" r="45" fill="none" stroke="url(#gradient)" stroke-width="4" stroke-dasharray="283" stroke-dashoffset="100">
-            <animateTransform attributeName="transform" type="rotate" from="0 50 50" to="360 50 50" dur="2s" repeatCount="indefinite" />
-          </circle>
-          <defs>
-            <linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stop-color="#9333ea" />
-              <stop offset="100%" stop-color="#3b82f6" />
-            </linearGradient>
-          </defs>
-        </svg>
-      </div>
-      <h2>กำลังวิเคราะห์ QA Consult...</h2>
-      <p class="status-msg">{processStatus}</p>
-      
-      <div class="progress-bar-container">
-        <div class="progress-fill" style="width: {progressPct}%"></div>
-      </div>
+      <SpectraLoading 
+        title="กำลังวิเคราะห์ QA Consult..." 
+        status={processStatus || "กำลังประมวลผลและตรวจสอบเกณฑ์ Exit Criteria..."} 
+        progressPct={progressPct} 
+      />
     </div>
 
   {:else if scanResult}
@@ -2561,6 +2615,116 @@
     margin: 0;
     padding: 9px 20px;
     font-size: 13.5px;
+  }
+
+  /* Delete Group Confirmation Modal */
+  .modal-delete-dialog {
+    background: rgba(15, 23, 42, 0.96);
+    border: 1px solid rgba(239, 68, 68, 0.35);
+    border-radius: 18px;
+    width: 90%;
+    max-width: 440px;
+    box-shadow: 0 25px 60px rgba(0, 0, 0, 0.85), 0 0 35px rgba(239, 68, 68, 0.15);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    overflow: hidden;
+    text-align: center;
+    padding: 28px 24px;
+    animation: modalPop 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .modal-delete-icon-wrap {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 16px;
+  }
+  .delete-icon-circle {
+    width: 58px;
+    height: 58px;
+    border-radius: 50%;
+    background: rgba(239, 68, 68, 0.12);
+    border: 1px solid rgba(239, 68, 68, 0.35);
+    color: #f87171;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 0 20px rgba(239, 68, 68, 0.2);
+  }
+  .modal-delete-title {
+    margin: 0 0 8px 0;
+    font-size: 18px;
+    font-weight: 700;
+    color: #f8fafc;
+  }
+  .modal-delete-desc {
+    margin: 0 0 16px 0;
+    font-size: 13.5px;
+    color: #94a3b8;
+    line-height: 1.5;
+  }
+  .delete-target-badge {
+    display: inline-block;
+    margin-top: 4px;
+    background: rgba(168, 85, 247, 0.15);
+    border: 1px solid rgba(168, 85, 247, 0.35);
+    color: #e9d5ff;
+    padding: 3px 10px;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 13px;
+  }
+  .delete-warning-box {
+    background: rgba(239, 68, 68, 0.08);
+    border: 1px solid rgba(239, 68, 68, 0.25);
+    border-radius: 10px;
+    padding: 10px 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    text-align: left;
+    margin-bottom: 22px;
+  }
+  .warning-icon {
+    font-size: 18px;
+    flex-shrink: 0;
+  }
+  .warning-text {
+    font-size: 12px;
+    color: #fca5a5;
+    line-height: 1.4;
+  }
+  .modal-delete-actions {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+  }
+  .modal-delete-actions button {
+    flex: 1;
+    margin: 0;
+  }
+  .btn-danger-confirm {
+    background: linear-gradient(135deg, #ef4444, #dc2626);
+    border: 1px solid #f87171;
+    color: #ffffff;
+    padding: 10px 18px;
+    font-size: 13.5px;
+    font-weight: 600;
+    border-radius: 10px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    transition: all 0.2s ease;
+    box-shadow: 0 4px 14px rgba(239, 68, 68, 0.3);
+  }
+  .btn-danger-confirm:hover:not(:disabled) {
+    background: linear-gradient(135deg, #dc2626, #b91c1c);
+    box-shadow: 0 6px 18px rgba(239, 68, 68, 0.5);
+    transform: translateY(-1px);
+  }
+  .btn-danger-confirm:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
   }
   .existing-groups-grid {
     display: grid;

@@ -104,58 +104,76 @@
     }
   }
 
-  async function confirmDeleteGroup(group) {
-    const gName = group.group_name || 'General';
-    if (!confirm(`คุณแน่ใจหรือไม่ว่าต้องการลบกลุ่ม "${gName}" และประวัติการสแกนทั้งหมดในกลุ่มนี้?`)) {
-      return;
-    }
-    try {
-      const res = await fetch("/api/qa_groups/delete", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          project_id: group.project_id,
-          group_name: gName
-        })
-      });
-      if (res.ok) {
-        toast(`ลบกลุ่ม "${gName}" เรียบร้อยแล้ว`, "success");
-        qaSessionGroups.update(gs => gs.filter(g => !(g.project_id === group.project_id && g.group_name === gName)));
-        if ($activeSidebarGroup && String($activeSidebarGroup.group_name || '').toLowerCase() === String(gName).toLowerCase()) {
-          activeSidebarGroup.set(null);
-        }
-        await loadQAGroupsFromDB();
-        await loadQAHistoryFromDB();
-      } else {
-        const err = await res.json();
-        toast(err.error || "ไม่สามารถลบกลุ่มได้", "error");
-      }
-    } catch (e) {
-      console.error(e);
-      toast("เกิดข้อผิดพลาดในการลบกลุ่ม", "error");
-    }
+  let showSidebarDeleteModal = false;
+  let sidebarItemToDelete = null;
+  let isSidebarDeleting = false;
+
+  function promptDeleteGroup(group) {
+    sidebarItemToDelete = { type: 'group', item: group, name: group.group_name || 'General', typeName: group.group_type || 'General' };
+    showSidebarDeleteModal = true;
   }
 
-  async function confirmDeleteHistory(item) {
-    const fName = item.filename || 'เอกสารนี้';
-    if (!confirm(`คุณแน่ใจหรือไม่ว่าต้องการลบประวัติการตรวจ "${fName}"?`)) {
-      return;
-    }
+  function promptDeleteHistory(history) {
+    sidebarItemToDelete = { type: 'history', item: history, name: history.filename || 'เอกสารนี้', typeName: history.docType || 'Document' };
+    showSidebarDeleteModal = true;
+  }
+
+  function cancelSidebarDelete() {
+    showSidebarDeleteModal = false;
+    sidebarItemToDelete = null;
+  }
+
+  async function executeSidebarDelete() {
+    if (!sidebarItemToDelete) return;
+    isSidebarDeleting = true;
     try {
-      const res = await fetch(`/api/qa_transactions/${item.id}`, {
-        method: "DELETE"
-      });
-      if (res.ok) {
-        toast(`ลบประวัติ "${fName}" เรียบรซ์แล้ว`, "success");
-        await loadQAHistoryFromDB();
-        await loadQAGroupsFromDB();
-      } else {
-        const err = await res.json();
-        toast(err.error || "ไม่สามารถลบประวัติได้", "error");
+      if (sidebarItemToDelete.type === 'group') {
+        const group = sidebarItemToDelete.item;
+        const gName = group.group_name || 'General';
+        const res = await fetch("/api/qa_groups/delete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            project_id: group.project_id,
+            group_name: gName
+          })
+        });
+        if (res.ok) {
+          toast(`ลบกลุ่ม "${gName}" เรียบร้อยแล้ว`, "success");
+          qaSessionGroups.update(gs => gs.filter(g => !(g.project_id === group.project_id && g.group_name === gName)));
+          if ($activeSidebarGroup && String($activeSidebarGroup.group_name || '').toLowerCase() === String(gName).toLowerCase()) {
+            activeSidebarGroup.set(null);
+          }
+          await loadQAGroupsFromDB();
+          await loadQAHistoryFromDB();
+          showSidebarDeleteModal = false;
+          sidebarItemToDelete = null;
+        } else {
+          const err = await res.json();
+          toast(err.error || "ไม่สามารถลบกลุ่มได้", "error");
+        }
+      } else if (sidebarItemToDelete.type === 'history') {
+        const item = sidebarItemToDelete.item;
+        const fName = item.filename || 'เอกสารนี้';
+        const res = await fetch(`/api/qa_transactions/${item.id}`, {
+          method: "DELETE"
+        });
+        if (res.ok) {
+          toast(`ลบประวัติ "${fName}" เรียบร้อยแล้ว`, "success");
+          await loadQAHistoryFromDB();
+          await loadQAGroupsFromDB();
+          showSidebarDeleteModal = false;
+          sidebarItemToDelete = null;
+        } else {
+          const err = await res.json();
+          toast(err.error || "ไม่สามารถลบประวัติได้", "error");
+        }
       }
     } catch (e) {
       console.error(e);
-      toast("เกิดข้อผิดพลาดในการลบประวัติ", "error");
+      toast("เกิดข้อผิดพลาดในการลบ", "error");
+    } finally {
+      isSidebarDeleting = false;
     }
   }
 
@@ -647,7 +665,7 @@
                       <button 
                         class="btn-sidebar-delete" 
                         title="ลบกลุ่มนี้" 
-                        on:click|stopPropagation={() => confirmDeleteGroup(group)}
+                        on:click|stopPropagation={() => promptDeleteGroup(group)}
                       >
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13">
                           <polyline points="3 6 5 6 21 6"></polyline>
@@ -703,7 +721,7 @@
                         <button 
                           class="btn-sidebar-delete" 
                           title="ลบประวัติการตรวจนี้" 
-                          on:click|stopPropagation={() => confirmDeleteHistory(item)}
+                          on:click|stopPropagation={() => promptDeleteHistory(item)}
                         >
                           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13">
                             <polyline points="3 6 5 6 21 6"></polyline>
@@ -1050,6 +1068,60 @@
             <button class="btn-primary" on:click={saveMyProfile}>บันทึกข้อมูลส่วนตัว</button>
         </div>
     </div>
+</div>
+{/if}
+
+<!-- Sidebar Delete Confirmation Modal -->
+{#if showSidebarDeleteModal && sidebarItemToDelete}
+<div class="modal-backdrop" transition:fade={{ duration: 150 }} on:click={cancelSidebarDelete}>
+  <div class="modal-delete-dialog" on:click|stopPropagation>
+    <div class="modal-delete-icon-wrap">
+      <div class="delete-icon-circle">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="28" height="28">
+          <polyline points="3 6 5 6 21 6"></polyline>
+          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+          <line x1="10" y1="11" x2="10" y2="17"></line>
+          <line x1="14" y1="11" x2="14" y2="17"></line>
+        </svg>
+      </div>
+    </div>
+
+    <div class="modal-delete-content">
+      <h3 class="modal-delete-title">
+        {sidebarItemToDelete.type === 'group' ? 'ยืนยันการลบกลุ่มการตรวจสอบ' : 'ยืนยันการลบประวัติการตรวจ'}
+      </h3>
+      <p class="modal-delete-desc">
+        คุณต้องการลบ {sidebarItemToDelete.type === 'group' ? 'กลุ่ม' : 'เอกสาร'}
+        <span class="delete-target-badge">[{sidebarItemToDelete.typeName}] {sidebarItemToDelete.name}</span>
+      </p>
+
+      <div class="delete-warning-box">
+        <div class="warning-icon">⚠️</div>
+        <div class="warning-text">
+          {sidebarItemToDelete.type === 'group'
+            ? 'ประวัติการสแกนเอกสารและรายงานผล QA ทั้งหมดในกลุ่มนี้จะถูกลบอย่างถาวร'
+            : 'ข้อมูลและรายงานผลการตรวจของเอกสารนี้จะถูกลบออกจากระบบอย่างถาวร'}
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-delete-actions">
+      <button class="btn-cancel-action" on:click={cancelSidebarDelete} disabled={isSidebarDeleting}>
+        ยกเลิก
+      </button>
+      <button class="btn-danger-confirm" on:click={executeSidebarDelete} disabled={isSidebarDeleting}>
+        {#if isSidebarDeleting}
+          <span>กำลังลบ...</span>
+        {:else}
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+            <polyline points="3 6 5 6 21 6"></polyline>
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+          </svg>
+          ยืนยันการลบ
+        {/if}
+      </button>
+    </div>
+  </div>
 </div>
 {/if}
 
@@ -1974,6 +2046,135 @@
     margin-top: 4px;
     display: block;
     font-family: var(--font-th);
+  }
+
+  /* Delete Confirmation Modal */
+  .modal-delete-dialog {
+    background: rgba(15, 23, 42, 0.96);
+    border: 1px solid rgba(239, 68, 68, 0.35);
+    border-radius: 18px;
+    width: 90%;
+    max-width: 440px;
+    box-shadow: 0 25px 60px rgba(0, 0, 0, 0.85), 0 0 35px rgba(239, 68, 68, 0.15);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    overflow: hidden;
+    text-align: center;
+    padding: 28px 24px;
+    animation: modalPop 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  @keyframes modalPop {
+    from { opacity: 0; transform: scale(0.95) translateY(10px); }
+    to { opacity: 1; transform: scale(1) translateY(0); }
+  }
+  .modal-delete-icon-wrap {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 16px;
+  }
+  .delete-icon-circle {
+    width: 58px;
+    height: 58px;
+    border-radius: 50%;
+    background: rgba(239, 68, 68, 0.12);
+    border: 1px solid rgba(239, 68, 68, 0.35);
+    color: #f87171;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 0 20px rgba(239, 68, 68, 0.2);
+  }
+  .modal-delete-title {
+    margin: 0 0 8px 0;
+    font-size: 18px;
+    font-weight: 700;
+    color: #f8fafc;
+  }
+  .modal-delete-desc {
+    margin: 0 0 16px 0;
+    font-size: 13.5px;
+    color: #94a3b8;
+    line-height: 1.5;
+  }
+  .delete-target-badge {
+    display: inline-block;
+    margin-top: 4px;
+    background: rgba(168, 85, 247, 0.15);
+    border: 1px solid rgba(168, 85, 247, 0.35);
+    color: #e9d5ff;
+    padding: 3px 10px;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 13px;
+  }
+  .delete-warning-box {
+    background: rgba(239, 68, 68, 0.08);
+    border: 1px solid rgba(239, 68, 68, 0.25);
+    border-radius: 10px;
+    padding: 10px 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    text-align: left;
+    margin-bottom: 22px;
+  }
+  .warning-icon {
+    font-size: 18px;
+    flex-shrink: 0;
+  }
+  .warning-text {
+    font-size: 12px;
+    color: #fca5a5;
+    line-height: 1.4;
+  }
+  .modal-delete-actions {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+  }
+  .modal-delete-actions button {
+    flex: 1;
+    margin: 0;
+  }
+  .btn-cancel-action {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: #cbd5e1;
+    padding: 10px 18px;
+    font-size: 13.5px;
+    font-weight: 500;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .btn-cancel-action:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.12);
+    color: white;
+  }
+  .btn-danger-confirm {
+    background: linear-gradient(135deg, #ef4444, #dc2626);
+    border: 1px solid #f87171;
+    color: #ffffff;
+    padding: 10px 18px;
+    font-size: 13.5px;
+    font-weight: 600;
+    border-radius: 10px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    transition: all 0.2s ease;
+    box-shadow: 0 4px 14px rgba(239, 68, 68, 0.3);
+  }
+  .btn-danger-confirm:hover:not(:disabled) {
+    background: linear-gradient(135deg, #dc2626, #b91c1c);
+    box-shadow: 0 6px 18px rgba(239, 68, 68, 0.5);
+    transform: translateY(-1px);
+  }
+  .btn-danger-confirm:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
   }
 </style>
 
