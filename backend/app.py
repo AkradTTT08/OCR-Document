@@ -3881,6 +3881,7 @@ def get_generated_documents():
             );
             ALTER TABLE qa_generated_documents ADD COLUMN IF NOT EXISTS markdown_content TEXT;
             ALTER TABLE qa_generated_documents ADD COLUMN IF NOT EXISTS pdf_url VARCHAR(255);
+            ALTER TABLE qa_generated_documents ADD COLUMN IF NOT EXISTS error_message TEXT;
             ALTER TABLE qa_generated_documents ADD COLUMN IF NOT EXISTS is_saved_to_project BOOLEAN DEFAULT FALSE;
             ALTER TABLE qa_generated_documents ADD COLUMN IF NOT EXISTS saved_doc_id UUID;
             ALTER TABLE qa_generated_documents ALTER COLUMN skill_id TYPE VARCHAR(500);
@@ -3892,7 +3893,7 @@ def get_generated_documents():
         skills_map = {str(r[0]): r[1] for r in cursor.fetchall()}
 
         cursor.execute("""
-            SELECT q.id, q.doc_name, q.doc_type, q.skill_id, q.status, q.file_url, q.pdf_url, q.is_saved_to_project, q.saved_doc_id, q.created_at, q.project_id
+            SELECT q.id, q.doc_name, q.doc_type, q.skill_id, q.status, q.file_url, q.pdf_url, q.is_saved_to_project, q.saved_doc_id, q.created_at, q.project_id, q.error_message
             FROM qa_generated_documents q
             WHERE q.project_id = %s::uuid
             ORDER BY q.created_at DESC
@@ -3932,7 +3933,8 @@ def get_generated_documents():
                 'is_saved_to_project': bool(row[7]) if row[7] is not None else False,
                 'saved_doc_id': str(row[8]) if row[8] else None,
                 'created_at': row[9].isoformat() if row[9] else None,
-                'project_id': str(row[10]) if row[10] else str(project_id)
+                'project_id': str(row[10]) if row[10] else str(project_id),
+                'error_message': row[11] if len(row) > 11 else None
             })
             
         cursor.close()
@@ -3984,16 +3986,18 @@ def download_generated_document(doc_id):
             )
         else: # Default: pdf
             file_path = pdf_path
-            # If pdf_path is missing or not found on disk, generate on-the-fly
+            # If pdf_path is missing or not found on disk, generate on-the-fly using System Template
             if not file_path or not os.path.exists(file_path):
                 if markdown_content and markdown_content.strip():
-                    from agent_6_doc_creator import render_html_to_pdf, simple_markdown_to_html
+                    from agent_6_doc_creator import render_html_to_pdf, simple_markdown_to_html, build_generic_document_html
                     import uuid
+                    import datetime
                     upload_dir = os.path.join(os.getcwd(), 'uploads', 'qa_generated')
                     os.makedirs(upload_dir, exist_ok=True)
                     gen_pdf_path = os.path.join(upload_dir, f"{safe_name}_{uuid.uuid4().hex[:6]}.pdf")
+                    today_str = datetime.datetime.now().strftime("%d/%m/%Y")
                     rendered_body = simple_markdown_to_html(markdown_content)
-                    html_content = f"""<!DOCTYPE html><html><head><meta charset='utf-8'><title>{doc_name}</title><style>body{{font-family:'Segoe UI',Tahoma,sans-serif;padding:24px;font-size:12px;color:#1e293b;line-height:1.5;}} h1{{color:#1e3a8a;border-bottom:2px solid #3b82f6;padding-bottom:6px;}} table{{width:100%;border-collapse:collapse;margin:12px 0;}} th,td{{border:1px solid #cbd5e1;padding:6px 10px;vertical-align:top;}} th{{background:#f1f5f9;font-weight:600;text-align:left;}}</style></head><body>{rendered_body}</body></html>"""
+                    html_content = build_generic_document_html(doc_name, doc_type or "Document", "QA Project", "-", "Standard QA Framework", today_str, rendered_body)
                     if render_html_to_pdf(html_content, gen_pdf_path) and os.path.exists(gen_pdf_path):
                         file_path = gen_pdf_path
                         try:

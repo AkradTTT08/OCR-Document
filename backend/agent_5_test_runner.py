@@ -104,6 +104,7 @@ Respond strictly in JSON format as follows:
     "fix_explanation": "What was changed to fix it",
     "fixed_code": "The complete revised TypeScript code (do not wrap in markdown code blocks, just raw code string)"
 }}
+"""
         text_response, usage_metadata = call_gemini(prompt)
         
         if usage_metadata:
