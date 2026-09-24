@@ -315,31 +315,15 @@
     <aside class="templates-sidebar">
       <div class="filter-box">
         <input type="text" bind:value={search} placeholder="ค้นหา Template..." class="search-input" />
-        <div class="custom-dropdown-container">
-          <button type="button" class="custom-dropdown-trigger" on:click|stopPropagation={() => showFilterDropdown = !showFilterDropdown}>
-            <span>{filterDocType ? filterDocType : 'ทุกประเภทเอกสาร'}</span>
-            <svg class="chevron" class:open={showFilterDropdown} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-              <polyline points="6 9 12 15 18 9"></polyline>
-            </svg>
-          </button>
-          {#if showFilterDropdown}
-            <!-- svelte-ignore a11y-click-events-have-key-events -->
-            <div class="custom-dropdown-menu glass-panel" in:fade={{ duration: 120 }}>
-              <!-- svelte-ignore a11y-click-events-have-key-events -->
-              <div class="dropdown-item-opt" class:active={filterDocType === ''} on:click={() => { filterDocType = ''; showFilterDropdown = false; }}>
-                <span>ทุกประเภทเอกสาร</span>
-                {#if filterDocType === ''}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" width="14" height="14" style="color: #6366f1;"><polyline points="20 6 9 17 4 12"></polyline></svg>{/if}
-              </div>
-              {#each docTypes as dt}
-                <!-- svelte-ignore a11y-click-events-have-key-events -->
-                <div class="dropdown-item-opt" class:active={filterDocType === dt} on:click={() => { filterDocType = dt; showFilterDropdown = false; }}>
-                  <span>{dt}</span>
-                  {#if filterDocType === dt}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" width="14" height="14" style="color: #6366f1;"><polyline points="20 6 9 17 4 12"></polyline></svg>{/if}
-                </div>
-              {/each}
-            </div>
-          {/if}
-        </div>
+        <CustomSelect
+          bind:value={filterDocType}
+          options={[
+            { value: '', label: 'ทุกประเภทเอกสาร' },
+            ...docTypes.map(dt => ({ value: dt, label: dt }))
+          ]}
+          placeholder="ทุกประเภทเอกสาร"
+          width="100%"
+        />
       </div>
 
       <div class="template-list">
@@ -403,28 +387,14 @@
               <input type="text" id="form_title" bind:value={form.title} placeholder="เช่น Universal Document Exit Criteria" class="form-control" />
             </div>
 
-            <div class="form-group doc-type-group" class:dropdown-open={showDocTypeDropdown}>
+            <div class="form-group doc-type-group">
               <label for="form_doc_type">ประเภทเอกสารเป้าหมาย (Doc Type):</label>
-              <div class="custom-dropdown-container">
-                <button type="button" class="custom-dropdown-trigger" on:click|stopPropagation={() => showDocTypeDropdown = !showDocTypeDropdown}>
-                  <span>{form.doc_type}</span>
-                  <svg class="chevron" class:open={showDocTypeDropdown} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                    <polyline points="6 9 12 15 18 9"></polyline>
-                  </svg>
-                </button>
-                {#if showDocTypeDropdown}
-                  <!-- svelte-ignore a11y-click-events-have-key-events -->
-                  <div class="custom-dropdown-menu glass-panel" in:fade={{ duration: 120 }}>
-                    {#each docTypes as dt}
-                      <!-- svelte-ignore a11y-click-events-have-key-events -->
-                      <div class="dropdown-item-opt" class:active={form.doc_type === dt} on:click={() => { form.doc_type = dt; showDocTypeDropdown = false; }}>
-                        <span>{dt}</span>
-                        {#if form.doc_type === dt}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" width="14" height="14" style="color: #6366f1;"><polyline points="20 6 9 17 4 12"></polyline></svg>{/if}
-                      </div>
-                    {/each}
-                  </div>
-                {/if}
-              </div>
+              <CustomSelect
+                bind:value={form.doc_type}
+                options={docTypes.map(dt => ({ value: dt, label: dt }))}
+                placeholder="เลือกประเภทเอกสาร..."
+                width="100%"
+              />
             </div>
 
             <div class="form-group">

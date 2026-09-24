@@ -1,5 +1,5 @@
 <script>
-  import { createEventDispatcher, onMount, onDestroy } from 'svelte';
+  import { createEventDispatcher, onMount, onDestroy, tick } from 'svelte';
 
   export let value = '';
   export let options = []; // Array of { value, label, icon?, class? } or simple strings
@@ -13,19 +13,69 @@
   const dispatch = createEventDispatcher();
   let isOpen = false;
   let selectEl;
+  let menuEl;
+
+  let menuTop = 0;
+  let menuLeft = 0;
+  let menuWidth = 0;
+  let dropUp = false;
 
   $: normalizedOptions = options.map(opt => {
     if (typeof opt === 'object' && opt !== null) {
-      return { value: opt.value, label: opt.label || opt.value, icon: opt.icon || '', badgeClass: opt.class || '' };
+      return { value: opt.value, label: opt.label !== undefined ? opt.label : opt.value, icon: opt.icon || '', badgeClass: opt.class || '' };
     }
     return { value: opt, label: String(opt), icon: '', badgeClass: '' };
   });
 
   $: selectedOption = normalizedOptions.find(o => String(o.value) === String(value)) || null;
 
-  function toggleOpen() {
+  function portal(node) {
+    document.body.appendChild(node);
+    return {
+      destroy() {
+        if (node.parentNode) {
+          node.parentNode.removeChild(node);
+        }
+      }
+    };
+  }
+
+  async function updatePosition() {
+    if (!selectEl) return;
+    await tick();
+    const rect = selectEl.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const spaceAbove = rect.top;
+    const estimatedMenuHeight = Math.min(normalizedOptions.length * 40 + 16, 260);
+
+    let calculatedWidth = Math.max(rect.width, 140);
+    let calculatedLeft = rect.left;
+
+    if (calculatedLeft + calculatedWidth > window.innerWidth - 12) {
+      calculatedLeft = Math.max(12, window.innerWidth - calculatedWidth - 12);
+    }
+    if (calculatedLeft < 12) {
+      calculatedLeft = 12;
+    }
+
+    menuWidth = calculatedWidth;
+    menuLeft = calculatedLeft;
+
+    if (spaceBelow < estimatedMenuHeight && spaceAbove > spaceBelow) {
+      dropUp = true;
+      menuTop = rect.top - 6;
+    } else {
+      dropUp = false;
+      menuTop = rect.bottom + 6;
+    }
+  }
+
+  async function toggleOpen() {
     if (disabled) return;
     isOpen = !isOpen;
+    if (isOpen) {
+      await updatePosition();
+    }
   }
 
   function selectOption(opt) {
@@ -35,17 +85,29 @@
   }
 
   function handleOutsideClick(e) {
-    if (isOpen && selectEl && !selectEl.contains(e.target)) {
+    if (isOpen) {
+      if (selectEl && selectEl.contains(e.target)) return;
+      if (menuEl && menuEl.contains(e.target)) return;
       isOpen = false;
     }
   }
 
+  function handleScrollResize() {
+    if (isOpen) {
+      updatePosition();
+    }
+  }
+
   onMount(() => {
-    window.addEventListener('click', handleOutsideClick);
+    window.addEventListener('click', handleOutsideClick, true);
+    window.addEventListener('scroll', handleScrollResize, true);
+    window.addEventListener('resize', handleScrollResize);
   });
 
   onDestroy(() => {
-    window.removeEventListener('click', handleOutsideClick);
+    window.removeEventListener('click', handleOutsideClick, true);
+    window.removeEventListener('scroll', handleScrollResize, true);
+    window.removeEventListener('resize', handleScrollResize);
   });
 </script>
 
@@ -79,7 +141,14 @@
   </button>
 
   {#if isOpen}
-    <div class="custom-dropdown-menu" role="listbox">
+    <div 
+      use:portal 
+      bind:this={menuEl}
+      class="custom-dropdown-menu" 
+      class:drop-up={dropUp}
+      style="position: fixed; top: {menuTop}px; left: {menuLeft}px; width: {menuWidth}px; min-width: {minWidth}; z-index: 999999;"
+      role="listbox"
+    >
       {#each normalizedOptions as opt}
         <div 
           class="custom-option-item" 
@@ -180,27 +249,34 @@
   }
 
   .custom-dropdown-menu {
-    position: absolute;
-    top: calc(100% + 6px);
-    left: 0;
-    width: 100%;
-    min-width: 180px;
-    background: rgba(15, 17, 26, 0.96);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    border: 1px solid rgba(168, 85, 247, 0.4);
+    position: fixed !important;
+    background: rgba(15, 17, 26, 0.96) !important;
+    backdrop-filter: blur(20px) !important;
+    -webkit-backdrop-filter: blur(20px) !important;
+    border: 1px solid rgba(168, 85, 247, 0.4) !important;
     border-radius: 12px;
-    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.85), 0 0 25px rgba(168, 85, 247, 0.2);
-    z-index: 999;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.88), 0 0 25px rgba(168, 85, 247, 0.25);
+    z-index: 999999 !important;
     max-height: 260px;
     overflow-y: auto;
     padding: 6px;
-    animation: dropdownFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    box-sizing: border-box;
+    animation: dropdownFadeIn 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .custom-dropdown-menu.drop-up {
+    transform: translateY(-100%);
+    animation: dropdownFadeInUp 0.18s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   @keyframes dropdownFadeIn {
     from { opacity: 0; transform: translateY(-8px) scale(0.97); }
     to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+
+  @keyframes dropdownFadeInUp {
+    from { opacity: 0; transform: translateY(calc(-100% + 8px)) scale(0.97); }
+    to { opacity: 1; transform: translateY(-100%) scale(1); }
   }
 
   .custom-dropdown-menu::-webkit-scrollbar { width: 5px; }
