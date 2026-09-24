@@ -973,6 +973,57 @@ The following documents contain additional project domain knowledge, specificati
     }
 
 
+def get_advanced_engineering_guidelines(doc_type: str, today_str: str) -> str:
+    return f"""
+# ==============================================================================
+# ENTERPRISE ENGINEERING DIRECTIVES & QUALITY GATES (MANDATORY STANDARDS)
+# ==============================================================================
+
+1. ZERO REQUIREMENT LOSS (100% Comprehensive Coverage of Knowledge Base & Briefings):
+   - You MUST extract, integrate, and satisfy EVERY functional feature, business rule, and constraint found in the Reference Documents, PO Briefings, and Project Knowledge Base.
+   - Statutory, Privacy & Security Mandates:
+     * Explicit PDPA / GDPR workflows: User Consent handling, Right to Erasure / "Delete Account" (self-service account & personal data deletion flow), Data Anonymization for analytics/heatmaps, and Data Retention rules.
+     * Authentication & Social Logins: Explicitly specify all supported providers stated in requirements (e.g. Email/Password, Google OAuth2, Apple Sign-In, Facebook Login) with session management and token lifecycle (JWT, Refresh Token).
+     * Role-Based Access Control (RBAC): Explicit permissions and capabilities for each user persona (e.g. Guest, Member, Merchant/Owner, System Admin, QA Auditor).
+   - Core Domain & Operational Logic:
+     * Complete lifecycle states (e.g. Draft -> Pending Review -> Approved -> Rejected -> Archived).
+     * Anti-abuse & Duplicate Prevention: Exact duplicate detection rules (e.g. Merchant duplication checked by Normalized Name matching >= 80% and GPS Distance <= 50 meters, with Admin notification and override options).
+     * Search & Filter Mechanics: Keyword search, Area/District name search (e.g. "บางแสน", "สยาม"), Distance radius filter, Category filter, and Operating Hours filter (including 24-Hour mode and Special Public Holiday exceptions).
+     * Scope & Platform Boundary: Explicitly distinguish Mobile App (iOS/Android) features vs. Web Management Portal features.
+
+2. LOGICAL INTEGRITY & DOCUMENT COHESION (Zero Self-Contradictions & Zero Placeholders):
+   - Chronological & Version Harmony:
+     * Generation / Current Date: {today_str}.
+     * Versioning: Use standard SemVer (e.g. 1.0.0).
+     * Document Metadata, Revision History, and referenced source dates MUST be logically consistent (a revision date CANNOT predate the PO Briefing or inception meetings referenced in the text).
+   - Zero Unresolved Placeholders:
+     * NEVER output unresolved placeholders such as '[System Analyst / Business Analyst Team]', '[TBD]', '[Insert Name]', '[To Be Decided]'.
+     * Always generate realistic, authoritative names, roles, or definitive specifications.
+   - Document Status & Sign-off Integrity:
+     * If document is marked as 'APPROVED BASELINE' or 'DRAFT', provide fully populated document control tables (Author, Reviewer, Approver, Sign-off Date, Version).
+   - Traceability & Cross-Reference Alignment:
+     * Every security protocol or technology mentioned in overviews (e.g. TLS 1.3, AES-256 encryption at rest, Redis in-memory cache) MUST have explicit, corresponding functional/non-functional requirement IDs (e.g., REQ-SEC-001, REQ-PERF-001).
+
+3. HIGH-PRECISION TESTABILITY & MEASURABILITY (Zero Ambiguity):
+   - Strict Ban on Vague Adjectives: DO NOT use ambiguous terms like "fast", "such as 3 km", "immediately", "most popular", "highest rated" without explicit formulas and thresholds.
+   - Concrete Parameters & Formulas:
+     * Search Radius: Define explicit default value (e.g. Default: 3,000 meters / 3 km), minimum allowed (500m), and maximum allowed (20,000m / 20 km).
+     * Performance & Debounce: UI Search Input Debounce (e.g. 300ms), Cache TTL (e.g. Redis TTL: 60s for search results), Map Cluster aggregation threshold (e.g. markers within 40px grid distance).
+     * Ranking Algorithms: Provide explicit mathematical scoring formula for "Most Popular" or "Best Rated" (e.g. Weighted Score = (R * v + C * m) / (v + m)).
+     * Upload & Content Limits: Specify file constraints (e.g. Max photo size 10MB per image, allowed formats JPEG/PNG/WebP, max 5 images per review), character bounds (Review title 5-100 chars, body 10-1,000 chars), rate limits (e.g. max 3 reviews per merchant per day).
+     * Timezone & Localization: Explicitly state Timezone standard (Asia/Bangkok / UTC+7) for all timestamps and operating hours.
+   - Quantified Non-Functional Requirements (NFR):
+     * Availability & Uptime: >= 99.9% uptime per calendar month.
+     * Concurrency & Peak Capacity: Minimum concurrent users (CCU) handling (e.g. >= 5,000 CCU during peak lunch hours 11:30-13:00 and dinner 17:30-19:30).
+     * Latency & Response Times: API P95 latency <= 1.5 seconds, P99 <= 3.0 seconds under peak load.
+     * Compatibility: iOS 15.0+, Android 11.0+, Modern Browsers (Chrome 110+, Safari 16+, Edge).
+
+4. CLEAN DOCUMENT ARCHITECTURE & ACCEPTANCE CRITERIA:
+   - For SRS / Requirement Documents:
+     * Structure logically: 1. Executive Summary & Scope, 2. System Architecture & Actors, 3. Comprehensive Functional Requirements (with ID, Module, Description, User Story, Pre-conditions, Main Flow, Alternate/Exception Flows, Post-conditions, and Acceptance Criteria in Given-When-Then format), 4. Non-Functional Requirements, 5. Data Dictionary & API Endpoints, 6. Security, Compliance (PDPA) & Audit Log.
+     * Do NOT mix draft defect logs or unfinished bug lists inside the core specification body. Defect lists belong to QA Audit reports.
+"""
+
 def create_qa_document(project_id: str, doc_type: str, doc_name: str, skill_id, reference_document_id=None, custom_prompt: str = ""):
     """
     Agent 6: QA Document Creator (Synchronous version returning raw text)
@@ -1018,20 +1069,26 @@ The user has provided the following specific guidelines, scenarios, or custom in
 {custom_prompt.strip()}
 """
 
+        today_str = datetime.datetime.now().strftime("%d/%m/%Y")
+        engineering_guidelines = get_advanced_engineering_guidelines(doc_type, today_str)
+
         # Build prompt for synchronous generation
         prompt = f"""
-You are an expert Software Architect, Senior Business Analyst, and Technical Writer.
-Your task is to generate a comprehensive, professional {doc_type} document for Project '{project_name}' ({project_code}) named '{doc_name}'.
-You MUST analyze, cross-reference, and synthesize ALL provided Project Knowledge Base documents (TOR, SRS, SDD, previous tests, specs) to ensure 100% technical accuracy and depth.
+You are an expert Principal Software Architect, Lead Business Analyst, and Senior Technical Writer.
+Your task is to generate a comprehensive, enterprise-grade, production-ready {doc_type} document for Project '{project_name}' ({project_code}) named '{doc_name}'.
+You MUST analyze, cross-reference, and synthesize ALL provided Project Knowledge Base documents (TOR, PO Briefing, SRS, SDD, previous tests, specs) to ensure 100% technical accuracy, depth, and zero requirement loss.
 
 # Target Document Information
 - Document Name: {doc_name}
 - Document Type: {doc_type}
 - Project: {project_name} ({project_code})
+- Date of Baseline: {today_str}
 
 # Framework & Guidelines (Skill: {skill_name})
 Please follow these structure and formatting instructions strictly:
 {instructions}
+
+{engineering_guidelines}
 
 {custom_prompt_section}
 
@@ -1041,10 +1098,10 @@ Please follow these structure and formatting instructions strictly:
 
 {structured_reqs_section}
 
-# Generation & Content Instructions:
-1. Synthesize all documents in the project knowledge base to create a complete, in-depth, production-grade {doc_type}.
-2. Use professional Markdown formatting with title, executive overview, detailed sections, numbered requirement tables, user stories/use cases, workflows, data specifications, non-functional requirements, and testability criteria.
-3. DO NOT leave placeholder text or brief outlines — write the full, comprehensive content in clear Thai / English as appropriate.
+# Final Output Directives:
+1. Synthesize all documents in the project knowledge base into a fully detailed, rigorous, production-grade {doc_type}.
+2. Ensure every single requirement is measurable, testable, and unambiguous.
+3. NEVER leave placeholder text or brief outlines.
 4. Output the complete document directly in clean, structured Markdown.
 """
 
@@ -1187,19 +1244,23 @@ Format:
 }}
 """
         else:
+            engineering_guidelines = get_advanced_engineering_guidelines(doc_type, today_str)
             prompt = f"""
-You are an expert Software Architect, Senior Business Analyst, and Technical Writer.
-Your task is to generate a comprehensive, professional {doc_type} document for Project '{project_name}' ({project_code}) named '{doc_name}'.
-You MUST analyze, cross-reference, and synthesize ALL provided Project Knowledge Base documents (TOR, SRS, SDD, previous tests, specs) to ensure 100% technical accuracy and depth.
+You are an expert Principal Software Architect, Lead Business Analyst, and Senior Technical Writer.
+Your task is to generate a comprehensive, enterprise-grade, production-ready {doc_type} document for Project '{project_name}' ({project_code}) named '{doc_name}'.
+You MUST analyze, cross-reference, and synthesize ALL provided Project Knowledge Base documents (TOR, PO Briefing, SRS, SDD, previous tests, specs) to ensure 100% technical accuracy, depth, and zero requirement loss.
 
 # Target Document Information
 - Document Name: {doc_name}
 - Document Type: {doc_type}
 - Project: {project_name} ({project_code})
+- Date of Baseline: {today_str}
 
 # Framework & Guidelines (Skill: {skill_name})
 Please follow these structure and formatting instructions strictly:
 {instructions}
+
+{engineering_guidelines}
 
 {custom_prompt_section}
 
@@ -1209,10 +1270,10 @@ Please follow these structure and formatting instructions strictly:
 
 {structured_reqs_section}
 
-# Generation & Content Instructions:
-1. Synthesize all documents in the project knowledge base to create a complete, in-depth, production-grade {doc_type}.
-2. Use professional Markdown formatting with title, executive overview, detailed sections, numbered requirement tables, user stories/use cases, workflows, data specifications, non-functional requirements, and testability criteria.
-3. DO NOT leave placeholder text or brief outlines — write the full, comprehensive content in clear Thai / English as appropriate.
+# Final Output Directives:
+1. Synthesize all documents in the project knowledge base into a fully detailed, rigorous, production-grade {doc_type}.
+2. Ensure every single requirement is measurable, testable, and unambiguous.
+3. NEVER leave placeholder text or brief outlines.
 4. Output the complete document directly in clean, structured Markdown.
 """
 

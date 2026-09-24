@@ -31,8 +31,16 @@ class QAState(BaseModel):
     
     # Execution details
     report: Optional[str] = None
+    final_report: Optional[str] = None
     status: str = "pending"
     error: Optional[str] = None
+
+    def __init__(self, **data):
+        super().__init__(**data)
+        if self.report and not self.final_report:
+            self.final_report = self.report
+        elif self.final_report and not self.report:
+            self.report = self.final_report
 
 class QASecurityState(BaseModel):
     """

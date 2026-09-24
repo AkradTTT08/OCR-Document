@@ -302,6 +302,17 @@
   let scanGroupName = "";
   let scanGroupType = "Project Plan";
   let isGroupNameSet = false;
+  let showCreateGroupModal = false;
+
+  function openCreateGroupModal() {
+    scanGroupName = "";
+    scanGroupType = "Project Plan";
+    showCreateGroupModal = true;
+  }
+
+  function closeCreateGroupModal() {
+    showCreateGroupModal = false;
+  }
 
   let isSendingEmail = false;
   let showConfirmModal = false;
@@ -393,6 +404,7 @@
       project_id: pId
     });
     
+    showCreateGroupModal = false;
     isGroupNameSet = true;
   }
   function handleDrop(e) {
@@ -640,7 +652,13 @@
             </svg>
             <h3>กลุ่มการตรวจสอบที่มีอยู่ในโครงการ ({currentProjectGroups.length})</h3>
           </div>
-          <span class="sub-hint">คลิกเลือกกลุ่มที่ต้องการเพื่อเริ่มการตรวจสอบ</span>
+          <button class="btn-create-group-trigger" on:click={openCreateGroupModal}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+            สร้างกลุ่มใหม่
+          </button>
         </div>
 
         <div class="existing-groups-grid">
@@ -691,99 +709,131 @@
           {/each}
         </div>
       </div>
-
-      <div class="or-divider">
-        <span>หรือ กำหนดกลุ่มการตรวจสอบใหม่</span>
+    {:else}
+      <!-- EMPTY STATE WHEN NO GROUPS EXIST -->
+      <div class="group-management-section">
+        <div class="empty-groups-box">
+          <div class="empty-groups-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="44" height="44">
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+            </svg>
+          </div>
+          <h4>ยังไม่มีกลุ่มการตรวจสอบในโครงการนี้</h4>
+          <p>สร้างกลุ่มการตรวจสอบ (Scan Group) แรก เพื่อจัดระเบียบเอกสารและเริ่มการตรวจ QA สำหรับโครงการนี้</p>
+          <button class="btn-create-group-trigger lg" on:click={openCreateGroupModal}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+            สร้างกลุ่มการตรวจสอบใหม่
+          </button>
+        </div>
       </div>
     {/if}
 
-    <!-- CREATE NEW GROUP FORM -->
-    <div class="main-card group-create-card">
-      <div class="card-inner-header">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20" style="color: #a855f7;">
-          <line x1="12" y1="5" x2="12" y2="19"></line>
-          <line x1="5" y1="12" x2="19" y2="12"></line>
-        </svg>
-        <h4>{currentProjectGroups.length > 0 ? 'สร้างกลุ่มการตรวจสอบใหม่' : 'กำหนดชื่อการตรวจสอบ (Scan Group)'}</h4>
-      </div>
-
-      <div class="setting-group relative">
-        <label>ชื่อการตรวจสอบ (Group Name)</label>
-        <input
-          type="text"
-          class="custom-select"
-          style="padding: 12px 16px; border: 1px solid rgba(139, 92, 246, 0.3); color: white; background: rgba(15, 23, 42, 0.6);"
-          bind:value={scanGroupName}
-          placeholder="เช่น ตรวจเอกสาร UAT รอบที่ 1, Sprint 2 Review..."
-          on:keydown={(e) => {
-            if (e.key === 'Enter' && scanGroupName.trim() !== '') {
-              confirmGroup();
-            }
-          }}
-        />
-      </div>
-
-      <div class="setting-group relative" style="margin-top: 15px;">
-        <label>ประเภทเอกสารหลัก (Group Type)</label>
-        <!-- Custom Dropdown for Group Type -->
-        <div class="custom-select" on:click|stopPropagation={() => { groupTypeOpen = !groupTypeOpen; }}>
-          <div class="select-trigger" class:open={groupTypeOpen}>
-            {scanGroupType}
-            <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
-          </div>
-          {#if groupTypeOpen}
-            <div class="options-menu" transition:fade={{duration: 100}}>
-              {#each masterGroupTypes as type}
-                <div class="option-item" class:selected={scanGroupType === type} on:click|stopPropagation={() => { scanGroupType = type; groupTypeOpen = false; }}>
-                  {type}
-                </div>
-              {/each}
+    <!-- MODAL: CREATE NEW GROUP -->
+    {#if showCreateGroupModal}
+      <div class="modal-backdrop" transition:fade={{ duration: 150 }} on:click={closeCreateGroupModal}>
+        <div class="modal-group-dialog" on:click|stopPropagation>
+          <div class="modal-dialog-header">
+            <div class="modal-dialog-title-wrap">
+              <div class="modal-dialog-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+                  <line x1="12" y1="5" x2="12" y2="19"></line>
+                  <line x1="5" y1="12" x2="19" y2="12"></line>
+                </svg>
+              </div>
+              <div>
+                <h3 class="modal-dialog-title">สร้างกลุ่มการตรวจสอบใหม่</h3>
+                <div class="modal-dialog-sub">โครงการ: <span class="sub-proj-name">{selectedProjectObj.project_code} - {selectedProjectObj.name}</span></div>
+              </div>
             </div>
-          {/if}
+            <button class="btn-dialog-close" title="ปิดหน้าต่าง" on:click={closeCreateGroupModal}>✕</button>
+          </div>
+
+          <div class="modal-dialog-body">
+            <div class="setting-group relative">
+              <label>ชื่อการตรวจสอบ (Group Name) <span class="req-star">*</span></label>
+              <input
+                type="text"
+                class="modal-form-input"
+                bind:value={scanGroupName}
+                placeholder="เช่น ตรวจเอกสาร UAT รอบที่ 1, Sprint 2 Review..."
+                autofocus
+                on:keydown={(e) => {
+                  if (e.key === 'Enter' && scanGroupName.trim() !== '') {
+                    confirmGroup();
+                  }
+                }}
+              />
+            </div>
+
+            <div class="setting-group relative" style="margin-top: 16px;">
+              <label>ประเภทเอกสารหลัก (Group Type)</label>
+              <!-- Custom Dropdown for Group Type -->
+              <div class="custom-select" on:click|stopPropagation={() => { groupTypeOpen = !groupTypeOpen; }}>
+                <div class="select-trigger" class:open={groupTypeOpen}>
+                  {scanGroupType}
+                  <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </div>
+                {#if groupTypeOpen}
+                  <div class="options-menu" transition:fade={{duration: 100}}>
+                    {#each masterGroupTypes as type}
+                      <div class="option-item" class:selected={scanGroupType === type} on:click|stopPropagation={() => { scanGroupType = type; groupTypeOpen = false; }}>
+                        {type}
+                      </div>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
+            </div>
+
+            <!-- Exit Criteria Mapping Status / Missing Warning Alert -->
+            <div class="criteria-mapping-status" style="margin-top: 16px;">
+              {#if isCheckingCriteria}
+                <div class="criteria-badge-box loading">
+                  <div class="box-icon spin">⏳</div>
+                  <div class="box-content">
+                    <div class="box-title">กำลังตรวจสอบ Exit Criteria...</div>
+                  </div>
+                </div>
+              {:else if matchedCriteriaTemplate}
+                <div class="criteria-badge-box matched">
+                  <div class="box-icon">🎯</div>
+                  <div class="box-content">
+                    <div class="box-title">เชื่อมโยง Exit Criteria: <span class="highlight">{matchedCriteriaTemplate.title}</span></div>
+                    <div class="box-desc">
+                      ระบบจะตรวจสอบด้วยเกณฑ์เฉพาะ <strong>"{scanGroupType}"</strong> ควบคู่กับเกณฑ์มาตรฐานกลาง <strong>(ALL)</strong> โดยอัตโนมัติ
+                    </div>
+                  </div>
+                </div>
+              {:else}
+                <div class="criteria-badge-box warning">
+                  <div class="box-icon">⚠️</div>
+                  <div class="box-content">
+                    <div class="box-title">ยังไม่มี Exit Criteria สำหรับประเภท <span class="highlight-warn">"{scanGroupType}"</span> ในการตรวจสอบ</div>
+                    <div class="box-desc">
+                      ระบบจะใช้เฉพาะเกณฑ์มาตรฐานกลาง (ALL) ในการตรวจสอบ หรือสามารถเพิ่มเกณฑ์เฉพาะได้ที่เมนู <strong>Exit Criteria</strong>
+                    </div>
+                  </div>
+                </div>
+              {/if}
+            </div>
+          </div>
+
+          <div class="modal-dialog-footer">
+            <button class="btn-dialog-cancel" on:click={closeCreateGroupModal}>ยกเลิก</button>
+            <button 
+              class="btn-primary btn-dialog-submit" 
+              disabled={!scanGroupName.trim()}
+              on:click={confirmGroup}
+            >
+              บันทึกกลุ่มและเข้าสู่หน้าสแกน &rarr;
+            </button>
+          </div>
         </div>
       </div>
-
-      <!-- Exit Criteria Mapping Status / Missing Warning Alert -->
-      <div class="criteria-mapping-status" style="margin-top: 14px;">
-        {#if isCheckingCriteria}
-          <div class="criteria-badge-box loading">
-            <div class="box-icon spin">⏳</div>
-            <div class="box-content">
-              <div class="box-title">กำลังตรวจสอบ Exit Criteria...</div>
-            </div>
-          </div>
-        {:else if matchedCriteriaTemplate}
-          <div class="criteria-badge-box matched">
-            <div class="box-icon">🎯</div>
-            <div class="box-content">
-              <div class="box-title">เชื่อมโยง Exit Criteria: <span class="highlight">{matchedCriteriaTemplate.title}</span></div>
-              <div class="box-desc">
-                ระบบจะตรวจสอบด้วยเกณฑ์เฉพาะ <strong>"{scanGroupType}"</strong> ควบคู่กับเกณฑ์มาตรฐานกลาง <strong>(ALL)</strong> โดยอัตโนมัติ
-              </div>
-            </div>
-          </div>
-        {:else}
-          <div class="criteria-badge-box warning">
-            <div class="box-icon">⚠️</div>
-            <div class="box-content">
-              <div class="box-title">ยังไม่มี Exit Criteria สำหรับประเภท <span class="highlight-warn">"{scanGroupType}"</span> ในการตรวจสอบ</div>
-              <div class="box-desc">
-                ระบบจะใช้เฉพาะเกณฑ์มาตรฐานกลาง (ALL) ในการตรวจสอบ หรือสามารถเพิ่มเกณฑ์เฉพาะได้ที่เมนู <strong>Exit Criteria</strong>
-              </div>
-            </div>
-          </div>
-        {/if}
-      </div>
-      
-      <button 
-        class="btn-primary" 
-        style="width: 100%; margin-top: 20px;"
-        disabled={!scanGroupName.trim()}
-        on:click={confirmGroup}
-      >
-        {currentProjectGroups.length > 0 ? 'บันทึกกลุ่มและเข้าสู่หน้าสแกน' : 'ดำเนินการต่อ'}
-      </button>
-    </div>
+    {/if}
 
     <!-- RECENT PROJECT SCAN HISTORY SECTION -->
     {#if currentProjectHistory.length > 0}
@@ -2310,7 +2360,7 @@
   .section-title-bar {
     display: flex;
     justify-content: space-between;
-    align-items: baseline;
+    align-items: center;
     margin-bottom: 14px;
     padding: 0 4px;
   }
@@ -2326,9 +2376,191 @@
     font-weight: 600;
     color: #f1f5f9;
   }
-  .sub-hint {
+  .btn-create-group-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: linear-gradient(135deg, rgba(147, 51, 234, 0.25), rgba(99, 102, 241, 0.25));
+    border: 1px solid rgba(168, 85, 247, 0.5);
+    color: #f1f5f9;
+    padding: 7px 14px;
+    font-size: 13px;
+    font-weight: 600;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.25s ease;
+    box-shadow: 0 2px 10px rgba(147, 51, 234, 0.2);
+  }
+  .btn-create-group-trigger:hover {
+    background: linear-gradient(135deg, #9333ea, #6366f1);
+    border-color: #c084fc;
+    color: #ffffff;
+    box-shadow: 0 4px 16px rgba(168, 85, 247, 0.4);
+    transform: translateY(-1px);
+  }
+  .btn-create-group-trigger.lg {
+    padding: 10px 20px;
+    font-size: 14px;
+    margin-top: 14px;
+    border-radius: 10px;
+  }
+  .empty-groups-box {
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px dashed rgba(168, 85, 247, 0.35);
+    border-radius: 16px;
+    padding: 36px 24px;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+  .empty-groups-icon {
+    color: #a855f7;
+    opacity: 0.8;
+    margin-bottom: 12px;
+  }
+  .empty-groups-box h4 {
+    margin: 0 0 6px 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: #f1f5f9;
+  }
+  .empty-groups-box p {
+    margin: 0 0 8px 0;
+    font-size: 13px;
+    color: #94a3b8;
+    max-width: 480px;
+  }
+
+  /* Group Modal Styles */
+  .modal-group-dialog {
+    background: rgba(15, 23, 42, 0.95);
+    border: 1px solid rgba(168, 85, 247, 0.35);
+    border-radius: 18px;
+    width: 90%;
+    max-width: 540px;
+    box-shadow: 0 25px 60px rgba(0, 0, 0, 0.8), 0 0 30px rgba(147, 51, 234, 0.2);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    overflow: hidden;
+    animation: modalPop 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  @keyframes modalPop {
+    from { opacity: 0; transform: scale(0.95) translateY(10px); }
+    to { opacity: 1; transform: scale(1) translateY(0); }
+  }
+  .modal-dialog-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 24px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(30, 41, 59, 0.5);
+  }
+  .modal-dialog-title-wrap {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .modal-dialog-icon {
+    width: 38px;
+    height: 38px;
+    border-radius: 10px;
+    background: rgba(168, 85, 247, 0.15);
+    border: 1px solid rgba(168, 85, 247, 0.3);
+    color: #c084fc;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .modal-dialog-title {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 700;
+    color: #f8fafc;
+  }
+  .modal-dialog-sub {
     font-size: 12px;
     color: #94a3b8;
+    margin-top: 2px;
+  }
+  .sub-proj-name {
+    color: #c084fc;
+    font-weight: 600;
+  }
+  .btn-dialog-close {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #94a3b8;
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s;
+  }
+  .btn-dialog-close:hover {
+    background: rgba(239, 68, 68, 0.2);
+    border-color: rgba(239, 68, 68, 0.4);
+    color: #f87171;
+  }
+  .modal-dialog-body {
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .modal-form-input {
+    width: 100%;
+    padding: 12px 16px;
+    border-radius: 12px;
+    border: 1px solid rgba(139, 92, 246, 0.35);
+    background: rgba(18, 20, 28, 0.85);
+    color: #f8fafc;
+    font-size: 14px;
+    outline: none;
+    box-sizing: border-box;
+    transition: all 0.2s ease;
+  }
+  .modal-form-input:focus {
+    border-color: #a855f7;
+    box-shadow: 0 0 0 3px rgba(168, 85, 247, 0.3);
+  }
+  .req-star {
+    color: #f43f5e;
+  }
+  .modal-dialog-footer {
+    padding: 16px 24px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(15, 23, 42, 0.8);
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+  }
+  .btn-dialog-cancel {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: #cbd5e1;
+    padding: 9px 18px;
+    font-size: 13.5px;
+    font-weight: 500;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .btn-dialog-cancel:hover {
+    background: rgba(255, 255, 255, 0.12);
+    color: white;
+  }
+  .btn-dialog-submit {
+    margin: 0;
+    padding: 9px 20px;
+    font-size: 13.5px;
   }
   .existing-groups-grid {
     display: grid;
@@ -2443,48 +2675,6 @@
   .btn-select-group:hover {
     background: #9333ea;
     color: white;
-  }
-
-  .or-divider {
-    max-width: 900px;
-    margin: 18px auto;
-    text-align: center;
-    position: relative;
-  }
-  .or-divider::before {
-    content: '';
-    position: absolute;
-    top: 50%;
-    left: 0;
-    right: 0;
-    height: 1px;
-    background: rgba(255, 255, 255, 0.1);
-  }
-  .or-divider span {
-    position: relative;
-    background: #0b0f19;
-    padding: 0 14px;
-    font-size: 12px;
-    color: #94a3b8;
-  }
-
-  .group-create-card {
-    max-width: 700px;
-    margin: 0 auto 30px auto;
-  }
-  .card-inner-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 16px;
-    padding-bottom: 12px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  }
-  .card-inner-header h4 {
-    margin: 0;
-    font-size: 15px;
-    font-weight: 600;
-    color: #f1f5f9;
   }
 
   /* Recent Project History Section */

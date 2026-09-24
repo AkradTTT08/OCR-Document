@@ -168,6 +168,7 @@ class QAConsultAgent:
                 raise Exception("All Gemini models failed in QAConsultAgent.")
                 
             state.report = response.text
+            state.final_report = response.text
             state.status = "completed"
             
         except Exception as e:

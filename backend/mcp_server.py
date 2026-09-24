@@ -339,12 +339,13 @@ def qa_consult(
                 "message": f"QA Consult failed: {result_state.error}"
             }, ensure_ascii=False)
             
+        qa_report_content = getattr(result_state, 'report', None) or getattr(result_state, 'final_report', None) or ""
         return json.dumps({
             "status": "SUCCESS",
             "project_id": project_id,
             "project_name": project_name,
             "doc_type": doc_type,
-            "qa_report": result_state.final_report
+            "qa_report": qa_report_content
         }, indent=2, ensure_ascii=False)
         
     except Exception as e:
@@ -481,16 +482,21 @@ if __name__ == "__main__":
                 if message["type"] == "http.response.start":
                     headers = message.get("headers", [])
                     new_headers = []
+                    is_sse_stream = False
                     for k, v in headers:
+                        if k.lower() == b"content-type" and b"text/event-stream" in v.lower():
+                            is_sse_stream = True
                         if k.lower() == b"cache-control":
                             v = v + b", no-transform"
                         new_headers.append((k, v))
+                    if is_sse_stream:
+                        new_headers = [(k, v) for k, v in new_headers if k.lower() != b"content-length"]
                     if not any(k.lower() == b"cache-control" for k, v in headers):
                         new_headers.append((b"cache-control", b"no-cache, no-transform"))
                     message["headers"] = new_headers
                 elif message["type"] == "http.response.body":
                     body = message.get("body", b"")
-                    if not has_sent_padding and scope.get("path") == "/sse":
+                    if not has_sent_padding and scope.get("path", "").startswith("/sse"):
                         padding = b": " + (b"x" * 8192) + b"\n\n"
                         message["body"] = padding + body
                         has_sent_padding = True
