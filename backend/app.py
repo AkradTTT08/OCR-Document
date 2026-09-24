@@ -2596,15 +2596,23 @@ def get_qa_transactions():
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        limit = request.args.get('limit', 20, type=int)
+        limit = request.args.get('limit', 500, type=int)
+        project_id = request.args.get('project_id')
         
-        cursor.execute("""
+        sql = """
             SELECT t.transaction_id, t.project_id, t.group_name, t.group_type, t.filename, t.doc_type, t.qa_report, t.created_at, p.project_code, t.total_pages, t.email, t.qa_findings, t.exit_criteria_eval
             FROM qa_transactions t
             LEFT JOIN projects p ON t.project_id = p.project_id
-            ORDER BY t.created_at DESC
-            LIMIT %s
-        """, (limit,))
+        """
+        params = []
+        if project_id:
+            sql += " WHERE t.project_id = %s::uuid"
+            params.append(project_id)
+            
+        sql += " ORDER BY t.created_at DESC LIMIT %s"
+        params.append(limit)
+        
+        cursor.execute(sql, params)
         
         rows = cursor.fetchall()
         transactions = []

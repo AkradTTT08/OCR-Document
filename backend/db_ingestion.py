@@ -1238,6 +1238,14 @@ def init_qa_groups_table():
             EXCEPTION WHEN OTHERS THEN
                 NULL;
             END $$;
+
+            -- Auto-sync/recover any existing groups from qa_transactions into qa_groups
+            INSERT INTO qa_groups (project_id, group_name, group_type, created_at)
+            SELECT t.project_id, REGEXP_REPLACE(t.group_name, '^\[.*?\]\s*', ''), COALESCE(NULLIF(t.group_type, ''), 'Project Plan'), MIN(t.created_at)
+            FROM qa_transactions t
+            WHERE t.project_id IS NOT NULL AND t.group_name IS NOT NULL AND TRIM(t.group_name) != ''
+            GROUP BY t.project_id, REGEXP_REPLACE(t.group_name, '^\[.*?\]\s*', ''), t.group_type
+            ON CONFLICT (project_id, group_name) DO NOTHING;
         """)
         logger.info("Checked/Created qa_groups table.")
     except Exception as e:
