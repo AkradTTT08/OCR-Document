@@ -92,7 +92,7 @@ def analyze_project_flow_and_diagrams(project_id: str, custom_instructions: str 
 
         # 3. Fetch Structured Requirements (Phase 1)
         cursor.execute("""
-            SELECT req_code, title, description, category, steps, expected_results
+            SELECT req_code, title, description, steps, expected_results
             FROM structured_requirements
             WHERE project_id = %s::uuid
             ORDER BY req_code ASC
@@ -104,9 +104,8 @@ def analyze_project_flow_and_diagrams(project_id: str, custom_instructions: str 
                 "req_code": r[0],
                 "title": r[1],
                 "description": r[2],
-                "category": r[3],
-                "steps": r[4],
-                "expected_results": r[5]
+                "steps": r[3],
+                "expected_results": r[4]
             })
 
         # 4. Fetch Generated QA Documents (Test Cases / SRS)

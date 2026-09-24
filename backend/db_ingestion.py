@@ -924,7 +924,7 @@ def retrieve_comprehensive_qa_context(project_id: str, query: str, history: list
         if project_id:
             try:
                 cursor.execute("""
-                    SELECT req_code, title, description, category, steps, expected_results
+                    SELECT req_code, title, description, steps, expected_results
                     FROM structured_requirements
                     WHERE project_id = %s::uuid
                     ORDER BY req_code ASC;
@@ -940,9 +940,8 @@ def retrieve_comprehensive_qa_context(project_id: str, query: str, history: list
                 "code": r[0],
                 "title": r[1],
                 "description": r[2],
-                "category": r[3],
-                "steps": r[4] or [],
-                "expected": r[5] or []
+                "steps": r[3] or [],
+                "expected": r[4] or []
             })
             
         # 4. QA Generated Documents (SRS, Test Cases, etc.)
