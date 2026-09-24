@@ -377,7 +377,8 @@ def evaluate_spectra_qa(
         A JSON string containing the evaluation status (PASS/REJECTED), circuit_breaker_hit flag, failed criteria, and recommendations.
     """
     import requests
-    url = "http://127.0.0.1:5000/api/mcp/submit_document"
+    backend_base = os.environ.get("BACKEND_INTERNAL_URL") or ("http://backend:5000" if os.environ.get("DB_HOST") == "qa_agent_db" else "http://127.0.0.1:5000")
+    url = f"{backend_base}/api/mcp/submit_document"
     payload = {
         "document_content": document_content,
         "document_type": document_type,
@@ -432,7 +433,8 @@ def send_email_report(to_email: str, subject: str, report_body: str) -> str:
     """
     try:
         import requests
-        url = "http://127.0.0.1:5000/api/qa_send_email"
+        backend_base = os.environ.get("BACKEND_INTERNAL_URL") or ("http://backend:5000" if os.environ.get("DB_HOST") == "qa_agent_db" else "http://127.0.0.1:5000")
+        url = f"{backend_base}/api/qa_send_email"
         payload = {
             "email": to_email,
             "docType": "QA Consult Audit",
