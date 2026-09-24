@@ -3,7 +3,7 @@
   import { fade } from "svelte/transition";
   import { toast } from "./toastStore.js";
   import { authUser } from "./authStore.js";
-  import { qaHistory, selectedHistory, loadQAHistoryFromDB, selectedProjectStore, qaSessionGroups, activeQAContext, loadQAGroupsFromDB, activeSidebarGroup, activeScanStatus } from "./qaHistoryStore.js";
+  import { qaHistory, selectedHistory, loadQAHistoryFromDB, selectedProjectStore, qaSessionGroups, activeQAContext, loadQAGroupsFromDB, activeSidebarGroup, activeScanStatus, allGroups } from "./qaHistoryStore.js";
   import GateResultModal from "./GateResultModal.svelte";
   import ProjectSelection from "./ProjectSelection.svelte";
   import { MASTER_DOC_TYPES } from "./constants.js";
@@ -46,6 +46,9 @@
   }
 
   onMount(async () => {
+    loadQAGroupsFromDB();
+    loadQAHistoryFromDB();
+
     // Load Skills (separate try/catch so failure won't block projects)
     try {
       const resSkills = await fetch("/api/skills");
@@ -128,7 +131,7 @@
       scanGroupType = item.group_type || '';
       isGroupNameSet = true;
       
-      const p = projects.find(p => p.id === item.project_id || p.project_id === item.project_id);
+      const p = projects.find(p => String(p.id) === String(item.project_id) || String(p.project_id) === String(item.project_id) || (p.project_code && item.project_code && p.project_code === item.project_code));
       if (p) {
         selectedProjectStore.set(p);
       }
@@ -159,7 +162,7 @@
       scanGroupType = item.group_type || '';
       isGroupNameSet = true;
 
-      const p = projects.find(p => p.id === item.project_id || p.project_id === item.project_id);
+      const p = projects.find(p => String(p.id) === String(item.project_id) || String(p.project_id) === String(item.project_id) || (p.project_code && item.project_code && p.project_code === item.project_code));
       if (p) {
         selectedProjectStore.set(p);
       }
@@ -183,9 +186,76 @@
     const pId = selectedProjectObj.id || selectedProjectObj.project_id;
     loadDocTypes(pId);
     loadExitCriteriaTemplates(pId);
+    loadQAGroupsFromDB();
+    loadQAHistoryFromDB();
   } else {
     loadDocTypes();
     loadExitCriteriaTemplates();
+  }
+
+  $: currentProjectGroups = $allGroups.filter(g => {
+    if (!selectedProjectObj) return false;
+    const pId = String(selectedProjectObj.id || selectedProjectObj.project_id || '');
+    const pCode = String(selectedProjectObj.project_code || '');
+    return String(g.project_id) === pId || (pCode && g.project_code === pCode);
+  });
+
+  $: currentProjectHistory = $qaHistory.filter(h => {
+    if (!selectedProjectObj) return false;
+    const pId = String(selectedProjectObj.id || selectedProjectObj.project_id || '');
+    const pCode = String(selectedProjectObj.project_code || '');
+    return String(h.project_id) === pId || (pCode && h.project_code === pCode);
+  });
+
+  function selectExistingGroup(g) {
+    const cleanName = String(g.group_name || 'General').replace(/^\[.*?\]\s*/, '').trim();
+    scanGroupName = cleanName;
+    scanGroupType = g.group_type || 'Project Plan';
+    isGroupNameSet = true;
+    activeSidebarGroup.set({
+      project: selectedProjectObj,
+      group_name: cleanName,
+      group_type: scanGroupType,
+      project_id: selectedProjectObj.id || selectedProjectObj.project_id
+    });
+  }
+
+  async function deleteGroupDirect(group) {
+    const gName = group.group_name || 'General';
+    if (!confirm(`คุณแน่ใจหรือไม่ว่าต้องการลบกลุ่ม "${gName}" และประวัติการสแกนทั้งหมดในกลุ่มนี้?`)) return;
+    try {
+      const res = await fetch("/api/qa_groups/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project_id: group.project_id,
+          group_name: gName
+        })
+      });
+      if (res.ok) {
+        toast(`ลบกลุ่ม "${gName}" เรียบร้อยแล้ว`, "success");
+        qaSessionGroups.update(gs => gs.filter(g => !(g.project_id === group.project_id && g.group_name === gName)));
+        if ($activeSidebarGroup && String($activeSidebarGroup.group_name || '').toLowerCase() === String(gName).toLowerCase()) {
+          activeSidebarGroup.set(null);
+        }
+        await loadQAGroupsFromDB();
+        await loadQAHistoryFromDB();
+      } else {
+        const err = await res.json();
+        toast(err.error || "ไม่สามารถลบกลุ่มได้", "error");
+      }
+    } catch (e) {
+      console.error(e);
+      toast("เกิดข้อผิดพลาดในการลบกลุ่ม", "error");
+    }
+  }
+
+  function formatHistoryTime(dStr) {
+    if (!dStr) return "";
+    let parsed = dStr;
+    if (!parsed.endsWith('Z') && !parsed.includes('+')) parsed += 'Z';
+    const d = new Date(parsed);
+    return d.toLocaleString('th-TH', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
   }
 
   let selectedDocTypes = [];
@@ -542,7 +612,7 @@
     />
 
   {:else if !isGroupNameSet}
-    <!-- GROUP NAME FORM -->
+    <!-- GROUP MANAGEMENT & CREATION VIEW -->
     <div class="top-nav">
       <button class="btn-back" on:click={() => { selectedProjectStore.set(null); isGroupNameSet = false; scanGroupName = ""; }}>
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
@@ -553,22 +623,98 @@
     </div>
 
     <div class="header-text-local">
-      <h2>กำหนดชื่อการตรวจสอบ (Scan Group)</h2>
-      <p>กรุณาระบุชื่อการตรวจสอบนี้เพื่อใช้จัดกลุ่มประวัติการตรวจสอบ (ตัวอย่าง: ตรวจเอกสาร UAT)</p>
+      <h2>QA Consult - เลือกกลุ่มการตรวจสอบ (Scan Group)</h2>
+      <p>เลือกกลุ่มการตรวจสอบที่มีอยู่เพื่อทำการสแกนต่อ หรือสร้างกลุ่มการตรวจสอบใหม่สำหรับโครงการ</p>
       <div class="active-project-badge">
         โครงการปัจจุบัน: <strong>{selectedProjectObj.project_code} - {selectedProjectObj.name}</strong>
       </div>
     </div>
 
-    <div class="main-card" style="max-width: 600px; margin: 0 auto;">
+    <!-- EXISTING GROUPS SECTION (IF ANY) -->
+    {#if currentProjectGroups.length > 0}
+      <div class="group-management-section">
+        <div class="section-title-bar">
+          <div class="title-with-badge">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+            </svg>
+            <h3>กลุ่มการตรวจสอบที่มีอยู่ในโครงการ ({currentProjectGroups.length})</h3>
+          </div>
+          <span class="sub-hint">คลิกเลือกกลุ่มที่ต้องการเพื่อเริ่มการตรวจสอบ</span>
+        </div>
+
+        <div class="existing-groups-grid">
+          {#each currentProjectGroups as group}
+            <div class="group-card-item" on:click={() => selectExistingGroup(group)}>
+              <div class="group-card-top">
+                <div class="group-icon-wrap">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <polyline points="14 2 14 8 20 8"></polyline>
+                  </svg>
+                </div>
+                <div class="group-title-info">
+                  <div class="group-type-tag">[{group.group_type || 'Project Plan'}]</div>
+                  <div class="group-name-text" title={group.group_name}>{group.group_name}</div>
+                </div>
+                <button 
+                  class="btn-card-delete" 
+                  title="ลบกลุ่มนี้" 
+                  on:click|stopPropagation={() => deleteGroupDirect(group)}
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                    <polyline points="3 6 5 6 21 6"></polyline>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                  </svg>
+                </button>
+              </div>
+
+              <div class="group-card-bottom">
+                <div class="group-meta-stat">
+                  {#if group.scan_count > 0}
+                    <span class="stat-badge count-active">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                      {group.scan_count} ไฟล์ตรวจแล้ว
+                    </span>
+                  {:else}
+                    <span class="stat-badge count-empty">ยังไม่มีไฟล์</span>
+                  {/if}
+                  {#if group.latest_date}
+                    <span class="stat-date">{formatHistoryTime(group.latest_date)}</span>
+                  {/if}
+                </div>
+                <button class="btn-select-group" on:click|stopPropagation={() => selectExistingGroup(group)}>
+                  เลือกกลุ่มนี้ &rarr;
+                </button>
+              </div>
+            </div>
+          {/each}
+        </div>
+      </div>
+
+      <div class="or-divider">
+        <span>หรือ กำหนดกลุ่มการตรวจสอบใหม่</span>
+      </div>
+    {/if}
+
+    <!-- CREATE NEW GROUP FORM -->
+    <div class="main-card group-create-card">
+      <div class="card-inner-header">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20" style="color: #a855f7;">
+          <line x1="12" y1="5" x2="12" y2="19"></line>
+          <line x1="5" y1="12" x2="19" y2="12"></line>
+        </svg>
+        <h4>{currentProjectGroups.length > 0 ? 'สร้างกลุ่มการตรวจสอบใหม่' : 'กำหนดชื่อการตรวจสอบ (Scan Group)'}</h4>
+      </div>
+
       <div class="setting-group relative">
-        <label>ชื่อการตรวจสอบ</label>
+        <label>ชื่อการตรวจสอบ (Group Name)</label>
         <input
           type="text"
           class="custom-select"
           style="padding: 12px 16px; border: 1px solid rgba(139, 92, 246, 0.3); color: white; background: rgba(15, 23, 42, 0.6);"
           bind:value={scanGroupName}
-          placeholder="เช่น ตรวจเอกสาร UAT รอบที่ 1..."
+          placeholder="เช่น ตรวจเอกสาร UAT รอบที่ 1, Sprint 2 Review..."
           on:keydown={(e) => {
             if (e.key === 'Enter' && scanGroupName.trim() !== '') {
               confirmGroup();
@@ -578,7 +724,7 @@
       </div>
 
       <div class="setting-group relative" style="margin-top: 15px;">
-        <label>ประเภท (Type)</label>
+        <label>ประเภทเอกสารหลัก (Group Type)</label>
         <!-- Custom Dropdown for Group Type -->
         <div class="custom-select" on:click|stopPropagation={() => { groupTypeOpen = !groupTypeOpen; }}>
           <div class="select-trigger" class:open={groupTypeOpen}>
@@ -635,9 +781,65 @@
         disabled={!scanGroupName.trim()}
         on:click={confirmGroup}
       >
-        ดำเนินการต่อ
+        {currentProjectGroups.length > 0 ? 'บันทึกกลุ่มและเข้าสู่หน้าสแกน' : 'ดำเนินการต่อ'}
       </button>
     </div>
+
+    <!-- RECENT PROJECT SCAN HISTORY SECTION -->
+    {#if currentProjectHistory.length > 0}
+      <div class="project-history-section">
+        <div class="section-title-bar">
+          <div class="title-with-badge">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <polyline points="14 2 14 8 20 8"></polyline>
+              <line x1="16" y1="13" x2="8" y2="13"></line>
+              <line x1="16" y1="17" x2="8" y2="17"></line>
+            </svg>
+            <h3>ประวัติการตรวจสอบล่าสุดในโครงการนี้ ({currentProjectHistory.length})</h3>
+          </div>
+          <span class="sub-hint">คลิกเอกสารเพื่อเปิดดูรายงานผลการตรวจย้อนหลัง</span>
+        </div>
+
+        <div class="history-table-container">
+          <table class="project-history-table">
+            <thead>
+              <tr>
+                <th>ชื่อไฟล์เอกสาร</th>
+                <th>กลุ่มการตรวจสอบ</th>
+                <th>ประเภท</th>
+                <th>วันที่ตรวจ</th>
+                <th style="text-align: right;">การจัดการ</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each currentProjectHistory.slice(0, 15) as item}
+                <tr class="history-table-row" on:click={() => selectedHistory.set(item)}>
+                  <td class="td-filename">
+                    <div class="file-name-cell">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="color: #60a5fa; flex-shrink: 0;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path></svg>
+                      <span>{item.filename || 'Unknown Document'}</span>
+                    </div>
+                  </td>
+                  <td>
+                    <span class="group-pill">{item.group_name || 'General'}</span>
+                  </td>
+                  <td>
+                    <span class="type-pill">{item.docType || item.group_type || 'General'}</span>
+                  </td>
+                  <td class="td-date">{formatHistoryTime(item.date)}</td>
+                  <td style="text-align: right;">
+                    <button class="btn-table-view" on:click|stopPropagation={() => selectedHistory.set(item)}>
+                      ดูรายงาน
+                    </button>
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    {/if}
 
   {:else if !isProcessing && !scanResult}
     <!-- INPUT FORM -->
@@ -2097,5 +2299,270 @@
   @keyframes spin {
     0% { transform: rotate(0deg); }
     100% { transform: rotate(360deg); }
+  }
+
+  /* Group Management and Selection in QAConsult */
+  .group-management-section {
+    max-width: 900px;
+    margin: 0 auto 24px auto;
+    width: 100%;
+  }
+  .section-title-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 14px;
+    padding: 0 4px;
+  }
+  .title-with-badge {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #c084fc;
+  }
+  .title-with-badge h3 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: #f1f5f9;
+  }
+  .sub-hint {
+    font-size: 12px;
+    color: #94a3b8;
+  }
+  .existing-groups-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
+    gap: 14px;
+  }
+  .group-card-item {
+    background: rgba(30, 41, 59, 0.6);
+    border: 1px solid rgba(139, 92, 246, 0.25);
+    border-radius: 12px;
+    padding: 14px 16px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .group-card-item:hover {
+    background: rgba(30, 41, 59, 0.9);
+    border-color: rgba(168, 85, 247, 0.6);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(147, 51, 234, 0.15);
+  }
+  .group-card-top {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .group-icon-wrap {
+    color: #a855f7;
+    background: rgba(168, 85, 247, 0.12);
+    padding: 8px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .group-title-info {
+    flex: 1;
+    overflow: hidden;
+  }
+  .group-type-tag {
+    font-size: 11px;
+    color: #a855f7;
+    font-weight: 600;
+    margin-bottom: 2px;
+  }
+  .group-name-text {
+    font-size: 14px;
+    font-weight: 600;
+    color: #f8fafc;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .btn-card-delete {
+    background: none;
+    border: none;
+    color: #ef4444;
+    opacity: 0.6;
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 4px;
+    transition: opacity 0.2s;
+  }
+  .btn-card-delete:hover {
+    opacity: 1;
+    background: rgba(239, 68, 68, 0.15);
+  }
+  .group-card-bottom {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    padding-top: 10px;
+  }
+  .group-meta-stat {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .stat-badge {
+    font-size: 11px;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .stat-badge.count-active {
+    color: #34d399;
+  }
+  .stat-badge.count-empty {
+    color: #f59e0b;
+  }
+  .stat-date {
+    font-size: 10px;
+    color: #64748b;
+  }
+  .btn-select-group {
+    background: rgba(147, 51, 234, 0.18);
+    border: 1px solid rgba(147, 51, 234, 0.4);
+    color: #d8b4fe;
+    padding: 6px 12px;
+    font-size: 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 500;
+    transition: all 0.2s;
+  }
+  .btn-select-group:hover {
+    background: #9333ea;
+    color: white;
+  }
+
+  .or-divider {
+    max-width: 900px;
+    margin: 18px auto;
+    text-align: center;
+    position: relative;
+  }
+  .or-divider::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: rgba(255, 255, 255, 0.1);
+  }
+  .or-divider span {
+    position: relative;
+    background: #0b0f19;
+    padding: 0 14px;
+    font-size: 12px;
+    color: #94a3b8;
+  }
+
+  .group-create-card {
+    max-width: 700px;
+    margin: 0 auto 30px auto;
+  }
+  .card-inner-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  .card-inner-header h4 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    color: #f1f5f9;
+  }
+
+  /* Recent Project History Section */
+  .project-history-section {
+    max-width: 900px;
+    margin: 0 auto;
+    width: 100%;
+  }
+  .history-table-container {
+    background: rgba(15, 23, 42, 0.5);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    overflow-x: auto;
+  }
+  .project-history-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    text-align: left;
+  }
+  .project-history-table th {
+    background: rgba(30, 41, 59, 0.8);
+    color: #94a3b8;
+    font-weight: 600;
+    padding: 10px 14px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    font-size: 12px;
+  }
+  .project-history-table td {
+    padding: 12px 14px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    color: #e2e8f0;
+  }
+  .history-table-row {
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .history-table-row:hover {
+    background: rgba(147, 51, 234, 0.08);
+  }
+  .file-name-cell {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 500;
+    color: #60a5fa;
+  }
+  .group-pill {
+    background: rgba(168, 85, 247, 0.15);
+    color: #d8b4fe;
+    padding: 3px 8px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 500;
+  }
+  .type-pill {
+    background: rgba(59, 130, 246, 0.15);
+    color: #93c5fd;
+    padding: 3px 8px;
+    border-radius: 6px;
+    font-size: 11px;
+  }
+  .td-date {
+    color: #94a3b8;
+    font-size: 12px;
+  }
+  .btn-table-view {
+    background: rgba(59, 130, 246, 0.15);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    color: #60a5fa;
+    padding: 4px 10px;
+    font-size: 11px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .btn-table-view:hover {
+    background: #2563eb;
+    color: white;
   }
 </style>

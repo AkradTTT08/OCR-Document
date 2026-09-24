@@ -416,10 +416,12 @@
     const context = $activeSidebarGroup;
     
     if (!project) return [];
-    const targetProject = project.id || project.project_id;
+    const targetProject = String(project.id || project.project_id || '');
+    const targetCode = String(project.project_code || '');
     
     return history.filter(h => {
-      if (h.project_id != targetProject) return false;
+      const matchProj = String(h.project_id || '') === targetProject || (targetCode && String(h.project_code || '') === targetCode);
+      if (!matchProj) return false;
       
       if (context) {
         const cleanHGroup = String(h.group_name || 'General').replace(/^\[.*?\]\s*/, '').trim().toLowerCase();
@@ -622,11 +624,11 @@
             {/if}
           {:else if $selectedProjectStore && activeView === 'qa_consult'}
               <!-- Groups filtered by selected project -->
-            {#if $allGroups.filter(g => g.project_id === ($selectedProjectStore.id || $selectedProjectStore.project_id)).length > 0}
+            {#if $allGroups.filter(g => String(g.project_id) === String($selectedProjectStore.id || $selectedProjectStore.project_id) || (g.project_code && $selectedProjectStore.project_code && g.project_code === $selectedProjectStore.project_code)).length > 0}
               <div class="history-section">
                 <div class="history-title">กลุ่มการตรวจสอบ (Groups)</div>
                 <div class="history-list">
-                  {#each $allGroups.filter(g => g.project_id === ($selectedProjectStore.id || $selectedProjectStore.project_id)) as group}
+                  {#each $allGroups.filter(g => String(g.project_id) === String($selectedProjectStore.id || $selectedProjectStore.project_id) || (g.project_code && $selectedProjectStore.project_code && g.project_code === $selectedProjectStore.project_code)) as group}
                     <div class="sidebar-item-row">
                       <button class="history-item group-item" class:active={$activeSidebarGroup && String($activeSidebarGroup.group_name || '').replace(/^\[.*?\]\s*/, '').trim().toLowerCase() === String(group.group_name || '').replace(/^\[.*?\]\s*/, '').trim().toLowerCase()} on:click={() => handleGroupClick(group)}>
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="flex-shrink: 0;">
@@ -658,60 +660,60 @@
               </div>
             {/if}
 
-            <!-- History filtered by selected group -->
-            {#if $activeSidebarGroup}
+            <!-- History filtered by selected group OR all project history if no group selected -->
+            {#if filteredQAHistory.length > 0}
               <div class="history-section">
-                <div class="history-title">ประวัติการวิเคราะห์ (History)</div>
-                {#if filteredQAHistory.length > 0}
-                  <div class="history-list">
-                    {#each filteredQAHistory.slice(0, 10) as item}
-                      <div class="sidebar-item-row">
-                        <button class="history-item" class:is-processing={item.is_processing} on:click={() => { activeView = "qa_consult"; selectedHistory.set(item); }}>
-                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path></svg>
-                          <div class="history-details">
-                            <span class="h-filename">{item.filename}</span>
-                            <span class="h-project" style="color: #a78bfa;">
-                              {#if item.group_type}[{item.group_type}] {/if}{item.group_name || 'General'}
+                <div class="history-title">
+                  {#if $activeSidebarGroup}
+                    ประวัติการวิเคราะห์ ({$activeSidebarGroup.group_name})
+                  {:else}
+                    ประวัติการวิเคราะห์ล่าสุด
+                  {/if}
+                </div>
+                <div class="history-list">
+                  {#each filteredQAHistory.slice(0, 10) as item}
+                    <div class="sidebar-item-row">
+                      <button class="history-item" class:is-processing={item.is_processing} on:click={() => { activeView = "qa_consult"; selectedHistory.set(item); }}>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path></svg>
+                        <div class="history-details">
+                          <span class="h-filename">{item.filename}</span>
+                          <span class="h-project" style="color: #a78bfa;">
+                            {#if item.group_type}[{item.group_type}] {/if}{item.group_name || 'General'}
+                          </span>
+                          {#if item.is_processing}
+                            <span class="h-status" style="color: #60a5fa; font-size: 11px; margin-top: 4px; display: flex; align-items: center; gap: 4px; animation: pulse 1.5s infinite;">
+                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="10" height="10" style="animation: spin 2s linear infinite;">
+                                <line x1="12" y1="2" x2="12" y2="6"></line>
+                                <line x1="12" y1="18" x2="12" y2="22"></line>
+                                <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line>
+                                <line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line>
+                                <line x1="2" y1="12" x2="6" y2="12"></line>
+                                <line x1="18" y1="12" x2="22" y2="12"></line>
+                                <line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line>
+                                <line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line>
+                              </svg>
+                              กำลังประมวลผล...
                             </span>
-                            {#if item.is_processing}
-                              <span class="h-status" style="color: #60a5fa; font-size: 11px; margin-top: 4px; display: flex; align-items: center; gap: 4px; animation: pulse 1.5s infinite;">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="10" height="10" style="animation: spin 2s linear infinite;">
-                                  <line x1="12" y1="2" x2="12" y2="6"></line>
-                                  <line x1="12" y1="18" x2="12" y2="22"></line>
-                                  <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line>
-                                  <line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line>
-                                  <line x1="2" y1="12" x2="6" y2="12"></line>
-                                  <line x1="18" y1="12" x2="22" y2="12"></line>
-                                  <line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line>
-                                  <line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line>
-                                </svg>
-                                กำลังประมวลผล...
-                              </span>
-                            {:else if item.date}
-                              <span class="h-date">{formatHistoryDate(item.date)}</span>
-                            {/if}
-                          </div>
+                          {:else if item.date}
+                            <span class="h-date">{formatHistoryDate(item.date)}</span>
+                          {/if}
+                        </div>
+                      </button>
+                      {#if !item.is_processing}
+                        <button 
+                          class="btn-sidebar-delete" 
+                          title="ลบประวัติการตรวจนี้" 
+                          on:click|stopPropagation={() => confirmDeleteHistory(item)}
+                        >
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13">
+                            <polyline points="3 6 5 6 21 6"></polyline>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                          </svg>
                         </button>
-                        {#if !item.is_processing}
-                          <button 
-                            class="btn-sidebar-delete" 
-                            title="ลบประวัติการตรวจนี้" 
-                            on:click|stopPropagation={() => confirmDeleteHistory(item)}
-                          >
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13">
-                              <polyline points="3 6 5 6 21 6"></polyline>
-                              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                            </svg>
-                          </button>
-                        {/if}
-                      </div>
-                    {/each}
-                  </div>
-                {:else}
-                  <div style="padding: 15px; text-align: center; color: #9ca3af; font-size: 13px; background: rgba(0,0,0,0.2); border-radius: 8px;">
-                    ไม่มีประวัติเอกสารในกลุ่มนี้
-                  </div>
-                {/if}
+                      {/if}
+                    </div>
+                  {/each}
+                </div>
               </div>
             {/if}
           {/if}

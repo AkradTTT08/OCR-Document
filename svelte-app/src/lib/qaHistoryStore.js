@@ -22,12 +22,13 @@ export const allGroups = derived(
     // From DB Groups (the master source of explicitly created groups)
     for (const g of $qaDbGroups) {
       const gName = cleanGroup(g.group_name);
-      const key = `${g.project_id}::${gName.toLowerCase()}`;
+      const pId = String(g.project_id || '');
+      const key = `${pId}::${gName.toLowerCase()}`;
       groupMap.set(key, {
         group_id: g.group_id,
         group_name: gName,
-        group_type: g.group_type,
-        project_id: g.project_id,
+        group_type: g.group_type || 'Project Plan',
+        project_id: pId,
         project_code: g.project_code || 'Unknown',
         latest_date: g.created_at,
         scan_count: 0
@@ -37,30 +38,36 @@ export const allGroups = derived(
     // From DB history (to count scans and get implicitly created groups)
     for (const h of $qaHistory) {
       const hName = cleanGroup(h.group_name);
-      const key = `${h.project_id}::${hName.toLowerCase()}`;
+      const pId = String(h.project_id || '');
+      const key = `${pId}::${hName.toLowerCase()}`;
       if (!groupMap.has(key)) {
         groupMap.set(key, {
           group_name: hName,
           group_type: h.group_type || 'Project Plan',
-          project_id: h.project_id,
+          project_id: pId,
           project_code: h.project_code || 'Unknown',
           latest_date: h.date,
           scan_count: 1
         });
       } else {
-        groupMap.get(key).scan_count++;
+        const item = groupMap.get(key);
+        item.scan_count++;
+        if (!item.latest_date && h.date) {
+          item.latest_date = h.date;
+        }
       }
     }
 
     // From session groups (newly created in this session)
     for (const g of $qaSessionGroups) {
       const gName = cleanGroup(g.group_name);
-      const key = `${g.project_id}::${gName.toLowerCase()}`;
+      const pId = String(g.project_id || '');
+      const key = `${pId}::${gName.toLowerCase()}`;
       if (!groupMap.has(key)) {
         groupMap.set(key, {
           group_name: gName,
           group_type: g.group_type || 'Project Plan',
-          project_id: g.project_id,
+          project_id: pId,
           project_code: g.project_code || '',
           latest_date: null,
           scan_count: 0

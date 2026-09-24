@@ -1220,10 +1220,24 @@ def init_qa_groups_table():
                 group_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 project_id UUID REFERENCES projects(project_id) ON DELETE CASCADE,
                 group_name VARCHAR(255) NOT NULL,
-                group_type VARCHAR(100) NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(project_id, group_name)
+                group_type VARCHAR(100) NOT NULL DEFAULT 'Project Plan',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+            ALTER TABLE qa_groups ADD COLUMN IF NOT EXISTS project_id UUID REFERENCES projects(project_id) ON DELETE CASCADE;
+            ALTER TABLE qa_groups ADD COLUMN IF NOT EXISTS group_name VARCHAR(255);
+            ALTER TABLE qa_groups ADD COLUMN IF NOT EXISTS group_type VARCHAR(100) DEFAULT 'Project Plan';
+            ALTER TABLE qa_groups ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+            
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint WHERE conname = 'qa_groups_project_group_unique'
+                ) THEN
+                    ALTER TABLE qa_groups ADD CONSTRAINT qa_groups_project_group_unique UNIQUE(project_id, group_name);
+                END IF;
+            EXCEPTION WHEN OTHERS THEN
+                NULL;
+            END $$;
         """)
         logger.info("Checked/Created qa_groups table.")
     except Exception as e:
@@ -1240,6 +1254,7 @@ def save_qa_group(project_id, group_name, group_type):
         if not project_id or not group_name:
             return False, "project_id and group_name are required"
             
+        init_qa_groups_table()
         conn = get_db_connection()
         cursor = conn.cursor()
         # Insert or ignore (using ON CONFLICT DO NOTHING)
@@ -1248,7 +1263,7 @@ def save_qa_group(project_id, group_name, group_type):
             VALUES (%s::uuid, %s, %s)
             ON CONFLICT (project_id, group_name) DO NOTHING
             RETURNING group_id
-        """, (project_id, group_name, group_type))
+        """, (str(project_id), group_name, group_type or 'Project Plan'))
         conn.commit()
         return True, "Group saved"
     except Exception as e:
@@ -1264,6 +1279,7 @@ def get_qa_groups(project_id=None):
     conn = None
     cursor = None
     try:
+        init_qa_groups_table()
         conn = get_db_connection()
         cursor = conn.cursor()
         
