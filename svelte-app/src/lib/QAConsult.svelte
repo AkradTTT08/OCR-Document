@@ -319,6 +319,21 @@
     return true;
   });
 
+  $: currentGroupHistory = $qaHistory.filter(h => {
+    if (!selectedProjectObj) return false;
+    const pId = String(selectedProjectObj.id || selectedProjectObj.project_id || '');
+    const pCode = String(selectedProjectObj.project_code || '');
+    const matchProj = String(h.project_id) === pId || (pCode && h.project_code === pCode);
+    if (!matchProj) return false;
+
+    if (scanGroupName) {
+      const cleanHGroup = String(h.group_name || 'General').replace(/^\[.*?\]\s*/, '').trim().toLowerCase();
+      const cleanTargetGroup = String(scanGroupName || 'General').replace(/^\[.*?\]\s*/, '').trim().toLowerCase();
+      return cleanHGroup === cleanTargetGroup || cleanHGroup.includes(cleanTargetGroup) || cleanTargetGroup.includes(cleanHGroup);
+    }
+    return true;
+  });
+
   function selectExistingGroup(g) {
     const cleanName = String(g.group_name || 'General').replace(/^\[.*?\]\s*/, '').trim();
     scanGroupName = cleanName;
@@ -409,7 +424,7 @@
       }
       emailInput = "";
     } else if (emailInput) {
-      toast.error("รูปแบบอีเมลไม่ถูกต้อง");
+      toast("รูปแบบอีเมลไม่ถูกต้อง", "warning");
     }
   }
 
@@ -561,13 +576,22 @@
 
   async function processQAConsult() {
     if (emailInput.trim() !== "") {
-      addEmail();
+      const emailTrimmed = emailInput.trim();
+      if (emailTrimmed.includes("@") && !emailList.includes(emailTrimmed)) {
+        emailList = [...emailList, emailTrimmed];
+      }
+      emailInput = "";
     }
+
+    const finalEmail = (emailList && emailList.length > 0) 
+      ? emailList.join(",") 
+      : (emailInput.trim() || email || "");
+
     if (!file) {
       toast("กรุณาอัปโหลดไฟล์เอกสารก่อน", "warning");
       return;
     }
-    if (!email) {
+    if (!finalEmail || finalEmail.trim() === "") {
       toast("กรุณากรอกอีเมลสำหรับรับผลการตรวจสอบ", "warning");
       return;
     }
@@ -614,7 +638,7 @@
     const formData = new FormData();
     formData.append("file", file);
     formData.append("doc_type", JSON.stringify(selectedDocTypes));
-    formData.append("email", email);
+    formData.append("email", finalEmail);
     formData.append("skill_id", JSON.stringify(selectedSkills));
     if (selectedProjectObj) {
       formData.append("project_id", pId);
@@ -746,6 +770,27 @@
     scanGroupType = "Project Plan";
     processStatus = "";
     if (fileInput) fileInput.value = "";
+  }
+
+  let isExitTableExpanded = false;
+  let isFindingsTableExpanded = false;
+
+  function scrollToSection(id) {
+    const el = document.getElementById(id);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }
+
+  async function copyReportText() {
+    if (scanResult && scanResult.report) {
+      try {
+        await navigator.clipboard.writeText(scanResult.report);
+        toast("คัดลอกรายงานเรียบร้อยแล้ว", "success");
+      } catch (err) {
+        toast("ไม่สามารถคัดลอกได้: " + err.message, "error");
+      }
+    }
   }
 </script>
 
@@ -1283,6 +1328,62 @@
       </div>
     </div>
 
+    <!-- RECENT TRANSACTIONS / SCAN HISTORY IN THIS GROUP -->
+    {#if currentGroupHistory.length > 0}
+      <div class="project-history-section" style="margin-top: 20px;">
+        <div class="section-title-bar">
+          <div class="title-with-badge">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <polyline points="14 2 14 8 20 8"></polyline>
+              <line x1="16" y1="13" x2="8" y2="13"></line>
+              <line x1="16" y1="17" x2="8" y2="17"></line>
+            </svg>
+            <h3>ประวัติเอกสารที่เคยตรวจในกลุ่มนี้ ({currentGroupHistory.length})</h3>
+          </div>
+          <span class="sub-hint">คลิกเอกสารเพื่อเปิดดูผลการวิเคราะห์ย้อนหลัง</span>
+        </div>
+
+        <div class="history-table-container">
+          <table class="project-history-table">
+            <thead>
+              <tr>
+                <th>ชื่อไฟล์เอกสาร</th>
+                <th>กลุ่มการตรวจสอบ</th>
+                <th>ประเภท</th>
+                <th>วันที่ตรวจ</th>
+                <th style="text-align: right;">การจัดการ</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each currentGroupHistory.slice(0, 15) as item}
+                <tr class="history-table-row" on:click={() => selectedHistory.set(item)}>
+                  <td class="td-filename">
+                    <div class="file-name-cell">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="color: #60a5fa; flex-shrink: 0;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path></svg>
+                      <span>{item.filename || 'Unknown Document'}</span>
+                    </div>
+                  </td>
+                  <td>
+                    <span class="group-pill">{item.group_name || 'General'}</span>
+                  </td>
+                  <td>
+                    <span class="type-pill">{item.docType || item.group_type || 'General'}</span>
+                  </td>
+                  <td class="td-date">{formatHistoryTime(item.date)}</td>
+                  <td style="text-align: right;">
+                    <button class="btn-table-view" on:click|stopPropagation={() => selectedHistory.set(item)}>
+                      ดูรายงาน
+                    </button>
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    {/if}
+
   {:else if isProcessing && !scanResult}
     <!-- SPECTRA QA LOADING STATE -->
     <div class="loading-state">
@@ -1303,7 +1404,7 @@
 
     <!-- RESULT STATE -->
     <div class="result-state">
-      <div class="dashboard-top-bar" style="display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,0.1); width: 100%; flex-wrap: wrap; gap: 16px;">
+      <div class="dashboard-top-bar" id="qa-top-header" style="display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 8px; padding-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,0.1); width: 100%; flex-wrap: wrap; gap: 16px;">
         <div class="left-content" style="display: flex; flex-direction: column; gap: 10px;">
           <div class="header-text" style="text-align: left; margin: 0;">
             <h2 style="font-size: 22px; margin-bottom: 2px;">ผลการวิเคราะห์ QA & Exit Criteria Review Gate</h2>
@@ -1364,22 +1465,46 @@
         </div>
       </div>
 
+      <!-- Quick Navigation Bar -->
+      <div class="quick-nav-bar">
+        <span class="nav-label">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+          นำทางด่วน:
+        </span>
+        {#if scanResult.exit_criteria_eval}
+          <button class="btn-quick-nav" on:click={() => scrollToSection('exit-criteria-section')}>
+            📋 Exit Criteria Gate ({scanResult.exit_criteria_eval.score_percentage}%)
+          </button>
+        {/if}
+        {#if scanResult.qa_findings && scanResult.qa_findings.length > 0}
+          <button class="btn-quick-nav" on:click={() => scrollToSection('qa-findings-section')}>
+            📊 QA Audit Findings ({scanResult.qa_findings.length})
+          </button>
+        {/if}
+        <button class="btn-quick-nav highlight-btn" on:click={() => scrollToSection('consult-report-section')}>
+          📝 Spectra QA Consult Report (รายงานวิเคราะห์)
+        </button>
+      </div>
+
       <!-- QA Findings Report Card -->
       {#if scanResult.qa_findings && scanResult.qa_findings.length > 0}
-        <div class="qa-findings-card glass-panel" style="margin-bottom: 24px; overflow-x: auto;">
+        <div class="qa-findings-card glass-panel" id="qa-findings-section" style="margin-bottom: 20px;">
           <div class="gate-result-header" style="margin-bottom: 16px;">
             <div class="gate-header-title">
               <h3>📊 QA Audit Findings Report</h3>
               <span class="template-badge">ประเด็นที่พบจากการวิเคราะห์</span>
             </div>
-            <div class="gate-header-actions">
+            <div class="gate-header-actions" style="display: flex; gap: 8px; align-items: center;">
               <span class="gate-status-pill status-info">
                 พบ {scanResult.qa_findings.length} รายการ
               </span>
+              <button class="btn-table-toggle" on:click={() => isFindingsTableExpanded = !isFindingsTableExpanded}>
+                {isFindingsTableExpanded ? '🔽 ย่อตาราง' : '🔼 ขยายเต็ม'}
+              </button>
             </div>
           </div>
 
-          <div class="exit-checklist-table-wrapper">
+          <div class="exit-checklist-table-wrapper" class:expanded={isFindingsTableExpanded}>
             <table class="exit-checklist-table">
               <thead>
                 <tr>
@@ -1419,16 +1544,19 @@
 
       <!-- Exit Criteria Review Gate Card -->
       {#if scanResult.exit_criteria_eval}
-        <div class="exit-criteria-gate-result-card glass-panel" style="margin-bottom: 24px;">
+        <div class="exit-criteria-gate-result-card glass-panel" id="exit-criteria-section" style="margin-bottom: 20px;">
           <div class="gate-result-header">
             <div class="gate-header-title">
               <h3>📋 ผลการประเมิน Exit Criteria Review Gate</h3>
               <span class="template-badge">{scanResult.exit_criteria_eval.template_title}</span>
             </div>
-            <div class="gate-header-actions">
+            <div class="gate-header-actions" style="display: flex; gap: 8px; align-items: center;">
               <span class="gate-status-pill status-{scanResult.exit_criteria_eval.status.toLowerCase()}">
                 {scanResult.exit_criteria_eval.status}
               </span>
+              <button class="btn-table-toggle" on:click={() => isExitTableExpanded = !isExitTableExpanded}>
+                {isExitTableExpanded ? '🔽 ย่อตาราง' : '🔼 ขยายเต็ม'}
+              </button>
             </div>
           </div>
 
@@ -1452,7 +1580,7 @@
           </div>
 
           <!-- Categorized Checklist Items -->
-          <div class="exit-checklist-table-wrapper">
+          <div class="exit-checklist-table-wrapper" class:expanded={isExitTableExpanded}>
             <table class="exit-checklist-table">
               <thead>
                 <tr>
@@ -1496,9 +1624,31 @@
         </div>
       {/if}
 
-      <div class="report-box email-preview" style="max-height: none;">
+      <!-- Spectra QA Consult Report Box -->
+      <div class="report-box email-preview" id="consult-report-section">
         <div class="email-header">
-          <h2>Spectra QA Consult Report</h2>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <polyline points="14 2 14 8 20 8"></polyline>
+              <line x1="16" y1="13" x2="8" y2="13"></line>
+              <line x1="16" y1="17" x2="8" y2="17"></line>
+              <polyline points="10 9 9 9 8 9"></polyline>
+            </svg>
+            <h2 style="margin: 0; font-size: 1.15rem; font-weight: 700;">Spectra QA Consult Report</h2>
+          </div>
+          <div style="display: flex; gap: 8px; align-items: center;">
+            {#if scanResult.report}
+              <button class="btn-report-action" on:click={copyReportText} title="คัดลอกข้อความรายงาน">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                คัดลอกรายงาน
+              </button>
+            {/if}
+            <button class="btn-report-action" on:click={() => scrollToSection('qa-top-header')} title="เลื่อนกลับด้านบน">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="18 15 12 9 6 15"></polyline></svg>
+              กลับด้านบน
+            </button>
+          </div>
         </div>
         <div class="email-body">
           <p>เรียนผู้ใช้งาน,</p>
@@ -1560,15 +1710,17 @@
     max-width: 1400px;
     height: 100%;
     margin: 0 auto;
-    padding: 20px 40px;
+    padding: 20px 40px 60px;
     display: flex;
     flex-direction: column;
     gap: 30px;
     overflow-y: auto;
+    scroll-behavior: smooth;
+    box-sizing: border-box;
   }
   .qa-container.full-width {
     max-width: 100%;
-    padding: 20px 20px;
+    padding: 20px 24px 80px 24px;
   }
   .header-text-local {
     text-align: center;
@@ -2392,8 +2544,112 @@
 
   .stat-lbl { font-size: 0.75rem; color: #94a3b8; margin-top: 2px; }
 
+  /* Result State Container */
+  .result-state {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    width: 100%;
+    flex-shrink: 0;
+    min-height: min-content;
+    padding-bottom: 80px;
+  }
+
+  /* Quick Navigation Bar */
+  .quick-nav-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    background: rgba(30, 41, 59, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    padding: 10px 16px;
+    border-radius: 12px;
+    margin-bottom: 8px;
+    backdrop-filter: blur(8px);
+  }
+  .nav-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: #94a3b8;
+    margin-right: 4px;
+  }
+  .btn-quick-nav {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: #e2e8f0;
+    padding: 6px 14px;
+    border-radius: 8px;
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+  .btn-quick-nav:hover {
+    background: rgba(99, 102, 241, 0.2);
+    border-color: rgba(99, 102, 241, 0.4);
+    color: #ffffff;
+    transform: translateY(-1px);
+  }
+  .btn-quick-nav.highlight-btn {
+    background: rgba(124, 58, 237, 0.25);
+    border-color: rgba(124, 58, 237, 0.45);
+    color: #c4b5fd;
+    font-weight: 600;
+  }
+  .btn-quick-nav.highlight-btn:hover {
+    background: rgba(124, 58, 237, 0.4);
+    color: #ffffff;
+  }
+
+  .btn-table-toggle {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: #cbd5e1;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+  .btn-table-toggle:hover {
+    background: rgba(255, 255, 255, 0.18);
+    color: #ffffff;
+  }
+
+  .btn-report-action {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(255, 255, 255, 0.15);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    color: #ffffff;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 0.78rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+  .btn-report-action:hover {
+    background: rgba(255, 255, 255, 0.28);
+    transform: translateY(-1px);
+  }
+
   .exit-checklist-table-wrapper {
     overflow-x: auto;
+    overflow-y: auto;
+    max-height: 480px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(15, 23, 42, 0.4);
+  }
+  .exit-checklist-table-wrapper.expanded {
+    max-height: none;
   }
 
   .exit-checklist-table {
@@ -2403,7 +2659,11 @@
   }
 
   .exit-checklist-table th {
-    background: rgba(30, 41, 59, 0.9);
+    background: #1e293b;
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.12);
     color: #cbd5e1;
     text-align: left;
     padding: 10px 12px;

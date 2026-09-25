@@ -1136,41 +1136,72 @@ def init_qa_transactions():
         if cursor: cursor.close()
         if conn: conn.close()
 
+def resolve_project_id_uuid(conn, project_id):
+    """Safely resolves project_id to a valid UUID string, or None."""
+    if not project_id or str(project_id).lower() in ['none', 'null', 'undefined', '']:
+        return None
+    import uuid
+    pid_str = str(project_id).strip()
+    try:
+        return str(uuid.UUID(pid_str))
+    except (ValueError, TypeError):
+        pass
+    
+    # Try looking up by project_code or project_name
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT project_id FROM projects WHERE project_code = %s OR project_name = %s LIMIT 1", (pid_str, pid_str))
+        row = cur.fetchone()
+        cur.close()
+        if row and row[0]:
+            return str(row[0])
+    except Exception as e:
+        logger.warning(f"Could not resolve project_id UUID for '{project_id}': {e}")
+    return None
+
 def save_qa_transaction(project_id, group_name, group_type, filename, doc_type, extracted_text, qa_report, total_pages=None, email=None, qa_findings=None, exit_criteria_eval=None):
     """Saves a QA consult transaction to the database."""
     import json, re
     conn = None
     cursor = None
     try:
-        if not project_id:
-            logger.warning("No project_id provided, skipping saving QA transaction.")
-            return False
-            
         if group_name:
             group_name = re.sub(r'^\[.*?\]\s*', '', str(group_name)).strip()
         if not group_name:
             group_name = 'General'
 
-        # Automatically ensure group exists in qa_groups table
-        try:
-            save_qa_group(project_id, group_name, group_type or 'Project Plan')
-        except Exception as g_err:
-            logger.warning(f"Note: auto save_qa_group in save_qa_transaction: {g_err}")
-
         conn = get_db_connection()
         cursor = conn.cursor()
-        
+
+        # Resolve project_id safely
+        resolved_pid = resolve_project_id_uuid(conn, project_id)
+
+        # Automatically ensure group exists in qa_groups table
+        if resolved_pid:
+            try:
+                save_qa_group(resolved_pid, group_name, group_type or 'Project Plan')
+            except Exception as g_err:
+                logger.warning(f"Note: auto save_qa_group in save_qa_transaction: {g_err}")
+
         qf_json = json.dumps(qa_findings) if qa_findings is not None else None
         ece_json = json.dumps(exit_criteria_eval) if exit_criteria_eval is not None else None
         
-        cursor.execute("""
-            INSERT INTO qa_transactions (project_id, group_name, group_type, filename, doc_type, extracted_text, qa_report, total_pages, email, qa_findings, exit_criteria_eval)
-            VALUES (%s::uuid, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)
-            RETURNING transaction_id
-        """, (project_id, group_name, group_type or 'Project Plan', filename, doc_type, extracted_text, qa_report, total_pages, email, qf_json, ece_json))
+        if resolved_pid:
+            cursor.execute("""
+                INSERT INTO qa_transactions (project_id, group_name, group_type, filename, doc_type, extracted_text, qa_report, total_pages, email, qa_findings, exit_criteria_eval)
+                VALUES (%s::uuid, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)
+                RETURNING transaction_id
+            """, (resolved_pid, group_name, group_type or 'Project Plan', filename, doc_type, extracted_text, qa_report, total_pages, email, qf_json, ece_json))
+        else:
+            cursor.execute("""
+                INSERT INTO qa_transactions (project_id, group_name, group_type, filename, doc_type, extracted_text, qa_report, total_pages, email, qa_findings, exit_criteria_eval)
+                VALUES (NULL, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)
+                RETURNING transaction_id
+            """, (group_name, group_type or 'Project Plan', filename, doc_type, extracted_text, qa_report, total_pages, email, qf_json, ece_json))
+
         transaction_id = cursor.fetchone()[0]
         conn.commit()
-        logger.info(f"Saved QA transaction {transaction_id} for {filename} in project {project_id}.")
+        logger.info(f"Saved QA transaction {transaction_id} for {filename} (project: {resolved_pid}).")
         return str(transaction_id)
     except Exception as e:
         if conn: conn.rollback()
@@ -1298,13 +1329,17 @@ def save_qa_group(project_id, group_name, group_type):
         init_qa_groups_table()
         conn = get_db_connection()
         cursor = conn.cursor()
+        resolved_pid = resolve_project_id_uuid(conn, project_id)
+        if not resolved_pid:
+            return False, f"Invalid project_id: {project_id}"
+            
         # Insert or ignore (using ON CONFLICT DO NOTHING)
         cursor.execute("""
             INSERT INTO qa_groups (project_id, group_name, group_type)
             VALUES (%s::uuid, %s, %s)
             ON CONFLICT (project_id, group_name) DO NOTHING
             RETURNING group_id
-        """, (str(project_id), group_name, group_type or 'Project Plan'))
+        """, (resolved_pid, group_name, group_type or 'Project Plan'))
         conn.commit()
         return True, "Group saved"
     except Exception as e:

@@ -37,13 +37,15 @@ export const allGroups = derived(
 
     // Helper to find existing group entry in map
     const findGroup = (pId, pCode, gName) => {
-      const directKey = `${pId}::${gName.toLowerCase()}`;
+      const cleanG = cleanGroup(gName).toLowerCase();
+      const directKey = `${pId}::${cleanG}`;
       if (groupMap.has(directKey)) return groupMap.get(directKey);
 
       // Try finding by project_code or matching name within project
       for (const item of groupMap.values()) {
-        const nameMatch = item.group_name.toLowerCase() === gName.toLowerCase();
-        const projMatch = (pId && item.project_id === pId) || (pCode && item.project_code === pCode);
+        const itemClean = cleanGroup(item.group_name).toLowerCase();
+        const nameMatch = itemClean === cleanG || itemClean.includes(cleanG) || cleanG.includes(itemClean);
+        const projMatch = (!pId && !item.project_id) || (pId && item.project_id === pId) || (pCode && item.project_code === pCode);
         if (nameMatch && projMatch) return item;
       }
       return null;
