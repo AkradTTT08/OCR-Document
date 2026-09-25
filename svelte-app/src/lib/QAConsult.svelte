@@ -15,11 +15,14 @@
   /** @type {any} */
   let gateResultData = null;
 
+  /** @type {any[]} */
   let skills = [];
   let docTypes = MASTER_DOC_TYPES;
   let selectedSkill = "";
   
+  /** @type {any[]} */
   let projects = [];
+  /** @type {any[]} */
   let exitCriteriaTemplates = [];
   let isCheckingCriteria = false;
 
@@ -43,6 +46,7 @@
   
   // Use store for selected project so App.svelte can filter history
   $: selectedProjectObj = $selectedProjectStore;
+  /** @param {any} p */
   function selectProject(p) {
     selectedProjectStore.set(p);
   }
@@ -174,6 +178,7 @@
     }
   }
 
+  /** @param {any} res */
   function synthesizeExitCriteria(res) {
     if (!res) return null;
     const findings = res.qa_findings || [];
@@ -492,6 +497,140 @@
   let showConfirmModal = false;
   let showSuccessModal = false;
 
+  let selectedCriteriaTab = 'all';
+
+  // Criteria Group Tabs extraction from scan result
+  $: criteriaTabsList = (() => {
+    const evalData = scanResult?.exit_criteria_eval;
+    if (!evalData || !evalData.items || evalData.items.length === 0) return [];
+
+    const groupMap = new Map();
+
+    evalData.items.forEach((/** @type {any} */ item) => {
+      let groupKey = 'universal';
+      let groupTitle = 'เกณฑ์มาตรฐานกลาง (Universal Document)';
+      let cleanCategory = item.category || '';
+
+      const match = cleanCategory.match(/^\[(.*?)\]\s*(.*)$/);
+      if (match) {
+        const prefix = match[1].trim();
+        cleanCategory = match[2].trim();
+        if (prefix.includes('เกณฑ์กลาง') || prefix.toUpperCase() === 'ALL' || prefix.toLowerCase().includes('universal')) {
+          groupKey = 'universal';
+          groupTitle = 'เกณฑ์มาตรฐานกลาง (Universal Document)';
+        } else {
+          groupKey = prefix.toLowerCase().replace(/[^a-z0-9_\u0E00-\u0E7F]/gi, '_');
+          groupTitle = prefix;
+        }
+      } else {
+        groupKey = 'universal';
+        groupTitle = 'เกณฑ์มาตรฐานกลาง (Universal Document)';
+      }
+
+      if (!groupMap.has(groupKey)) {
+        groupMap.set(groupKey, {
+          key: groupKey,
+          title: groupTitle,
+          items: []
+        });
+      }
+      groupMap.get(groupKey).items.push({
+        ...item,
+        displayCategory: cleanCategory,
+        groupTag: match ? match[1].trim() : ''
+      });
+    });
+
+    const groups = Array.from(groupMap.values());
+
+    return groups.map(g => {
+      const passed = g.items.filter((/** @type {any} */ i) => i.status === 'PASS').length;
+      const failed = g.items.filter((/** @type {any} */ i) => i.status === 'FAIL').length;
+      const na = g.items.filter((/** @type {any} */ i) => i.status === 'NA' || i.status === 'N/A').length;
+      const totalValid = g.items.length - na;
+      const score = totalValid > 0 ? Math.round((passed / totalValid) * 100) : 100;
+      
+      const hasCat12Fail = g.items.some((/** @type {any} */ i) => i.status === 'FAIL' && (
+        (i.category || '').includes('Defect') || 
+        (i.category || '').includes('Content') || 
+        (i.item_code || '').startsWith('1.') || 
+        (i.item_code || '').startsWith('2.')
+      ));
+
+      let status = 'PASSED';
+      if (failed > 0) {
+        status = hasCat12Fail ? 'REJECTED' : 'CONDITIONAL_PASSED';
+      }
+
+      return {
+        ...g,
+        score,
+        passed,
+        failed,
+        na,
+        total: g.items.length,
+        status
+      };
+    });
+  })();
+
+  $: activeTabItems = (() => {
+    const evalData = scanResult?.exit_criteria_eval;
+    if (!evalData || !evalData.items) return [];
+
+    if (selectedCriteriaTab === 'all') {
+      return evalData.items.map((/** @type {any} */ item) => {
+        const match = (item.category || '').match(/^\[(.*?)\]\s*(.*)$/);
+        return {
+          ...item,
+          displayCategory: match ? match[2].trim() : item.category,
+          groupTag: match ? match[1].trim() : ''
+        };
+      });
+    }
+
+    const found = criteriaTabsList.find(g => g.key === selectedCriteriaTab);
+    if (found) {
+      return found.items;
+    }
+
+    return evalData.items;
+  })();
+
+  $: activeTabStats = (() => {
+    const evalData = scanResult?.exit_criteria_eval;
+    if (!evalData) return { score: 100, passed: 0, failed: 0, na: 0, status: 'PASSED' };
+
+    if (selectedCriteriaTab === 'all') {
+      return {
+        score: evalData.score_percentage ?? 100,
+        passed: evalData.passed_items ?? 0,
+        failed: evalData.failed_items ?? 0,
+        na: evalData.na_items ?? 0,
+        status: evalData.status || 'PASSED'
+      };
+    }
+
+    const found = criteriaTabsList.find(g => g.key === selectedCriteriaTab);
+    if (found) {
+      return {
+        score: found.score,
+        passed: found.passed,
+        failed: found.failed,
+        na: found.na,
+        status: found.status
+      };
+    }
+
+    return {
+      score: evalData.score_percentage ?? 100,
+      passed: evalData.passed_items ?? 0,
+      failed: evalData.failed_items ?? 0,
+      na: evalData.na_items ?? 0,
+      status: evalData.status || 'PASSED'
+    };
+  })();
+
   let docTypeOpen = false;
   let skillOpen = false;
   let groupTypeOpen = false;
@@ -537,7 +676,7 @@
   async function confirmGroup() {
     if (!scanGroupName.trim()) return;
     
-    const pId = selectedProjectObj.id || selectedProjectObj.project_id;
+    const pId = selectedProjectObj?.id || selectedProjectObj?.project_id;
     // Clean group name by removing any leading bracketed type e.g. "[Project Plan] II" -> "II"
     const groupName = scanGroupName.replace(/^\[.*?\]\s*/, '').trim();
     scanGroupName = groupName;
@@ -630,7 +769,7 @@
 
     const cleanGroupName = scanGroupName.replace(/^\[.*?\]\s*/, '').trim() || 'General';
     scanGroupName = cleanGroupName;
-    const pId = selectedProjectObj.id || selectedProjectObj.project_id;
+    const pId = selectedProjectObj?.id || selectedProjectObj?.project_id;
 
     // Keep sidebar active group in sync
     activeSidebarGroup.set({
@@ -1649,13 +1788,13 @@
               <span class="template-badge">{scanResult.exit_criteria_eval.template_title}</span>
             </div>
             <div class="gate-header-actions" style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-              {#if scanResult.exit_criteria_eval.status !== 'PASSED'}
+              {#if activeTabStats.status !== 'PASSED'}
                 <button class="btn-mini-autofix" on:click={sendFindingsToDocCreation} disabled={isSendingToDocCreation}>
                   🔄 ส่งแก้ไขตามเกณฑ์ Gate
                 </button>
               {/if}
-              <span class="gate-status-pill status-{scanResult.exit_criteria_eval.status.toLowerCase()}">
-                {scanResult.exit_criteria_eval.status}
+              <span class="gate-status-pill status-{activeTabStats.status.toLowerCase()}">
+                {activeTabStats.status}
               </span>
               <button class="btn-table-toggle" on:click={() => isExitTableExpanded = !isExitTableExpanded}>
                 {isExitTableExpanded ? '🔽 ย่อตาราง' : '🔼 ขยายเต็ม'}
@@ -1663,21 +1802,61 @@
             </div>
           </div>
 
+          <!-- Criteria Tabs Navigation -->
+          {#if criteriaTabsList && criteriaTabsList.length > 1}
+            <div class="criteria-nav-tabs">
+              <button 
+                class="criteria-tab-btn" 
+                class:active={selectedCriteriaTab === 'all'}
+                on:click={() => selectedCriteriaTab = 'all'}
+              >
+                <span class="tab-icon">📑</span>
+                <span class="tab-title">ทั้งหมด (All Criteria)</span>
+                <span class="tab-badge">{scanResult.exit_criteria_eval.items ? scanResult.exit_criteria_eval.items.length : 0} ข้อ</span>
+                {#if scanResult.exit_criteria_eval.failed_items > 0}
+                  <span class="tab-status-dot red" title="มีข้อที่ไม่ผ่าน"></span>
+                {:else}
+                  <span class="tab-status-dot green" title="ผ่านทุกข้อ"></span>
+                {/if}
+              </button>
+
+              {#each criteriaTabsList as grp}
+                <button 
+                  class="criteria-tab-btn" 
+                  class:active={selectedCriteriaTab === grp.key}
+                  on:click={() => selectedCriteriaTab = grp.key}
+                >
+                  <span class="tab-icon">{grp.key === 'universal' ? '🌐' : '📘'}</span>
+                  <span class="tab-title">{grp.title}</span>
+                  <span class="tab-badge" class:has-fail={grp.failed > 0}>
+                    {grp.passed}/{grp.total} ผ่าน
+                    {#if grp.failed > 0}
+                      <span class="fail-count">({grp.failed} ไม่ผ่าน)</span>
+                    {/if}
+                  </span>
+                  <span class="tab-status-pill status-{grp.status.toLowerCase()}">
+                    {grp.status}
+                  </span>
+                </button>
+              {/each}
+            </div>
+          {/if}
+
           <div class="gate-summary-bar">
             <div class="summary-stat">
-              <span class="stat-num">{scanResult.exit_criteria_eval.score_percentage}%</span>
+              <span class="stat-num">{activeTabStats.score}%</span>
               <span class="stat-lbl">คะแนนสมบูรณ์</span>
             </div>
             <div class="summary-stat green">
-              <span class="stat-num">{scanResult.exit_criteria_eval.passed_items}</span>
+              <span class="stat-num">{activeTabStats.passed}</span>
               <span class="stat-lbl">ผ่าน (PASS)</span>
             </div>
             <div class="summary-stat red">
-              <span class="stat-num">{scanResult.exit_criteria_eval.failed_items}</span>
+              <span class="stat-num">{activeTabStats.failed}</span>
               <span class="stat-lbl">ไม่ผ่าน (FAIL)</span>
             </div>
             <div class="summary-stat gray">
-              <span class="stat-num">{scanResult.exit_criteria_eval.na_items}</span>
+              <span class="stat-num">{activeTabStats.na}</span>
               <span class="stat-lbl">ข้าม (N/A)</span>
             </div>
           </div>
@@ -1697,30 +1876,43 @@
                 </tr>
               </thead>
               <tbody>
-                {#each scanResult.exit_criteria_eval.items as item}
-                  <tr class="row-status-{item.status.toLowerCase()}">
-                    <td class="item-code-cell"><strong>{item.item_code}</strong></td>
-                    <td class="category-cell">{item.category}</td>
-                    <td class="question-cell">{item.question_text}</td>
-                    <td class="metric-cell">
-                      <span class="badge-metric">{item.target_metric || '100% (ผ่านบริบูรณ์)'}</span>
-                    </td>
-                    <td class="severity-cell">
-                      <span class="badge-sev badge-sev-{item.severity.toLowerCase()}">{item.severity}</span>
-                    </td>
-                    <td class="status-cell">
-                      <span class="badge-status status-tag-{item.status.toLowerCase()}">
-                        {item.status === 'PASS' ? '✅ PASS' : item.status === 'FAIL' ? '❌ FAIL' : '⚪ N/A'}
-                      </span>
-                    </td>
-                    <td class="remarks-cell">
-                      <div class="remark-text">{item.remarks}</div>
-                      {#if item.evidence_text}
-                        <div class="evidence-text">🔎 <em>{item.evidence_text}</em></div>
-                      {/if}
+                {#if activeTabItems.length === 0}
+                  <tr>
+                    <td colspan="7" style="text-align: center; padding: 24px; color: #94a3b8;">
+                      ไม่พบรายการข้อตรวจในเกณฑ์นี้
                     </td>
                   </tr>
-                {/each}
+                {:else}
+                  {#each activeTabItems as item}
+                    <tr class="row-status-{item.status.toLowerCase()}">
+                      <td class="item-code-cell"><strong>{item.item_code}</strong></td>
+                      <td class="category-cell">
+                        {#if selectedCriteriaTab === 'all' && item.groupTag}
+                          <span class="group-prefix-badge">{item.groupTag}</span>
+                        {/if}
+                        {item.displayCategory || item.category}
+                      </td>
+                      <td class="question-cell">{item.question_text}</td>
+                      <td class="metric-cell">
+                        <span class="badge-metric">{item.target_metric || '100% (ผ่านบริบูรณ์)'}</span>
+                      </td>
+                      <td class="severity-cell">
+                        <span class="badge-sev badge-sev-{item.severity.toLowerCase()}">{item.severity}</span>
+                      </td>
+                      <td class="status-cell">
+                        <span class="badge-status status-tag-{item.status.toLowerCase()}">
+                          {item.status === 'PASS' ? '✅ PASS' : item.status === 'FAIL' ? '❌ FAIL' : '⚪ N/A'}
+                        </span>
+                      </td>
+                      <td class="remarks-cell">
+                        <div class="remark-text">{item.remarks}</div>
+                        {#if item.evidence_text}
+                          <div class="evidence-text">🔎 <em>{item.evidence_text}</em></div>
+                        {/if}
+                      </td>
+                    </tr>
+                  {/each}
+                {/if}
               </tbody>
             </table>
           </div>
@@ -2802,6 +2994,117 @@
   .btn-report-action:hover {
     background: rgba(255, 255, 255, 0.28);
     transform: translateY(-1px);
+  }
+
+  /* Criteria Nav Tabs */
+  .criteria-nav-tabs {
+    display: flex;
+    gap: 8px;
+    margin: 14px 0 16px 0;
+    padding-bottom: 8px;
+    overflow-x: auto;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  .criteria-tab-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(30, 41, 59, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #94a3b8;
+    padding: 8px 14px;
+    border-radius: 10px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+  }
+  .criteria-tab-btn:hover {
+    background: rgba(51, 65, 85, 0.8);
+    color: #e2e8f0;
+    border-color: rgba(255, 255, 255, 0.2);
+    transform: translateY(-1px);
+  }
+  .criteria-tab-btn.active {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.25), rgba(124, 58, 237, 0.3));
+    border-color: rgba(99, 102, 241, 0.6);
+    color: #ffffff;
+    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.25);
+  }
+  .tab-icon {
+    font-size: 0.95rem;
+  }
+  .tab-title {
+    font-weight: 600;
+  }
+  .tab-badge {
+    background: rgba(255, 255, 255, 0.1);
+    color: #cbd5e1;
+    padding: 2px 7px;
+    border-radius: 12px;
+    font-size: 0.72rem;
+    font-weight: 500;
+  }
+  .criteria-tab-btn.active .tab-badge {
+    background: rgba(255, 255, 255, 0.2);
+    color: #ffffff;
+  }
+  .tab-badge.has-fail {
+    background: rgba(239, 68, 68, 0.2);
+    color: #fca5a5;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+  }
+  .tab-badge .fail-count {
+    color: #f87171;
+    font-weight: 700;
+  }
+  .tab-status-pill {
+    padding: 2px 7px;
+    border-radius: 6px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+  }
+  .tab-status-pill.status-passed {
+    background: rgba(16, 185, 129, 0.2);
+    color: #34d399;
+    border: 1px solid rgba(16, 185, 129, 0.4);
+  }
+  .tab-status-pill.status-conditional_passed {
+    background: rgba(245, 158, 11, 0.2);
+    color: #fbbf24;
+    border: 1px solid rgba(245, 158, 11, 0.4);
+  }
+  .tab-status-pill.status-rejected {
+    background: rgba(239, 68, 68, 0.2);
+    color: #f87171;
+    border: 1px solid rgba(239, 68, 68, 0.4);
+  }
+  .tab-status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+  }
+  .tab-status-dot.green {
+    background: #10b981;
+    box-shadow: 0 0 6px rgba(16, 185, 129, 0.6);
+  }
+  .tab-status-dot.red {
+    background: #ef4444;
+    box-shadow: 0 0 6px rgba(239, 68, 68, 0.6);
+  }
+  .group-prefix-badge {
+    display: inline-block;
+    padding: 2px 6px;
+    margin-right: 4px;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    background: rgba(99, 102, 241, 0.15);
+    border: 1px solid rgba(99, 102, 241, 0.3);
+    color: #a5b4fc;
   }
 
   .exit-checklist-table-wrapper {

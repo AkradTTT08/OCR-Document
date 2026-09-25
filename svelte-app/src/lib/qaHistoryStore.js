@@ -1,13 +1,22 @@
 import { writable, derived, get } from 'svelte/store';
 
+/** @type {import('svelte/store').Writable<any[]>} */
 export const qaHistory = writable([]);
+/** @type {import('svelte/store').Writable<any>} */
 export const selectedHistory = writable(null);
+/** @type {import('svelte/store').Writable<any>} */
 export const selectedProjectStore = writable(null);
+/** @type {import('svelte/store').Writable<any[]>} */
 export const qaSessionGroups = writable([]);
+/** @type {import('svelte/store').Writable<any>} */
 export const activeQAContext = writable(null);
+/** @type {import('svelte/store').Writable<any>} */
 export const activeSidebarGroup = writable(null);
+/** @type {import('svelte/store').Writable<any[]>} */
 export const qaDbGroups = writable([]);
+/** @type {import('svelte/store').Writable<any>} */
 export const activeScanStatus = writable(null);
+/** @type {import('svelte/store').Writable<any>} */
 export const qaRefinementFeedback = writable(null);
 
 /**
