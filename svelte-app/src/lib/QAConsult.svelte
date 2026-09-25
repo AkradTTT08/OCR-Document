@@ -306,7 +306,17 @@
     if (!selectedProjectObj) return false;
     const pId = String(selectedProjectObj.id || selectedProjectObj.project_id || '');
     const pCode = String(selectedProjectObj.project_code || '');
-    return String(h.project_id) === pId || (pCode && h.project_code === pCode);
+    const matchProj = String(h.project_id) === pId || (pCode && h.project_code === pCode);
+    if (!matchProj) return false;
+
+    if ($activeSidebarGroup && $activeSidebarGroup.group_name) {
+      const cleanHGroup = String(h.group_name || 'General').replace(/^\[.*?\]\s*/, '').trim().toLowerCase();
+      const cleanCtxGroup = String($activeSidebarGroup.group_name || 'General').replace(/^\[.*?\]\s*/, '').trim().toLowerCase();
+      const rawHGroup = String(h.group_name || 'General').trim().toLowerCase();
+      const rawCtxGroup = String($activeSidebarGroup.group_name || 'General').trim().toLowerCase();
+      return rawHGroup === rawCtxGroup || cleanHGroup === cleanCtxGroup || cleanHGroup.includes(cleanCtxGroup) || cleanCtxGroup.includes(cleanHGroup);
+    }
+    return true;
   });
 
   function selectExistingGroup(g) {

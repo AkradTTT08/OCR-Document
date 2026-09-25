@@ -2623,16 +2623,17 @@ def get_qa_transactions():
         rows = cursor.fetchall()
         transactions = []
         for r in rows:
+            p_id_str = str(r[1]) if r[1] is not None and str(r[1]).lower() != 'none' else None
             transactions.append({
                 'id': str(r[0]),
-                'project_id': str(r[1]),
+                'project_id': p_id_str,
                 'group_name': r[2] or 'General',
                 'group_type': r[3] or '',
                 'filename': r[4],
                 'docType': r[5],
                 'report': r[6],
                 'date': r[7].isoformat() if r[7] else None,
-                'project_code': r[8] or 'Unknown',
+                'project_code': r[8] or '',
                 'total_pages': r[9] if len(r) > 9 else None,
                 'email': r[10] if len(r) > 10 else None,
                 'qa_findings': r[11] if len(r) > 11 else None,

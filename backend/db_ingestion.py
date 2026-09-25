@@ -1151,6 +1151,12 @@ def save_qa_transaction(project_id, group_name, group_type, filename, doc_type, 
         if not group_name:
             group_name = 'General'
 
+        # Automatically ensure group exists in qa_groups table
+        try:
+            save_qa_group(project_id, group_name, group_type or 'Project Plan')
+        except Exception as g_err:
+            logger.warning(f"Note: auto save_qa_group in save_qa_transaction: {g_err}")
+
         conn = get_db_connection()
         cursor = conn.cursor()
         

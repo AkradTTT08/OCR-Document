@@ -29,32 +29,50 @@ export const allGroups = derived(
         group_name: gName,
         group_type: g.group_type || 'Project Plan',
         project_id: pId,
-        project_code: g.project_code || 'Unknown',
+        project_code: g.project_code || '',
         latest_date: g.created_at,
         scan_count: 0
       });
     }
 
+    // Helper to find existing group entry in map
+    const findGroup = (pId, pCode, gName) => {
+      const directKey = `${pId}::${gName.toLowerCase()}`;
+      if (groupMap.has(directKey)) return groupMap.get(directKey);
+
+      // Try finding by project_code or matching name within project
+      for (const item of groupMap.values()) {
+        const nameMatch = item.group_name.toLowerCase() === gName.toLowerCase();
+        const projMatch = (pId && item.project_id === pId) || (pCode && item.project_code === pCode);
+        if (nameMatch && projMatch) return item;
+      }
+      return null;
+    };
+
     // From DB history (to count scans and get implicitly created groups)
     for (const h of $qaHistory) {
       const hName = cleanGroup(h.group_name);
       const pId = String(h.project_id || '');
-      const key = `${pId}::${hName.toLowerCase()}`;
-      if (!groupMap.has(key)) {
+      const pCode = String(h.project_code || '');
+      
+      const existing = findGroup(pId, pCode, hName);
+      if (existing) {
+        existing.scan_count = (existing.scan_count || 0) + 1;
+        if (h.date && (!existing.latest_date || new Date(h.date) > new Date(existing.latest_date))) {
+          existing.latest_date = h.date;
+        }
+        if (!existing.project_code && pCode) existing.project_code = pCode;
+        if (!existing.project_id && pId) existing.project_id = pId;
+      } else {
+        const key = `${pId}::${hName.toLowerCase()}`;
         groupMap.set(key, {
           group_name: hName,
-          group_type: h.group_type || 'Project Plan',
+          group_type: h.group_type || h.docType || 'Project Plan',
           project_id: pId,
-          project_code: h.project_code || 'Unknown',
+          project_code: pCode || '',
           latest_date: h.date,
           scan_count: 1
         });
-      } else {
-        const item = groupMap.get(key);
-        item.scan_count++;
-        if (!item.latest_date && h.date) {
-          item.latest_date = h.date;
-        }
       }
     }
 
@@ -62,13 +80,16 @@ export const allGroups = derived(
     for (const g of $qaSessionGroups) {
       const gName = cleanGroup(g.group_name);
       const pId = String(g.project_id || '');
-      const key = `${pId}::${gName.toLowerCase()}`;
-      if (!groupMap.has(key)) {
+      const pCode = String(g.project_code || '');
+      
+      const existing = findGroup(pId, pCode, gName);
+      if (!existing) {
+        const key = `${pId}::${gName.toLowerCase()}`;
         groupMap.set(key, {
           group_name: gName,
           group_type: g.group_type || 'Project Plan',
           project_id: pId,
-          project_code: g.project_code || '',
+          project_code: pCode || '',
           latest_date: null,
           scan_count: 0
         });

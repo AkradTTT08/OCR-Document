@@ -86,8 +86,9 @@
 
   function handleGroupClick(group) {
     // Find the project for this group
-    const proj = sidebarProjects.find(p => (p.id || p.project_id) === group.project_id);
+    const proj = sidebarProjects.find(p => String(p.id || p.project_id) === String(group.project_id) || (p.project_code && group.project_code && p.project_code === group.project_code));
     if (proj) {
+      selectedProjectStore.set(proj);
       activeView = 'qa_consult';
       activeQAContext.set({ project: proj, group_name: group.group_name, group_type: group.group_type });
       activeSidebarGroup.set({ project: proj, group_name: group.group_name, group_type: group.group_type });
@@ -99,6 +100,7 @@
         group_name: group.group_name, 
         group_type: group.group_type 
       };
+      selectedProjectStore.set(ctx.project);
       activeQAContext.set(ctx);
       activeSidebarGroup.set(ctx);
     }
@@ -441,12 +443,12 @@
       const matchProj = String(h.project_id || '') === targetProject || (targetCode && String(h.project_code || '') === targetCode);
       if (!matchProj) return false;
       
-      if (context) {
+      if (context && context.group_name) {
         const cleanHGroup = String(h.group_name || 'General').replace(/^\[.*?\]\s*/, '').trim().toLowerCase();
         const cleanCtxGroup = String(context.group_name || 'General').replace(/^\[.*?\]\s*/, '').trim().toLowerCase();
         const rawHGroup = String(h.group_name || 'General').trim().toLowerCase();
         const rawCtxGroup = String(context.group_name || 'General').trim().toLowerCase();
-        return rawHGroup === rawCtxGroup || cleanHGroup === cleanCtxGroup;
+        return rawHGroup === rawCtxGroup || cleanHGroup === cleanCtxGroup || cleanHGroup.includes(cleanCtxGroup) || cleanCtxGroup.includes(cleanHGroup);
       }
       return true; // Show all project history if no group context selected
     });
