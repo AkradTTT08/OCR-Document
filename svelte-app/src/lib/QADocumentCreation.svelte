@@ -399,10 +399,12 @@
       const data = await res.json();
 
       if (res.ok && data.success) {
-        toast('เริ่มการสร้างเอกสารในเบื้องหลังแล้ว...', 'success');
+        if (activeFeedback) {
+          toast('เริ่มการปรับปรุงและสร้างเอกสารใหม่ในเบื้องหลังเรียบร้อยแล้ว...', 'success', 5000);
+        } else {
+          toast('เริ่มการสร้างเอกสารในเบื้องหลังแล้ว...', 'success', 4000);
+        }
         fetchHistory($selectedProjectStore.id || $selectedProjectStore.project_id);
-        docName = ""; // reset
-        customPrompt = ""; // reset
       } else {
         toast(data.error || 'Failed to start generation.', 'error');
       }
@@ -676,7 +678,19 @@
       </div>
 
       <div class="form-group">
-        <label for="customPrompt">คำสั่งหรือ Prompt เพิ่มเติม (Additional Prompt / Custom Instructions) - <i>Optional</i>:</label>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+          <label for="customPrompt" style="margin-bottom: 0;">คำสั่งหรือ Prompt เพิ่มเติม (Additional Prompt / Custom Instructions) - <i>Optional</i>:</label>
+          {#if customPrompt && customPrompt.trim()}
+            <button 
+              type="button" 
+              on:click={() => customPrompt = ""} 
+              style="background: none; border: none; color: #94a3b8; font-size: 11px; cursor: pointer; text-decoration: underline; padding: 0;"
+              title="ล้างข้อความในกล่อง Prompt"
+            >
+              ล้างข้อความ Prompt
+            </button>
+          {/if}
+        </div>
         <textarea 
           id="customPrompt" 
           bind:value={customPrompt} 
