@@ -973,6 +973,75 @@ The following documents contain additional project domain knowledge, specificati
     }
 
 
+def fetch_agent_learned_rules(cursor, project_id: str = None, doc_type: str = "General") -> str:
+    """Fetches learned quality rules from QA Consult audits to reinforce Agent 6's generator prompt."""
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS qa_agent_learned_rules (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                project_id UUID,
+                doc_type VARCHAR(255),
+                source_doc_name VARCHAR(255),
+                rule_category VARCHAR(255),
+                issue_description TEXT,
+                found_incorrect TEXT,
+                correct_expectation TEXT,
+                recommendation TEXT,
+                severity VARCHAR(50),
+                is_active BOOLEAN DEFAULT TRUE,
+                times_referenced INT DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        
+        query = """
+            SELECT rule_category, issue_description, found_incorrect, correct_expectation, recommendation, severity
+            FROM qa_agent_learned_rules
+            WHERE is_active = TRUE AND (doc_type = %s OR doc_type = 'General' OR doc_type IS NULL)
+        """
+        params = [doc_type]
+        if project_id:
+            query += " AND (project_id = %s::uuid OR project_id IS NULL)"
+            params.append(project_id)
+            
+        query += " ORDER BY created_at DESC LIMIT 20"
+        cursor.execute(query, tuple(params))
+        rows = cursor.fetchall()
+        
+        if not rows:
+            return ""
+            
+        rules_text = [
+            "# ==============================================================================",
+            "# LEARNED QUALITY RULES FROM QA CONSULT GATE AUDITS (CONTINUOUS AGENT TRAINING)",
+            "# ==============================================================================",
+            "The following quality rules were learned from previous QA Consult audit findings and exit criteria rejections.",
+            "You MUST strictly prevent these defects in this generated document to guarantee a 100% PASS audit score:\n"
+        ]
+        
+        for idx, r in enumerate(rows, 1):
+            cat, issue, found_inc, correct_val, rec, sev = r
+            rule_entry = f"{idx}. [{cat}] (Severity: {sev})\n"
+            rule_entry += f"   - Common Defect Identified: {issue}\n"
+            if found_inc and found_inc != '-':
+                rule_entry += f"   - Defect Pattern to Avoid: {found_inc}\n"
+            if correct_val and correct_val != '-':
+                rule_entry += f"   - Mandatory Standard: {correct_val}\n"
+            if rec and rec != '-':
+                rule_entry += f"   - Required Corrective Action: {rec}\n"
+            rules_text.append(rule_entry)
+            
+        return "\n".join(rules_text)
+    except Exception as e:
+        logger.warning(f"Could not load learned rules: {e}")
+        try:
+            if hasattr(cursor, 'connection') and cursor.connection:
+                cursor.connection.rollback()
+        except Exception:
+            pass
+        return ""
+
+
 def get_advanced_engineering_guidelines(doc_type: str, today_str: str) -> str:
     return f"""
 # ==============================================================================
@@ -1018,10 +1087,25 @@ def get_advanced_engineering_guidelines(doc_type: str, today_str: str) -> str:
      * Latency & Response Times: API P95 latency <= 1.5 seconds, P99 <= 3.0 seconds under peak load.
      * Compatibility: iOS 15.0+, Android 11.0+, Modern Browsers (Chrome 110+, Safari 16+, Edge).
 
-4. CLEAN DOCUMENT ARCHITECTURE & ACCEPTANCE CRITERIA:
+4. MANDATORY UNHAPPY PATH & EXCEPTION/ERROR HANDLING FOR EVERY REQUIREMENT (Zero Missing Alternate Flows):
+   - In SRS and Requirement specifications, EVERY functional requirement (e.g. REQ-CUS-001 through REQ-CUS-010, etc.) MUST have clearly defined:
+     * Pre-conditions & Main (Happy) Path
+     * Unhappy Path & Alternate/Exception Handling (e.g., User denies GPS permission -> fallback to manual district selection; No search results found -> display recommendation suggestions; Network disconnect -> cache query retry; Database conflict / Duplication error -> prompt override).
+     * Post-conditions and Error Messages returned to the user.
+
+5. MATHEMATICAL FORMULA TRANSPARENCY & VARIABLE DEFINITIONS:
+   - When any mathematical formula, algorithm, or weighting formula is stated in requirements (e.g. Score = (R*v + C*m)/(v+m)):
+     * You MUST clearly define the exact meaning of EVERY variable (e.g., R = Item's Average Rating, v = Total number of ratings/votes, C = Overall mean rating across entire system/category, m = Minimum votes required to establish credibility).
+     * You MUST provide explicit rationale/justification for any chosen constants (e.g., "m = 5 is chosen as the minimum baseline threshold to prevent a single 5-star review from outranking seasoned items").
+
+6. REMARK HYGIENE & SEPARATION OF SYSTEM DESIGN VS. FUNCTIONAL REQUIREMENTS:
+   - Functional Requirement Remarks: Must contain ONLY testable assertions, QA guidelines, or business acceptance constraints (e.g., "Response time must be within 300ms", "System must display opening status with 100% accuracy based on current time").
+   - Implementation Specifics (e.g. "ใช้ PostGIS Bounding Box Query", SQL queries, ORM code): DO NOT place them inside Functional Requirement remarks. Move all database query mechanics, indexing strategies, and spatial query details into Section 2 (System Architecture & Technical Specifications / System Design).
+   - Business Slogans (e.g. "Core Value ของระบบ"): Do NOT leave as abstract slogans; translate them into testable, verifiable acceptance criteria.
+
+7. CLEAN DOCUMENT ARCHITECTURE:
    - For SRS / Requirement Documents:
-     * Structure logically: 1. Executive Summary & Scope, 2. System Architecture & Actors, 3. Comprehensive Functional Requirements (with ID, Module, Description, User Story, Pre-conditions, Main Flow, Alternate/Exception Flows, Post-conditions, and Acceptance Criteria in Given-When-Then format), 4. Non-Functional Requirements, 5. Data Dictionary & API Endpoints, 6. Security, Compliance (PDPA) & Audit Log.
-     * Do NOT mix draft defect logs or unfinished bug lists inside the core specification body. Defect lists belong to QA Audit reports.
+     * Structure logically: 1. Executive Summary & Scope, 2. System Architecture & Actors, 3. Comprehensive Functional Requirements (with ID, Module, Description, User Story, Pre-conditions, Main Flow, Unhappy Path/Exception Flows, Post-conditions, and Acceptance Criteria in Given-When-Then format), 4. Non-Functional Requirements, 5. Data Dictionary & API Endpoints, 6. Security, Compliance (PDPA) & Audit Log.
 """
 
 def create_qa_document(project_id: str, doc_type: str, doc_name: str, skill_id, reference_document_id=None, custom_prompt: str = ""):
@@ -1048,6 +1132,9 @@ def create_qa_document(project_id: str, doc_type: str, doc_name: str, skill_id, 
         else:
             cursor.execute("SELECT skill_name, target_doc_type, markdown_instructions FROM agent_skills WHERE skill_id::text = ANY(%s)", (target_skill_ids,))
             skill_rows = cursor.fetchall()
+
+        # Fetch learned QA rules from continuous learning database
+        learned_rules_section = fetch_agent_learned_rules(cursor, project_id, doc_type)
 
         cursor.close()
         conn.close()
@@ -1089,6 +1176,8 @@ Please follow these structure and formatting instructions strictly:
 {instructions}
 
 {engineering_guidelines}
+
+{learned_rules_section}
 
 {custom_prompt_section}
 
@@ -1176,6 +1265,9 @@ def create_qa_document_async(gen_id: str, project_id: str, doc_type: str, doc_na
                 except Exception:
                     conn.rollback()
 
+        # Fetch learned rules from previous audits
+        learned_rules_section = fetch_agent_learned_rules(cursor, project_id, doc_type)
+
         if not skill_rows:
             skill_name = "Default QA Framework"
             target_doc_type = doc_type
@@ -1209,6 +1301,8 @@ Your task is to generate a formal QA Test Case document based on ALL provided Pr
 # Framework & Structural Instructions (Skill: {skill_name})
 Please follow these instructions strictly to structure and generate the test cases:
 {instructions}
+
+{learned_rules_section}
 
 {custom_prompt_section}
 
@@ -1261,6 +1355,8 @@ Please follow these structure and formatting instructions strictly:
 {instructions}
 
 {engineering_guidelines}
+
+{learned_rules_section}
 
 {custom_prompt_section}
 

@@ -3,7 +3,7 @@
   import { fade } from "svelte/transition";
   import { toast } from "./toastStore.js";
   import { authUser } from "./authStore.js";
-  import { qaHistory, selectedHistory, loadQAHistoryFromDB, selectedProjectStore, qaSessionGroups, activeQAContext, loadQAGroupsFromDB, activeSidebarGroup, activeScanStatus, allGroups } from "./qaHistoryStore.js";
+  import { qaHistory, selectedHistory, loadQAHistoryFromDB, selectedProjectStore, qaSessionGroups, activeQAContext, loadQAGroupsFromDB, activeSidebarGroup, activeScanStatus, allGroups, qaRefinementFeedback } from "./qaHistoryStore.js";
   import GateResultModal from "./GateResultModal.svelte";
   import ProjectSelection from "./ProjectSelection.svelte";
   import SpectraLoading from "./SpectraLoading.svelte";
@@ -12,6 +12,7 @@
   const dispatch = createEventDispatcher();
 
   let showGateModal = false;
+  /** @type {any} */
   let gateResultData = null;
 
   let skills = [];
@@ -81,10 +82,11 @@
       console.error("Failed to load projects:", err);
     }
 
-    // Auto-fill email from logged-in user
-    const currentUser = $authUser;
+    // Auto-fill email from logged-in user if valid email format
+    const currentUser = ($authUser || localStorage.getItem('auth_user') || '').trim();
     if (currentUser && currentUser.includes('@') && !emailList.includes(currentUser)) {
-      emailList = [currentUser];
+      emailList = [currentUser, ...emailList];
+      userEmailInitialized = true;
     }
   });
 
@@ -319,16 +321,18 @@
     return true;
   });
 
+  $: targetGroupName = scanGroupName || (scanResult && scanResult.group_name) || ($activeSidebarGroup && $activeSidebarGroup.group_name) || '';
+
   $: currentGroupHistory = $qaHistory.filter(h => {
     if (!selectedProjectObj) return false;
     const pId = String(selectedProjectObj.id || selectedProjectObj.project_id || '');
     const pCode = String(selectedProjectObj.project_code || '');
-    const matchProj = String(h.project_id) === pId || (pCode && h.project_code === pCode);
+    const matchProj = String(h.project_id || '') === pId || (pCode && String(h.project_code || '') === pCode);
     if (!matchProj) return false;
 
-    if (scanGroupName) {
+    if (targetGroupName) {
       const cleanHGroup = String(h.group_name || 'General').replace(/^\[.*?\]\s*/, '').trim().toLowerCase();
-      const cleanTargetGroup = String(scanGroupName || 'General').replace(/^\[.*?\]\s*/, '').trim().toLowerCase();
+      const cleanTargetGroup = String(targetGroupName || 'General').replace(/^\[.*?\]\s*/, '').trim().toLowerCase();
       return cleanHGroup === cleanTargetGroup || cleanHGroup.includes(cleanTargetGroup) || cleanTargetGroup.includes(cleanHGroup);
     }
     return true;
@@ -412,9 +416,32 @@
   $: filteredSkills = skills;
 
   let file = null;
+
+  const getInitialUserEmail = () => {
+    const fromAuth = ($authUser || '').trim();
+    if (fromAuth && fromAuth.includes('@')) return [fromAuth];
+    const u = (localStorage.getItem('auth_user') || '').trim();
+    if (u && u.includes('@')) return [u];
+    const rem = (localStorage.getItem('remembered_email') || '').trim();
+    if (rem && rem.includes('@')) return [rem];
+    return [];
+  };
+
   let emailInput = "";
-  let emailList = [];
+  let emailList = getInitialUserEmail();
+  let userEmailInitialized = emailList.length > 0;
   $: email = emailList.join(",");
+
+  // Automatically keep user email in emailList if available, or do not add if user has no email
+  $: if ($authUser) {
+    const u = ($authUser || '').trim();
+    if (u.includes('@')) {
+      if (!emailList.includes(u)) {
+        emailList = [u, ...emailList];
+      }
+      userEmailInitialized = true;
+    }
+  }
 
   function addEmail() {
     if (emailInput && emailInput.includes("@")) {
@@ -770,6 +797,8 @@
     scanGroupType = "Project Plan";
     processStatus = "";
     if (fileInput) fileInput.value = "";
+    emailList = getInitialUserEmail();
+    emailInput = "";
   }
 
   let isExitTableExpanded = false;
@@ -790,6 +819,62 @@
       } catch (err) {
         toast("ไม่สามารถคัดลอกได้: " + err.message, "error");
       }
+    }
+  }
+
+  let isSendingToDocCreation = false;
+
+  async function sendFindingsToDocCreation() {
+    if (!scanResult) return;
+    
+    isSendingToDocCreation = true;
+    try {
+      const activeProj = $selectedProjectStore;
+      const targetDocType = scanResult.doc_type || (selectedDocTypes && selectedDocTypes[0]) || scanGroupType || 'SRS';
+      let cleanDocName = scanResult.filename || scanResult.doc_name || scanGroupName || 'Document';
+      // Strip extension if present (.pdf, .docx, .md)
+      cleanDocName = cleanDocName.replace(/\.[^/.]+$/, "");
+      
+      const findingsList = scanResult.qa_findings || [];
+      const exitEval = scanResult.exit_criteria_eval || null;
+
+      const payload = {
+        project_id: activeProj ? (activeProj.id || activeProj.project_id) : null,
+        project_code: activeProj?.project_code || '',
+        project_name: activeProj?.name || activeProj?.project_name || '',
+        doc_name: cleanDocName,
+        doc_type: targetDocType,
+        findings: findingsList,
+        exit_criteria_eval: exitEval,
+        total_pages: scanResult.total_pages || 1,
+        source_filename: scanResult.filename || cleanDocName,
+        raw_markdown: scanResult.markdown || scanResult.raw_text || '',
+        source_text: scanResult.report || '',
+        created_at: new Date().toISOString()
+      };
+
+      // 1. Train Agent in Background (save learned rules into backend memory)
+      fetch('/api/agent/train_qa_rules', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      }).then(r => r.json()).then(res => {
+        if (res.success && res.count > 0) {
+          console.log(`Agent trained with ${res.count} quality rules.`);
+        }
+      }).catch(e => console.warn('Rule training background post error:', e));
+
+      // 2. Set refinement feedback store
+      qaRefinementFeedback.set(payload);
+
+      // 3. Dispatch navigation event to App.svelte
+      dispatch('navigate', { view: 'qa_doc_creation', feedback: payload });
+      toast(`ส่งประเด็นข้อผิดพลาด (${findingsList.length} รายการ) ไปยัง QA Document Creation เรียบร้อยแล้ว พร้อมบันทึก Rule ปรับปรุง Agent`, 'success', 5000);
+    } catch (err) {
+      console.error('Error sending findings to doc creation:', err);
+      toast('เกิดข้อผิดพลาดในการส่งข้อมูล: ' + err.message, 'error');
+    } finally {
+      isSendingToDocCreation = false;
     }
   }
 </script>
@@ -1429,6 +1514,16 @@
         </div>
 
         <div class="right-actions" style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+          {#if (scanResult.qa_findings && scanResult.qa_findings.length > 0) || (scanResult.exit_criteria_eval && scanResult.exit_criteria_eval.status !== 'PASSED')}
+            <button class="btn-auto-fix-glow" on:click={sendFindingsToDocCreation} disabled={isSendingToDocCreation} title="ส่งข้อบกพร่องที่พบไปยัง QA Document Creation เพื่อปรับปรุงเอกสารให้ผ่าน และบันทึก Rule ปรับปรุง Agent">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+                <path d="M12 8v4l3 3"/>
+              </svg>
+              {isSendingToDocCreation ? 'กำลังส่งข้อมูล...' : `🔄 ส่งแก้ไขใน QA Doc Creation (${scanResult.qa_findings?.length || 0} ข้อ)`}
+            </button>
+          {/if}
+
           {#if scanResult.exit_criteria_eval}
             <button class="btn-outline-glow" on:click={() => { gateResultData = scanResult.exit_criteria_eval; showGateModal = true; }} style="height: 42px; font-weight: 600;">
               ✨ แสดง Modal Animation
@@ -1494,10 +1589,13 @@
               <h3>📊 QA Audit Findings Report</h3>
               <span class="template-badge">ประเด็นที่พบจากการวิเคราะห์</span>
             </div>
-            <div class="gate-header-actions" style="display: flex; gap: 8px; align-items: center;">
+            <div class="gate-header-actions" style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
               <span class="gate-status-pill status-info">
                 พบ {scanResult.qa_findings.length} รายการ
               </span>
+              <button class="btn-mini-autofix" on:click={sendFindingsToDocCreation} disabled={isSendingToDocCreation}>
+                🔄 ส่งแก้ไขใน QA Doc Creation
+              </button>
               <button class="btn-table-toggle" on:click={() => isFindingsTableExpanded = !isFindingsTableExpanded}>
                 {isFindingsTableExpanded ? '🔽 ย่อตาราง' : '🔼 ขยายเต็ม'}
               </button>
@@ -1550,7 +1648,12 @@
               <h3>📋 ผลการประเมิน Exit Criteria Review Gate</h3>
               <span class="template-badge">{scanResult.exit_criteria_eval.template_title}</span>
             </div>
-            <div class="gate-header-actions" style="display: flex; gap: 8px; align-items: center;">
+            <div class="gate-header-actions" style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+              {#if scanResult.exit_criteria_eval.status !== 'PASSED'}
+                <button class="btn-mini-autofix" on:click={sendFindingsToDocCreation} disabled={isSendingToDocCreation}>
+                  🔄 ส่งแก้ไขตามเกณฑ์ Gate
+                </button>
+              {/if}
               <span class="gate-status-pill status-{scanResult.exit_criteria_eval.status.toLowerCase()}">
                 {scanResult.exit_criteria_eval.status}
               </span>
@@ -1667,6 +1770,67 @@
           <p class="footer-note"><small>สร้างโดย Spectra QA Intelligent Analysis System</small></p>
         </div>
       </div>
+
+      <!-- GROUP SCAN TRANSACTIONS IN RESULT VIEW -->
+      {#if currentGroupHistory.length > 0}
+        <div class="project-history-section" style="margin-top: 24px;">
+          <div class="section-title-bar">
+            <div class="title-with-badge">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                <polyline points="14 2 14 8 20 8"></polyline>
+                <line x1="16" y1="13" x2="8" y2="13"></line>
+                <line x1="16" y1="17" x2="8" y2="17"></line>
+              </svg>
+              <h3>ประวัติเอกสารที่เคยตรวจในกลุ่มนี้ ({currentGroupHistory.length})</h3>
+            </div>
+            <button class="btn-outline" on:click={() => { scanResult = null; file = null; }} style="padding: 6px 14px; font-size: 13px; height: 34px;">
+              ➕ สแกนเอกสารเพิ่มในกลุ่มนี้
+            </button>
+          </div>
+
+          <div class="history-table-container">
+            <table class="project-history-table">
+              <thead>
+                <tr>
+                  <th>ชื่อไฟล์เอกสาร</th>
+                  <th>กลุ่มการตรวจสอบ</th>
+                  <th>ประเภท</th>
+                  <th>วันที่ตรวจ</th>
+                  <th style="text-align: right;">การจัดการ</th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each currentGroupHistory.slice(0, 15) as item}
+                  <tr class="history-table-row" class:active-row={item.filename === scanResult.filename} on:click={() => selectedHistory.set(item)}>
+                    <td class="td-filename">
+                      <div class="file-name-cell">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="color: #60a5fa; flex-shrink: 0;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path></svg>
+                        <span>{item.filename || 'Unknown Document'}</span>
+                        {#if item.filename === scanResult.filename}
+                          <span style="font-size: 10px; background: rgba(99, 102, 241, 0.2); color: #a5b4fc; border: 1px solid rgba(99, 102, 241, 0.4); border-radius: 4px; padding: 1px 6px;">กำลังดู</span>
+                        {/if}
+                      </div>
+                    </td>
+                    <td>
+                      <span class="group-pill">{item.group_name || 'General'}</span>
+                    </td>
+                    <td>
+                      <span class="type-pill">{item.docType || item.group_type || 'General'}</span>
+                    </td>
+                    <td class="td-date">{formatHistoryTime(item.date)}</td>
+                    <td style="text-align: right;">
+                      <button class="btn-table-view" on:click|stopPropagation={() => selectedHistory.set(item)}>
+                        ดูรายงาน
+                      </button>
+                    </td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      {/if}
     </div>
   {/if}
 </div>
@@ -3292,5 +3456,66 @@
   .btn-table-view:hover {
     background: #2563eb;
     color: white;
+  }
+
+  .btn-auto-fix-glow {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: linear-gradient(135deg, #f59e0b 0%, #ec4899 50%, #8b5cf6 100%);
+    color: #ffffff;
+    border: none;
+    padding: 10px 18px;
+    border-radius: 8px;
+    font-size: 13.5px;
+    font-weight: 700;
+    cursor: pointer;
+    box-shadow: 0 4px 14px rgba(236, 72, 153, 0.4), 0 0 20px rgba(245, 158, 11, 0.25);
+    transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    animation: pulseAutoFix 2.5s infinite;
+  }
+  .btn-auto-fix-glow:hover {
+    transform: translateY(-2px) scale(1.02);
+    box-shadow: 0 6px 20px rgba(236, 72, 153, 0.6), 0 0 25px rgba(245, 158, 11, 0.4);
+    filter: brightness(1.1);
+  }
+  .btn-auto-fix-glow:active {
+    transform: translateY(0);
+  }
+  .btn-auto-fix-glow:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    animation: none;
+  }
+
+  .btn-mini-autofix {
+    background: linear-gradient(135deg, rgba(245, 158, 11, 0.2), rgba(236, 72, 153, 0.25));
+    border: 1px solid rgba(245, 158, 11, 0.5);
+    color: #fde047;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 4px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .btn-mini-autofix:hover {
+    background: linear-gradient(135deg, #f59e0b, #ec4899);
+    color: #ffffff;
+    border-color: transparent;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(245, 158, 11, 0.4);
+  }
+
+  @keyframes pulseAutoFix {
+    0%, 100% {
+      box-shadow: 0 4px 14px rgba(236, 72, 153, 0.4), 0 0 20px rgba(245, 158, 11, 0.25);
+    }
+    50% {
+      box-shadow: 0 4px 22px rgba(236, 72, 153, 0.7), 0 0 30px rgba(245, 158, 11, 0.5);
+    }
   }
 </style>

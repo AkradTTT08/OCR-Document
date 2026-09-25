@@ -1136,31 +1136,54 @@ def init_qa_transactions():
         if cursor: cursor.close()
         if conn: conn.close()
 
-def resolve_project_id_uuid(conn, project_id):
-    """Safely resolves project_id to a valid UUID string, or None."""
-    if not project_id or str(project_id).lower() in ['none', 'null', 'undefined', '']:
+def resolve_project_id_uuid(conn, project_id, project_code=None, project_name=None):
+    """Safely resolves project_id to a valid existing UUID in the projects table, or None."""
+    if not conn:
         return None
-    import uuid
-    pid_str = str(project_id).strip()
-    try:
-        return str(uuid.UUID(pid_str))
-    except (ValueError, TypeError):
-        pass
     
-    # Try looking up by project_code or project_name
-    try:
-        cur = conn.cursor()
-        cur.execute("SELECT project_id FROM projects WHERE project_code = %s OR project_name = %s LIMIT 1", (pid_str, pid_str))
-        row = cur.fetchone()
-        cur.close()
-        if row and row[0]:
-            return str(row[0])
-    except Exception as e:
-        logger.warning(f"Could not resolve project_id UUID for '{project_id}': {e}")
+    # 1. If project_id provided, check if it's a UUID that actually exists in DB
+    if project_id and str(project_id).lower() not in ['none', 'null', 'undefined', '']:
+        pid_str = str(project_id).strip()
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT project_id FROM projects WHERE project_id = %s::uuid LIMIT 1", (pid_str,))
+            row = cur.fetchone()
+            cur.close()
+            if row and row[0]:
+                return str(row[0])
+        except Exception:
+            try: conn.rollback()
+            except: pass
+
+        # Try matching by project_code or project_name from the pid_str
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT project_id FROM projects WHERE project_code = %s OR project_name = %s LIMIT 1", (pid_str, pid_str))
+            row = cur.fetchone()
+            cur.close()
+            if row and row[0]:
+                return str(row[0])
+        except Exception:
+            try: conn.rollback()
+            except: pass
+
+    # 2. Try matching with explicit project_code or project_name if provided
+    if project_code or project_name:
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT project_id FROM projects WHERE (project_code = %s AND %s != '') OR (project_name = %s AND %s != '') LIMIT 1", (project_code or '', project_code or '', project_name or '', project_name or ''))
+            row = cur.fetchone()
+            cur.close()
+            if row and row[0]:
+                return str(row[0])
+        except Exception:
+            try: conn.rollback()
+            except: pass
+
     return None
 
 def save_qa_transaction(project_id, group_name, group_type, filename, doc_type, extracted_text, qa_report, total_pages=None, email=None, qa_findings=None, exit_criteria_eval=None):
-    """Saves a QA consult transaction to the database."""
+    """Saves a QA consult transaction to the database with resilient foreign key fallback."""
     import json, re
     conn = None
     cursor = None
@@ -1173,7 +1196,7 @@ def save_qa_transaction(project_id, group_name, group_type, filename, doc_type, 
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        # Resolve project_id safely
+        # Resolve project_id safely against database
         resolved_pid = resolve_project_id_uuid(conn, project_id)
 
         # Automatically ensure group exists in qa_groups table
@@ -1186,23 +1209,42 @@ def save_qa_transaction(project_id, group_name, group_type, filename, doc_type, 
         qf_json = json.dumps(qa_findings) if qa_findings is not None else None
         ece_json = json.dumps(exit_criteria_eval) if exit_criteria_eval is not None else None
         
+        transaction_id = None
         if resolved_pid:
-            cursor.execute("""
-                INSERT INTO qa_transactions (project_id, group_name, group_type, filename, doc_type, extracted_text, qa_report, total_pages, email, qa_findings, exit_criteria_eval)
-                VALUES (%s::uuid, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)
-                RETURNING transaction_id
-            """, (resolved_pid, group_name, group_type or 'Project Plan', filename, doc_type, extracted_text, qa_report, total_pages, email, qf_json, ece_json))
+            try:
+                cursor.execute("""
+                    INSERT INTO qa_transactions (project_id, group_name, group_type, filename, doc_type, extracted_text, qa_report, total_pages, email, qa_findings, exit_criteria_eval)
+                    VALUES (%s::uuid, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)
+                    RETURNING transaction_id
+                """, (resolved_pid, group_name, group_type or 'Project Plan', filename, doc_type, extracted_text, qa_report, total_pages, email, qf_json, ece_json))
+                row = cursor.fetchone()
+                if row:
+                    transaction_id = row[0]
+            except Exception as fk_err:
+                conn.rollback()
+                logger.warning(f"FK insert failed for resolved_pid {resolved_pid}, falling back to NULL project_id: {fk_err}")
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO qa_transactions (project_id, group_name, group_type, filename, doc_type, extracted_text, qa_report, total_pages, email, qa_findings, exit_criteria_eval)
+                    VALUES (NULL, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)
+                    RETURNING transaction_id
+                """, (group_name, group_type or 'Project Plan', filename, doc_type, extracted_text, qa_report, total_pages, email, qf_json, ece_json))
+                row = cursor.fetchone()
+                if row:
+                    transaction_id = row[0]
         else:
             cursor.execute("""
                 INSERT INTO qa_transactions (project_id, group_name, group_type, filename, doc_type, extracted_text, qa_report, total_pages, email, qa_findings, exit_criteria_eval)
                 VALUES (NULL, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)
                 RETURNING transaction_id
             """, (group_name, group_type or 'Project Plan', filename, doc_type, extracted_text, qa_report, total_pages, email, qf_json, ece_json))
+            row = cursor.fetchone()
+            if row:
+                transaction_id = row[0]
 
-        transaction_id = cursor.fetchone()[0]
         conn.commit()
         logger.info(f"Saved QA transaction {transaction_id} for {filename} (project: {resolved_pid}).")
-        return str(transaction_id)
+        return str(transaction_id) if transaction_id else False
     except Exception as e:
         if conn: conn.rollback()
         logger.error(f"Error saving QA transaction for {filename}: {e}", exc_info=True)

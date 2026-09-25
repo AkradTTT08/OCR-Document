@@ -2416,14 +2416,6 @@ def qa_consult_api():
                 
                 report = qa_state.report
                 
-                # Save transaction
-                transaction_id = None
-                if project_id:
-                    try:
-                        transaction_id = save_qa_transaction(project_id, group_name, group_type, original_filename, ', '.join(doc_type) if isinstance(doc_type, list) else doc_type, extracted_text[:8000], report, total_pages, email)
-                    except Exception as e:
-                        logger.error(f"Failed to save QA transaction: {e}")
-
                 # 3b. Parse QA findings for Exit Criteria context and web display
                 from excel_report import parse_qa_report_with_ai as _parse_findings
                 qa_findings = []
@@ -2441,6 +2433,25 @@ def qa_consult_api():
                     exit_criteria_eval = evaluate_document_exit_criteria(extracted_text, doc_type=doc_type_eval, project_id=project_id, qa_findings=qa_findings)
                 except Exception as eval_err:
                     logger.error(f"Failed to evaluate document exit criteria: {eval_err}")
+
+                # Save transaction to DB with parsed findings and exit criteria
+                transaction_id = None
+                try:
+                    transaction_id = save_qa_transaction(
+                        project_id=project_id,
+                        group_name=group_name,
+                        group_type=group_type,
+                        filename=original_filename,
+                        doc_type=', '.join(doc_type) if isinstance(doc_type, list) else doc_type,
+                        extracted_text=extracted_text[:8000],
+                        qa_report=report,
+                        total_pages=total_pages,
+                        email=email,
+                        qa_findings=qa_findings,
+                        exit_criteria_eval=exit_criteria_eval
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to save QA transaction: {e}")
 
                 yield f"data: {json.dumps({'type': 'progress', 'pct': 90, 'message': 'กำลังสร้าง Excel QA Report...' })}\n\n"
 
@@ -2480,18 +2491,14 @@ def qa_consult_api():
                 except Exception as excel_err:
                     logger.error(f"Failed to generate Excel report: {excel_err}")
 
-                # Update the transaction in DB with the parsed results
-                if transaction_id:
-                    try:
-                        from db_ingestion import update_qa_transaction_results
-                        update_qa_transaction_results(transaction_id, qa_findings, exit_criteria_eval)
-                    except Exception as update_err:
-                        logger.error(f"Failed to update transaction results: {update_err}")
-
                 yield f"data: {json.dumps({'type': 'progress', 'pct': 100, 'message': 'ประมวลผลเสร็จสมบูรณ์ เตรียมแสดงรายงาน...' })}\n\n"
                 
                 # Return report and exit criteria evaluation to frontend
                 result_payload = {
+                    'id': transaction_id or None,
+                    'project_id': project_id,
+                    'group_name': group_name,
+                    'group_type': group_type,
                     'total_pages': total_pages,
                     'status': 'success',
                     'report': report,
@@ -4021,6 +4028,165 @@ def get_generated_documents():
         
     except Exception as e:
         logger.error(f"Error fetching generated documents: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/agent/train_qa_rules', methods=['POST'])
+def train_qa_rules():
+    data = request.json or {}
+    project_id = data.get('project_id')
+    doc_type = data.get('doc_type', 'General')
+    doc_name = data.get('doc_name', '')
+    findings = data.get('findings', [])
+    exit_criteria_eval = data.get('exit_criteria_eval', {})
+    
+    if not findings and not exit_criteria_eval:
+        return jsonify({'success': True, 'message': 'No findings to train', 'count': 0})
+        
+    try:
+        from db_ingestion import get_db_connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS qa_agent_learned_rules (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                project_id UUID,
+                doc_type VARCHAR(255),
+                source_doc_name VARCHAR(255),
+                rule_category VARCHAR(255),
+                issue_description TEXT,
+                found_incorrect TEXT,
+                correct_expectation TEXT,
+                recommendation TEXT,
+                severity VARCHAR(50),
+                is_active BOOLEAN DEFAULT TRUE,
+                times_referenced INT DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        
+        saved_count = 0
+        for f in findings:
+            issue = (f.get('issue') or '').strip()
+            if not issue:
+                continue
+            cat = f.get('check_type') or 'QA Audit'
+            found_inc = f.get('found_incorrect') or ''
+            correct_val = f.get('correct_value') or ''
+            rec = f.get('recommendation') or ''
+            sev = f.get('severity') or 'Medium'
+            
+            # Check for duplicate rule in this project/doc_type
+            cursor.execute("""
+                SELECT id FROM qa_agent_learned_rules 
+                WHERE doc_type = %s AND issue_description = %s AND is_active = TRUE
+                LIMIT 1
+            """, (doc_type, issue))
+            existing = cursor.fetchone()
+            if not existing:
+                cursor.execute("""
+                    INSERT INTO qa_agent_learned_rules 
+                    (project_id, doc_type, source_doc_name, rule_category, issue_description, found_incorrect, correct_expectation, recommendation, severity)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """, (project_id if project_id else None, doc_type, doc_name, cat, issue, found_inc, correct_val, rec, sev))
+                saved_count += 1
+                
+        # Also extract failed items from exit criteria
+        if exit_criteria_eval and isinstance(exit_criteria_eval, dict):
+            failed_items = [it for it in exit_criteria_eval.get('items', []) if it.get('status') == 'FAIL']
+            for fit in failed_items:
+                q_text = (fit.get('question_text') or '').strip()
+                remarks = fit.get('remarks') or ''
+                cat = fit.get('category') or 'Exit Criteria'
+                sev = fit.get('severity') or 'High'
+                evidence = fit.get('evidence_text') or ''
+                
+                if q_text:
+                    cursor.execute("""
+                        SELECT id FROM qa_agent_learned_rules 
+                        WHERE doc_type = %s AND issue_description = %s AND is_active = TRUE
+                        LIMIT 1
+                    """, (doc_type, q_text))
+                    if not cursor.fetchone():
+                        cursor.execute("""
+                            INSERT INTO qa_agent_learned_rules 
+                            (project_id, doc_type, source_doc_name, rule_category, issue_description, found_incorrect, correct_expectation, recommendation, severity)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """, (project_id if project_id else None, doc_type, doc_name, cat, q_text, evidence, fit.get('target_metric', '100% (ผ่านบริบูรณ์)'), remarks, sev))
+                        saved_count += 1
+                        
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        logger.info(f"Trained Agent with {saved_count} new quality rules from QA Consult for {doc_type} ({doc_name})")
+        return jsonify({'success': True, 'count': saved_count, 'message': f'Learned {saved_count} new rules for Agent 6'})
+    except Exception as e:
+        logger.error(f"Error training QA rules: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/agent/learned_rules', methods=['GET'])
+def get_learned_rules():
+    project_id = request.args.get('project_id')
+    doc_type = request.args.get('doc_type')
+    try:
+        from db_ingestion import get_db_connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS qa_agent_learned_rules (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                project_id UUID,
+                doc_type VARCHAR(255),
+                source_doc_name VARCHAR(255),
+                rule_category VARCHAR(255),
+                issue_description TEXT,
+                found_incorrect TEXT,
+                correct_expectation TEXT,
+                recommendation TEXT,
+                severity VARCHAR(50),
+                is_active BOOLEAN DEFAULT TRUE,
+                times_referenced INT DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        conn.commit()
+        
+        query = "SELECT id, project_id, doc_type, source_doc_name, rule_category, issue_description, found_incorrect, correct_expectation, recommendation, severity, created_at FROM qa_agent_learned_rules WHERE is_active = TRUE"
+        params = []
+        if doc_type:
+            query += " AND (doc_type = %s OR doc_type = 'General')"
+            params.append(doc_type)
+        if project_id:
+            query += " AND (project_id = %s::uuid OR project_id IS NULL)"
+            params.append(project_id)
+            
+        query += " ORDER BY created_at DESC LIMIT 50"
+        cursor.execute(query, tuple(params))
+        rows = cursor.fetchall()
+        
+        rules = []
+        for r in rows:
+            rules.append({
+                "id": str(r[0]),
+                "project_id": str(r[1]) if r[1] else None,
+                "doc_type": r[2],
+                "source_doc_name": r[3],
+                "rule_category": r[4],
+                "issue_description": r[5],
+                "found_incorrect": r[6],
+                "correct_expectation": r[7],
+                "recommendation": r[8],
+                "severity": r[9],
+                "created_at": r[10].isoformat() if r[10] else None
+            })
+            
+        cursor.close()
+        conn.close()
+        return jsonify({'success': True, 'rules': rules})
+    except Exception as e:
+        logger.error(f"Error fetching learned rules: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/agent/download_generated_document/<string:doc_id>', methods=['GET'])

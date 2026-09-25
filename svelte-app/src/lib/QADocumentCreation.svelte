@@ -1,6 +1,6 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
-  import { selectedProjectStore } from './qaHistoryStore.js';
+  import { selectedProjectStore, qaRefinementFeedback } from './qaHistoryStore.js';
   import { toast } from './toastStore.js';
   import { fade, slide, scale } from 'svelte/transition';
   import ProjectSelection from './ProjectSelection.svelte';
@@ -12,6 +12,91 @@
   let docName = "";
   let docType = "Test Case"; // Default
   let customPrompt = "";
+  
+  // QA Consult Refinement Feedback State
+  let activeFeedback = null;
+  let showFindingsDrawer = false;
+
+  $: {
+    if ($qaRefinementFeedback && $qaRefinementFeedback !== activeFeedback) {
+      activeFeedback = $qaRefinementFeedback;
+      applyRefinementFeedback(activeFeedback);
+    }
+  }
+
+  function applyRefinementFeedback(fb) {
+    if (!fb) return;
+    
+    // 1. Select project if provided
+    if (fb.project_id && (!$selectedProjectStore || ($selectedProjectStore.id !== fb.project_id && $selectedProjectStore.project_id !== fb.project_id))) {
+      const targetProj = projects.find(p => String(p.id || p.project_id) === String(fb.project_id) || (p.project_code && fb.project_code && p.project_code === fb.project_code));
+      if (targetProj) {
+        selectedProjectStore.set(targetProj);
+      }
+    }
+
+    // 2. Set document name and document type
+    if (fb.doc_name) {
+      docName = fb.doc_name.replace(/^[\[\(].*?[\]\)]\s*/, '').trim();
+    }
+    if (fb.doc_type && MASTER_DOC_TYPES.includes(fb.doc_type)) {
+      docType = fb.doc_type;
+    } else if (fb.doc_type) {
+      const match = MASTER_DOC_TYPES.find(t => t.toLowerCase() === fb.doc_type.toLowerCase());
+      if (match) docType = match;
+    }
+
+    // 3. Synthesize structured prompt for AI addressing each specific issue
+    const directives = [];
+    directives.push(`[🎯 QA Consult Quality Gate Refinement Mode - Mandatory Fix Directives]`);
+    directives.push(`เอกสารนี้ได้รับการตรวจประเมินใน QA Consult และพบประเด็นที่ไม่ผ่านเกณฑ์ด้านล่าง คุณต้องปรับปรุงและสร้างเอกสารใหม่ให้สมบูรณ์ 100% ตามข้อเสนอแนะทุกข้อ เพื่อให้ตรวจซ้ำแล้วได้สถานะ PASS:\n`);
+
+    if (fb.findings && fb.findings.length > 0) {
+      directives.push(`### รายการข้อผิดพลาดที่พบจาก QA Audit (${fb.findings.length} รายการ):`);
+      fb.findings.forEach((f, idx) => {
+        directives.push(`${idx + 1}. [${f.check_type || 'Audit'}] ประเด็น: ${f.issue || ''}`);
+        if (f.found_incorrect && f.found_incorrect !== '-') {
+          directives.push(`   - ข้อความที่ผิดในเอกสารเดิม: "${f.found_incorrect}"`);
+        }
+        if (f.correct_value && f.correct_value !== '-') {
+          directives.push(`   - สิ่งที่ควรเป็น (Standard): ${f.correct_value}`);
+        }
+        if (f.recommendation && f.recommendation !== '-') {
+          directives.push(`   - ข้อเสนอแนะในการแก้ไข (Action): ${f.recommendation}`);
+        }
+      });
+      directives.push('');
+    }
+
+    if (fb.exit_criteria_eval && fb.exit_criteria_eval.items) {
+      const failedItems = fb.exit_criteria_eval.items.filter(it => it.status === 'FAIL');
+      if (failedItems.length > 0) {
+        directives.push(`### รายการ Exit Criteria Gate ที่ไม่ผ่าน (${failedItems.length} ข้อ):`);
+        failedItems.forEach((it, idx) => {
+          directives.push(`${idx + 1}. ข้อตรวจ ${it.item_code} (${it.category}): ${it.question_text}`);
+          if (it.target_metric) directives.push(`   - ตัวชี้วัดเป้าหมาย: ${it.target_metric}`);
+          if (it.remarks) directives.push(`   - ข้อสังเกตที่ทำให้ไม่ผ่าน: ${it.remarks}`);
+        });
+        directives.push('');
+      }
+    }
+
+    directives.push(`### คำสั่งพิเศษสำหรับการสร้างเนื้อหา:`);
+    directives.push(`1. ทุก Functional Requirement (REQ-xxx) ต้องระบุ Unhappy Path / Alternate Flows และ Error Handling อย่างชัดเจนครบถ้วน`);
+    directives.push(`2. ย้ายรายละเอียดเชิงเทคนิค/SQL/PostGIS Query ออกจากส่วน Requirement ไปไว้ใน System Architecture หรือ Technical Spec แทน`);
+    directives.push(`3. สูตรการคำนวณและตัวแปรทั้งหมด (เช่น R, v, C, m) ต้องระบุความหมายและที่มาของค่าคงที่ทุกตัว`);
+    directives.push(`4. ปรับเปลี่ยนคำอธิบายเชิงธุรกิจ (Slogan) ให้กลายเป็น Acceptance Criteria ที่วัดผลการทดสอบได้ 100%`);
+
+    customPrompt = directives.join('\n');
+    toast(`โหลดข้อมูลข้อผิดพลาด ${fb.findings?.length || 0} ประเด็นเข้าสู่โหมดปรับปรุงเอกสารแล้ว`, 'info', 4000);
+  }
+
+  function clearRefinementMode() {
+    activeFeedback = null;
+    qaRefinementFeedback.set(null);
+    customPrompt = "";
+    toast('ยกเลิกโหมดปรับปรุงเอกสารแล้ว', 'info');
+  }
   
   const docTypeMetadata = {
     'Test Case': { label: 'Test Case (แบบทดสอบและกรณีทดสอบ)', icon: '🧪' },
@@ -426,6 +511,62 @@
       </div>
       <p class="desc-text">สร้างเอกสาร QA อัจฉริยะ (เช่น SRS, SDD, TOR, Test Case, UAT, คู่มือ) โดย AI จะดึงและวิเคราะห์ข้อมูลทั้งหมดใน Knowledge Base ของโครงการมาประมวลผลรวมกันอย่างแม่นยำ</p>
 
+      {#if activeFeedback}
+        <div class="refinement-banner" transition:slide>
+          <div class="refinement-banner-header">
+            <div class="refinement-badge">
+              <span class="pulse-dot"></span>
+              🎯 โหมดปรับปรุงเอกสารตามผลตรวจ QA Consult
+            </div>
+            <div class="refinement-actions">
+              <button class="btn-findings-toggle" on:click={() => showFindingsDrawer = !showFindingsDrawer}>
+                {showFindingsDrawer ? '▲ ซ่อนรายการประเด็น' : `▼ ดูประเด็นข้อผิดพลาด (${activeFeedback.findings?.length || 0} ข้อ)`}
+              </button>
+              <button class="btn-clear-refine" on:click={clearRefinementMode}>
+                ✕ ยกเลิกโหมดนี้
+              </button>
+            </div>
+          </div>
+          
+          <div class="refinement-banner-body">
+            <div class="refinement-info-chip"><strong>📄 เอกสารเดิม:</strong> {activeFeedback.source_filename || activeFeedback.doc_name}</div>
+            <div class="refinement-info-chip"><strong>🏷️ ประเภท:</strong> {activeFeedback.doc_type}</div>
+            {#if activeFeedback.exit_criteria_eval}
+              <div class="refinement-info-chip">
+                <strong>📋 Gate ก่อนหน้า:</strong> 
+                <span class="refinement-gate-tag status-{(activeFeedback.exit_criteria_eval.status || 'rejected').toLowerCase()}">
+                  {activeFeedback.exit_criteria_eval.status} ({activeFeedback.exit_criteria_eval.score_percentage}%)
+                </span>
+              </div>
+            {/if}
+          </div>
+
+          {#if showFindingsDrawer && activeFeedback.findings && activeFeedback.findings.length > 0}
+            <div class="findings-drawer" transition:slide>
+              <div class="findings-drawer-title">📋 รายการข้อบกพร่องที่ต้องแก้ไขในการสร้างครั้งนี้ ({activeFeedback.findings.length} ข้อ):</div>
+              <div class="findings-mini-list">
+                {#each activeFeedback.findings as f, i}
+                  <div class="finding-mini-card sev-{f.severity?.toLowerCase() || 'medium'}">
+                    <div class="f-top">
+                      <span class="f-num">#{i+1}</span>
+                      <span class="f-type">[{f.check_type || 'Audit'}]</span>
+                      <span class="f-issue">{f.issue}</span>
+                      <span class="f-sev">{f.severity}</span>
+                    </div>
+                    {#if f.found_incorrect && f.found_incorrect !== '-'}
+                      <div class="f-evidence"><span style="color: #f87171;">ข้อความเดิม:</span> {f.found_incorrect}</div>
+                    {/if}
+                    {#if f.recommendation && f.recommendation !== '-'}
+                      <div class="f-rec"><strong>💡 แนวทางแก้ไข:</strong> {f.recommendation}</div>
+                    {/if}
+                  </div>
+                {/each}
+              </div>
+            </div>
+          {/if}
+        </div>
+      {/if}
+
     <div class="form-container">
       <div class="form-group">
         <label for="docName">ชื่อเอกสาร (Document Name):</label>
@@ -470,14 +611,16 @@
           id="customPrompt" 
           bind:value={customPrompt} 
           placeholder="เช่น ระบุเงื่อนไข Edge Cases พิเศษ, เน้นการทดสอบกรณี Error Handling, หรือข้อกำหนดเฉพาะที่ต้องการ..." 
-          rows="3" 
+          rows={activeFeedback ? 6 : 3} 
           class="text-input custom-prompt-textarea"
         ></textarea>
       </div>
 
-      <button class="btn-primary" on:click={handleGenerate} disabled={isGenerating || !$selectedProjectStore} style="margin-top: 15px; width: 100%;">
+      <button class="btn-primary" class:btn-refine-action={!!activeFeedback} on:click={handleGenerate} disabled={isGenerating || !$selectedProjectStore} style="margin-top: 15px; width: 100%;">
         {#if isGenerating}
           <div class="spinner-small"></div> กำลังสร้างเอกสาร (Generating...)...
+        {:else if activeFeedback}
+          🔄 ปรับปรุงและสร้างเอกสารใหม่ (Regenerate & Fix Findings)
         {:else}
           ✨ สร้างเอกสาร (Generate Document)
         {/if}
@@ -1415,5 +1558,191 @@
   .btn-save:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  /* Refinement Mode Styles */
+  .refinement-banner {
+    background: linear-gradient(135deg, rgba(245, 158, 11, 0.12) 0%, rgba(236, 72, 153, 0.15) 50%, rgba(139, 92, 246, 0.12) 100%);
+    border: 1.5px solid rgba(245, 158, 11, 0.4);
+    border-radius: 12px;
+    padding: 16px 20px;
+    margin-bottom: 22px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  }
+
+  .refinement-banner-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+
+  .refinement-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    font-weight: 700;
+    color: #fde047;
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
+  }
+
+  .pulse-dot {
+    width: 10px;
+    height: 10px;
+    background: #f59e0b;
+    border-radius: 50%;
+    display: inline-block;
+    box-shadow: 0 0 10px #f59e0b;
+    animation: pulseDot 1.5s infinite;
+  }
+
+  @keyframes pulseDot {
+    0%, 100% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.4); opacity: 0.6; }
+  }
+
+  .refinement-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .btn-findings-toggle {
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: #f1f5f9;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 5px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .btn-findings-toggle:hover {
+    background: rgba(255, 255, 255, 0.2);
+    color: #ffffff;
+  }
+
+  .btn-clear-refine {
+    background: rgba(239, 68, 68, 0.15);
+    border: 1px solid rgba(239, 68, 68, 0.35);
+    color: #fca5a5;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 5px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .btn-clear-refine:hover {
+    background: #ef4444;
+    color: #ffffff;
+    border-color: transparent;
+  }
+
+  .refinement-banner-body {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+    font-size: 12.5px;
+    color: #cbd5e1;
+  }
+
+  .refinement-info-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(15, 23, 42, 0.6);
+    padding: 4px 10px;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .refinement-gate-tag {
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+    text-transform: uppercase;
+  }
+  .refinement-gate-tag.status-rejected { background: #fee2e2; color: #b91c1c; }
+  .refinement-gate-tag.status-conditional_passed { background: #fef3c7; color: #b45309; }
+  .refinement-gate-tag.status-passed { background: #dcfce7; color: #15803d; }
+
+  .findings-drawer {
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px dashed rgba(245, 158, 11, 0.3);
+  }
+
+  .findings-drawer-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: #fde047;
+    margin-bottom: 10px;
+  }
+
+  .findings-mini-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 240px;
+    overflow-y: auto;
+    padding-right: 4px;
+  }
+
+  .finding-mini-card {
+    background: rgba(15, 23, 42, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 12px;
+  }
+  .finding-mini-card.sev-critical { border-left: 4px solid #ef4444; }
+  .finding-mini-card.sev-high { border-left: 4px solid #f97316; }
+  .finding-mini-card.sev-medium { border-left: 4px solid #eab308; }
+  .finding-mini-card.sev-low { border-left: 4px solid #3b82f6; }
+
+  .f-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+  }
+  .f-num { color: #94a3b8; font-weight: 700; }
+  .f-type { color: #a78bfa; font-weight: 600; font-size: 11px; }
+  .f-issue { color: #f8fafc; font-weight: 600; flex: 1; }
+  .f-sev {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.1);
+  }
+  .f-evidence {
+    color: #94a3b8;
+    font-size: 11px;
+    margin-bottom: 4px;
+    padding-left: 20px;
+  }
+  .f-rec {
+    color: #38bdf8;
+    font-size: 11.5px;
+    padding-left: 20px;
+  }
+
+  .btn-refine-action {
+    background: linear-gradient(135deg, #f59e0b 0%, #ec4899 50%, #8b5cf6 100%) !important;
+    box-shadow: 0 4px 18px rgba(236, 72, 153, 0.5) !important;
+    font-weight: 700 !important;
+  }
+  .btn-refine-action:hover:not(:disabled) {
+    transform: translateY(-2px) !important;
+    box-shadow: 0 6px 24px rgba(236, 72, 153, 0.7) !important;
   }
 </style>

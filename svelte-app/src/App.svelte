@@ -853,8 +853,8 @@
               <ApiCollectionAdmin />
             {:else if activeView === "api_usage" && $authRole === "admin"}
               <ApiUsageDashboard />
-            {:else if activeView === "qa_consult" && $authRole === "user"}
-              <QAConsult />
+            {:else if activeView === "qa_consult"}
+              <QAConsult on:navigate={(e) => { if (e.detail?.view) activeView = e.detail.view; }} />
             {:else if activeView === "qa_performance"}
               <QAPerformance />
             {:else if activeView === "qa_research"}

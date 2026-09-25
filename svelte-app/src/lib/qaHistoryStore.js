@@ -8,6 +8,7 @@ export const activeQAContext = writable(null);
 export const activeSidebarGroup = writable(null);
 export const qaDbGroups = writable([]);
 export const activeScanStatus = writable(null);
+export const qaRefinementFeedback = writable(null);
 
 /**
  * Derived store: unique groups from DB groups, DB history, and session groups
