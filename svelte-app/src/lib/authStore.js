@@ -23,6 +23,7 @@ export const DEFAULT_ADMIN_MENUS = [
 // ── Internal stores ──
 const _token = writable(localStorage.getItem('jwt_token') || '');
 const _user  = writable(localStorage.getItem('auth_user')  || '');
+const _email = writable(localStorage.getItem('auth_email') || '');
 const _role  = writable(localStorage.getItem('auth_role')  || '');
 const _displayName = writable(localStorage.getItem('auth_display_name') || '');
 const _avatarPath = writable(localStorage.getItem('auth_avatar_path') || '');
@@ -31,6 +32,7 @@ const _allowedProjects = writable(parseStoredJson('auth_allowed_projects', ['all
 
 // ── Derived readable stores for components ──
 export const authUser = { subscribe: _user.subscribe };
+export const authEmail = { subscribe: _email.subscribe };
 export const authRole = { subscribe: _role.subscribe };
 export const authDisplayName = { subscribe: _displayName.subscribe };
 export const authAvatar = { subscribe: _avatarPath.subscribe };
@@ -47,12 +49,14 @@ export const showLogin = derived(_token, ($t) => !$t);
  * Persists credentials and installs a fetch interceptor that
  * attaches the Authorization header to every subsequent request.
  */
-export function login(token, user, role, displayName, avatarPath, allowedMenus, allowedProjects) {
+export function login(token, user, role, displayName, avatarPath, allowedMenus, allowedProjects, email = '') {
   const finalMenus = allowedMenus || (role === 'admin' ? DEFAULT_ADMIN_MENUS : DEFAULT_USER_MENUS);
   const finalProjects = allowedProjects || ['all'];
+  const finalEmail = (email || (user && user.includes('@') ? user : '') || localStorage.getItem('auth_email') || '').trim();
 
   _token.set(token);
   _user.set(user);
+  _email.set(finalEmail);
   _role.set(role);
   _displayName.set(displayName || user);
   _avatarPath.set(avatarPath || '');
@@ -61,6 +65,9 @@ export function login(token, user, role, displayName, avatarPath, allowedMenus, 
 
   localStorage.setItem('jwt_token', token);
   localStorage.setItem('auth_user', user);
+  if (finalEmail) {
+    localStorage.setItem('auth_email', finalEmail);
+  }
   localStorage.setItem('auth_role', role);
   localStorage.setItem('auth_display_name', displayName || user);
   localStorage.setItem('auth_allowed_menus', JSON.stringify(finalMenus));
@@ -78,10 +85,18 @@ export function login(token, user, role, displayName, avatarPath, allowedMenus, 
  * Dynamically updates the user's display name and/or avatar path in both
  * reactive stores and localStorage without requiring a full re-login.
  */
-export function updateAuthProfile(displayName, avatarPath) {
+export function updateAuthProfile(displayName, avatarPath, email) {
   if (displayName) {
     _displayName.set(displayName);
     localStorage.setItem('auth_display_name', displayName);
+  }
+  if (email !== undefined) {
+    _email.set(email || '');
+    if (email) {
+      localStorage.setItem('auth_email', email);
+    } else {
+      localStorage.removeItem('auth_email');
+    }
   }
   if (avatarPath !== undefined) {
     _avatarPath.set(avatarPath || '');
@@ -99,6 +114,7 @@ export function updateAuthProfile(displayName, avatarPath) {
 export function logout() {
   _token.set('');
   _user.set('');
+  _email.set('');
   _role.set('');
   _displayName.set('');
   _avatarPath.set('');
@@ -107,6 +123,7 @@ export function logout() {
 
   localStorage.removeItem('jwt_token');
   localStorage.removeItem('auth_user');
+  localStorage.removeItem('auth_email');
   localStorage.removeItem('auth_role');
   localStorage.removeItem('auth_display_name');
   localStorage.removeItem('auth_avatar_path');

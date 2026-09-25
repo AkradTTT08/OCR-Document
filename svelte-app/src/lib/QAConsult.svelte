@@ -2,7 +2,7 @@
   import { createEventDispatcher, onMount } from "svelte";
   import { fade } from "svelte/transition";
   import { toast } from "./toastStore.js";
-  import { authUser } from "./authStore.js";
+  import { authUser, authEmail } from "./authStore.js";
   import { qaHistory, selectedHistory, loadQAHistoryFromDB, selectedProjectStore, qaSessionGroups, activeQAContext, loadQAGroupsFromDB, activeSidebarGroup, activeScanStatus, allGroups, qaRefinementFeedback } from "./qaHistoryStore.js";
   import GateResultModal from "./GateResultModal.svelte";
   import ProjectSelection from "./ProjectSelection.svelte";
@@ -86,12 +86,44 @@
       console.error("Failed to load projects:", err);
     }
 
-    // Auto-fill email from logged-in user if valid email format
-    const currentUser = ($authUser || localStorage.getItem('auth_user') || '').trim();
-    if (currentUser && currentUser.includes('@') && !emailList.includes(currentUser)) {
-      emailList = [currentUser, ...emailList];
-      userEmailInitialized = true;
+    // Auto-fill email from logged-in user or user profile API
+    async function resolveUserEmail() {
+      if (emailList.length > 0) return;
+      
+      const localCandidate = ($authEmail || localStorage.getItem('auth_email') || localStorage.getItem('last_qa_email') || localStorage.getItem('remembered_email') || '').trim();
+      if (localCandidate && localCandidate.includes('@')) {
+        const parts = localCandidate.split(',').map(p => p.trim()).filter(p => p.includes('@'));
+        if (parts.length > 0) {
+          emailList = [...parts];
+          userEmailInitialized = true;
+          return;
+        }
+      }
+
+      // Query /api/users to find current logged-in user's email if not present in localStorage
+      try {
+        const uRes = await fetch("/api/users");
+        if (uRes.ok) {
+          const uData = await uRes.json();
+          const curUser = ($authUser || localStorage.getItem('auth_user') || '').trim().toLowerCase();
+          const matched = (uData || []).find((/** @type {any} */ u) => 
+            (u.username && u.username.toLowerCase() === curUser) ||
+            (u.display_name && u.display_name.toLowerCase() === curUser)
+          );
+          if (matched && matched.email && matched.email.includes('@')) {
+            const foundEmail = matched.email.trim();
+            localStorage.setItem('auth_email', foundEmail);
+            if (!emailList.includes(foundEmail)) {
+              emailList = [foundEmail];
+              userEmailInitialized = true;
+            }
+          }
+        }
+      } catch (err) {
+        console.warn("Could not fetch user profile for email auto-fill:", err);
+      }
     }
+    resolveUserEmail();
   });
 
   $: if ($activeQAContext && projects.length > 0) {
@@ -423,12 +455,27 @@
   let file = null;
 
   const getInitialUserEmail = () => {
+    const fromAuthEmail = ($authEmail || '').trim();
+    if (fromAuthEmail && fromAuthEmail.includes('@')) return [fromAuthEmail];
+
+    const storedAuthEmail = (localStorage.getItem('auth_email') || '').trim();
+    if (storedAuthEmail && storedAuthEmail.includes('@')) return [storedAuthEmail];
+
+    const lastQa = (localStorage.getItem('last_qa_email') || '').trim();
+    if (lastQa && lastQa.includes('@')) {
+      const parts = lastQa.split(',').map(p => p.trim()).filter(p => p.includes('@'));
+      if (parts.length > 0) return parts;
+    }
+
     const fromAuth = ($authUser || '').trim();
     if (fromAuth && fromAuth.includes('@')) return [fromAuth];
+
     const u = (localStorage.getItem('auth_user') || '').trim();
     if (u && u.includes('@')) return [u];
+
     const rem = (localStorage.getItem('remembered_email') || '').trim();
     if (rem && rem.includes('@')) return [rem];
+
     return [];
   };
 
@@ -437,15 +484,20 @@
   let userEmailInitialized = emailList.length > 0;
   $: email = emailList.join(",");
 
-  // Automatically keep user email in emailList if available, or do not add if user has no email
-  $: if ($authUser) {
-    const u = ($authUser || '').trim();
-    if (u.includes('@')) {
-      if (!emailList.includes(u)) {
-        emailList = [u, ...emailList];
-      }
+  // Automatically keep user email in emailList if available
+  $: if (($authEmail || $authUser) && emailList.length === 0) {
+    const cand = ($authEmail || '').trim() || (localStorage.getItem('auth_email') || '').trim() || (($authUser || '').includes('@') ? ($authUser || '').trim() : '');
+    if (cand && cand.includes('@') && !emailList.includes(cand)) {
+      emailList = [cand];
       userEmailInitialized = true;
     }
+  }
+
+  // Save last used QA email to localStorage whenever emailList changes
+  $: if (emailList.length > 0) {
+    try {
+      localStorage.setItem('last_qa_email', emailList.join(','));
+    } catch(e) {}
   }
 
   function addEmail() {
