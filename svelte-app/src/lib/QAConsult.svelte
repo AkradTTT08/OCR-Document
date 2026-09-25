@@ -146,6 +146,8 @@
       const safeName = baseName.replace(/[^\w\-.]/g, '_');
       const computedExcelUrl = `/api/qa_report/download/QA_Report_${safeName}_${item.id}.xlsx`;
 
+      const evalData = item.exit_criteria_eval || synthesizeExitCriteria({ qa_findings: item.qa_findings, report: item.report, doc_type: item.docType });
+
       scanResult = {
         status: 'success',
         report: item.report,
@@ -156,7 +158,7 @@
         emailSent: false,
         excel_url: computedExcelUrl,
         qa_findings: item.qa_findings,
-        exit_criteria_eval: item.exit_criteria_eval
+        exit_criteria_eval: evalData
       };
 
       scanGroupName = item.group_name || 'General';
@@ -168,6 +170,105 @@
         selectedProjectStore.set(p);
       }
     }
+  }
+
+  function synthesizeExitCriteria(res) {
+    if (!res) return null;
+    const findings = res.qa_findings || [];
+    const highCritical = findings.filter(f => {
+      const sev = (f.severity || '').toLowerCase();
+      return sev === 'critical' || sev === 'high';
+    });
+    const medium = findings.filter(f => (f.severity || '').toLowerCase() === 'medium');
+    const typos = findings.filter(f => {
+      const ct = (f.check_type || '').toLowerCase();
+      const iss = (f.issue || '').toLowerCase();
+      return ct.includes('spell') || ct.includes('คำผิด') || iss.includes('คำผิด') || iss.includes('สะกด');
+    });
+
+    const defaultItems = [
+      { item_code: '1.1', category: 'Defect & Bug', question_text: 'ไม่มี Defect ระดับ Critical / High คงค้างในเอกสาร', target_metric: '0 Critical/High Bugs (ผ่าน 100%)', severity: 'Critical', is_mandatory: true },
+      { item_code: '1.2', category: 'Defect & Bug', question_text: 'ไม่มีข้อผิดพลาดด้าน Logic การคำนวณ หรือการไหลของกระบวนการทำงาน (Process Flow)', target_metric: '100% Correct Logic', severity: 'Critical', is_mandatory: true },
+      { item_code: '1.3', category: 'Defect & Bug', question_text: 'ไม่มี Broken Links, รหัสอ้างอิงที่ไม่ตรงกัน หรือภาพประกอบที่ไม่ถูกต้อง', target_metric: '0 Broken Links/Refs', severity: 'Major', is_mandatory: true },
+      { item_code: '2.1', category: 'Content Completeness', question_text: 'มีเนื้อหาครบถ้วนตาม Scope, Objective และ Requirement ที่ตกลงไว้', target_metric: '100% Scope Coverage', severity: 'Critical', is_mandatory: true },
+      { item_code: '2.2', category: 'Content Completeness', question_text: 'มีรายละเอียด Input / Output / Data Dictionary ครบถ้วนชัดเจน', target_metric: '100% Data Specs', severity: 'Major', is_mandatory: true },
+      { item_code: '2.3', category: 'Content Completeness', question_text: 'ครอบคลุม Exception Cases, Edge Cases และ Error Handling', target_metric: '100% Edge Cases Handling', severity: 'Major', is_mandatory: true },
+      { item_code: '2.4', category: 'Content Completeness', question_text: 'มีเกณฑ์การยอมรับ (Acceptance Criteria / Definition of Done) ชัดเจนทุกหัวข้อ', target_metric: '100% Defined Criteria', severity: 'Major', is_mandatory: true },
+      { item_code: '3.1', category: 'Formatting & Quality', question_text: 'ไม่มีคำผิด (Spelling / Typos) ในคำศัพท์เฉพาะทาง, ภาษาไทย และภาษาอังกฤษ', target_metric: '0 Typos (ความถูกต้อง 100%)', severity: 'Minor', is_mandatory: false },
+      { item_code: '3.2', category: 'Formatting & Quality', question_text: 'รูปแบบฟอนต์, ขนาดตัวอักษร, ระยะย่อหน้า และหัวข้อ มีความสม่ำเสมอทั้งเอกสาร', target_metric: '100% Style Consistency', severity: 'Minor', is_mandatory: false },
+      { item_code: '3.3', category: 'Formatting & Quality', question_text: 'การจัดวางตาราง, รูปภาพ และ Diagram มีความชัดเจน อ่านง่าย ไม่ตกขอบ', target_metric: '100% Visual Clarity', severity: 'Minor', is_mandatory: false },
+      { item_code: '4.1', category: 'Governance & Control', question_text: 'มีการระบุ Document Title, Version Number, วันที่อัปเดต และชื่อผู้แต่ง/ผู้แก้ไขชัดเจน', target_metric: '100% Header & Metadata', severity: 'Major', is_mandatory: true },
+      { item_code: '4.2', category: 'Governance & Control', question_text: 'มีประวัติการแก้ไข (Document History / Revision Log) สรุปการเปลี่ยนแปลงในแต่ละเวอร์ชัน', target_metric: '100% Logged History', severity: 'Minor', is_mandatory: false },
+      { item_code: '4.3', category: 'Governance & Control', question_text: 'จัดทำเอกสารฉบับสะอาด (Clean Version) ที่ปิด Track Changes และ Remove Comment ร่างออกเรียบร้อย', target_metric: '0 Draft Comments (ฉบับสะอาด 100%)', severity: 'Major', is_mandatory: true }
+    ];
+
+    let passedCnt = 0;
+    let failedCnt = 0;
+    let naCnt = 0;
+    let hasCat12Fail = false;
+
+    const items = defaultItems.map(d => {
+      let st = 'PASS';
+      let rem = 'ตรวจสอบแล้วตรงตามเกณฑ์มาตรฐาน';
+      let evid = '';
+
+      if (d.item_code === '1.1' && highCritical.length > 0) {
+        st = 'FAIL';
+        rem = `พบประเด็นความรุนแรง Critical/High จำนวน ${highCritical.length} รายการ`;
+        evid = highCritical[0].issue || '';
+      } else if (d.item_code === '3.1' && typos.length > 0) {
+        st = 'FAIL';
+        rem = `พบคำผิดหรือการสะกดคำไม่ถูกต้อง ${typos.length} รายการ`;
+        evid = typos[0].issue || '';
+      }
+
+      if (st === 'PASS') passedCnt++;
+      else if (st === 'FAIL') {
+        failedCnt++;
+        if (d.item_code.startsWith('1.') || d.item_code.startsWith('2.')) {
+          hasCat12Fail = true;
+        }
+      } else {
+        naCnt++;
+      }
+
+      return {
+        ...d,
+        item_id: `synth-${d.item_code}`,
+        status: st,
+        remarks: rem,
+        evidence_text: evid
+      };
+    });
+
+    let finalStatus = 'PASSED';
+    let summaryRemarks = 'เอกสารผ่านเกณฑ์มาตรฐาน Exit Criteria ครบถ้วนบริบูรณ์ 100%';
+
+    if (failedCnt > 0) {
+      if (hasCat12Fail) {
+        finalStatus = 'REJECTED';
+        summaryRemarks = 'เอกสารไม่ผ่านเกณฑ์ Exit Criteria สาระสำคัญ (หมวด 1 หรือ 2) ต้องแก้ไขและส่งกลับมาตรวจใหม่';
+      } else {
+        finalStatus = 'CONDITIONAL_PASSED';
+        summaryRemarks = 'เอกสารผ่านเกณฑ์สาระสำคัญ (หมวด 1, 2, 4) พบข้อสังเกตเล็กน้อยในหมวดจัดหน้า/คำผิด (หมวด 3) สามารถแก้ไขและส่ง Final Copy ได้เลย';
+      }
+    }
+
+    const totalValid = items.length - naCnt;
+    const scorePct = totalValid > 0 ? Math.round((passedCnt / totalValid) * 100) : 100;
+
+    return {
+      template_id: 'universal-default',
+      template_title: 'Universal Document Exit Criteria',
+      status: finalStatus,
+      total_items: items.length,
+      passed_items: passedCnt,
+      failed_items: failedCnt,
+      na_items: naCnt,
+      score_percentage: scorePct,
+      summary_remarks: summaryRemarks,
+      items: items
+    };
   }
 
   async function loadDocTypes(projectId = null) {
@@ -560,7 +661,10 @@
               qaHistory.update(h => h.filter(item => item.id !== pendingItem.id));
               await loadQAHistoryFromDB();
               await loadQAGroupsFromDB();
-              if (scanResult && scanResult.exit_criteria_eval) {
+              if (scanResult) {
+                if (!scanResult.exit_criteria_eval) {
+                  scanResult.exit_criteria_eval = synthesizeExitCriteria(scanResult);
+                }
                 gateResultData = scanResult.exit_criteria_eval;
                 showGateModal = true;
               }

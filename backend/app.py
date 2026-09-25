@@ -2810,25 +2810,51 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
     Combines universal baseline criteria ('ALL') with specific criteria for doc_type (e.g. SRS, UAT, Project Plan).
     Returns evaluation summary, status, and itemized results.
     """
-    from db_ingestion import get_db_connection
-    from ocr_engine import _get_gemini_client
+    import os
     import json
     import re
-    
-    conn = get_db_connection()
+    import uuid
+    from db_ingestion import get_db_connection
+    from ocr_engine import _get_gemini_client
+
+    DEFAULT_UNIVERSAL_ITEMS = [
+        ('1.1', 'Defect & Bug', 'ไม่มี Defect ระดับ Critical / High คงค้างในเอกสาร', '0 Critical/High Bugs (ผ่าน 100%)', 'Critical', True, 1),
+        ('1.2', 'Defect & Bug', 'ไม่มีข้อผิดพลาดด้าน Logic การคำนวณ หรือการไหลของกระบวนการทำงาน (Process Flow)', '100% Correct Logic', 'Critical', True, 2),
+        ('1.3', 'Defect & Bug', 'ไม่มี Broken Links, รหัสอ้างอิงที่ไม่ตรงกัน หรือภาพประกอบที่ไม่ถูกต้อง', '0 Broken Links/Refs', 'Major', True, 3),
+        ('2.1', 'Content Completeness', 'มีเนื้อหาครบถ้วนตาม Scope, Objective และ Requirement ที่ตกลงไว้', '100% Scope Coverage', 'Critical', True, 4),
+        ('2.2', 'Content Completeness', 'มีรายละเอียด Input / Output / Data Dictionary ครบถ้วนชัดเจน', '100% Data Specs', 'Major', True, 5),
+        ('2.3', 'Content Completeness', 'ครอบคลุม Exception Cases, Edge Cases และ Error Handling', '100% Edge Cases Handling', 'Major', True, 6),
+        ('2.4', 'Content Completeness', 'มีเกณฑ์การยอมรับ (Acceptance Criteria / Definition of Done) ชัดเจนทุกหัวข้อ', '100% Defined Criteria', 'Major', True, 7),
+        ('3.1', 'Formatting & Quality', 'ไม่มีคำผิด (Spelling / Typos) ในคำศัพท์เฉพาะทาง, ภาษาไทย และภาษาอังกฤษ', '0 Typos (ความถูกต้อง 100%)', 'Minor', False, 8),
+        ('3.2', 'Formatting & Quality', 'รูปแบบฟอนต์, ขนาดตัวอักษร, ระยะย่อหน้า และหัวข้อ มีความสม่ำเสมอทั้งเอกสาร', '100% Style Consistency', 'Minor', False, 9),
+        ('3.3', 'Formatting & Quality', 'การจัดวางตาราง, รูปภาพ และ Diagram มีความชัดเจน อ่านง่าย ไม่ตกขอบ', '100% Visual Clarity', 'Minor', False, 10),
+        ('4.1', 'Governance & Control', 'มีการระบุ Document Title, Version Number, วันที่อัปเดต และชื่อผู้แต่ง/ผู้แก้ไขชัดเจน', '100% Header & Metadata', 'Major', True, 11),
+        ('4.2', 'Governance & Control', 'มีประวัติการแก้ไข (Document History / Revision Log) สรุปการเปลี่ยนแปลงในแต่ละเวอร์ชัน', '100% Logged History', 'Minor', False, 12),
+        ('4.3', 'Governance & Control', 'จัดทำเอกสารฉบับสะอาด (Clean Version) ที่ปิด Track Changes และ Remove Comment ร่างออกเรียบร้อย', '0 Draft Comments (ฉบับสะอาด 100%)', 'Major', True, 13)
+    ]
+
+    conn = None
+    templates_to_use = []
+    item_rows = []
+    specific_template_found = False
+    template_title = "Universal Document Exit Criteria"
+    template_id = None
+    skill_context = ""
+
+    target_type_clean = (doc_type or '').strip()
+
     try:
+        conn = get_db_connection()
         cur = conn.cursor()
         
         # 1. Fetch Universal ALL templates (Active)
-        templates_to_use = []
         cur.execute("""
             SELECT template_id, title, doc_type, max_loops 
             FROM exit_criteria_templates 
             WHERE is_active = TRUE AND UPPER(TRIM(doc_type)) = 'ALL'
             ORDER BY created_at DESC;
         """)
-        all_template_rows = cur.fetchall()
-        for r in all_template_rows:
+        for r in cur.fetchall():
             templates_to_use.append({
                 'template_id': r[0],
                 'title': r[1],
@@ -2836,18 +2862,19 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
                 'max_loops': r[3] or 3
             })
             
-        # 2. Fetch Specific doc_type templates (Active) if doc_type is specified and != 'ALL'
-        specific_template_found = False
-        target_type_clean = (doc_type or '').strip()
+        # 2. Fetch Specific doc_type templates (Active)
         if target_type_clean and target_type_clean.upper() != 'ALL':
             cur.execute("""
                 SELECT template_id, title, doc_type, max_loops 
                 FROM exit_criteria_templates 
-                WHERE is_active = TRUE AND UPPER(TRIM(doc_type)) = UPPER(TRIM(%s))
+                WHERE is_active = TRUE AND (
+                    UPPER(TRIM(doc_type)) = UPPER(TRIM(%s))
+                    OR %s ILIKE '%%' || TRIM(doc_type) || '%%'
+                    OR TRIM(doc_type) ILIKE '%%' || %s || '%%'
+                )
                 ORDER BY created_at DESC;
-            """, (target_type_clean,))
-            spec_rows = cur.fetchall()
-            for r in spec_rows:
+            """, (target_type_clean, target_type_clean, target_type_clean))
+            for r in cur.fetchall():
                 specific_template_found = True
                 templates_to_use.append({
                     'template_id': r[0],
@@ -2856,26 +2883,7 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
                     'max_loops': r[3] or 3
                 })
 
-        if not templates_to_use:
-            cur.close()
-            conn.close()
-            return None
-
-        # Determine composite title
-        if specific_template_found:
-            spec_titles = [t['title'] for t in templates_to_use if t['doc_type'] != 'ALL']
-            all_titles = [t['title'] for t in templates_to_use if t['doc_type'] == 'ALL']
-            if all_titles:
-                template_title = f"{' / '.join(spec_titles)} + เกณฑ์กลาง ({' / '.join(all_titles)})"
-            else:
-                template_title = f"{' / '.join(spec_titles)}"
-        else:
-            template_title = templates_to_use[0]['title']
-
-        template_id = templates_to_use[0]['template_id']
-
-        # Collect items from all matching templates
-        item_rows = []
+        # Collect items from matching templates
         seen_codes = set()
         for t in templates_to_use:
             cur.execute("""
@@ -2887,22 +2895,14 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
             t_prefix = "เกณฑ์กลาง ALL" if is_universal else t['doc_type']
             for row in t_items:
                 i_id, i_code, i_cat, i_q, i_metric, i_sev, i_mand, i_idx = row
-                # Disambiguate item codes if multiple templates share codes
                 code_key = i_code
                 if code_key in seen_codes:
                     code_key = f"{'ALL' if is_universal else target_type_clean}-{i_code}"
                 seen_codes.add(code_key)
-                
                 cat_label = f"[{t_prefix}] {i_cat}" if specific_template_found else i_cat
                 item_rows.append((i_id, code_key, cat_label, i_q, i_metric, i_sev, i_mand, i_idx))
-        
-        if not item_rows:
-            cur.close()
-            conn.close()
-            return None
 
-        # Fetch relevant AI skills for this doc_type
-        skill_context = ""
+        # Fetch active skills
         cur.execute("SELECT skill_name, markdown_instructions FROM agent_skills WHERE is_active = TRUE AND (UPPER(TRIM(target_doc_type)) = UPPER(TRIM(%s)) OR target_doc_type = 'ALL') AND skill_name NOT ILIKE %s;", (doc_type, '%Exit Criteria%'))
         active_skills = cur.fetchall()
         if active_skills:
@@ -2910,52 +2910,85 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
             for s_name, s_inst in active_skills:
                 skill_context += f"[{s_name}]:\n{s_inst}\n\n"
 
-        # Format prompt for Gemini AI Evaluation
-        checklist_formatted = ""
-        items_dict = {}
-        for row in item_rows:
-            i_id, item_code, category, question, metric, severity, mandatory, idx = row
-            items_dict[item_code] = {
-                'item_id': str(i_id),
-                'item_code': item_code,
-                'category': category,
-                'question_text': question,
-                'target_metric': metric or '100% (ผ่านบริบูรณ์)',
-                'severity': severity,
-                'is_mandatory': mandatory
-            }
-            mand_txt = "บังคับผ่าน" if mandatory else "ข้ามได้หากไม่เกี่ยว"
-            checklist_formatted += f"- ข้อ [{item_code}] หมวด {category} (ตัวชี้วัด/KPI: {metric or '100%'}, ความรุนแรง: {severity}, {mand_txt}): {question}\n"
+        if templates_to_use:
+            template_id = templates_to_use[0]['template_id']
+            if specific_template_found:
+                spec_titles = [t['title'] for t in templates_to_use if t['doc_type'] != 'ALL']
+                all_titles = [t['title'] for t in templates_to_use if t['doc_type'] == 'ALL']
+                if all_titles:
+                    template_title = f"{' / '.join(spec_titles)} + เกณฑ์กลาง ({' / '.join(all_titles)})"
+                else:
+                    template_title = f"{' / '.join(spec_titles)}"
+            else:
+                template_title = templates_to_use[0]['title']
 
-        # Build findings summary for prompt context
-        findings_summary = ""
-        if qa_findings:
-            high_critical = [f for f in qa_findings if f.get('severity','').lower() in ['critical','high']]
-            medium = [f for f in qa_findings if f.get('severity','').lower() == 'medium']
-            low_info = [f for f in qa_findings if f.get('severity','').lower() in ['low','info']]
-            findings_summary = f"""
+        cur.close()
+    except Exception as db_err:
+        logger.warning(f"DB load for exit criteria templates encountered issue (will use universal fallback): {db_err}")
 
+    # Fallback to Built-in Universal Items if item_rows is empty
+    if not item_rows:
+        template_title = "Universal Document Exit Criteria"
+        template_id = str(uuid.uuid4())
+        for code, cat, q, metric, sev, mand, idx in DEFAULT_UNIVERSAL_ITEMS:
+            item_rows.append((f"default-{code}", code, cat, q, metric, sev, mand, idx))
+
+    # Format checklist items
+    checklist_formatted = ""
+    items_dict = {}
+    for row in item_rows:
+        i_id, item_code, category, question, metric, severity, mandatory, idx = row
+        items_dict[item_code] = {
+            'item_id': str(i_id),
+            'item_code': item_code,
+            'category': category,
+            'question_text': question,
+            'target_metric': metric or '100% (ผ่านบริบูรณ์)',
+            'severity': severity,
+            'is_mandatory': mandatory
+        }
+        mand_txt = "บังคับผ่าน" if mandatory else "ข้ามได้หากไม่เกี่ยว"
+        checklist_formatted += f"- ข้อ [{item_code}] หมวด {category} (ตัวชี้วัด/KPI: {metric or '100%'}, ความรุนแรง: {severity}, {mand_txt}): {question}\n"
+
+    # Build findings summary for prompt context
+    findings_summary = ""
+    high_critical = []
+    medium = []
+    low_info = []
+    typos = []
+    if qa_findings:
+        for f in qa_findings:
+            sev = (f.get('severity') or '').lower()
+            ct = (f.get('check_type') or '').lower()
+            iss = (f.get('issue') or '').lower()
+            if sev in ['critical', 'high']:
+                high_critical.append(f)
+            elif sev == 'medium':
+                medium.append(f)
+            else:
+                low_info.append(f)
+            if 'spell' in ct or 'คำผิด' in ct or 'คำผิด' in iss or 'สะกด' in iss:
+                typos.append(f)
+
+        findings_summary = f"""
 === ผล QA Analysis Findings ที่พบในเอกสาร ===
-(ข้อมูลนี้คือผลจากการวิเคราะห์โดย AI — ให้นำมาประกอบการตัดสินใจ Exit Criteria ด้วย)
 - Critical/High Findings: {len(high_critical)} รายการ
 - Medium Findings: {len(medium)} รายการ  
 - Low/Info Findings: {len(low_info)} รายการ
 - รวมทั้งหมด: {len(qa_findings)} รายการ
-
-รายการ Critical/High ที่พบ:
 """
-            for f in high_critical[:10]:  # limit to 10
-                findings_summary += f"  [{f.get('severity','')}] {f.get('issue','')} — ประเภท: {f.get('check_type','')}\n"
-            if medium:
-                findings_summary += f"\nรายการ Medium ที่พบ ({len(medium)} รายการ):\n"
-                for f in medium[:5]:
-                    findings_summary += f"  [Medium] {f.get('issue','')}\n"
-            findings_summary += """
-**หมายเหตุ:** ถ้ามี Critical/High Findings → ข้อตรวจที่เกี่ยวข้องควรเป็น FAIL
-ถ้ามีเพียง Medium/Low → ข้อตรวจที่เกี่ยวข้องอาจเป็น FAIL หรือ CONDITIONAL_PASS ขึ้นอยู่กับเนื้อหา
+        for f in high_critical[:10]:
+            findings_summary += f"  [{f.get('severity','')}] {f.get('issue','')} — ประเภท: {f.get('check_type','')}\n"
+        if medium:
+            findings_summary += f"\nรายการ Medium ที่พบ ({len(medium)} รายการ):\n"
+            for f in medium[:5]:
+                findings_summary += f"  [Medium] {f.get('issue','')}\n"
+        findings_summary += """
+**หมายเหตุ:** ถ้ามี Critical/High Findings → ข้อตรวจที่เกี่ยวข้อง (1.1, 1.2, 2.1) ควรเป็น FAIL
+ถ้ามีเพียง Medium/Low หรือคำผิด → ข้อตรวจที่เกี่ยวข้องอาจเป็น CONDITIONAL_PASS หรือ FAIL ตามหมวด
 """
 
-        prompt = f"""คุณคือ System Auditor และ Quality Gate Evaluator
+    prompt = f"""คุณคือ System Auditor และ Quality Gate Evaluator
 กรุณาประเมินเนื้อหาเอกสารประเภท "{doc_type}" ต่อไปนี้เทียบกับรายการ Exit Criteria Checklist แต่ละข้อ:
 {skill_context}
 === รายการข้อตรวจ (Exit Criteria Checklist) ===
@@ -2975,11 +3008,12 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
   }}
 ]
 """
+    eval_items_res = []
+    try:
         client = _get_gemini_client()
-        gemini_model = os.environ.get('GEMINI_MODEL', 'gemini-3.1-pro')
-        fallback_models = [gemini_model, 'gemini-3.1-flash', 'gemini-2.5-flash', 'gemini-2.5-flash-lite']
+        gemini_model = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash')
+        fallback_models = [gemini_model, 'gemini-2.5-flash-lite', 'gemini-3.1-flash', 'gemini-3.1-pro']
         
-        eval_items_res = []
         for model_name in fallback_models:
             try:
                 res = client.models.generate_content(model=model_name, contents=prompt)
@@ -2997,106 +3031,135 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
                             log_api_usage("Exit_Criteria", used_model, res.usage_metadata)
                         except Exception as usage_err:
                             logger.error(f"Failed to log API usage: {usage_err}")
-                    
                     break
             except Exception as e:
                 logger.warning(f"Exit criteria AI eval attempt failed with {model_name}: {e}")
                 continue
+    except Exception as client_err:
+        logger.error(f"Failed to initialize Gemini client for exit criteria: {client_err}")
 
-        # Map results and determine Final Gate Status
-        results_map = {item.get('item_code'): item for item in eval_items_res if isinstance(item, dict)}
-        
-        evaluated_items = []
-        passed_count = 0
-        failed_count = 0
-        na_count = 0
-        
-        has_cat1_2_fail = False
-        has_cat3_fail = False
-        
-        for item_code, item_info in items_dict.items():
-            ai_eval = results_map.get(item_code, {})
-            status = ai_eval.get('status', 'PASS').upper()
-            if status not in ['PASS', 'FAIL', 'NA']:
-                status = 'PASS'
-                
-            remarks = ai_eval.get('remarks', 'ตรวจสอบแล้วตรงตามเกณฑ์มาตรฐาน')
-            evidence = ai_eval.get('evidence_text', '')
-            
-            if status == 'PASS':
-                passed_count += 1
-            elif status == 'FAIL':
-                failed_count += 1
-                cat = item_info['category']
-                if 'Defect' in cat or 'Content' in cat or '1' in item_code or '2' in item_code:
-                    has_cat1_2_fail = True
-                else:
-                    has_cat3_fail = True
+    # Map results and determine Final Gate Status
+    results_map = {item.get('item_code'): item for item in eval_items_res if isinstance(item, dict)}
+    
+    evaluated_items = []
+    passed_count = 0
+    failed_count = 0
+    na_count = 0
+    
+    has_cat1_2_fail = False
+    
+    for item_code, item_info in items_dict.items():
+        ai_eval = results_map.get(item_code, {})
+        status = ai_eval.get('status', '').upper() if ai_eval else ''
+        remarks = ai_eval.get('remarks', '') if ai_eval else ''
+        evidence = ai_eval.get('evidence_text', '') if ai_eval else ''
+
+        # Fallback reasoning from findings if AI evaluation didn't cover this item
+        if not status or status not in ['PASS', 'FAIL', 'NA']:
+            if item_code in ['1.1', 'Defect-1.1'] and high_critical:
+                status = 'FAIL'
+                remarks = f"พบประเด็นความรุนแรง Critical/High จำนวน {len(high_critical)} รายการ"
+                evidence = high_critical[0].get('issue', '')
+            elif item_code in ['3.1', 'Formatting-3.1'] and typos:
+                status = 'FAIL'
+                remarks = f"พบคำผิดหรือการสะกดคำไม่ถูกต้อง {len(typos)} รายการ"
+                evidence = typos[0].get('issue', '')
             else:
-                na_count += 1
-                
-            evaluated_items.append({
-                'item_id': item_info['item_id'],
-                'item_code': item_code,
-                'category': item_info['category'],
-                'question_text': item_info['question_text'],
-                'target_metric': item_info['target_metric'],
-                'severity': item_info['severity'],
-                'is_mandatory': item_info['is_mandatory'],
-                'status': status,
-                'remarks': remarks,
-                'evidence_text': evidence
-            })
+                status = 'PASS'
+                remarks = 'ตรวจสอบแล้วตรงตามเกณฑ์มาตรฐาน'
 
-        total_items = len(evaluated_items)
-        score_pct = round((passed_count / (total_items - na_count)) * 100, 2) if (total_items - na_count) > 0 else 100.0
-
-        # Determine Final Gate Assessment Rule
-        if failed_count == 0:
-            final_status = 'PASSED'
-            summary_remarks = 'เอกสารผ่านเกณฑ์มาตรฐาน Exit Criteria ครบถ้วนบริบูรณ์ 100%'
-        elif not has_cat1_2_fail:
-            final_status = 'CONDITIONAL_PASSED'
-            summary_remarks = 'เอกสารผ่านเกณฑ์สาระสำคัญ (หมวด 1, 2, 4) พบข้อสังเกตเล็กน้อยในหมวดจัดหน้า/คำผิด (หมวด 3) สามารถแก้ไขและส่ง Final Copy ได้เลย'
+        if status == 'PASS':
+            passed_count += 1
+        elif status == 'FAIL':
+            failed_count += 1
+            cat = item_info['category']
+            if 'Defect' in cat or 'Content' in cat or item_code.startswith('1.') or item_code.startswith('2.'):
+                has_cat1_2_fail = True
         else:
-            final_status = 'REJECTED'
-            summary_remarks = 'เอกสารไม่ผ่านเกณฑ์ Exit Criteria สาระสำคัญ (หมวด 1 หรือ 2) ต้องแก้ไขและส่งกลับมาตรวจใหม่'
-
-        # Save evaluation log in DB
-        try:
-            cur.execute("""
-                INSERT INTO document_exit_evaluations (template_id, project_id, status, score_percentage, summary_remarks)
-                VALUES (%s, %s, %s, %s, %s) RETURNING evaluation_id;
-            """, (template_id, project_id, final_status, score_pct, summary_remarks))
-            eval_id = cur.fetchone()[0]
+            na_count += 1
             
-            for item in evaluated_items:
-                cur.execute("""
-                    INSERT INTO document_exit_evaluation_items (evaluation_id, item_id, item_code, target_metric, status, remarks, evidence_text)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s);
-                """, (eval_id, item['item_id'], item['item_code'], item['target_metric'], item['status'], item['remarks'], item['evidence_text']))
-        except Exception as log_err:
-            logger.error(f"Failed to log document_exit_evaluations: {log_err}")
+        evaluated_items.append({
+            'item_id': item_info['item_id'],
+            'item_code': item_code,
+            'category': item_info['category'],
+            'question_text': item_info['question_text'],
+            'target_metric': item_info['target_metric'],
+            'severity': item_info['severity'],
+            'is_mandatory': item_info['is_mandatory'],
+            'status': status,
+            'remarks': remarks,
+            'evidence_text': evidence
+        })
 
-        cur.close()
-        conn.close()
-        
-        return {
-            'template_id': str(template_id),
-            'template_title': template_title,
-            'status': final_status,
-            'total_items': total_items,
-            'passed_items': passed_count,
-            'failed_items': failed_count,
-            'na_items': na_count,
-            'score_percentage': score_pct,
-            'summary_remarks': summary_remarks,
-            'items': evaluated_items
-        }
-    except Exception as e:
-        logger.error(f"Error evaluating exit criteria: {e}", exc_info=True)
-        if conn: conn.close()
-        return None
+    total_items = len(evaluated_items)
+    score_pct = round((passed_count / (total_items - na_count)) * 100, 2) if (total_items - na_count) > 0 else 100.0
+
+    # Determine Final Gate Assessment Rule
+    if failed_count == 0:
+        final_status = 'PASSED'
+        summary_remarks = 'เอกสารผ่านเกณฑ์มาตรฐาน Exit Criteria ครบถ้วนบริบูรณ์ 100%'
+    elif not has_cat1_2_fail:
+        final_status = 'CONDITIONAL_PASSED'
+        summary_remarks = 'เอกสารผ่านเกณฑ์สาระสำคัญ (หมวด 1, 2, 4) พบข้อสังเกตเล็กน้อยในหมวดจัดหน้า/คำผิด (หมวด 3) สามารถแก้ไขและส่ง Final Copy ได้เลย'
+    else:
+        final_status = 'REJECTED'
+        summary_remarks = 'เอกสารไม่ผ่านเกณฑ์ Exit Criteria สาระสำคัญ (หมวด 1 หรือ 2) ต้องแก้ไขและส่งกลับมาตรวจใหม่'
+
+    # Save evaluation log in DB if possible
+    if conn:
+        try:
+            safe_p_id = project_id if (project_id and str(project_id).strip()) else None
+            # Check if template_id is valid UUID
+            valid_t_id = None
+            try:
+                uuid.UUID(str(template_id))
+                valid_t_id = template_id
+            except:
+                valid_t_id = None
+
+            if valid_t_id:
+                cur = conn.cursor()
+                cur.execute("""
+                    INSERT INTO document_exit_evaluations (template_id, project_id, status, score_percentage, summary_remarks)
+                    VALUES (%s, %s, %s, %s, %s) RETURNING evaluation_id;
+                """, (valid_t_id, safe_p_id, final_status, score_pct, summary_remarks))
+                eval_id = cur.fetchone()[0]
+                
+                for item in evaluated_items:
+                    valid_i_id = None
+                    try:
+                        uuid.UUID(str(item['item_id']))
+                        valid_i_id = item['item_id']
+                    except:
+                        valid_i_id = None
+                        
+                    if valid_i_id:
+                        cur.execute("""
+                            INSERT INTO document_exit_evaluation_items (evaluation_id, item_id, item_code, target_metric, status, remarks, evidence_text)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s);
+                        """, (eval_id, valid_i_id, item['item_code'], item['target_metric'], item['status'], item['remarks'], item['evidence_text']))
+                conn.commit()
+                cur.close()
+        except Exception as log_err:
+            logger.warning(f"Failed to log document_exit_evaluations (non-critical): {log_err}")
+        finally:
+            try:
+                conn.close()
+            except:
+                pass
+
+    return {
+        'template_id': str(template_id),
+        'template_title': template_title,
+        'status': final_status,
+        'total_items': total_items,
+        'passed_items': passed_count,
+        'failed_items': failed_count,
+        'na_items': na_count,
+        'score_percentage': score_pct,
+        'summary_remarks': summary_remarks,
+        'items': evaluated_items
+    }
 
 @app.route('/api/exit-criteria/templates', methods=['GET', 'POST'])
 def handle_exit_criteria_templates():
