@@ -126,28 +126,46 @@
     resolveUserEmail();
   });
 
-  $: if ($activeQAContext && projects.length > 0) {
+  $: if ($activeQAContext) {
     const ctx = $activeQAContext;
     activeQAContext.set(null); // Clear it
     
-    selectedProjectStore.set(ctx.project);
-    scanGroupName = ctx.group_name;
-    scanGroupType = ctx.group_type;
+    if (ctx.project) {
+      selectedProjectStore.set(ctx.project);
+    }
+    const cleanGName = String(ctx.group_name || '').replace(/^\[.*?\]\s*/, '').trim() || 'General';
+    scanGroupName = cleanGName;
+    scanGroupType = ctx.group_type || 'Project Plan';
     isGroupNameSet = true;
 
-    // Check if this group is currently scanning
-    const scan = $activeScanStatus;
-    const cleanCurrent = String(ctx.group_name || '').replace(/^\[.*?\]\s*/, '').trim().toLowerCase();
-    const cleanScanning = scan ? String(scan.groupName || '').replace(/^\[.*?\]\s*/, '').trim().toLowerCase() : '';
-    if (scan && cleanScanning === cleanCurrent) {
-      isProcessing = true;
-      scanResult = null;
-      processStatus = scan.processStatus || "กำลังวิเคราะห์ข้อมูลเบื้องหลัง...";
-      progressPct = scan.progressPct || 50;
-    } else {
+    // If file is passed from QA Document Creation or another module
+    if (ctx.file) {
+      file = ctx.file;
       isProcessing = false;
       scanResult = null;
-      file = null;
+      if (ctx.doc_types && Array.isArray(ctx.doc_types) && ctx.doc_types.length > 0) {
+        selectedDocTypes = [...ctx.doc_types];
+      } else if (ctx.group_type) {
+        selectedDocTypes = [ctx.group_type];
+      }
+      if (ctx.skill_ids && Array.isArray(ctx.skill_ids)) {
+        selectedSkills = [...ctx.skill_ids];
+      }
+    } else {
+      // Check if this group is currently scanning
+      const scan = $activeScanStatus;
+      const cleanCurrent = cleanGName.toLowerCase();
+      const cleanScanning = scan ? String(scan.groupName || '').replace(/^\[.*?\]\s*/, '').trim().toLowerCase() : '';
+      if (scan && cleanScanning === cleanCurrent) {
+        isProcessing = true;
+        scanResult = null;
+        processStatus = scan.processStatus || "กำลังวิเคราะห์ข้อมูลเบื้องหลัง...";
+        progressPct = scan.progressPct || 50;
+      } else {
+        isProcessing = false;
+        scanResult = null;
+        file = null;
+      }
     }
   }
 
@@ -161,18 +179,22 @@
     }
   }
 
-  $: if ($selectedHistory && projects.length > 0) {
+  $: if ($selectedHistory) {
     const item = $selectedHistory;
     selectedHistory.set(null); // Clear it so it doesn't re-trigger
 
+    const cleanGName = String(item.group_name || 'General').replace(/^\[.*?\]\s*/, '').trim() || 'General';
+
     if (item.is_processing) {
-      scanGroupName = item.group_name || 'General';
+      scanGroupName = cleanGName;
       scanGroupType = item.group_type || '';
       isGroupNameSet = true;
       
-      const p = projects.find(p => String(p.id) === String(item.project_id) || String(p.project_id) === String(item.project_id) || (p.project_code && item.project_code && p.project_code === item.project_code));
+      const p = (projects || []).find(p => String(p.id) === String(item.project_id) || String(p.project_id) === String(item.project_id) || (p.project_code && item.project_code && p.project_code === item.project_code));
       if (p) {
         selectedProjectStore.set(p);
+      } else if (item.project_id || item.project_code) {
+        selectedProjectStore.set({ id: item.project_id, project_id: item.project_id, project_code: item.project_code || 'Project', name: item.project_code || 'Project' });
       }
       
       isProcessing = true;
@@ -199,13 +221,15 @@
         exit_criteria_eval: evalData
       };
 
-      scanGroupName = item.group_name || 'General';
+      scanGroupName = cleanGName;
       scanGroupType = item.group_type || '';
       isGroupNameSet = true;
 
-      const p = projects.find(p => String(p.id) === String(item.project_id) || String(p.project_id) === String(item.project_id) || (p.project_code && item.project_code && p.project_code === item.project_code));
+      const p = (projects || []).find(p => String(p.id) === String(item.project_id) || String(p.project_id) === String(item.project_id) || (p.project_code && item.project_code && p.project_code === item.project_code));
       if (p) {
         selectedProjectStore.set(p);
+      } else if (item.project_id || item.project_code) {
+        selectedProjectStore.set({ id: item.project_id, project_id: item.project_id, project_code: item.project_code || 'Project', name: item.project_code || 'Project' });
       }
     }
   }
@@ -349,20 +373,16 @@
     const pCode = String(selectedProjectObj.project_code || '').trim().toLowerCase();
     const hPid = String(h.project_id || '');
     const hCode = String(h.project_code || '').trim().toLowerCase();
-    const matchProj = !hPid || !pId || hPid === pId || (pCode && hCode && hCode === pCode);
-    if (!matchProj) return false;
-
-    if ($activeSidebarGroup && $activeSidebarGroup.group_name) {
-      const cleanHGroup = String(h.group_name || 'General').replace(/^\[.*?\]\s*/, '').trim().toLowerCase();
-      const cleanCtxGroup = String($activeSidebarGroup.group_name || 'General').replace(/^\[.*?\]\s*/, '').trim().toLowerCase();
-      const rawHGroup = String(h.group_name || 'General').trim().toLowerCase();
-      const rawCtxGroup = String($activeSidebarGroup.group_name || 'General').trim().toLowerCase();
-      return rawHGroup === rawCtxGroup || cleanHGroup === cleanCtxGroup || cleanHGroup.includes(cleanCtxGroup) || cleanCtxGroup.includes(cleanHGroup);
-    }
-    return true;
+    return !hPid || !pId || hPid === pId || (pCode && hCode && hCode === pCode);
   });
 
-  $: targetGroupName = scanGroupName || (scanResult && scanResult.group_name) || ($activeSidebarGroup && $activeSidebarGroup.group_name) || '';
+  $: cleanTargetGroupName = (() => {
+    let raw = scanGroupName || (scanResult && scanResult.group_name) || ($activeSidebarGroup && $activeSidebarGroup.group_name) || '';
+    while (/^\[.*?\]\s*/.test(raw)) {
+      raw = raw.replace(/^\[.*?\]\s*/, '').trim();
+    }
+    return raw.trim().toLowerCase();
+  })();
 
   $: currentGroupHistory = $qaHistory.filter(h => {
     if (!selectedProjectObj) return false;
@@ -373,12 +393,13 @@
     const matchProj = !hPid || !pId || hPid === pId || (pCode && hCode && hCode === pCode);
     if (!matchProj) return false;
 
-    if (targetGroupName) {
-      const cleanHGroup = String(h.group_name || 'General').replace(/^\[.*?\]\s*/, '').trim().toLowerCase();
-      const cleanTargetGroup = String(targetGroupName || 'General').replace(/^\[.*?\]\s*/, '').trim().toLowerCase();
-      const rawHGroup = String(h.group_name || 'General').trim().toLowerCase();
-      const rawTargetGroup = String(targetGroupName || 'General').trim().toLowerCase();
-      return rawHGroup === rawTargetGroup || cleanHGroup === cleanTargetGroup || cleanHGroup.includes(cleanTargetGroup) || cleanTargetGroup.includes(cleanHGroup);
+    if (cleanTargetGroupName) {
+      let cleanHGroup = String(h.group_name || 'General').trim();
+      while (/^\[.*?\]\s*/.test(cleanHGroup)) {
+        cleanHGroup = cleanHGroup.replace(/^\[.*?\]\s*/, '').trim();
+      }
+      cleanHGroup = cleanHGroup.toLowerCase();
+      return cleanHGroup === cleanTargetGroupName || cleanHGroup.includes(cleanTargetGroupName) || cleanTargetGroupName.includes(cleanHGroup);
     }
     return true;
   });

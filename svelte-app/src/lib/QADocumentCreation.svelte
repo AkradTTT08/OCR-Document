@@ -1,6 +1,6 @@
 <script>
-  import { onMount, onDestroy } from 'svelte';
-  import { selectedProjectStore, qaRefinementFeedback } from './qaHistoryStore.js';
+  import { onMount, onDestroy, createEventDispatcher } from 'svelte';
+  import { selectedProjectStore, qaRefinementFeedback, activeQAContext, activeSidebarGroup } from './qaHistoryStore.js';
   import { toast } from './toastStore.js';
   import { fade, slide, scale } from 'svelte/transition';
   import ProjectSelection from './ProjectSelection.svelte';
@@ -8,6 +8,8 @@
   import CustomMultiSelect from './CustomMultiSelect.svelte';
 
   import { MASTER_DOC_TYPES } from './constants.js';
+
+  const dispatch = createEventDispatcher();
 
   let docName = "";
   let docType = "Test Case"; // Default
@@ -417,6 +419,74 @@
     window.location.href = `/api/agent/download_generated_document/${doc.id}?format=${format}`;
   }
 
+  let isTransferringToQA = false;
+  let transferringDocId = null;
+
+  async function sendToQAConsult(doc) {
+    if (!doc || doc.status !== 'Completed') return;
+    transferringDocId = doc.id;
+    isTransferringToQA = true;
+    try {
+      toast('กำลังดึงไฟล์เอกสารเพื่อส่งต่อไปยัง QA Consult...', 'info', 2000);
+      
+      const format = (doc.doc_type === 'Test Case' || doc.doc_type === 'TestCase') ? 'excel' : 'pdf';
+      const fileExt = format === 'excel' ? 'xlsx' : 'pdf';
+      const mimeType = format === 'excel' ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'application/pdf';
+      
+      const res = await fetch(`/api/agent/download_generated_document/${doc.id}?format=${format}`);
+      if (!res.ok) {
+        throw new Error(`Failed to fetch document file (HTTP ${res.status})`);
+      }
+      
+      const blob = await res.blob();
+      const safeName = (doc.doc_name || 'Generated_Document').replace(/[^\w\u0E00-\u0E7F\-. ]/g, '_').trim();
+      const fileName = `${safeName}.${fileExt}`;
+      const fileObj = new File([blob], fileName, { type: mimeType });
+
+      // Clean group name and group type
+      const cleanGName = String(doc.doc_name || 'General').replace(/^\[.*?\]\s*/, '').trim();
+      const groupType = doc.doc_type || 'Project Plan';
+      
+      // Determine project
+      const proj = $selectedProjectStore || {
+        id: doc.project_id,
+        project_id: doc.project_id,
+        project_code: doc.project_code || '',
+        name: doc.project_name || doc.project_code || 'Project'
+      };
+
+      // Set active QA Context with pre-attached file
+      activeQAContext.set({
+        project: proj,
+        group_name: cleanGName,
+        group_type: groupType,
+        file: fileObj,
+        doc_types: doc.doc_type ? [doc.doc_type] : []
+      });
+
+      // Also set activeSidebarGroup and selectedProjectStore
+      selectedProjectStore.set(proj);
+      activeSidebarGroup.set({
+        project: proj,
+        group_name: cleanGName,
+        group_type: groupType,
+        project_id: proj.id || proj.project_id
+      });
+
+      toast(`โหลดไฟล์ "${fileName}" พร้อมส่งตรวจ QA Consult เรียบร้อยแล้ว`, 'success');
+      
+      // Dispatch navigate event to App.svelte to switch view
+      dispatch('navigate', { view: 'qa_consult' });
+
+    } catch (err) {
+      console.error('Error transferring document to QA Consult:', err);
+      toast(`ไม่สามารถส่งไฟล์ไป QA Consult ได้: ${err.message}`, 'error');
+    } finally {
+      isTransferringToQA = false;
+      transferringDocId = null;
+    }
+  }
+
   async function cancelDocument(doc) {
     if (!doc || !doc.id) return;
     try {
@@ -717,6 +787,22 @@
                             PDF
                           </button>
                         {/if}
+                        <button 
+                          class="btn-action btn-qa-consult" 
+                          title="ส่งไฟล์เอกสารนี้ไปตรวจที่ QA Consult"
+                          disabled={isTransferringToQA && transferringDocId === doc.id}
+                          on:click={() => sendToQAConsult(doc)}
+                        >
+                          {#if isTransferringToQA && transferringDocId === doc.id}
+                            <div class="spinner-micro"></div>
+                            กำลังส่ง...
+                          {:else}
+                            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                              <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path>
+                            </svg>
+                            ส่งตรวจ QA
+                          {/if}
+                        </button>
                         {#if doc.is_saved_to_project}
                           <span class="badge-saved" title="เอกสารนี้ถูกบันทึกเข้า Knowledge Base ของโครงการแล้ว">
                             <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" fill="currentColor" viewBox="0 0 16 16">
@@ -1233,6 +1319,26 @@
     border-color: rgba(16, 185, 129, 0.6);
     color: #ffffff;
     box-shadow: 0 0 10px rgba(16, 185, 129, 0.3);
+  }
+
+  .btn-qa-consult {
+    background: linear-gradient(135deg, rgba(168, 85, 247, 0.18), rgba(99, 102, 241, 0.22));
+    border-color: rgba(168, 85, 247, 0.45);
+    color: #d8b4fe;
+    font-weight: 500;
+  }
+
+  .btn-qa-consult:hover:not(:disabled) {
+    background: linear-gradient(135deg, rgba(168, 85, 247, 0.38), rgba(99, 102, 241, 0.42));
+    border-color: rgba(168, 85, 247, 0.8);
+    color: #ffffff;
+    box-shadow: 0 0 14px rgba(168, 85, 247, 0.38);
+    transform: translateY(-1px);
+  }
+
+  .btn-qa-consult:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
   }
 
   .btn-save-kb {

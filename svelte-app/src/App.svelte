@@ -85,8 +85,17 @@
   let systemReady = true;
 
   function handleGroupClick(group) {
+    const cleanClickedName = String(group.group_name || '').replace(/^\[.*?\]\s*/, '').trim().toLowerCase();
+    const cleanActiveName = String($activeSidebarGroup?.group_name || '').replace(/^\[.*?\]\s*/, '').trim().toLowerCase();
+
+    // Toggle off if clicking the already active group
+    if ($activeSidebarGroup && cleanClickedName === cleanActiveName) {
+      activeSidebarGroup.set(null);
+      return;
+    }
+
     // Find the project for this group
-    const proj = sidebarProjects.find(p => String(p.id || p.project_id) === String(group.project_id) || (p.project_code && group.project_code && p.project_code === group.project_code));
+    const proj = sidebarProjects.find(p => String(p.id || p.project_id) === String(group.project_id) || (p.project_code && group.project_code && p.project_code === group.project_code)) || $selectedProjectStore;
     if (proj) {
       selectedProjectStore.set(proj);
       activeView = 'qa_consult';
@@ -450,7 +459,7 @@
     const targetProject = String(project.id || project.project_id || '');
     const targetCode = String(project.project_code || '').trim().toLowerCase();
     
-    return history.filter(h => {
+    return (history || []).filter(h => {
       const hPid = String(h.project_id || '');
       const hCode = String(h.project_code || '').trim().toLowerCase();
       
@@ -458,11 +467,19 @@
       if (!matchProj) return false;
       
       if (context && context.group_name) {
-        const cleanHGroup = String(h.group_name || 'General').replace(/^\[.*?\]\s*/, '').trim().toLowerCase();
-        const cleanCtxGroup = String(context.group_name || 'General').replace(/^\[.*?\]\s*/, '').trim().toLowerCase();
-        const rawHGroup = String(h.group_name || 'General').trim().toLowerCase();
-        const rawCtxGroup = String(context.group_name || 'General').trim().toLowerCase();
-        return rawHGroup === rawCtxGroup || cleanHGroup === cleanCtxGroup || cleanHGroup.includes(cleanCtxGroup) || cleanCtxGroup.includes(cleanHGroup);
+        let cleanHGroup = String(h.group_name || 'General').trim();
+        while (/^\[.*?\]\s*/.test(cleanHGroup)) {
+          cleanHGroup = cleanHGroup.replace(/^\[.*?\]\s*/, '').trim();
+        }
+        cleanHGroup = cleanHGroup.toLowerCase();
+
+        let cleanCtxGroup = String(context.group_name || 'General').trim();
+        while (/^\[.*?\]\s*/.test(cleanCtxGroup)) {
+          cleanCtxGroup = cleanCtxGroup.replace(/^\[.*?\]\s*/, '').trim();
+        }
+        cleanCtxGroup = cleanCtxGroup.toLowerCase();
+
+        return cleanHGroup === cleanCtxGroup || cleanHGroup.includes(cleanCtxGroup) || cleanCtxGroup.includes(cleanHGroup);
       }
       return true; // Show all project history if no group context selected
     });
@@ -697,11 +714,23 @@
             <!-- History filtered by selected group OR all project history if no group selected -->
             {#if filteredQAHistory.length > 0}
               <div class="history-section">
-                <div class="history-title">
+                <div class="history-title" style="display: flex; justify-content: space-between; align-items: center;">
+                  <span>
+                    {#if $activeSidebarGroup}
+                      ประวัติ ({$activeSidebarGroup.group_name})
+                    {:else}
+                      ประวัติการวิเคราะห์ล่าสุด
+                    {/if}
+                  </span>
                   {#if $activeSidebarGroup}
-                    ประวัติการวิเคราะห์ ({$activeSidebarGroup.group_name})
-                  {:else}
-                    ประวัติการวิเคราะห์ล่าสุด
+                    <button 
+                      class="btn-reset-group-filter" 
+                      style="background: transparent; border: none; color: #a78bfa; font-size: 11px; cursor: pointer; text-decoration: underline; padding: 0;"
+                      title="คลิกเพื่อแสดงประวัติทั้งหมดในโครงการ"
+                      on:click={() => activeSidebarGroup.set(null)}
+                    >
+                      ดูทั้งหมด
+                    </button>
                   {/if}
                 </div>
                 <div class="history-list">
@@ -747,6 +776,28 @@
                       {/if}
                     </div>
                   {/each}
+                </div>
+              </div>
+            {:else if $activeSidebarGroup}
+              <div class="history-section">
+                <div class="history-title" style="display: flex; justify-content: space-between; align-items: center;">
+                  <span>ประวัติ ({$activeSidebarGroup.group_name})</span>
+                  <button 
+                    class="btn-reset-group-filter" 
+                    style="background: transparent; border: none; color: #a78bfa; font-size: 11px; cursor: pointer; text-decoration: underline; padding: 0;"
+                    on:click={() => activeSidebarGroup.set(null)}
+                  >
+                    ดูทั้งหมด
+                  </button>
+                </div>
+                <div style="padding: 10px 12px; font-size: 12px; color: #94a3b8; font-style: italic; background: rgba(255, 255, 255, 0.03); border-radius: 8px; margin-top: 4px;">
+                  ยังไม่มีประวัติการตรวจในกลุ่มนี้ 
+                  <button 
+                    style="background: none; border: none; color: #818cf8; text-decoration: underline; cursor: pointer; padding: 0; margin-left: 4px; font-size: 12px;"
+                    on:click={() => activeSidebarGroup.set(null)}
+                  >
+                    ดูประวัติทั้งหมด
+                  </button>
                 </div>
               </div>
             {/if}
@@ -878,7 +929,7 @@
             {:else if activeView === "qa_automate"}
               <QATestAutomation />
             {:else if activeView === "qa_doc_creation"}
-              <QADocumentCreation />
+              <QADocumentCreation on:navigate={(e) => { if (e.detail?.view) activeView = e.detail.view; }} />
             {:else if activeView === "qa_analysis_diagram"}
               <QAAnalysisDiagram />
             {:else if activeView === "qa_board"}

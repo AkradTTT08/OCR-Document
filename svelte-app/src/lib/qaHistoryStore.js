@@ -1,23 +1,75 @@
 import { writable, derived, get } from 'svelte/store';
 
+const QA_HISTORY_KEY = 'spectra_qa_history';
+const QA_GROUPS_KEY = 'spectra_qa_groups';
+const QA_PROJECT_KEY = 'spectra_qa_selected_project';
+const QA_ACTIVE_GROUP_KEY = 'spectra_qa_active_group';
+const QA_SESSION_GROUPS_KEY = 'spectra_qa_session_groups';
+
+function getLocalJSON(key, defaultVal) {
+  try {
+    const val = localStorage.getItem(key);
+    if (val) {
+      const parsed = JSON.parse(val);
+      if (parsed !== null && parsed !== undefined) return parsed;
+    }
+  } catch (e) {}
+  return defaultVal;
+}
+
+function setLocalJSON(key, val) {
+  try {
+    if (val === null || val === undefined) {
+      localStorage.removeItem(key);
+    } else {
+      localStorage.setItem(key, JSON.stringify(val));
+    }
+  } catch (e) {}
+}
+
 /** @type {import('svelte/store').Writable<any[]>} */
-export const qaHistory = writable([]);
+export const qaHistory = writable(getLocalJSON(QA_HISTORY_KEY, []));
 /** @type {import('svelte/store').Writable<any>} */
 export const selectedHistory = writable(null);
 /** @type {import('svelte/store').Writable<any>} */
-export const selectedProjectStore = writable(null);
+export const selectedProjectStore = writable(getLocalJSON(QA_PROJECT_KEY, null));
 /** @type {import('svelte/store').Writable<any[]>} */
-export const qaSessionGroups = writable([]);
+export const qaSessionGroups = writable(getLocalJSON(QA_SESSION_GROUPS_KEY, []));
 /** @type {import('svelte/store').Writable<any>} */
 export const activeQAContext = writable(null);
 /** @type {import('svelte/store').Writable<any>} */
-export const activeSidebarGroup = writable(null);
+export const activeSidebarGroup = writable(getLocalJSON(QA_ACTIVE_GROUP_KEY, null));
 /** @type {import('svelte/store').Writable<any[]>} */
-export const qaDbGroups = writable([]);
+export const qaDbGroups = writable(getLocalJSON(QA_GROUPS_KEY, []));
 /** @type {import('svelte/store').Writable<any>} */
 export const activeScanStatus = writable(null);
 /** @type {import('svelte/store').Writable<any>} */
 export const qaRefinementFeedback = writable(null);
+
+// Auto-sync stores to localStorage
+if (typeof window !== 'undefined') {
+  qaHistory.subscribe(val => {
+    // Only persist completed items to avoid saving transient spinners
+    const completed = (val || []).filter(item => !item.is_processing);
+    setLocalJSON(QA_HISTORY_KEY, completed.slice(0, 100));
+  });
+
+  qaDbGroups.subscribe(val => {
+    if (val && val.length > 0) setLocalJSON(QA_GROUPS_KEY, val);
+  });
+
+  selectedProjectStore.subscribe(val => {
+    setLocalJSON(QA_PROJECT_KEY, val);
+  });
+
+  activeSidebarGroup.subscribe(val => {
+    setLocalJSON(QA_ACTIVE_GROUP_KEY, val);
+  });
+
+  qaSessionGroups.subscribe(val => {
+    setLocalJSON(QA_SESSION_GROUPS_KEY, val || []);
+  });
+}
 
 /**
  * Derived store: unique groups from DB groups, DB history, and session groups
@@ -27,10 +79,18 @@ export const allGroups = derived(
   ([$qaHistory, $qaSessionGroups, $qaDbGroups]) => {
     const groupMap = new Map();
 
-    const cleanGroup = (name) => String(name || 'General').replace(/^\[.*?\]\s*/, '').trim();
+    const cleanGroup = (name) => {
+      if (!name) return 'General';
+      let s = String(name).trim();
+      // Remove repeated leading bracket tags like [SRS], [Test Case], etc.
+      while (/^\[.*?\]\s*/.test(s)) {
+        s = s.replace(/^\[.*?\]\s*/, '').trim();
+      }
+      return s || 'General';
+    };
 
     // From DB Groups (the master source of explicitly created groups)
-    for (const g of $qaDbGroups) {
+    for (const g of ($qaDbGroups || [])) {
       const gName = cleanGroup(g.group_name);
       let pId = String(g.project_id || '');
       if (pId.toLowerCase() === 'none' || pId.toLowerCase() === 'null') pId = '';
@@ -52,13 +112,13 @@ export const allGroups = derived(
       const normPid = (pId && pId.toLowerCase() !== 'none' && pId.toLowerCase() !== 'null') ? String(pId) : '';
       const normPCode = pCode ? String(pCode).trim().toLowerCase() : '';
 
-      // Direct match
+      // 1. Direct match by project_id + name
       if (normPid) {
         const directKey = `${normPid}::${cleanG}`;
         if (groupMap.has(directKey)) return groupMap.get(directKey);
       }
 
-      // Match by group name and project code / ID
+      // 2. Match by clean group name + project code / ID
       for (const item of groupMap.values()) {
         const itemClean = cleanGroup(item.group_name).toLowerCase();
         const nameMatch = itemClean === cleanG || itemClean.includes(cleanG) || cleanG.includes(itemClean);
@@ -70,11 +130,18 @@ export const allGroups = derived(
         const projMatch = !normPid || !itemPid || itemPid === normPid || (normPCode && itemPCode && itemPCode === normPCode);
         if (projMatch) return item;
       }
+
+      // 3. Fallback match by exact clean name across any group if project is unassigned
+      for (const item of groupMap.values()) {
+        const itemClean = cleanGroup(item.group_name).toLowerCase();
+        if (itemClean === cleanG) return item;
+      }
+
       return null;
     };
 
     // From DB history (to count scans and get implicitly created groups)
-    for (const h of $qaHistory) {
+    for (const h of ($qaHistory || [])) {
       const hName = cleanGroup(h.group_name);
       let pId = String(h.project_id || '');
       if (pId.toLowerCase() === 'none' || pId.toLowerCase() === 'null') pId = '';
@@ -102,7 +169,7 @@ export const allGroups = derived(
     }
 
     // From session groups (newly created in this session)
-    for (const g of $qaSessionGroups) {
+    for (const g of ($qaSessionGroups || [])) {
       const gName = cleanGroup(g.group_name);
       let pId = String(g.project_id || '');
       if (pId.toLowerCase() === 'none' || pId.toLowerCase() === 'null') pId = '';
@@ -138,7 +205,8 @@ export async function loadQAHistoryFromDB() {
           // Preserve any newly completed items in current that aren't yet in DB response
           const dbIds = new Set(data.transactions.map(t => String(t.id)));
           const unpersisted = current.filter(item => !item.is_processing && item.id && !dbIds.has(String(item.id)));
-          return [...inProgress, ...unpersisted, ...data.transactions];
+          const merged = [...inProgress, ...unpersisted, ...data.transactions];
+          return merged;
         });
       }
     }
