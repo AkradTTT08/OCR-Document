@@ -2448,7 +2448,8 @@ def qa_consult_api():
                         total_pages=total_pages,
                         email=email,
                         qa_findings=qa_findings,
-                        exit_criteria_eval=exit_criteria_eval
+                        exit_criteria_eval=exit_criteria_eval,
+                        project_name=project_name
                     )
                 except Exception as e:
                     logger.error(f"Failed to save QA transaction: {e}")
@@ -2486,7 +2487,7 @@ def qa_consult_api():
                     # Create download URL from filename
                     import os as _os
                     excel_basename = _os.path.basename(excel_path)
-                    excel_download_url = f"http://127.0.0.1:5000/api/qa_report/download/{excel_basename}"
+                    excel_download_url = f"/api/qa_report/download/{excel_basename}"
                     logger.info(f"Excel report generated: {excel_path}")
                 except Exception as excel_err:
                     logger.error(f"Failed to generate Excel report: {excel_err}")
@@ -2531,6 +2532,9 @@ def qa_send_email():
     รับ Report ที่ประมวลผลเสร็จแล้ว ส่งอีเมลแจ้งเตือน
     """
     try:
+        import os, urllib.parse
+        from pathlib import Path
+
         data = request.json
         email = data.get('email')
         doc_type = data.get('docType')
@@ -2542,8 +2546,50 @@ def qa_send_email():
         if not all([email, doc_type, filename, report]):
             return jsonify({'error': 'Missing required fields'}), 400
 
+        # Build absolute URL for email links (supports PUBLIC_BASE_URL or dynamic request.host_url)
+        public_base = os.environ.get('PUBLIC_BASE_URL') or os.environ.get('SERVER_URL') or request.host_url.rstrip('/')
+        if excel_url and not excel_url.startswith(('http://', 'https://')):
+            excel_url = f"{public_base.rstrip('/')}{'/' if not excel_url.startswith('/') else ''}{excel_url}"
+
+        # Resolve excel file path on server to attach directly
+        reports_dir = Path(__file__).parent.parent / "reports"
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        excel_file_path = None
+        if excel_url:
+            url_path = urllib.parse.urlparse(excel_url).path
+            fname = os.path.basename(url_path)
+            candidate = reports_dir / fname
+            if candidate.exists():
+                excel_file_path = str(candidate)
+
+        # If excel file doesn't exist on disk, generate it on-the-fly
+        if not excel_file_path:
+            try:
+                from excel_report import generate_qa_excel
+                doc_type_str = ', '.join(doc_type) if isinstance(doc_type, list) else (doc_type or 'Requirement')
+                generated_path = generate_qa_excel(
+                    report_text=report,
+                    filename=filename,
+                    doc_type=doc_type_str,
+                    exit_criteria_eval=exit_criteria_eval
+                )
+                if os.path.exists(generated_path):
+                    excel_file_path = generated_path
+                    if not excel_url:
+                        excel_url = f"{request.host_url.rstrip('/')}/api/qa_report/download/{os.path.basename(generated_path)}"
+            except Exception as gen_err:
+                logger.warning(f"Could not auto-generate Excel for email attachment: {gen_err}")
+
         from email_service import send_qa_report
-        email_sent = send_qa_report(email, doc_type, filename, report, excel_download_url=excel_url, exit_criteria_eval=exit_criteria_eval)
+        email_sent = send_qa_report(
+            recipient_email=email,
+            doc_type=doc_type,
+            filename=filename,
+            report_content=report,
+            excel_download_url=excel_url,
+            exit_criteria_eval=exit_criteria_eval,
+            excel_file_path=excel_file_path
+        )
 
         if email_sent:
             return jsonify({'success': True, 'message': 'ส่งอีเมลสำเร็จ'})
@@ -2557,39 +2603,95 @@ def qa_send_email():
 
 @app.route('/api/qa_report/download/<path:filename>', methods=['GET'])
 def download_qa_excel(filename):
-    """Download generated QA Excel report"""
+    """Download generated QA Excel report with on-the-fly regeneration fallback"""
     try:
+        import os, re, urllib.parse
+        from pathlib import Path
+        
         reports_dir = Path(__file__).parent.parent / "reports"
-        safe_name = secure_filename(filename)
-        filepath = reports_dir / safe_name
+        reports_dir.mkdir(parents=True, exist_ok=True)
         
-        if not filepath.exists():
-            # Fallback for old history files with different naming conventions
-            import re, os
-            match = re.match(r'QA_Report_(.+)_[a-zA-Z0-9\-]+\.xlsx', safe_name)
-            if match:
-                base_search = match.group(1)
-                best_match = None
-                best_mtime = 0
-                for f in os.listdir(reports_dir):
-                    if f.startswith(f"QA_Report_{base_search}_") and f.endswith(".xlsx"):
-                        f_mtime = os.path.getmtime(reports_dir / f)
-                        if f_mtime > best_mtime:
-                            best_match = f
-                            best_mtime = f_mtime
-                if best_match:
-                    safe_name = best_match
-                    filepath = reports_dir / safe_name
+        raw_name = os.path.basename(urllib.parse.unquote(filename))
+        
+        # 1. Direct match on disk
+        target_path = reports_dir / raw_name
+        if not target_path.exists():
+            # Try secure_filename version
+            safe_name = secure_filename(raw_name)
+            if (reports_dir / safe_name).exists():
+                target_path = reports_dir / safe_name
+
+        # 2. Check case-insensitively for matching file in reports directory
+        if not target_path.exists():
+            for f in os.listdir(reports_dir):
+                if f.lower() == raw_name.lower():
+                    target_path = reports_dir / f
+                    break
+
+        # 3. If still not found, try to find transaction in DB and generate on the fly
+        if not target_path.exists():
+            # Try to extract UUID / transaction_id from filename
+            uuid_match = re.search(r'([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})', raw_name)
+            row = None
+            try:
+                from db_ingestion import get_db_connection
+                conn = get_db_connection()
+                cur = conn.cursor()
+                if uuid_match:
+                    tid = uuid_match.group(1)
+                    cur.execute("""
+                        SELECT t.transaction_id, t.filename, t.doc_type, t.qa_report, t.group_name, t.group_type, p.project_code, t.qa_findings, t.exit_criteria_eval
+                        FROM qa_transactions t
+                        LEFT JOIN projects p ON t.project_id = p.project_id
+                        WHERE t.transaction_id = %s::uuid
+                        LIMIT 1
+                    """, (tid,))
+                    row = cur.fetchone()
                 else:
-                    return jsonify({'error': 'ไม่พบไฟล์รายงาน'}), 404
-            else:
-                return jsonify({'error': 'ไม่พบไฟล์รายงาน'}), 404
+                    # Try matching by filename inside QA_Report_<filename>_<id>.xlsx
+                    name_parts = raw_name.replace('QA_Report_', '').rsplit('_', 1)
+                    doc_cand = name_parts[0] if name_parts else raw_name
+                    cur.execute("""
+                        SELECT t.transaction_id, t.filename, t.doc_type, t.qa_report, t.group_name, t.group_type, p.project_code, t.qa_findings, t.exit_criteria_eval
+                        FROM qa_transactions t
+                        LEFT JOIN projects p ON t.project_id = p.project_id
+                        WHERE t.filename ILIKE %s OR %s ILIKE ('%' || REPLACE(t.filename, '.pdf', '') || '%')
+                        ORDER BY t.created_at DESC
+                        LIMIT 1
+                    """, (f"%{doc_cand}%", raw_name))
+                    row = cur.fetchone()
+                cur.close()
+                conn.close()
+            except Exception as db_err:
+                logger.warning(f"DB search fallback in download_qa_excel: {db_err}")
+
+            if row:
+                try:
+                    from excel_report import generate_qa_excel
+                    gen_path = generate_qa_excel(
+                        report_text=row[3] or '',
+                        filename=row[1] or 'Document',
+                        doc_type=row[2] or 'Requirement',
+                        project_code=row[6] or '',
+                        group_name=row[4] or 'General',
+                        group_type=row[5] or 'Project Plan',
+                        transaction_id=str(row[0]),
+                        exit_criteria_eval=row[8]
+                    )
+                    if os.path.exists(gen_path):
+                        target_path = Path(gen_path)
+                except Exception as gen_err:
+                    logger.error(f"Failed to on-the-fly generate excel in download: {gen_err}")
+
+        if not target_path.exists():
+            return jsonify({'error': 'ไม่พบไฟล์รายงาน Excel'}), 404
         
+        final_filename = target_path.name
         return send_from_directory(
-            str(reports_dir),
-            safe_name,
+            str(target_path.parent),
+            final_filename,
             as_attachment=True,
-            download_name=safe_name,
+            download_name=final_filename,
             mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         )
     except Exception as e:

@@ -430,6 +430,17 @@
     return unique;
   })();
 
+  $: activeProjectGroups = (() => {
+    if (!$selectedProjectStore) return [];
+    const pId = String($selectedProjectStore.id || $selectedProjectStore.project_id || '');
+    const pCode = String($selectedProjectStore.project_code || '').trim().toLowerCase();
+    return $allGroups.filter(g => {
+      const gPid = String(g.project_id || '');
+      const gCode = String(g.project_code || '').trim().toLowerCase();
+      return !gPid || !pId || gPid === pId || (pCode && gCode && gCode === pCode);
+    });
+  })();
+
   $: filteredQAHistory = (() => {
     const history = $qaHistory;
     const project = $selectedProjectStore;
@@ -437,10 +448,13 @@
     
     if (!project) return [];
     const targetProject = String(project.id || project.project_id || '');
-    const targetCode = String(project.project_code || '');
+    const targetCode = String(project.project_code || '').trim().toLowerCase();
     
     return history.filter(h => {
-      const matchProj = String(h.project_id || '') === targetProject || (targetCode && String(h.project_code || '') === targetCode);
+      const hPid = String(h.project_id || '');
+      const hCode = String(h.project_code || '').trim().toLowerCase();
+      
+      const matchProj = !hPid || !targetProject || hPid === targetProject || (targetCode && hCode && hCode === targetCode);
       if (!matchProj) return false;
       
       if (context && context.group_name) {
@@ -644,11 +658,11 @@
             {/if}
           {:else if $selectedProjectStore && activeView === 'qa_consult'}
               <!-- Groups filtered by selected project -->
-            {#if $allGroups.filter(g => String(g.project_id) === String($selectedProjectStore.id || $selectedProjectStore.project_id) || (g.project_code && $selectedProjectStore.project_code && g.project_code === $selectedProjectStore.project_code)).length > 0}
+            {#if activeProjectGroups.length > 0}
               <div class="history-section">
                 <div class="history-title">กลุ่มการตรวจสอบ (Groups)</div>
                 <div class="history-list">
-                  {#each $allGroups.filter(g => String(g.project_id) === String($selectedProjectStore.id || $selectedProjectStore.project_id) || (g.project_code && $selectedProjectStore.project_code && g.project_code === $selectedProjectStore.project_code)) as group}
+                  {#each activeProjectGroups as group}
                     <div class="sidebar-item-row">
                       <button class="history-item group-item" class:active={$activeSidebarGroup && String($activeSidebarGroup.group_name || '').replace(/^\[.*?\]\s*/, '').trim().toLowerCase() === String(group.group_name || '').replace(/^\[.*?\]\s*/, '').trim().toLowerCase()} on:click={() => handleGroupClick(group)}>
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="flex-shrink: 0;">

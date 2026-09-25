@@ -32,7 +32,8 @@ export const allGroups = derived(
     // From DB Groups (the master source of explicitly created groups)
     for (const g of $qaDbGroups) {
       const gName = cleanGroup(g.group_name);
-      const pId = String(g.project_id || '');
+      let pId = String(g.project_id || '');
+      if (pId.toLowerCase() === 'none' || pId.toLowerCase() === 'null') pId = '';
       const key = `${pId}::${gName.toLowerCase()}`;
       groupMap.set(key, {
         group_id: g.group_id,
@@ -48,15 +49,26 @@ export const allGroups = derived(
     // Helper to find existing group entry in map
     const findGroup = (pId, pCode, gName) => {
       const cleanG = cleanGroup(gName).toLowerCase();
-      const directKey = `${pId}::${cleanG}`;
-      if (groupMap.has(directKey)) return groupMap.get(directKey);
+      const normPid = (pId && pId.toLowerCase() !== 'none' && pId.toLowerCase() !== 'null') ? String(pId) : '';
+      const normPCode = pCode ? String(pCode).trim().toLowerCase() : '';
 
-      // Try finding by project_code or matching name within project
+      // Direct match
+      if (normPid) {
+        const directKey = `${normPid}::${cleanG}`;
+        if (groupMap.has(directKey)) return groupMap.get(directKey);
+      }
+
+      // Match by group name and project code / ID
       for (const item of groupMap.values()) {
         const itemClean = cleanGroup(item.group_name).toLowerCase();
         const nameMatch = itemClean === cleanG || itemClean.includes(cleanG) || cleanG.includes(itemClean);
-        const projMatch = (!pId && !item.project_id) || (pId && item.project_id === pId) || (pCode && item.project_code === pCode);
-        if (nameMatch && projMatch) return item;
+        if (!nameMatch) continue;
+
+        const itemPid = String(item.project_id || '');
+        const itemPCode = String(item.project_code || '').trim().toLowerCase();
+
+        const projMatch = !normPid || !itemPid || itemPid === normPid || (normPCode && itemPCode && itemPCode === normPCode);
+        if (projMatch) return item;
       }
       return null;
     };
@@ -64,7 +76,8 @@ export const allGroups = derived(
     // From DB history (to count scans and get implicitly created groups)
     for (const h of $qaHistory) {
       const hName = cleanGroup(h.group_name);
-      const pId = String(h.project_id || '');
+      let pId = String(h.project_id || '');
+      if (pId.toLowerCase() === 'none' || pId.toLowerCase() === 'null') pId = '';
       const pCode = String(h.project_code || '');
       
       const existing = findGroup(pId, pCode, hName);
@@ -91,7 +104,8 @@ export const allGroups = derived(
     // From session groups (newly created in this session)
     for (const g of $qaSessionGroups) {
       const gName = cleanGroup(g.group_name);
-      const pId = String(g.project_id || '');
+      let pId = String(g.project_id || '');
+      if (pId.toLowerCase() === 'none' || pId.toLowerCase() === 'null') pId = '';
       const pCode = String(g.project_code || '');
       
       const existing = findGroup(pId, pCode, gName);
@@ -119,9 +133,12 @@ export async function loadQAHistoryFromDB() {
       const data = await res.json();
       if (data.success && data.transactions) {
         qaHistory.update(current => {
-          // Preserve any in-progress pending items that haven't finished
+          // Preserve any in-progress pending items
           const inProgress = current.filter(item => item.is_processing);
-          return [...inProgress, ...data.transactions];
+          // Preserve any newly completed items in current that aren't yet in DB response
+          const dbIds = new Set(data.transactions.map(t => String(t.id)));
+          const unpersisted = current.filter(item => !item.is_processing && item.id && !dbIds.has(String(item.id)));
+          return [...inProgress, ...unpersisted, ...data.transactions];
         });
       }
     }
@@ -136,7 +153,12 @@ export async function loadQAGroupsFromDB() {
     if (res.ok) {
       const data = await res.json();
       if (data.success && data.groups) {
-        qaDbGroups.set(data.groups);
+        const sanitized = data.groups.map(g => {
+          let pid = String(g.project_id || '');
+          if (pid.toLowerCase() === 'none' || pid.toLowerCase() === 'null') pid = '';
+          return { ...g, project_id: pid };
+        });
+        qaDbGroups.set(sanitized);
       }
     }
   } catch (err) {

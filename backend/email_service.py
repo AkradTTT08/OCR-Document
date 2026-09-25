@@ -9,10 +9,10 @@ from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
-def send_qa_report(recipient_email: str, doc_type: str, filename: str, report_content: str, excel_download_url: str = '', exit_criteria_eval: dict = None) -> bool:
+def send_qa_report(recipient_email: str, doc_type: str, filename: str, report_content: str, excel_download_url: str = '', exit_criteria_eval: dict = None, excel_file_path: str = None) -> bool:
     """
     Sends a QA Consult report via Gmail SMTP.
-    Optionally includes an Excel report download link and Exit Criteria Gate evaluation.
+    Includes an Excel report attachment, download link, and Exit Criteria Gate evaluation.
     """
     # Load environment variables dynamically
     env_path = os.path.join(os.path.dirname(__file__), '.env')
@@ -110,12 +110,12 @@ def send_qa_report(recipient_email: str, doc_type: str, filename: str, report_co
         if excel_download_url:
             excel_section = f"""
                 <div style="margin: 20px 0; padding: 20px; background: linear-gradient(135deg, #7c3aed15, #3b82f615); border: 1px solid #7c3aed30; border-radius: 12px; text-align: center;">
-                    <p style="margin: 0 0 12px 0; font-size: 14px; color: #555;">📊 รายงาน QA Report (Excel) พร้อมดาวน์โหลด</p>
+                    <p style="margin: 0 0 12px 0; font-size: 14px; color: #555;">📊 รายงาน QA Report (Excel) แนบในอีเมลและพร้อมดาวน์โหลด</p>
                     <a href="{excel_download_url}" 
                        style="display: inline-block; padding: 12px 32px; background: linear-gradient(135deg, #7c3aed, #6d28d9); color: white; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 14px; box-shadow: 0 4px 12px rgba(124, 58, 237, 0.3);">
                         ⬇️ ดาวน์โหลด Excel QA Report (พร้อม Sheet Exit Criteria)
                     </a>
-                    <p style="margin: 10px 0 0 0; font-size: 12px; color: #999;">คลิกที่ปุ่มด้านบนเพื่อดาวน์โหลดรายงานในรูปแบบ Excel</p>
+                    <p style="margin: 10px 0 0 0; font-size: 12px; color: #999;">หรือเปิดดูไฟล์แนบ .xlsx ด้านล่างอีเมลฉบับนี้</p>
                 </div>
             """
 
@@ -157,6 +157,33 @@ def send_qa_report(recipient_email: str, doc_type: str, filename: str, report_co
         msg.attach(MIMEText(html_content, 'html'))
         if logo_part:
             msg.attach(logo_part)
+
+        # Resolve and attach Excel file directly
+        target_excel_path = None
+        if excel_file_path and os.path.exists(excel_file_path):
+            target_excel_path = excel_file_path
+        elif excel_download_url:
+            import urllib.parse
+            url_path = urllib.parse.urlparse(excel_download_url).path
+            base_fname = os.path.basename(url_path)
+            reports_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'reports')
+            candidate_path = os.path.join(reports_dir, base_fname)
+            if os.path.exists(candidate_path):
+                target_excel_path = candidate_path
+
+        if target_excel_path and os.path.exists(target_excel_path):
+            try:
+                with open(target_excel_path, 'rb') as ef:
+                    excel_data = ef.read()
+                excel_attachment_part = MIMEBase('application', 'vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+                excel_attachment_part.set_payload(excel_data)
+                encoders.encode_base64(excel_attachment_part)
+                attach_filename = os.path.basename(target_excel_path)
+                excel_attachment_part.add_header('Content-Disposition', 'attachment', filename=attach_filename)
+                msg.attach(excel_attachment_part)
+                logger.info(f"Attached Excel report to email: {attach_filename}")
+            except Exception as ef_err:
+                logger.warning(f"Could not attach Excel file to email: {ef_err}")
 
         # Prepare recipient list
         to_list = [e.strip() for e in recipient_email.split(',') if e.strip()]

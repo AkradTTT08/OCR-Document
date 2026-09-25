@@ -1158,7 +1158,7 @@ def resolve_project_id_uuid(conn, project_id, project_code=None, project_name=No
         # Try matching by project_code or project_name from the pid_str
         try:
             cur = conn.cursor()
-            cur.execute("SELECT project_id FROM projects WHERE project_code = %s OR project_name = %s LIMIT 1", (pid_str, pid_str))
+            cur.execute("SELECT project_id FROM projects WHERE LOWER(project_code) = LOWER(%s) OR LOWER(project_name) = LOWER(%s) LIMIT 1", (pid_str, pid_str))
             row = cur.fetchone()
             cur.close()
             if row and row[0]:
@@ -1171,7 +1171,15 @@ def resolve_project_id_uuid(conn, project_id, project_code=None, project_name=No
     if project_code or project_name:
         try:
             cur = conn.cursor()
-            cur.execute("SELECT project_id FROM projects WHERE (project_code = %s AND %s != '') OR (project_name = %s AND %s != '') LIMIT 1", (project_code or '', project_code or '', project_name or '', project_name or ''))
+            p_code_str = str(project_code or '').strip()
+            p_name_str = str(project_name or '').strip()
+            cur.execute("""
+                SELECT project_id FROM projects 
+                WHERE (LOWER(project_code) = LOWER(%s) AND %s != '') 
+                   OR (LOWER(project_name) = LOWER(%s) AND %s != '')
+                   OR (%s != '' AND LOWER(project_name) LIKE LOWER(%s))
+                LIMIT 1
+            """, (p_code_str, p_code_str, p_name_str, p_name_str, p_name_str, f"%{p_name_str}%"))
             row = cur.fetchone()
             cur.close()
             if row and row[0]:
@@ -1182,7 +1190,7 @@ def resolve_project_id_uuid(conn, project_id, project_code=None, project_name=No
 
     return None
 
-def save_qa_transaction(project_id, group_name, group_type, filename, doc_type, extracted_text, qa_report, total_pages=None, email=None, qa_findings=None, exit_criteria_eval=None):
+def save_qa_transaction(project_id, group_name, group_type, filename, doc_type, extracted_text, qa_report, total_pages=None, email=None, qa_findings=None, exit_criteria_eval=None, project_code=None, project_name=None):
     """Saves a QA consult transaction to the database with resilient foreign key fallback."""
     import json, re
     conn = None
@@ -1197,7 +1205,7 @@ def save_qa_transaction(project_id, group_name, group_type, filename, doc_type, 
         cursor = conn.cursor()
 
         # Resolve project_id safely against database
-        resolved_pid = resolve_project_id_uuid(conn, project_id)
+        resolved_pid = resolve_project_id_uuid(conn, project_id, project_code=project_code, project_name=project_name)
 
         # Automatically ensure group exists in qa_groups table
         if resolved_pid:
@@ -1417,13 +1425,14 @@ def get_qa_groups(project_id=None):
         rows = cursor.fetchall()
         groups = []
         for r in rows:
+            p_id_str = str(r[1]) if r[1] is not None and str(r[1]).lower() != 'none' else ''
             groups.append({
                 'group_id': str(r[0]),
-                'project_id': str(r[1]),
+                'project_id': p_id_str,
                 'group_name': r[2],
                 'group_type': r[3],
                 'created_at': r[4].isoformat() if r[4] else None,
-                'project_code': r[5] or 'Unknown'
+                'project_code': r[5] or ''
             })
         return groups
     except Exception as e:

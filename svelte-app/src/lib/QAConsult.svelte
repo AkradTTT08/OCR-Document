@@ -337,15 +337,19 @@
   $: currentProjectGroups = $allGroups.filter(g => {
     if (!selectedProjectObj) return false;
     const pId = String(selectedProjectObj.id || selectedProjectObj.project_id || '');
-    const pCode = String(selectedProjectObj.project_code || '');
-    return String(g.project_id) === pId || (pCode && g.project_code === pCode);
+    const pCode = String(selectedProjectObj.project_code || '').trim().toLowerCase();
+    const gPid = String(g.project_id || '');
+    const gCode = String(g.project_code || '').trim().toLowerCase();
+    return !gPid || !pId || gPid === pId || (pCode && gCode && gCode === pCode);
   });
 
   $: currentProjectHistory = $qaHistory.filter(h => {
     if (!selectedProjectObj) return false;
     const pId = String(selectedProjectObj.id || selectedProjectObj.project_id || '');
-    const pCode = String(selectedProjectObj.project_code || '');
-    const matchProj = String(h.project_id) === pId || (pCode && h.project_code === pCode);
+    const pCode = String(selectedProjectObj.project_code || '').trim().toLowerCase();
+    const hPid = String(h.project_id || '');
+    const hCode = String(h.project_code || '').trim().toLowerCase();
+    const matchProj = !hPid || !pId || hPid === pId || (pCode && hCode && hCode === pCode);
     if (!matchProj) return false;
 
     if ($activeSidebarGroup && $activeSidebarGroup.group_name) {
@@ -363,14 +367,18 @@
   $: currentGroupHistory = $qaHistory.filter(h => {
     if (!selectedProjectObj) return false;
     const pId = String(selectedProjectObj.id || selectedProjectObj.project_id || '');
-    const pCode = String(selectedProjectObj.project_code || '');
-    const matchProj = String(h.project_id || '') === pId || (pCode && String(h.project_code || '') === pCode);
+    const pCode = String(selectedProjectObj.project_code || '').trim().toLowerCase();
+    const hPid = String(h.project_id || '');
+    const hCode = String(h.project_code || '').trim().toLowerCase();
+    const matchProj = !hPid || !pId || hPid === pId || (pCode && hCode && hCode === pCode);
     if (!matchProj) return false;
 
     if (targetGroupName) {
       const cleanHGroup = String(h.group_name || 'General').replace(/^\[.*?\]\s*/, '').trim().toLowerCase();
       const cleanTargetGroup = String(targetGroupName || 'General').replace(/^\[.*?\]\s*/, '').trim().toLowerCase();
-      return cleanHGroup === cleanTargetGroup || cleanHGroup.includes(cleanTargetGroup) || cleanTargetGroup.includes(cleanHGroup);
+      const rawHGroup = String(h.group_name || 'General').trim().toLowerCase();
+      const rawTargetGroup = String(targetGroupName || 'General').trim().toLowerCase();
+      return rawHGroup === rawTargetGroup || cleanHGroup === cleanTargetGroup || cleanHGroup.includes(cleanTargetGroup) || cleanTargetGroup.includes(cleanHGroup);
     }
     return true;
   });
@@ -910,7 +918,27 @@
               scanResult = data.result;
               isProcessing = false;
               activeScanStatus.set(null);
-              qaHistory.update(h => h.filter(item => item.id !== pendingItem.id));
+
+              // Immediately save completed transaction into qaHistory store
+              const completedItem = {
+                id: scanResult?.id || ('scan-' + Date.now()),
+                filename: scanResult?.filename || file.name,
+                group_name: cleanGroupName,
+                group_type: scanGroupType,
+                project_id: pId || (selectedProjectObj?.id || selectedProjectObj?.project_id),
+                project_code: selectedProjectObj?.project_code || '',
+                docType: scanResult?.doc_type || 'General',
+                report: scanResult?.report,
+                email: scanResult?.email || finalEmail,
+                total_pages: scanResult?.total_pages,
+                qa_findings: scanResult?.qa_findings,
+                exit_criteria_eval: scanResult?.exit_criteria_eval,
+                date: new Date().toISOString(),
+                is_processing: false
+              };
+
+              qaHistory.update(h => [completedItem, ...h.filter(item => item.id !== pendingItem.id && item.id !== completedItem.id)]);
+              
               await loadQAHistoryFromDB();
               await loadQAGroupsFromDB();
               if (scanResult) {
@@ -931,9 +959,9 @@
       toast(`เกิดข้อผิดพลาด: ${msg}`, "error");
       isProcessing = false;
       activeScanStatus.set(null);
+      qaHistory.update(h => h.filter(item => item.id !== pendingItem.id));
     } finally {
       activeScanStatus.set(null);
-      qaHistory.update(h => h.filter(item => item.id !== pendingItem.id));
       await loadQAHistoryFromDB();
       await loadQAGroupsFromDB();
     }
@@ -1727,7 +1755,14 @@
           </button>
           
           {#if scanResult.excel_url}
-            <a href={scanResult.excel_url} target="_blank" rel="noopener noreferrer" class="btn-download-excel" style="padding: 10px 16px; margin: 0; height: 42px; border-radius: 8px; font-size: 14px; box-shadow: none;">
+            <a 
+              href={scanResult.excel_url} 
+              download 
+              target="_blank" 
+              rel="noopener noreferrer" 
+              class="btn-download-excel" 
+              style="padding: 10px 16px; margin: 0; height: 42px; border-radius: 8px; font-size: 14px; box-shadow: none;"
+            >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                 <polyline points="7 10 12 15 17 10"></polyline>
