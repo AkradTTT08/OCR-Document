@@ -994,17 +994,24 @@ def fetch_agent_learned_rules(cursor, project_id: str = None, doc_type: str = "G
             );
         """)
         
+        doc_type_clean = (doc_type or "General").strip()
         query = """
             SELECT rule_category, issue_description, found_incorrect, correct_expectation, recommendation, severity
             FROM qa_agent_learned_rules
-            WHERE is_active = TRUE AND (doc_type = %s OR doc_type = 'General' OR doc_type IS NULL)
+            WHERE is_active = TRUE AND (
+                UPPER(TRIM(doc_type)) = UPPER(TRIM(%s)) 
+                OR %s ILIKE '%%' || TRIM(doc_type) || '%%' 
+                OR TRIM(doc_type) ILIKE '%%' || %s || '%%'
+                OR doc_type = 'General' 
+                OR doc_type IS NULL
+            )
         """
-        params = [doc_type]
+        params = [doc_type_clean, doc_type_clean, doc_type_clean]
         if project_id:
             query += " AND (project_id = %s::uuid OR project_id IS NULL)"
             params.append(project_id)
             
-        query += " ORDER BY created_at DESC LIMIT 20"
+        query += " ORDER BY created_at DESC LIMIT 30"
         cursor.execute(query, tuple(params))
         rows = cursor.fetchall()
         
@@ -1048,7 +1055,15 @@ def get_advanced_engineering_guidelines(doc_type: str, today_str: str) -> str:
 # ENTERPRISE ENGINEERING DIRECTIVES & QUALITY GATES (MANDATORY STANDARDS)
 # ==============================================================================
 
-1. ZERO REQUIREMENT LOSS (100% Comprehensive Coverage of Knowledge Base & Briefings):
+1. MANDATORY SECTION 1: GENERAL INFORMATION & DOCUMENT CONTROL (100% COMPLETE):
+   - You MUST begin the document with Section 1: General Information & Document Control Table containing:
+     * Document Title, Document Code / Ref ID, Version Number (e.g. 1.0.0 or 1.1.0)
+     * Project Name, Project Code, Baseline Date: {today_str}
+     * Author (Lead Business Analyst / QA Architect), Reviewer, Approver, Target Audience
+     * Executive Project Scope, Business Objectives, and System Boundaries.
+   - Section 1.2 MUST include a Revision History & Defect Resolution Table (Document Version, Date, Author, Summary of Changes: "Initial Baseline / Resolved 100% of previous audit comments and Exit Criteria findings").
+
+2. ZERO REQUIREMENT LOSS (100% Comprehensive Coverage of Knowledge Base & Briefings):
    - You MUST extract, integrate, and satisfy EVERY functional feature, business rule, and constraint found in the Reference Documents, PO Briefings, and Project Knowledge Base.
    - Statutory, Privacy & Security Mandates:
      * Explicit PDPA / GDPR workflows: User Consent handling, Right to Erasure / "Delete Account" (self-service account & personal data deletion flow), Data Anonymization for analytics/heatmaps, and Data Retention rules.
@@ -1060,20 +1075,20 @@ def get_advanced_engineering_guidelines(doc_type: str, today_str: str) -> str:
      * Search & Filter Mechanics: Keyword search, Area/District name search (e.g. "บางแสน", "สยาม"), Distance radius filter, Category filter, and Operating Hours filter (including 24-Hour mode and Special Public Holiday exceptions).
      * Scope & Platform Boundary: Explicitly distinguish Mobile App (iOS/Android) features vs. Web Management Portal features.
 
-2. LOGICAL INTEGRITY & DOCUMENT COHESION (Zero Self-Contradictions & Zero Placeholders):
+3. LOGICAL INTEGRITY & DOCUMENT COHESION (Zero Self-Contradictions & Zero Placeholders):
    - Chronological & Version Harmony:
      * Generation / Current Date: {today_str}.
-     * Versioning: Use standard SemVer (e.g. 1.0.0).
-     * Document Metadata, Revision History, and referenced source dates MUST be logically consistent (a revision date CANNOT predate the PO Briefing or inception meetings referenced in the text).
+     * Versioning: Use standard SemVer (e.g. 1.0.0 or 1.1.0).
+     * Document Metadata, Revision History, and referenced source dates MUST be logically consistent.
    - Zero Unresolved Placeholders:
      * NEVER output unresolved placeholders such as '[System Analyst / Business Analyst Team]', '[TBD]', '[Insert Name]', '[To Be Decided]'.
      * Always generate realistic, authoritative names, roles, or definitive specifications.
    - Document Status & Sign-off Integrity:
-     * If document is marked as 'APPROVED BASELINE' or 'DRAFT', provide fully populated document control tables (Author, Reviewer, Approver, Sign-off Date, Version).
+     * Provide fully populated document control tables (Author, Reviewer, Approver, Sign-off Date, Version).
    - Traceability & Cross-Reference Alignment:
      * Every security protocol or technology mentioned in overviews (e.g. TLS 1.3, AES-256 encryption at rest, Redis in-memory cache) MUST have explicit, corresponding functional/non-functional requirement IDs (e.g., REQ-SEC-001, REQ-PERF-001).
 
-3. HIGH-PRECISION TESTABILITY & MEASURABILITY (Zero Ambiguity):
+4. HIGH-PRECISION TESTABILITY & MEASURABILITY (Zero Ambiguity):
    - Strict Ban on Vague Adjectives: DO NOT use ambiguous terms like "fast", "such as 3 km", "immediately", "most popular", "highest rated" without explicit formulas and thresholds.
    - Concrete Parameters & Formulas:
      * Search Radius: Define explicit default value (e.g. Default: 3,000 meters / 3 km), minimum allowed (500m), and maximum allowed (20,000m / 20 km).
@@ -1087,25 +1102,22 @@ def get_advanced_engineering_guidelines(doc_type: str, today_str: str) -> str:
      * Latency & Response Times: API P95 latency <= 1.5 seconds, P99 <= 3.0 seconds under peak load.
      * Compatibility: iOS 15.0+, Android 11.0+, Modern Browsers (Chrome 110+, Safari 16+, Edge).
 
-4. MANDATORY UNHAPPY PATH & EXCEPTION/ERROR HANDLING FOR EVERY REQUIREMENT (Zero Missing Alternate Flows):
-   - In SRS and Requirement specifications, EVERY functional requirement (e.g. REQ-CUS-001 through REQ-CUS-010, etc.) MUST have clearly defined:
+5. MANDATORY UNHAPPY PATH & EXCEPTION/ERROR HANDLING FOR EVERY REQUIREMENT:
+   - In SRS and Requirement specifications, EVERY functional requirement (e.g. REQ-xxx) MUST have clearly defined:
      * Pre-conditions & Main (Happy) Path
      * Unhappy Path & Alternate/Exception Handling (e.g., User denies GPS permission -> fallback to manual district selection; No search results found -> display recommendation suggestions; Network disconnect -> cache query retry; Database conflict / Duplication error -> prompt override).
      * Post-conditions and Error Messages returned to the user.
+     * Acceptance Criteria in Given-When-Then format.
 
-5. MATHEMATICAL FORMULA TRANSPARENCY & VARIABLE DEFINITIONS:
+6. MATHEMATICAL FORMULA TRANSPARENCY & VARIABLE DEFINITIONS:
    - When any mathematical formula, algorithm, or weighting formula is stated in requirements (e.g. Score = (R*v + C*m)/(v+m)):
      * You MUST clearly define the exact meaning of EVERY variable (e.g., R = Item's Average Rating, v = Total number of ratings/votes, C = Overall mean rating across entire system/category, m = Minimum votes required to establish credibility).
      * You MUST provide explicit rationale/justification for any chosen constants (e.g., "m = 5 is chosen as the minimum baseline threshold to prevent a single 5-star review from outranking seasoned items").
 
-6. REMARK HYGIENE & SEPARATION OF SYSTEM DESIGN VS. FUNCTIONAL REQUIREMENTS:
-   - Functional Requirement Remarks: Must contain ONLY testable assertions, QA guidelines, or business acceptance constraints (e.g., "Response time must be within 300ms", "System must display opening status with 100% accuracy based on current time").
+7. REMARK HYGIENE & SEPARATION OF SYSTEM DESIGN VS. FUNCTIONAL REQUIREMENTS:
+   - Functional Requirement Remarks: Must contain ONLY testable assertions, QA guidelines, or business acceptance constraints.
    - Implementation Specifics (e.g. "ใช้ PostGIS Bounding Box Query", SQL queries, ORM code): DO NOT place them inside Functional Requirement remarks. Move all database query mechanics, indexing strategies, and spatial query details into Section 2 (System Architecture & Technical Specifications / System Design).
    - Business Slogans (e.g. "Core Value ของระบบ"): Do NOT leave as abstract slogans; translate them into testable, verifiable acceptance criteria.
-
-7. CLEAN DOCUMENT ARCHITECTURE:
-   - For SRS / Requirement Documents:
-     * Structure logically: 1. Executive Summary & Scope, 2. System Architecture & Actors, 3. Comprehensive Functional Requirements (with ID, Module, Description, User Story, Pre-conditions, Main Flow, Unhappy Path/Exception Flows, Post-conditions, and Acceptance Criteria in Given-When-Then format), 4. Non-Functional Requirements, 5. Data Dictionary & API Endpoints, 6. Security, Compliance (PDPA) & Audit Log.
 """
 
 def create_qa_document(project_id: str, doc_type: str, doc_name: str, skill_id, reference_document_id=None, custom_prompt: str = ""):

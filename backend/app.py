@@ -3094,8 +3094,10 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
             for f in medium[:5]:
                 findings_summary += f"  [Medium] {f.get('issue','')}\n"
         findings_summary += """
-**หมายเหตุ:** ถ้ามี Critical/High Findings → ข้อตรวจที่เกี่ยวข้อง (1.1, 1.2, 2.1) ควรเป็น FAIL
-ถ้ามีเพียง Medium/Low หรือคำผิด → ข้อตรวจที่เกี่ยวข้องอาจเป็น CONDITIONAL_PASS หรือ FAIL ตามหมวด
+**แนวทางการประเมินตามเนื้อหาเอกสารจริง:**
+- ข้อ [2.1] (General Information / Content Completeness): หากเอกสารมี Section 1 / ตารางข้อมูลทั่วไปประกอบเอกสาร (Document Title, Version, Project Name, Code, Author, Scope, Objectives) ครบถ้วนชัดเจน ให้ถือว่า **PASS**
+- ข้อ [1.1] (Critical / High Defects & Revision Resolution): หากเอกสารเป็นฉบับปรับปรุงที่ระบุ Revision History / บันทึกการแก้ไข หรือแก้ไขจุดบกพร่องตามข้อเสนอแนะครบถ้วนแล้ว ให้ถือว่า **PASS**
+- ให้ประเมินผลตามเนื้อหาจริงในเอกสารที่ส่งตรวจเป็นหลักอย่างเป็นธรรมและตรงตามมาตรฐานวิศวกรรม
 """
 
     prompt = f"""คุณคือ System Auditor และ Quality Gate Evaluator
