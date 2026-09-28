@@ -900,10 +900,21 @@
     formData.append("group_name", cleanGroupName);
     formData.append("group_type", scanGroupType);
 
+    const token = (typeof window !== 'undefined' && window.localStorage) ? (localStorage.getItem('jwt_token') || '') : '';
+    const currentUsername = (typeof window !== 'undefined' && window.localStorage) ? (localStorage.getItem('auth_user') || '') : '';
+    if (currentUsername) {
+      formData.append("username", currentUsername);
+    }
+
     try {
+      const headers = {};
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
       // Create a stream request
       const response = await fetch("/api/qa_consult", {
         method: "POST",
+        headers,
         body: formData,
       });
 

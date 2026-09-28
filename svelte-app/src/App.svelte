@@ -29,10 +29,10 @@
   import LegalModal from "./lib/LegalModal.svelte";
   import NotificationDropdown from "./lib/NotificationDropdown.svelte";
   import NotificationConfigModal from "./lib/NotificationConfigModal.svelte";
-  import { unreadCount } from "./lib/notificationStore.js";
+  import { unreadCount, startNotificationSync, stopNotificationSync } from "./lib/notificationStore.js";
   import { showLogin, authRole, authUser, authDisplayName, authAvatar, authAllowedMenus, authAllowedProjects, DEFAULT_USER_MENUS, DEFAULT_ADMIN_MENUS, logout, updateAuthProfile } from "./lib/authStore.js";
   import { globalSearchQuery, triggerGlobalSearch } from "./lib/globalStore.js";
-  import { onMount } from "svelte";
+  import { onMount, onDestroy } from "svelte";
   import { toast } from "./lib/toastStore.js";
 
   let showNotifications = false;
@@ -60,6 +60,7 @@
     loadQAGroupsFromDB();
     loadPerfHistory();
     loadOCRHistory();
+    startNotificationSync(6000);
     // Load projects for sidebar group mapping
     try {
       const res = await fetch('/api/projects');
@@ -80,6 +81,10 @@
         systemReady = false;
       }
     }, 10000);
+  });
+
+  onDestroy(() => {
+    stopNotificationSync();
   });
 
   let systemReady = true;

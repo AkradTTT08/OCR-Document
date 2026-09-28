@@ -1247,10 +1247,11 @@ Please follow these structure and formatting instructions strictly:
         return False, str(e)
 
 
-def create_qa_document_async(gen_id: str, project_id: str, doc_type: str, doc_name: str, skill_id, reference_document_id=None, custom_prompt: str = "", source_markdown: str = ""):
+def create_qa_document_async(gen_id: str, project_id: str, doc_type: str, doc_name: str, skill_id, reference_document_id=None, custom_prompt: str = "", source_markdown: str = "", username: str = None):
     """
     Async background version of QA Document Creator that generates Excel, PDF, and Markdown.
     Supports surgical refinement mode if source_markdown is provided.
+    Delivers in-app notification directly to the requesting user upon completion.
     """
     conn = None
     cursor = None
@@ -1676,6 +1677,22 @@ Please follow these structure and formatting instructions strictly:
         conn.commit()
         logger.info(f"Successfully generated QA document (File: {final_file_url}, PDF: {pdf_file_path})")
 
+        # Notify strictly the user who requested the document generation
+        if username:
+            try:
+                from notification_service import send_user_notification
+                send_user_notification(
+                    username=username,
+                    title=f"สร้างเอกสาร '{doc_name}' เสร็จสมบูรณ์",
+                    message=f"เอกสาร {doc_type} สร้างเสร็จเรียบร้อยแล้ว พร้อมดาวน์โหลดหรือส่งตรวจ QA Consult ทันที",
+                    noti_type="success",
+                    icon="📄",
+                    action_view="qa_doc_creation",
+                    action_payload={"doc_name": doc_name, "project_id": str(project_id), "doc_id": str(gen_id)}
+                )
+            except Exception as noti_err:
+                logger.error(f"Failed to dispatch completion notification to {username}: {noti_err}")
+
     except Exception as e:
         logger.error(f"Error in create_qa_document_async: {e}", exc_info=True)
         if conn and cursor:
@@ -1690,6 +1707,22 @@ Please follow these structure and formatting instructions strictly:
                 conn.commit()
             except Exception as update_err:
                 logger.error(f"Failed to update failed status in DB: {update_err}")
+
+        # Notify user about failure
+        if username:
+            try:
+                from notification_service import send_user_notification
+                send_user_notification(
+                    username=username,
+                    title=f"สร้างเอกสาร '{doc_name}' ไม่สำเร็จ",
+                    message=f"เกิดข้อผิดพลาดในการประมวลผล: {str(e)[:150]}",
+                    noti_type="error",
+                    icon="❌",
+                    action_view="qa_doc_creation",
+                    action_payload={"doc_name": doc_name, "project_id": str(project_id)}
+                )
+            except Exception as noti_err:
+                logger.error(f"Failed to dispatch failure notification to {username}: {noti_err}")
     finally:
         if cursor: cursor.close()
         if conn: conn.close()

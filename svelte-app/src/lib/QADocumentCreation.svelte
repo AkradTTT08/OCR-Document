@@ -58,11 +58,38 @@
     if (fb.skill_ids && Array.isArray(fb.skill_ids) && fb.skill_ids.length > 0) {
       selectedSkillIds = [...fb.skill_ids];
     }
-    if (fb.doc_type && MASTER_DOC_TYPES.includes(fb.doc_type)) {
-      docType = fb.doc_type;
-    } else if (fb.doc_type) {
-      const match = MASTER_DOC_TYPES.find(t => t.toLowerCase() === fb.doc_type.toLowerCase());
-      if (match) docType = match;
+    // Deduce Document Type intelligently from doc_type, group_type, or docName
+    let resolvedDocType = "";
+    const candidateTypes = [fb.doc_type, fb.group_type, sourceGroupType].filter(Boolean);
+    for (const cand of candidateTypes) {
+      if (MASTER_DOC_TYPES.includes(cand)) {
+        resolvedDocType = cand;
+        break;
+      }
+      const match = MASTER_DOC_TYPES.find(t => t.toLowerCase() === String(cand).toLowerCase());
+      if (match) {
+        resolvedDocType = match;
+        break;
+      }
+    }
+
+    if (!resolvedDocType) {
+      const combinedName = `${docName} ${fb.source_filename || ''}`.toUpperCase();
+      const detected = MASTER_DOC_TYPES.find(t => {
+        const upperT = t.toUpperCase();
+        return combinedName.startsWith(upperT) || 
+               combinedName.includes(` ${upperT} `) || 
+               combinedName.includes(`_${upperT}_`) || 
+               combinedName.includes(`-${upperT}-`) || 
+               combinedName.includes(`[${upperT}]`) ||
+               combinedName.includes(`_${upperT}`) ||
+               combinedName.includes(`${upperT}_`);
+      });
+      if (detected) resolvedDocType = detected;
+    }
+
+    if (resolvedDocType) {
+      docType = resolvedDocType;
     }
 
     // 3. Synthesize structured prompt for AI addressing each specific issue
@@ -405,6 +432,9 @@
       const resolvedGroupName = sourceGroupName || ($activeSidebarGroup && $activeSidebarGroup.group_name) || "";
       const resolvedGroupType = sourceGroupType || ($activeSidebarGroup && $activeSidebarGroup.group_type) || docType;
 
+      const token = (typeof window !== 'undefined' && window.localStorage) ? (localStorage.getItem('jwt_token') || '') : '';
+      const currentUsername = (typeof window !== 'undefined' && window.localStorage) ? (localStorage.getItem('auth_user') || '') : '';
+
       const payload = {
         project_id: $selectedProjectStore.id || $selectedProjectStore.project_id,
         doc_type: docType,
@@ -414,12 +444,18 @@
         custom_prompt: customPrompt.trim(),
         source_markdown: sourceRawMarkdown,
         group_name: resolvedGroupName,
-        group_type: resolvedGroupType
+        group_type: resolvedGroupType,
+        username: currentUsername
       };
+
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
 
       const res = await fetch('/api/agent/create_document', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(payload)
       });
       const data = await res.json();

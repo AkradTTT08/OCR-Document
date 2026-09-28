@@ -209,6 +209,24 @@ def token_required(f):
         return f(*args, **kwargs)
     return decorated
 
+def get_request_user():
+    """Extract username from Bearer token, JSON body, form data, or query params."""
+    try:
+        auth_header = request.headers.get('Authorization')
+        if auth_header and auth_header.startswith('Bearer '):
+            token = auth_header.split(' ')[1]
+            payload = decode_jwt(token)
+            if payload and payload.get('user'):
+                return payload.get('user')
+        if request.is_json and request.json:
+            u = request.json.get('username') or request.json.get('created_by')
+            if u: return str(u).strip()
+        u = request.form.get('username') or request.args.get('username')
+        if u: return str(u).strip()
+    except Exception:
+        pass
+    return None
+
 DEFAULT_USER_MENUS = [
     "qa_consult", "qa_doc_creation", "qa_analysis_diagram", "qa_board",
     "qa_automate", "qa_performance", "qa_security", "qa_research",
@@ -2283,13 +2301,18 @@ def qa_consult_api():
                 except:
                     pass
 
-        # Read file bytes before generator starts to avoid I/O on closed file
+        # Read file bytes before background worker starts to avoid I/O on closed file
         doc_filename = secure_filename(file.filename) if file and file.filename else 'document.pdf'
         pdf_bytes = file.read()
+        req_user = get_request_user() or request.form.get('username')
 
-        def generate():
+        import queue
+        import threading
+        msg_queue = queue.Queue()
+
+        def run_qa_worker():
             try:
-                yield f"data: {json.dumps({'type': 'progress', 'pct': 10, 'message': 'กำลังวิเคราะห์ข้อความจากเอกสาร PDF...' })}\n\n"
+                msg_queue.put({'type': 'progress', 'pct': 10, 'message': 'กำลังวิเคราะห์ข้อความจากเอกสาร PDF...' })
                 
                 # 1. OCR
                 from ocr_engine import ocr_pdf_bytes
@@ -2303,7 +2326,8 @@ def qa_consult_api():
                         extracted_text += page.get('text', '') + '\n\n'
                 
                 if not extracted_text.strip():
-                    yield f"data: {json.dumps({'type': 'error', 'message': 'ไม่พบข้อความในเอกสาร' })}\n\n"
+                    msg_queue.put({'type': 'error', 'message': 'ไม่พบข้อความในเอกสาร'})
+                    msg_queue.put(None)
                     return
 
                 # Check if explicit doc_type flow is selected or auto-discovery
@@ -2321,10 +2345,10 @@ def qa_consult_api():
                         logger.error(f"Failed to fetch available project MD docs: {e}")
 
                 if is_explicit:
-                    yield f"data: {json.dumps({'type': 'progress', 'pct': 40, 'message': f'กำลังสืบค้นฐานข้อมูลตามประเภทเอกสารที่ระบุ [{doc_type_display}] (Explicit Flow)...' })}\n\n"
+                    msg_queue.put({'type': 'progress', 'pct': 40, 'message': f'กำลังสืบค้นฐานข้อมูลตามประเภทเอกสารที่ระบุ [{doc_type_display}] (Explicit Flow)...' })
                     kb_results = search_knowledge_base(extracted_text[:2000], doc_type=doc_type, top_k=6, project_id=project_id if project_id else None)
                 else:
-                    yield f"data: {json.dumps({'type': 'progress', 'pct': 40, 'message': 'กำลังสำรวจเอกสาร Markdown ในโครงการและค้นหาข้อมูลอ้างอิงอัตโนมัติ...' })}\n\n"
+                    msg_queue.put({'type': 'progress', 'pct': 40, 'message': 'กำลังสำรวจเอกสาร Markdown ในโครงการและค้นหาข้อมูลอ้างอิงอัตโนมัติ...' })
                     kb_results = search_knowledge_base(extracted_text[:2000], doc_type=None, top_k=8, project_id=project_id if project_id else None)
                 
                 kb_context = ''
@@ -2340,7 +2364,7 @@ def qa_consult_api():
                     except Exception as e:
                         logger.error(f"Failed to fetch previous transaction: {e}")
 
-                yield f"data: {json.dumps({'type': 'progress', 'pct': 70, 'message': 'กำลังใช้ AI วิเคราะห์และเปรียบเทียบข้อมูล...' })}\n\n"
+                msg_queue.put({'type': 'progress', 'pct': 70, 'message': 'กำลังใช้ AI วิเคราะห์และเปรียบเทียบข้อมูล...' })
                 
                 # 3. Analyze with Multi-Agent Pipeline
                 try:
@@ -2420,7 +2444,8 @@ def qa_consult_api():
                     if '429' in str(qa_state.error) or 'RESOURCE_EXHAUSTED' in str(qa_state.error):
                         user_err = "โควต้า Gemini API (429 Rate Limit) เต็มชั่วคราว กรุณารอสักครู่ (ประมาณ 30-60 วินาที) แล้วกดสแกนใหม่อีกครั้ง"
                     logger.error(f"QA Consult Agent failed: {qa_state.error}")
-                    yield f"data: {json.dumps({'type': 'error', 'message': user_err})}\n\n"
+                    msg_queue.put({'type': 'error', 'message': user_err})
+                    msg_queue.put(None)
                     return
                 
                 report = qa_state.report
@@ -2436,7 +2461,7 @@ def qa_consult_api():
                 # 4. Evaluate Exit Criteria Checklist Gate (with QA findings context)
                 exit_criteria_eval = None
                 try:
-                    yield f"data: {json.dumps({'type': 'progress', 'pct': 85, 'message': 'กำลังตรวจสอบเกณฑ์ Exit Criteria Review Gate...' })}\n\n"
+                    msg_queue.put({'type': 'progress', 'pct': 85, 'message': 'กำลังตรวจสอบเกณฑ์ Exit Criteria Review Gate...' })
                     doc_type_str = ', '.join(doc_type) if isinstance(doc_type, list) else doc_type
                     doc_type_eval = group_type if group_type else (doc_type_str or 'ALL')
                     exit_criteria_eval = evaluate_document_exit_criteria(extracted_text, doc_type=doc_type_eval, project_id=project_id, qa_findings=qa_findings)
@@ -2463,7 +2488,7 @@ def qa_consult_api():
                 except Exception as e:
                     logger.error(f"Failed to save QA transaction: {e}")
 
-                yield f"data: {json.dumps({'type': 'progress', 'pct': 90, 'message': 'กำลังสร้าง Excel QA Report...' })}\n\n"
+                msg_queue.put({'type': 'progress', 'pct': 90, 'message': 'กำลังสร้าง Excel QA Report...' })
 
                 # Generate Excel Report
                 excel_download_url = ''
@@ -2501,9 +2526,9 @@ def qa_consult_api():
                 except Exception as excel_err:
                     logger.error(f"Failed to generate Excel report: {excel_err}")
 
-                yield f"data: {json.dumps({'type': 'progress', 'pct': 100, 'message': 'ประมวลผลเสร็จสมบูรณ์ เตรียมแสดงรายงาน...' })}\n\n"
+                msg_queue.put({'type': 'progress', 'pct': 100, 'message': 'ประมวลผลเสร็จสมบูรณ์ เตรียมแสดงรายงาน...' })
                 
-                # Return report and exit criteria evaluation to frontend
+                # Return report and exit criteria evaluation
                 result_payload = {
                     'id': transaction_id or None,
                     'project_id': project_id,
@@ -2520,12 +2545,78 @@ def qa_consult_api():
                     'qa_findings': qa_findings
                 }
                 
-                yield f"data: {json.dumps({'type': 'complete', 'result': result_payload })}\n\n"
-                
+                # Notify strictly the user who initiated the document scan
+                if req_user:
+                    gate_status = (exit_criteria_eval.get('status') if exit_criteria_eval else 'COMPLETED')
+                    score_pct = (exit_criteria_eval.get('score_percentage', 0) if exit_criteria_eval else 100)
+                    noti_title = f"วิเคราะห์เอกสาร '{original_filename}' เสร็จสิ้น"
+                    noti_msg = f"กลุ่ม '{group_name}' ผลประเมิน Gate: {gate_status} ({score_pct}%) พบประเด็น {len(qa_findings)} ข้อ"
+                    noti_type = "success" if str(gate_status).upper() == "PASSED" else "warning"
+                    noti_icon = "✅" if str(gate_status).upper() == "PASSED" else "⚠️"
+                    try:
+                        from notification_service import send_user_notification
+                        send_user_notification(
+                            username=req_user,
+                            title=noti_title,
+                            message=noti_msg,
+                            noti_type=noti_type,
+                            icon=noti_icon,
+                            action_view="qa_consult",
+                            action_payload={
+                                "project_id": project_id,
+                                "group_name": group_name,
+                                "group_type": group_type,
+                                "transaction_id": transaction_id,
+                                "filename": original_filename
+                            }
+                        )
+                    except Exception as noti_err:
+                        logger.error(f"Failed to dispatch consult completion notification to {req_user}: {noti_err}")
+
+                msg_queue.put({'type': 'complete', 'result': result_payload })
+                msg_queue.put(None)
+
             except Exception as e:
                 import traceback
                 traceback.print_exc()
-                yield f"data: {json.dumps({'type': 'error', 'message': str(e) })}\n\n"
+                logger.error(f"Error in QA Consult background worker: {e}", exc_info=True)
+                msg_queue.put({'type': 'error', 'message': str(e) })
+                if req_user:
+                    try:
+                        from notification_service import send_user_notification
+                        send_user_notification(
+                            username=req_user,
+                            title=f"การวิเคราะห์เอกสาร '{original_filename}' ไม่สำเร็จ",
+                            message=f"เกิดข้อผิดพลาดในการประมวลผล: {str(e)[:150]}",
+                            noti_type="error",
+                            icon="❌",
+                            action_view="qa_consult",
+                            action_payload={"project_id": project_id, "group_name": group_name}
+                        )
+                    except Exception:
+                        pass
+                msg_queue.put(None)
+
+        # Launch background worker thread: continues running even if client navigates away
+        worker_thread = threading.Thread(target=run_qa_worker, daemon=True)
+        worker_thread.start()
+
+        def generate():
+            try:
+                while True:
+                    try:
+                        item = msg_queue.get(timeout=2.0)
+                        if item is None:
+                            break
+                        yield f"data: {json.dumps(item)}\n\n"
+                        if item.get('type') in ['complete', 'error']:
+                            break
+                    except queue.Empty:
+                        if not worker_thread.is_alive():
+                            break
+                        yield ": keepalive\n\n"
+            except GeneratorExit:
+                logger.info(f"Client disconnected from SSE stream for '{original_filename}'. Background worker continues analyzing uninterrupted.")
 
         from flask import Response
         return Response(generate(), mimetype='text/event-stream')
@@ -4012,6 +4103,8 @@ def create_document():
         conn = get_db_connection()
         cursor = conn.cursor()
         
+        req_user = get_request_user() or data.get('username')
+
         # Ensure table exists
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS qa_generated_documents (
@@ -4026,6 +4119,7 @@ def create_document():
             );
             ALTER TABLE qa_generated_documents ADD COLUMN IF NOT EXISTS group_name VARCHAR(255);
             ALTER TABLE qa_generated_documents ADD COLUMN IF NOT EXISTS group_type VARCHAR(255);
+            ALTER TABLE qa_generated_documents ADD COLUMN IF NOT EXISTS username VARCHAR(100);
             ALTER TABLE qa_generated_documents ALTER COLUMN skill_id TYPE VARCHAR(500);
         """)
         
@@ -4037,19 +4131,23 @@ def create_document():
 
         # Insert initial record
         cursor.execute("""
-            INSERT INTO qa_generated_documents (project_id, doc_name, doc_type, skill_id, status, group_name, group_type)
-            VALUES (%s::uuid, %s, %s, %s, 'Generating', %s, %s)
+            INSERT INTO qa_generated_documents (project_id, doc_name, doc_type, skill_id, status, group_name, group_type, username)
+            VALUES (%s::uuid, %s, %s, %s, 'Generating', %s, %s, %s)
             RETURNING id
-        """, (project_id, doc_name, doc_type, skill_id_str, group_name or None, group_type or None))
+        """, (project_id, doc_name, doc_type, skill_id_str, group_name or None, group_type or None, req_user or None))
         gen_id = cursor.fetchone()[0]
         conn.commit()
         cursor.close()
         conn.close()
 
-        # Run generation in background
+        # Run generation in background with dedicated user notification target
         from agent_6_doc_creator import create_qa_document_async
         import threading
-        thread = threading.Thread(target=create_qa_document_async, args=(gen_id, project_id, doc_type, doc_name, skill_id, reference_document_id, custom_prompt, source_markdown))
+        thread = threading.Thread(
+            target=create_qa_document_async, 
+            args=(gen_id, project_id, doc_type, doc_name, skill_id, reference_document_id, custom_prompt, source_markdown),
+            kwargs={'username': req_user}
+        )
         thread.daemon = True
         thread.start()
         
@@ -5379,6 +5477,55 @@ def test_notification_webhook():
     except Exception as e:
         logger.error(f"Error dispatching notification: {e}")
         return jsonify({'error': str(e)}), 500
+
+# ==============================================================================
+# User-Specific In-App Notifications API
+# ==============================================================================
+@app.route('/api/user/notifications', methods=['GET', 'OPTIONS'])
+def api_get_user_notifications():
+    if request.method == 'OPTIONS':
+        return jsonify({}), 200
+    user = get_request_user()
+    if not user:
+        return jsonify({'notifications': [], 'unread_count': 0}), 200
+    from notification_service import get_user_notifications
+    data = get_user_notifications(user)
+    return jsonify({'success': True, **data}), 200
+
+@app.route('/api/user/notifications/mark_read', methods=['POST', 'OPTIONS'])
+def api_mark_user_notifications_read():
+    if request.method == 'OPTIONS':
+        return jsonify({}), 200
+    user = get_request_user()
+    if not user:
+        return jsonify({'error': 'Unauthorized'}), 401
+    body = request.get_json() or {}
+    noti_id = body.get('id')
+    from notification_service import mark_user_notification_read
+    success = mark_user_notification_read(user, noti_id)
+    return jsonify({'success': success}), 200
+
+@app.route('/api/user/notifications/<int:noti_id>', methods=['DELETE', 'OPTIONS'])
+def api_delete_user_notification(noti_id):
+    if request.method == 'OPTIONS':
+        return jsonify({}), 200
+    user = get_request_user()
+    if not user:
+        return jsonify({'error': 'Unauthorized'}), 401
+    from notification_service import delete_user_notification
+    success = delete_user_notification(user, noti_id)
+    return jsonify({'success': success}), 200
+
+@app.route('/api/user/notifications/clear', methods=['DELETE', 'OPTIONS'])
+def api_clear_user_notifications():
+    if request.method == 'OPTIONS':
+        return jsonify({}), 200
+    user = get_request_user()
+    if not user:
+        return jsonify({'error': 'Unauthorized'}), 401
+    from notification_service import clear_user_notifications
+    success = clear_user_notifications(user)
+    return jsonify({'success': success}), 200
 
 # --- AI Feedback Loop Endpoint ---
 @app.route('/api/kb/feedback', methods=['POST', 'OPTIONS'])

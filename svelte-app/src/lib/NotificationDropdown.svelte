@@ -15,7 +15,24 @@
   function handleNotiClick(noti) {
     markAsRead(noti.id);
     if (noti.actionView) {
-      dispatch('navigate', { view: noti.actionView });
+      if (noti.actionPayload && (noti.actionPayload.group_name || noti.actionPayload.project_id)) {
+        import('./qaHistoryStore.js').then(({ activeSidebarGroup, selectedProjectStore }) => {
+          if (noti.actionPayload.project_id) {
+            selectedProjectStore.set({ 
+              id: noti.actionPayload.project_id, 
+              project_id: noti.actionPayload.project_id 
+            });
+          }
+          if (noti.actionPayload.group_name) {
+            activeSidebarGroup.set({
+              group_name: noti.actionPayload.group_name,
+              group_type: noti.actionPayload.group_type || 'General',
+              project_id: noti.actionPayload.project_id
+            });
+          }
+        });
+      }
+      dispatch('navigate', { view: noti.actionView, payload: noti.actionPayload });
     }
   }
 </script>
