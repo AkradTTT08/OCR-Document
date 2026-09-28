@@ -996,7 +996,16 @@ def fetch_agent_learned_rules(cursor, project_id: str = None, doc_type: str = "G
         
         doc_type_clean = (doc_type or "General").strip()
         query = """
-            SELECT rule_category, issue_description, found_incorrect, correct_expectation, recommendation, severity
+            SELECT DISTINCT ON (TRIM(LOWER(issue_description))) 
+                   rule_category, issue_description, found_incorrect, correct_expectation, recommendation, severity,
+                   CASE 
+                       WHEN UPPER(severity) = 'CRITICAL' THEN 1
+                       WHEN UPPER(severity) = 'HIGH' THEN 2
+                       WHEN UPPER(severity) = 'MAJOR' THEN 3
+                       WHEN UPPER(severity) = 'MEDIUM' THEN 4
+                       ELSE 5
+                   END AS sev_order,
+                   created_at
             FROM qa_agent_learned_rules
             WHERE is_active = TRUE AND (
                 UPPER(TRIM(doc_type)) = UPPER(TRIM(%s)) 
@@ -1005,19 +1014,24 @@ def fetch_agent_learned_rules(cursor, project_id: str = None, doc_type: str = "G
                 OR doc_type = 'General' 
                 OR doc_type IS NULL
             )
+            AND issue_description NOT ILIKE '%%abruptly ends%%' 
+            AND issue_description NOT ILIKE '%%ระบบรีว%%'
         """
         params = [doc_type_clean, doc_type_clean, doc_type_clean]
         if project_id:
             query += " AND (project_id = %s::uuid OR project_id IS NULL)"
             params.append(project_id)
             
-        query += " ORDER BY created_at DESC LIMIT 30"
+        query += " ORDER BY TRIM(LOWER(issue_description)), sev_order ASC, created_at DESC LIMIT 15"
         cursor.execute(query, tuple(params))
         rows = cursor.fetchall()
         
         if not rows:
             return ""
             
+        # Re-sort rows by severity order so Critical and High come first
+        sorted_rows = sorted(rows, key=lambda x: x[6])
+
         rules_text = [
             "# ==============================================================================",
             "# LEARNED QUALITY RULES FROM QA CONSULT GATE AUDITS (CONTINUOUS AGENT TRAINING)",
@@ -1026,8 +1040,8 @@ def fetch_agent_learned_rules(cursor, project_id: str = None, doc_type: str = "G
             "You MUST strictly prevent these defects in this generated document to guarantee a 100% PASS audit score:\n"
         ]
         
-        for idx, r in enumerate(rows, 1):
-            cat, issue, found_inc, correct_val, rec, sev = r
+        for idx, r in enumerate(sorted_rows, 1):
+            cat, issue, found_inc, correct_val, rec, sev, _, _ = r
             rule_entry = f"{idx}. [{cat}] (Severity: {sev})\n"
             rule_entry += f"   - Common Defect Identified: {issue}\n"
             if found_inc and found_inc != '-':
@@ -1222,7 +1236,7 @@ Please follow these structure and formatting instructions strictly:
 
         # 3. Call Gemini with Gemini 3.1 Pro
         model_to_use = os.environ.get("GEMINI_DOC_MODEL", "gemini-3.1-pro")
-        doc_content, usage_metadata = call_gemini(prompt, model_name=model_to_use)
+        doc_content, usage_metadata = call_gemini(prompt, model_name=model_to_use, max_output_tokens=32768)
         
         if usage_metadata:
             try:
@@ -1424,7 +1438,7 @@ Please follow these structure and formatting instructions strictly:
 
         logger.info(f"Generating document async '{doc_name}' ({doc_type})...")
         model_to_use = os.environ.get("GEMINI_DOC_MODEL", "gemini-3.1-pro")
-        doc_content, usage_metadata = call_gemini(prompt, model_name=model_to_use)
+        doc_content, usage_metadata = call_gemini(prompt, model_name=model_to_use, max_output_tokens=32768)
         
         if usage_metadata:
             try:

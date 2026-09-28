@@ -22,7 +22,7 @@ def call_gemini(
     model_name: str = None, 
     system_instruction: str = None,
     temperature: float = 0.2,
-    max_output_tokens: int = 8192
+    max_output_tokens: int = 32768
 ) -> Tuple[str, Any]:
     """
     Calls Google Gemini using modern google-genai SDK with automatic fallback across models and legacy SDK.

@@ -4413,6 +4413,36 @@ def train_qa_rules():
                             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                         """, (project_id if project_id else None, doc_type, doc_name, cat, q_text, evidence, fit.get('target_metric', '100% (ผ่านบริบูรณ์)'), remarks, sev))
                         saved_count += 1
+
+        # Continuous Skill Evolution: Update base skill instructions in agent_skills
+        if saved_count > 0 and doc_type:
+            try:
+                cursor.execute("""
+                    SELECT skill_id, skill_name, markdown_instructions 
+                    FROM agent_skills 
+                    WHERE is_active = TRUE AND (UPPER(TRIM(target_doc_type)) = UPPER(TRIM(%s)) OR skill_name ILIKE %s)
+                      AND skill_name NOT ILIKE '%%Exit Criteria%%' AND skill_name NOT ILIKE '%%QA SRS%%'
+                    ORDER BY version DESC LIMIT 1;
+                """, (doc_type, f"%{doc_type}%"))
+                skill_to_evolve = cursor.fetchone()
+                if skill_to_evolve:
+                    s_id, s_name, s_inst = skill_to_evolve
+                    crit_high_rules = [f for f in findings if (f.get('severity') or '').upper() in ['CRITICAL', 'HIGH'] and f.get('recommendation')]
+                    evolved_notes = []
+                    for cr in crit_high_rules[:3]:
+                        rec = (cr.get('recommendation') or '').strip()
+                        if rec and rec not in s_inst and not any(rec in n for n in evolved_notes):
+                            evolved_notes.append(f"- [QA Audit Evolution]: {rec}")
+                    if evolved_notes:
+                        header_tag = "\n\n### 🛡️ กฎเกณฑ์ที่ได้รับการปรับปรุงจากผลตรวจ QA (Continuous Learned Directives)\n"
+                        if header_tag not in s_inst:
+                            new_inst = s_inst + header_tag + "\n".join(evolved_notes)
+                        else:
+                            new_inst = s_inst + "\n" + "\n".join(evolved_notes)
+                        cursor.execute("UPDATE agent_skills SET markdown_instructions = %s, version = COALESCE(version, 1) + 1 WHERE skill_id = %s;", (new_inst, s_id))
+                        logger.info(f"Skill '{s_name}' evolved with {len(evolved_notes)} new directives from QA findings!")
+            except Exception as ev_err:
+                logger.warning(f"Continuous skill evolution warning: {ev_err}")
                         
         conn.commit()
         cursor.close()
