@@ -2488,6 +2488,44 @@ def qa_consult_api():
                 except Exception as e:
                     logger.error(f"Failed to save QA transaction: {e}")
 
+                # Update linked qa_generated_documents record with audit findings and status
+                try:
+                    if project_id:
+                        from db_ingestion import get_db_connection as _gdc
+                        _conn = _gdc()
+                        _cur = _conn.cursor()
+                        clean_fbase = original_filename.rsplit('.', 1)[0]
+                        qf_count = len(qa_findings) if qa_findings else 0
+                        qf_json = json.dumps(qa_findings) if qa_findings else '[]'
+                        
+                        has_crit_high = any((f.get('severity') or '').lower() in ['critical', 'high'] for f in (qa_findings or []))
+                        if has_crit_high:
+                            eff_status = 'REJECTED'
+                        elif qf_count > 0:
+                            eff_status = 'CONDITIONAL_PASSED'
+                        else:
+                            eff_status = (exit_criteria_eval.get('status') if exit_criteria_eval else 'PASSED')
+
+                        score_v = (exit_criteria_eval.get('score_percentage') if exit_criteria_eval else 100)
+
+                        _cur.execute("""
+                            UPDATE qa_generated_documents
+                            SET qa_status = %s,
+                                qa_score = %s,
+                                qa_findings_count = %s,
+                                qa_findings = %s::jsonb,
+                                last_scanned_at = NOW(),
+                                last_transaction_id = %s
+                            WHERE project_id = %s::uuid 
+                              AND (doc_name = %s OR doc_name = %s OR %s ILIKE '%%' || doc_name || '%%')
+                        """, (eff_status, score_v, qf_count, qf_json, transaction_id, project_id, original_filename, clean_fbase, clean_fbase))
+                        _conn.commit()
+                        _cur.close()
+                        _conn.close()
+                        logger.info(f"Linked scan results (status={eff_status}, findings={qf_count}) to qa_generated_documents for {original_filename}")
+                except Exception as up_err:
+                    logger.warning(f"Could not link qa_generated_documents to scan: {up_err}")
+
                 msg_queue.put({'type': 'progress', 'pct': 90, 'message': 'กำลังสร้าง Excel QA Report...' })
 
                 # Generate Excel Report
@@ -4196,7 +4234,10 @@ def get_generated_documents():
         skills_map = {str(r[0]): r[1] for r in cursor.fetchall()}
 
         cursor.execute("""
-            SELECT q.id, q.doc_name, q.doc_type, q.skill_id, q.status, q.file_url, q.pdf_url, q.is_saved_to_project, q.saved_doc_id, q.created_at, q.project_id, q.error_message, q.group_name, q.group_type
+            SELECT q.id, q.doc_name, q.doc_type, q.skill_id, q.status, q.file_url, q.pdf_url, 
+                   q.is_saved_to_project, q.saved_doc_id, q.created_at, q.project_id, q.error_message, 
+                   q.group_name, q.group_type, q.qa_status, q.qa_score, q.qa_findings_count, 
+                   q.qa_findings, q.last_scanned_at, q.last_transaction_id
             FROM qa_generated_documents q
             WHERE q.project_id = %s::uuid
             ORDER BY q.created_at DESC
@@ -4225,6 +4266,17 @@ def get_generated_documents():
                     elif k and k not in ['undefined', 'null']:
                         resolved_names.append(k)
 
+            # Parse qa_findings safely
+            parsed_findings = []
+            if len(row) > 17 and row[17]:
+                if isinstance(row[17], list):
+                    parsed_findings = row[17]
+                elif isinstance(row[17], str):
+                    try:
+                        parsed_findings = json.loads(row[17])
+                    except:
+                        parsed_findings = []
+
             docs.append({
                 'id': str(row[0]),
                 'doc_name': row[1],
@@ -4239,7 +4291,13 @@ def get_generated_documents():
                 'project_id': str(row[10]) if row[10] else str(project_id),
                 'error_message': row[11] if len(row) > 11 else None,
                 'group_name': row[12] if len(row) > 12 else None,
-                'group_type': row[13] if len(row) > 13 else None
+                'group_type': row[13] if len(row) > 13 else None,
+                'qa_status': row[14] if len(row) > 14 else None,
+                'qa_score': float(row[15]) if len(row) > 15 and row[15] is not None else None,
+                'qa_findings_count': int(row[16]) if len(row) > 16 and row[16] is not None else len(parsed_findings),
+                'qa_findings': parsed_findings,
+                'last_scanned_at': row[18].isoformat() if len(row) > 18 and row[18] else None,
+                'last_transaction_id': row[19] if len(row) > 19 else None
             })
             
         cursor.close()
@@ -4248,6 +4306,27 @@ def get_generated_documents():
         
     except Exception as e:
         logger.error(f"Error fetching generated documents: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/agent/mark_document_scanning', methods=['POST', 'OPTIONS'])
+def mark_document_scanning():
+    if request.method == 'OPTIONS':
+        return jsonify({}), 200
+    data = request.json or {}
+    doc_id = data.get('doc_id')
+    if not doc_id:
+        return jsonify({'error': 'Missing doc_id'}), 400
+    try:
+        from db_ingestion import get_db_connection
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("UPDATE qa_generated_documents SET qa_status = 'Scanning' WHERE id = %s::uuid", (doc_id,))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return jsonify({'success': True})
+    except Exception as e:
+        logger.error(f"Error marking document scanning: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/agent/train_qa_rules', methods=['POST'])

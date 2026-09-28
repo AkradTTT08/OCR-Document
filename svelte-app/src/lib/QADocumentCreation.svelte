@@ -573,6 +573,15 @@
         project_id: proj.id || proj.project_id
       });
 
+      // Mark document as Scanning immediately
+      doc.qa_status = 'Scanning';
+      generatedHistory = [...generatedHistory];
+      fetch('/api/agent/mark_document_scanning', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ doc_name: doc.doc_name, id: doc.id })
+      }).catch(e => console.error('Failed to mark document scanning:', e));
+
       toast(`โหลดไฟล์ "${fileName}" พร้อมส่งตรวจ QA Consult เรียบร้อยแล้ว`, 'success');
       
       // Dispatch navigate event to App.svelte to switch view
@@ -608,6 +617,48 @@
       console.error('Cancel error:', err);
       toast('เกิดข้อผิดพลาดในการส่งคำขอยกเลิก', 'error');
     }
+  }
+
+  let showFindingsModal = false;
+  let selectedDocForFindings = null;
+
+  function openFindingsModal(doc) {
+    selectedDocForFindings = doc;
+    showFindingsModal = true;
+  }
+
+  function closeFindingsModal() {
+    showFindingsModal = false;
+    selectedDocForFindings = null;
+  }
+
+  function applyDocFindingsToRefinement(doc) {
+    if (!doc) return;
+    const fList = doc.qa_findings || [];
+    const feedbackObj = {
+      project_id: doc.project_id,
+      doc_name: doc.doc_name,
+      doc_type: doc.doc_type,
+      findings: fList,
+      exit_criteria_eval: {
+        status: doc.qa_status || (fList.length > 0 ? 'REJECTED' : 'PASSED'),
+        score_percentage: doc.qa_score || 0
+      },
+      source_markdown: doc.markdown_content || '',
+      source_filename: `${doc.doc_name}.pdf`,
+      group_name: doc.group_name,
+      group_type: doc.group_type
+    };
+
+    activeFeedback = feedbackObj;
+    qaRefinementFeedback.set(feedbackObj);
+    docName = doc.doc_name ? `${doc.doc_name}_v2` : docName;
+    sourceGroupName = doc.group_name || sourceGroupName;
+    sourceGroupType = doc.group_type || sourceGroupType;
+    sourceRawMarkdown = doc.markdown_content || sourceRawMarkdown;
+    closeFindingsModal();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    toast(`โหลดประเด็นข้อผิดพลาด ${fList.length} ข้อ เข้าสู่โหมดปรับปรุงเรียบร้อยแล้ว`, 'success', 5000);
   }
 
   let showDeleteModal = false;
@@ -823,14 +874,15 @@
               <th>ชื่อเอกสาร</th>
               <th>ประเภท</th>
               <th>Framework/Skill</th>
-              <th>สถานะ</th>
+              <th>สถานะสร้างเอกสาร</th>
+              <th>ผลการตรวจ QA</th>
               <th>การกระทำ</th>
             </tr>
           </thead>
           <tbody>
             {#if generatedHistory.length === 0}
               <tr>
-                <td colspan="6" style="text-align: center; color: #94a3b8; padding: 20px;">
+                <td colspan="7" style="text-align: center; color: #94a3b8; padding: 20px;">
                   ยังไม่มีประวัติการสร้างเอกสาร
                 </td>
               </tr>
@@ -870,6 +922,43 @@
                       </div>
                     {:else}
                       <span>{doc.status}</span>
+                    {/if}
+                  </td>
+                  <td>
+                    {#if doc.qa_status === 'Scanning'}
+                      <div class="qa-badge qa-scanning" title="กำลังดำเนินการตรวจประเมินคุณภาพ...">
+                        <div class="spinner-micro"></div>
+                        <span>กำลังตรวจ...</span>
+                      </div>
+                    {:else if doc.qa_status === 'PASSED'}
+                      <div class="qa-badge qa-pass" title="เอกสารผ่านเกณฑ์การตรวจสอบ QA ทั้งหมด">
+                        <span>✅ ผ่าน</span>
+                        {#if doc.qa_score !== null && doc.qa_score !== undefined}
+                          <span class="qa-score-chip">{doc.qa_score}%</span>
+                        {/if}
+                      </div>
+                    {:else if doc.qa_status === 'REJECTED' || (doc.qa_findings_count && doc.qa_findings_count > 0)}
+                      <button 
+                        class="qa-badge qa-fail clickable" 
+                        title="คลิกเพื่อดูรายละเอียดข้อผิดพลาด {doc.qa_findings_count || (doc.qa_findings && doc.qa_findings.length) || 0} ข้อ"
+                        on:click={() => openFindingsModal(doc)}
+                      >
+                        <span class="badge-main">❌ ไม่ผ่าน ({doc.qa_findings_count || (doc.qa_findings && doc.qa_findings.length) || 0} ข้อ)</span>
+                        <span class="view-detail-hint">ดูรายละเอียด 🔍</span>
+                      </button>
+                    {:else if doc.qa_status === 'CONDITIONAL_PASSED'}
+                      <button 
+                        class="qa-badge qa-warn clickable" 
+                        title="คลิกเพื่อดูข้อสังเกต {doc.qa_findings_count || (doc.qa_findings && doc.qa_findings.length) || 0} ข้อ"
+                        on:click={() => openFindingsModal(doc)}
+                      >
+                        <span class="badge-main">⚠️ ข้อสังเกต ({doc.qa_findings_count || (doc.qa_findings && doc.qa_findings.length) || 0} ข้อ)</span>
+                        <span class="view-detail-hint">ดูรายละเอียด 🔍</span>
+                      </button>
+                    {:else}
+                      <span class="qa-badge qa-none" title="ยังไม่ได้ส่งตรวจที่เมนู QA Consult">
+                        - ยังไม่ได้ตรวจ -
+                      </span>
                     {/if}
                   </td>
                   <td>
@@ -1082,6 +1171,107 @@
           {:else}
             💾 บันทึกเข้า Project
           {/if}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- ── QA Audit Findings Modal ── -->
+{#if showFindingsModal && selectedDocForFindings}
+  <div class="modal-backdrop" on:click|self={closeFindingsModal} in:fade={{ duration: 150 }}>
+    <div class="modal-content modal-findings-content" on:click|stopPropagation in:scale={{ duration: 200, start: 0.95 }}>
+      <button class="modal-close-btn" on:click={closeFindingsModal} title="ปิด">✕</button>
+      
+      <div class="modal-title-bar">
+        <div class="modal-icon-badge" style="background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.3); color: #f87171;">
+          📋
+        </div>
+        <div style="flex: 1;">
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px;">
+            <h3 style="margin: 0; font-size: 1.25rem;">ผลการตรวจสอบ QA (QA Audit Findings)</h3>
+            {#if selectedDocForFindings.qa_status === 'REJECTED' || (selectedDocForFindings.qa_findings_count > 0)}
+              <span class="finding-status-tag tag-fail">❌ ไม่ผ่านเกณฑ์</span>
+            {:else if selectedDocForFindings.qa_status === 'CONDITIONAL_PASSED'}
+              <span class="finding-status-tag tag-warn">⚠️ ผ่านแบบมีข้อสังเกต</span>
+            {:else}
+              <span class="finding-status-tag tag-pass">✅ ผ่านเกณฑ์สมบูรณ์</span>
+            {/if}
+          </div>
+          <p class="modal-subtitle" style="margin-top: 4px;">
+            เอกสาร: <strong style="color: #60a5fa;">{selectedDocForFindings.doc_name}</strong> 
+            {#if selectedDocForFindings.qa_score !== null && selectedDocForFindings.qa_score !== undefined}
+              <span style="margin: 0 6px; color: #475569;">|</span> คะแนน: <strong style="color: #38bdf8;">{selectedDocForFindings.qa_score}%</strong>
+            {/if}
+            <span style="margin: 0 6px; color: #475569;">|</span> ข้อผิดพลาดที่ต้องแก้ไข: <strong style="color: #f87171;">{(selectedDocForFindings.qa_findings && selectedDocForFindings.qa_findings.length) || selectedDocForFindings.qa_findings_count || 0} ข้อ</strong>
+          </p>
+        </div>
+      </div>
+
+      <!-- Findings List -->
+      <div class="findings-list-container">
+        {#if !selectedDocForFindings.qa_findings || selectedDocForFindings.qa_findings.length === 0}
+          <div class="empty-findings">
+            <span style="font-size: 2.2rem; display: block; margin-bottom: 8px;">🎉</span>
+            <p style="font-size: 14px; color: #94a3b8; margin: 0;">ไม่พบข้อผิดพลาดหรือข้อบกพร่องที่ต้องแก้ไขในเอกสารนี้</p>
+          </div>
+        {:else}
+          {#each selectedDocForFindings.qa_findings as finding, idx}
+            <div class="finding-card severity-{(finding.severity || 'medium').toLowerCase()}">
+              <div class="finding-card-header">
+                <div class="finding-title-left">
+                  <span class="finding-number">#{idx + 1}</span>
+                  <span class="severity-badge sev-{(finding.severity || 'medium').toLowerCase()}">
+                    {finding.severity || 'Medium'}
+                  </span>
+                  <span class="category-badge">{finding.category || 'General'}</span>
+                </div>
+              </div>
+
+              <div class="finding-body">
+                <div class="finding-row">
+                  <div class="finding-label">ประเด็นข้อผิดพลาด:</div>
+                  <div class="finding-value problem-text">
+                    {finding.problem || finding.issue || finding.finding || finding.description || '-'}
+                  </div>
+                </div>
+
+                {#if finding.evidence || finding.detail || finding.location}
+                  <div class="finding-row">
+                    <div class="finding-label">จุดที่พบ / บริบท (Evidence):</div>
+                    <div class="finding-value evidence-text">
+                      {finding.evidence || finding.detail || finding.location}
+                    </div>
+                  </div>
+                {/if}
+
+                {#if finding.recommendation || finding.suggestion || finding.fix}
+                  <div class="finding-row recommendation-row">
+                    <div class="finding-label">คำแนะนำการแก้ไข (QA Suggestion):</div>
+                    <div class="finding-value recommendation-text">
+                      💡 {finding.recommendation || finding.suggestion || finding.fix}
+                    </div>
+                  </div>
+                {/if}
+              </div>
+            </div>
+          {/each}
+        {/if}
+      </div>
+
+      <div class="modal-actions" style="margin-top: 20px; justify-content: space-between; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 16px;">
+        <button class="btn-cancel" on:click={closeFindingsModal}>
+          ปิดหน้าต่าง
+        </button>
+        <button 
+          class="btn-refine-action" 
+          on:click={() => applyDocFindingsToRefinement(selectedDocForFindings)}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+          </svg>
+          ส่งข้อผิดพลาดเข้าโหมดปรับปรุงเอกสาร (Auto Refine)
         </button>
       </div>
     </div>
@@ -1962,5 +2152,276 @@
   .btn-refine-action:hover:not(:disabled) {
     transform: translateY(-2px) !important;
     box-shadow: 0 6px 24px rgba(236, 72, 153, 0.7) !important;
+  }
+
+  /* ── QA Result Badges in History Table ── */
+  .qa-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.2;
+    border: 1px solid transparent;
+    transition: all 0.2s ease;
+    font-family: inherit;
+    text-align: left;
+  }
+
+  .qa-badge.qa-scanning {
+    background: rgba(234, 179, 8, 0.15);
+    border-color: rgba(234, 179, 8, 0.35);
+    color: #fbbf24;
+  }
+
+  .qa-badge.qa-pass {
+    background: rgba(34, 197, 94, 0.15);
+    border-color: rgba(34, 197, 94, 0.35);
+    color: #4ade80;
+  }
+
+  .qa-score-chip {
+    background: rgba(34, 197, 94, 0.25);
+    color: #86efac;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  .qa-badge.qa-fail {
+    background: rgba(239, 68, 68, 0.15);
+    border-color: rgba(239, 68, 68, 0.35);
+    color: #fca5a5;
+  }
+
+  .qa-badge.qa-warn {
+    background: rgba(245, 158, 11, 0.15);
+    border-color: rgba(245, 158, 11, 0.35);
+    color: #fcd34d;
+  }
+
+  .qa-badge.qa-none {
+    background: rgba(148, 163, 184, 0.08);
+    border-color: rgba(148, 163, 184, 0.18);
+    color: #64748b;
+  }
+
+  .qa-badge.clickable {
+    cursor: pointer;
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 6px 10px;
+  }
+
+  .qa-badge.clickable:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  }
+
+  .qa-badge.qa-fail.clickable:hover {
+    background: rgba(239, 68, 68, 0.25);
+    border-color: rgba(239, 68, 68, 0.6);
+  }
+
+  .qa-badge.qa-warn.clickable:hover {
+    background: rgba(245, 158, 11, 0.25);
+    border-color: rgba(245, 158, 11, 0.6);
+  }
+
+  .badge-main {
+    font-weight: 600;
+  }
+
+  .view-detail-hint {
+    font-size: 10.5px;
+    color: #93c5fd;
+    text-decoration: underline;
+    opacity: 0.9;
+    margin-top: 2px;
+  }
+
+  /* ── QA Findings Modal ── */
+  .modal-findings-content {
+    width: 760px;
+    max-width: 95vw;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .finding-status-tag {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 3px 8px;
+    border-radius: 6px;
+    text-transform: uppercase;
+  }
+  .finding-status-tag.tag-fail {
+    background: rgba(239, 68, 68, 0.2);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    color: #fca5a5;
+  }
+  .finding-status-tag.tag-warn {
+    background: rgba(245, 158, 11, 0.2);
+    border: 1px solid rgba(245, 158, 11, 0.4);
+    color: #fcd34d;
+  }
+  .finding-status-tag.tag-pass {
+    background: rgba(34, 197, 94, 0.2);
+    border: 1px solid rgba(34, 197, 94, 0.4);
+    color: #86efac;
+  }
+
+  .findings-list-container {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    overflow-y: auto;
+    margin-top: 16px;
+    padding-right: 6px;
+    max-height: 52vh;
+  }
+
+  .empty-findings {
+    text-align: center;
+    padding: 36px 20px;
+    background: rgba(15, 23, 42, 0.4);
+    border-radius: 8px;
+    border: 1px dashed rgba(255, 255, 255, 0.1);
+  }
+
+  .finding-card {
+    background: rgba(15, 23, 42, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    padding: 12px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    transition: all 0.2s ease;
+  }
+  .finding-card:hover {
+    background: rgba(15, 23, 42, 0.9);
+    border-color: rgba(255, 255, 255, 0.15);
+  }
+
+  .finding-card.severity-critical { border-left: 4px solid #ef4444; }
+  .finding-card.severity-high { border-left: 4px solid #f97316; }
+  .finding-card.severity-medium { border-left: 4px solid #eab308; }
+  .finding-card.severity-low { border-left: 4px solid #3b82f6; }
+  .finding-card.severity-info { border-left: 4px solid #06b6d4; }
+
+  .finding-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .finding-title-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .finding-number {
+    font-weight: 700;
+    color: #94a3b8;
+    font-size: 12px;
+  }
+
+  .severity-badge {
+    font-size: 10.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    padding: 2px 7px;
+    border-radius: 4px;
+    letter-spacing: 0.3px;
+  }
+  .severity-badge.sev-critical {
+    background: rgba(239, 68, 68, 0.2);
+    color: #f87171;
+    border: 1px solid rgba(239, 68, 68, 0.4);
+  }
+  .severity-badge.sev-high {
+    background: rgba(249, 115, 22, 0.2);
+    color: #fb923c;
+    border: 1px solid rgba(249, 115, 22, 0.4);
+  }
+  .severity-badge.sev-medium {
+    background: rgba(234, 179, 8, 0.2);
+    color: #facc15;
+    border: 1px solid rgba(234, 179, 8, 0.4);
+  }
+  .severity-badge.sev-low {
+    background: rgba(59, 130, 246, 0.2);
+    color: #60a5fa;
+    border: 1px solid rgba(59, 130, 246, 0.4);
+  }
+  .severity-badge.sev-info {
+    background: rgba(6, 182, 212, 0.2);
+    color: #22d3ee;
+    border: 1px solid rgba(6, 182, 212, 0.4);
+  }
+
+  .category-badge {
+    background: rgba(139, 92, 246, 0.15);
+    color: #c4b5fd;
+    border: 1px solid rgba(139, 92, 246, 0.3);
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 4px;
+  }
+
+  .finding-body {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  .finding-row {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .finding-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: #94a3b8;
+    text-transform: uppercase;
+    letter-spacing: 0.2px;
+  }
+
+  .problem-text {
+    color: #f8fafc;
+    font-weight: 500;
+  }
+
+  .evidence-text {
+    color: #cbd5e1;
+    background: rgba(0, 0, 0, 0.2);
+    padding: 6px 10px;
+    border-radius: 4px;
+    border-left: 2px solid #64748b;
+    font-size: 12px;
+  }
+
+  .recommendation-row {
+    margin-top: 4px;
+    background: rgba(30, 41, 59, 0.6);
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: 1px solid rgba(56, 189, 248, 0.2);
+  }
+
+  .recommendation-text {
+    color: #38bdf8;
+    font-size: 12.5px;
+    font-weight: 500;
   }
 </style>

@@ -1223,7 +1223,7 @@ def save_qa_transaction(project_id, group_name, group_type, filename, doc_type, 
                 cursor.execute("""
                     INSERT INTO qa_transactions (project_id, group_name, group_type, filename, doc_type, extracted_text, qa_report, total_pages, email, qa_findings, exit_criteria_eval)
                     VALUES (%s::uuid, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)
-                    RETURNING transaction_id
+                    RETURNING id
                 """, (resolved_pid, group_name, group_type or 'Project Plan', filename, doc_type, extracted_text, qa_report, total_pages, email, qf_json, ece_json))
                 row = cursor.fetchone()
                 if row:
@@ -1235,7 +1235,7 @@ def save_qa_transaction(project_id, group_name, group_type, filename, doc_type, 
                 cursor.execute("""
                     INSERT INTO qa_transactions (project_id, group_name, group_type, filename, doc_type, extracted_text, qa_report, total_pages, email, qa_findings, exit_criteria_eval)
                     VALUES (NULL, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)
-                    RETURNING transaction_id
+                    RETURNING id
                 """, (group_name, group_type or 'Project Plan', filename, doc_type, extracted_text, qa_report, total_pages, email, qf_json, ece_json))
                 row = cursor.fetchone()
                 if row:
@@ -1244,7 +1244,7 @@ def save_qa_transaction(project_id, group_name, group_type, filename, doc_type, 
             cursor.execute("""
                 INSERT INTO qa_transactions (project_id, group_name, group_type, filename, doc_type, extracted_text, qa_report, total_pages, email, qa_findings, exit_criteria_eval)
                 VALUES (NULL, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)
-                RETURNING transaction_id
+                RETURNING id
             """, (group_name, group_type or 'Project Plan', filename, doc_type, extracted_text, qa_report, total_pages, email, qf_json, ece_json))
             row = cursor.fetchone()
             if row:
