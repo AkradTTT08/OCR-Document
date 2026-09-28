@@ -1468,7 +1468,7 @@ def delete_qa_transaction(transaction_id: str):
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM qa_transactions WHERE transaction_id = %s::uuid;", (transaction_id,))
+        cursor.execute("DELETE FROM qa_transactions WHERE CAST(id AS TEXT) = %s;", (str(transaction_id),))
         conn.commit()
         return True, "Transaction deleted successfully"
     except Exception as e:

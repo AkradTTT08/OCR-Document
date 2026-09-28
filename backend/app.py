@@ -2778,10 +2778,10 @@ def download_qa_excel(filename):
                 if uuid_match:
                     tid = uuid_match.group(1)
                     cur.execute("""
-                        SELECT t.transaction_id, t.filename, t.doc_type, t.qa_report, t.group_name, t.group_type, p.project_code, t.qa_findings, t.exit_criteria_eval
+                        SELECT t.id, t.filename, t.doc_type, t.qa_report, t.group_name, t.group_type, p.project_code, t.qa_findings, t.exit_criteria_eval
                         FROM qa_transactions t
                         LEFT JOIN projects p ON t.project_id = p.project_id
-                        WHERE t.transaction_id = %s::uuid
+                        WHERE CAST(t.id AS TEXT) = %s
                         LIMIT 1
                     """, (tid,))
                     row = cur.fetchone()
@@ -2790,7 +2790,7 @@ def download_qa_excel(filename):
                     name_parts = raw_name.replace('QA_Report_', '').rsplit('_', 1)
                     doc_cand = name_parts[0] if name_parts else raw_name
                     cur.execute("""
-                        SELECT t.transaction_id, t.filename, t.doc_type, t.qa_report, t.group_name, t.group_type, p.project_code, t.qa_findings, t.exit_criteria_eval
+                        SELECT t.id, t.filename, t.doc_type, t.qa_report, t.group_name, t.group_type, p.project_code, t.qa_findings, t.exit_criteria_eval
                         FROM qa_transactions t
                         LEFT JOIN projects p ON t.project_id = p.project_id
                         WHERE t.filename ILIKE %s OR %s ILIKE ('%' || REPLACE(t.filename, '.pdf', '') || '%')
@@ -2853,7 +2853,7 @@ def get_qa_transactions():
         project_id = request.args.get('project_id')
         
         sql = """
-            SELECT t.transaction_id, t.project_id, t.group_name, t.group_type, t.filename, t.doc_type, t.qa_report, t.created_at, p.project_code, t.total_pages, t.email, t.qa_findings, t.exit_criteria_eval
+            SELECT t.id, t.project_id, t.group_name, t.group_type, t.filename, t.doc_type, t.qa_report, t.created_at, p.project_code, t.total_pages, t.email, t.qa_findings, t.exit_criteria_eval
             FROM qa_transactions t
             LEFT JOIN projects p ON t.project_id = p.project_id
         """
