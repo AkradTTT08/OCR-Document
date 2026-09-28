@@ -2336,7 +2336,7 @@ def qa_consult_api():
                 original_filename = getattr(file, 'filename', 'document.pdf') or 'document.pdf'
                 if project_id:
                     try:
-                        prev_transaction = get_latest_qa_transaction(project_id, original_filename)
+                        prev_transaction = get_latest_qa_transaction(project_id, filename=original_filename, group_name=group_name)
                     except Exception as e:
                         logger.error(f"Failed to fetch previous transaction: {e}")
 
@@ -2352,9 +2352,18 @@ def qa_consult_api():
                 
                 prev_report_context = ""
                 if prev_transaction:
+                    prev_findings_text = ""
+                    if prev_transaction.get('qa_findings'):
+                        prev_findings_text = "\n### รายการประเด็นที่พบในรอบก่อนหน้า:\n" + "\n".join([
+                            f"- [{f.get('severity','Info')}] {f.get('issue','')} (ข้อเสนอแนะ: {f.get('recommendation','-')})"
+                            for f in (prev_transaction.get('qa_findings') or [])[:10]
+                        ])
                     prev_report_context = f"""
-=== ประวัติการตรวจสอบครั้งก่อนหน้า (Previous QA Report) ===
-(ใช้อ้างอิงเพื่อตรวจสอบว่าผู้ใช้ได้แก้ไขตามข้อเสนอแนะเดิมหรือไม่)
+=== ประวัติการตรวจสอบครั้งก่อนหน้าในกลุ่มนี้ (Previous QA Audit in Group '{group_name}') ===
+(ใช้อ้างอิงเพื่อตรวจสอบว่าผู้ใช้ได้ปรับปรุงแก้ไขตามข้อเสนอแนะเดิมครบถ้วน 100% หรือไม่ หากแก้ไขแล้วให้ระบุชัดเจนว่าปัญหาเดิมได้รับการแก้ไขเรียบร้อยแล้ว)
+{prev_findings_text}
+
+รายงานผลรอบก่อนหน้า:
 {prev_transaction['qa_report']}
 """
                 
@@ -3095,8 +3104,8 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
                 findings_summary += f"  [Medium] {f.get('issue','')}\n"
         findings_summary += """
 **แนวทางการประเมินตามเนื้อหาเอกสารจริง:**
-- ข้อ [2.1] (General Information / Content Completeness): หากเอกสารมี Section 1 / ตารางข้อมูลทั่วไปประกอบเอกสาร (Document Title, Version, Project Name, Code, Author, Scope, Objectives) ครบถ้วนชัดเจน ให้ถือว่า **PASS**
-- ข้อ [1.1] (Critical / High Defects & Revision Resolution): หากเอกสารเป็นฉบับปรับปรุงที่ระบุ Revision History / บันทึกการแก้ไข หรือแก้ไขจุดบกพร่องตามข้อเสนอแนะครบถ้วนแล้ว ให้ถือว่า **PASS**
+- ข้อ [2.1] (ข้อมูลทั่วไปของเอกสารและโครงการ / General Information): หากเอกสารมี Section 1 (ตารางข้อมูลควบคุมเอกสาร Document Control, Title, Version, Project Code, Scope, Business Objectives) และจัดรูปแบบด้วย Markdown ชัดเจน ให้ถือว่า **PASS**
+- ข้อ [1.1] (ข้อสั่งการ/Comment ระดับ Critical / High ได้รับการแก้ไขแล้ว 100%): หากเอกสารเป็นฉบับปรับปรุงที่มีตาราง Revision History / Audit Resolution Log หรือไม่พบ Defect ระดับ Blocker/Critical ใหม่ตกค้างในเอกสาร ให้ถือว่า **PASS**
 - ให้ประเมินผลตามเนื้อหาจริงในเอกสารที่ส่งตรวจเป็นหลักอย่างเป็นธรรมและตรงตามมาตรฐานวิศวกรรม
 """
 
@@ -3107,7 +3116,7 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
 {checklist_formatted}{findings_summary}
 
 === เนื้อหาเอกสารที่ตรวจ ===
-{doc_text[:7000]}
+{doc_text[:25000]}
 
 กรุณาประเมินข้อตรวจทุกข้อ โดยส่งคืนผลลัพธ์เป็น JSON Array เท่านั้น ห้ามมีข้อความอื่น
 แต่ละ Object ใน JSON Array มีโครงสร้างดังนี้:
@@ -3991,6 +4000,9 @@ def create_document():
     skill_id = data.get('skill_id') # Single ID or list of IDs
     reference_document_id = data.get('reference_document_id') # Single ID or list of IDs
     custom_prompt = data.get('custom_prompt', '')
+    source_markdown = data.get('source_markdown', '')
+    group_name = data.get('group_name', '')
+    group_type = data.get('group_type', '')
     
     if not all([project_id, doc_type, doc_name]):
         return jsonify({'error': 'Missing required fields (project_id, doc_type, doc_name)'}), 400
@@ -4012,6 +4024,8 @@ def create_document():
                 file_url VARCHAR(255),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+            ALTER TABLE qa_generated_documents ADD COLUMN IF NOT EXISTS group_name VARCHAR(255);
+            ALTER TABLE qa_generated_documents ADD COLUMN IF NOT EXISTS group_type VARCHAR(255);
             ALTER TABLE qa_generated_documents ALTER COLUMN skill_id TYPE VARCHAR(500);
         """)
         
@@ -4023,10 +4037,10 @@ def create_document():
 
         # Insert initial record
         cursor.execute("""
-            INSERT INTO qa_generated_documents (project_id, doc_name, doc_type, skill_id, status)
-            VALUES (%s::uuid, %s, %s, %s, 'Generating')
+            INSERT INTO qa_generated_documents (project_id, doc_name, doc_type, skill_id, status, group_name, group_type)
+            VALUES (%s::uuid, %s, %s, %s, 'Generating', %s, %s)
             RETURNING id
-        """, (project_id, doc_name, doc_type, skill_id_str))
+        """, (project_id, doc_name, doc_type, skill_id_str, group_name or None, group_type or None))
         gen_id = cursor.fetchone()[0]
         conn.commit()
         cursor.close()
@@ -4035,7 +4049,7 @@ def create_document():
         # Run generation in background
         from agent_6_doc_creator import create_qa_document_async
         import threading
-        thread = threading.Thread(target=create_qa_document_async, args=(gen_id, project_id, doc_type, doc_name, skill_id, reference_document_id, custom_prompt))
+        thread = threading.Thread(target=create_qa_document_async, args=(gen_id, project_id, doc_type, doc_name, skill_id, reference_document_id, custom_prompt, source_markdown))
         thread.daemon = True
         thread.start()
         
@@ -4073,6 +4087,8 @@ def get_generated_documents():
             ALTER TABLE qa_generated_documents ADD COLUMN IF NOT EXISTS error_message TEXT;
             ALTER TABLE qa_generated_documents ADD COLUMN IF NOT EXISTS is_saved_to_project BOOLEAN DEFAULT FALSE;
             ALTER TABLE qa_generated_documents ADD COLUMN IF NOT EXISTS saved_doc_id UUID;
+            ALTER TABLE qa_generated_documents ADD COLUMN IF NOT EXISTS group_name VARCHAR(255);
+            ALTER TABLE qa_generated_documents ADD COLUMN IF NOT EXISTS group_type VARCHAR(255);
             ALTER TABLE qa_generated_documents ALTER COLUMN skill_id TYPE VARCHAR(500);
         """)
         conn.commit()
@@ -4082,7 +4098,7 @@ def get_generated_documents():
         skills_map = {str(r[0]): r[1] for r in cursor.fetchall()}
 
         cursor.execute("""
-            SELECT q.id, q.doc_name, q.doc_type, q.skill_id, q.status, q.file_url, q.pdf_url, q.is_saved_to_project, q.saved_doc_id, q.created_at, q.project_id, q.error_message
+            SELECT q.id, q.doc_name, q.doc_type, q.skill_id, q.status, q.file_url, q.pdf_url, q.is_saved_to_project, q.saved_doc_id, q.created_at, q.project_id, q.error_message, q.group_name, q.group_type
             FROM qa_generated_documents q
             WHERE q.project_id = %s::uuid
             ORDER BY q.created_at DESC
@@ -4123,7 +4139,9 @@ def get_generated_documents():
                 'saved_doc_id': str(row[8]) if row[8] else None,
                 'created_at': row[9].isoformat() if row[9] else None,
                 'project_id': str(row[10]) if row[10] else str(project_id),
-                'error_message': row[11] if len(row) > 11 else None
+                'error_message': row[11] if len(row) > 11 else None,
+                'group_name': row[12] if len(row) > 12 else None,
+                'group_type': row[13] if len(row) > 13 else None
             })
             
         cursor.close()

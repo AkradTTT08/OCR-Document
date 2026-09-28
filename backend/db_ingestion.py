@@ -1288,8 +1288,8 @@ def update_qa_transaction_results(transaction_id, qa_findings, exit_criteria_eva
         if cursor: cursor.close()
         if conn: conn.close()
 
-def get_latest_qa_transaction(project_id, filename):
-    """Retrieves the latest QA transaction for a given project and filename."""
+def get_latest_qa_transaction(project_id, filename=None, group_name=None):
+    """Retrieves the latest QA transaction for a given project, group_name or filename."""
     conn = None
     cursor = None
     try:
@@ -1298,19 +1298,38 @@ def get_latest_qa_transaction(project_id, filename):
             
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("""
-            SELECT extracted_text, qa_report, created_at
-            FROM qa_transactions
-            WHERE project_id = %s::uuid AND filename = %s
-            ORDER BY created_at DESC
-            LIMIT 1
-        """, (project_id, filename))
+        
+        clean_gname = None
+        if group_name:
+            import re
+            clean_gname = re.sub(r'^\[.*?\]\s*', '', str(group_name)).strip()
+
+        if clean_gname:
+            cursor.execute("""
+                SELECT extracted_text, qa_report, created_at, filename, qa_findings, exit_criteria_eval
+                FROM qa_transactions
+                WHERE project_id = %s::uuid AND (group_name = %s OR filename = %s)
+                ORDER BY created_at DESC
+                LIMIT 1
+            """, (project_id, clean_gname, filename))
+        else:
+            cursor.execute("""
+                SELECT extracted_text, qa_report, created_at, filename, qa_findings, exit_criteria_eval
+                FROM qa_transactions
+                WHERE project_id = %s::uuid AND filename = %s
+                ORDER BY created_at DESC
+                LIMIT 1
+            """, (project_id, filename))
+            
         row = cursor.fetchone()
         if row:
             return {
                 'extracted_text': row[0],
                 'qa_report': row[1],
-                'created_at': row[2].isoformat() if row[2] else None
+                'created_at': row[2].isoformat() if row[2] else None,
+                'filename': row[3],
+                'qa_findings': row[4],
+                'exit_criteria_eval': row[5]
             }
         return None
     except Exception as e:

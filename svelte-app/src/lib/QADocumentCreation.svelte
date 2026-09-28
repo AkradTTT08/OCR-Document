@@ -1,6 +1,6 @@
 <script>
   import { onMount, onDestroy, createEventDispatcher } from 'svelte';
-  import { selectedProjectStore, qaRefinementFeedback, activeQAContext, activeSidebarGroup } from './qaHistoryStore.js';
+  import { selectedProjectStore, qaRefinementFeedback, activeQAContext, activeSidebarGroup, allGroups } from './qaHistoryStore.js';
   import { toast } from './toastStore.js';
   import { fade, slide, scale } from 'svelte/transition';
   import ProjectSelection from './ProjectSelection.svelte';
@@ -17,6 +17,9 @@
   
   // QA Consult Refinement Feedback State
   let activeFeedback = null;
+  let sourceGroupName = "";
+  let sourceGroupType = "";
+  let sourceRawMarkdown = "";
   let showFindingsDrawer = false;
 
   $: {
@@ -37,9 +40,23 @@
       }
     }
 
-    // 2. Set document name and document type
+    // 2. Set document name, type, source group, skills, and baseline content
     if (fb.doc_name) {
       docName = fb.doc_name.replace(/^[\[\(].*?[\]\)]\s*/, '').trim();
+    }
+    if (fb.group_name) {
+      sourceGroupName = fb.group_name.replace(/^[\[\(].*?[\]\)]\s*/, '').trim();
+    }
+    if (fb.group_type) {
+      sourceGroupType = fb.group_type;
+    }
+    if (fb.raw_markdown) {
+      sourceRawMarkdown = fb.raw_markdown;
+    } else if (fb.source_text) {
+      sourceRawMarkdown = fb.source_text;
+    }
+    if (fb.skill_ids && Array.isArray(fb.skill_ids) && fb.skill_ids.length > 0) {
+      selectedSkillIds = [...fb.skill_ids];
     }
     if (fb.doc_type && MASTER_DOC_TYPES.includes(fb.doc_type)) {
       docType = fb.doc_type;
@@ -83,11 +100,11 @@
       }
     }
 
-    directives.push(`### คำสั่งพิเศษสำหรับการสร้างเนื้อหา:`);
-    directives.push(`1. ทุก Functional Requirement (REQ-xxx) ต้องระบุ Unhappy Path / Alternate Flows และ Error Handling อย่างชัดเจนครบถ้วน`);
-    directives.push(`2. ย้ายรายละเอียดเชิงเทคนิค/SQL/PostGIS Query ออกจากส่วน Requirement ไปไว้ใน System Architecture หรือ Technical Spec แทน`);
-    directives.push(`3. สูตรการคำนวณและตัวแปรทั้งหมด (เช่น R, v, C, m) ต้องระบุความหมายและที่มาของค่าคงที่ทุกตัว`);
-    directives.push(`4. ปรับเปลี่ยนคำอธิบายเชิงธุรกิจ (Slogan) ให้กลายเป็น Acceptance Criteria ที่วัดผลการทดสอบได้ 100%`);
+    directives.push(`### โครงสร้างบังคับเพื่อให้ผ่าน Exit Criteria Gate ข้อ [1.1] และ [2.1] 100%:`);
+    directives.push(`1. Section 1 (ข้อมูลทั่วไปของเอกสารและโครงการ - General Information):`);
+    directives.push(`   - ต้องมีตาราง 1.1 Document Control: ระบุ Document Title, Version (เช่น Version 1.1 หรือ 2.0), Project Name, Project Code, Baseline Date, Author, วัตถุประสงค์ (Business Objectives), และขอบเขตระบบ (System Scope)`);
+    directives.push(`   - ต้องมีตาราง 1.2 Revision History & Audit Resolution Log: บันทึกว่าเวอร์ชันนี้เป็นฉบับปรับปรุงที่ได้ "แก้ไขประเด็นข้อสั่งการระดับ Critical/High จากรอบก่อนหน้าเรียบร้อยแล้ว 100% ตามข้อเสนอแนะ" (ตรงตามเกณฑ์ข้อ [1.1] และ [2.1])`);
+    directives.push(`2. โหมดผ่าตัดแก้ไข (Surgical Refinement): ให้คงเนื้อหาเดิมและฟังก์ชันเดิมที่ถูกต้องไว้ทั้งหมด 100% และแก้ไขเฉพาะจุดที่ระบุในรายการข้อผิดพลาดด้านบน ห้ามตัดทอนข้อกำหนดสำคัญเดิมทิ้งเด็ดขาด`);
 
     customPrompt = directives.join('\n');
     toast(`โหลดข้อมูลข้อผิดพลาด ${fb.findings?.length || 0} ประเด็นเข้าสู่โหมดปรับปรุงเอกสารแล้ว`, 'info', 4000);
@@ -95,6 +112,9 @@
 
   function clearRefinementMode() {
     activeFeedback = null;
+    sourceGroupName = "";
+    sourceGroupType = "";
+    sourceRawMarkdown = "";
     qaRefinementFeedback.set(null);
     customPrompt = "";
     toast('ยกเลิกโหมดปรับปรุงเอกสารแล้ว', 'info');
@@ -382,13 +402,19 @@
 
     isGenerating = true;
     try {
+      const resolvedGroupName = sourceGroupName || ($activeSidebarGroup && $activeSidebarGroup.group_name) || "";
+      const resolvedGroupType = sourceGroupType || ($activeSidebarGroup && $activeSidebarGroup.group_type) || docType;
+
       const payload = {
         project_id: $selectedProjectStore.id || $selectedProjectStore.project_id,
         doc_type: docType,
         doc_name: docName.trim(),
         skill_id: selectedSkillIds,
         reference_document_id: selectedKbDocIds,
-        custom_prompt: customPrompt.trim()
+        custom_prompt: customPrompt.trim(),
+        source_markdown: sourceRawMarkdown,
+        group_name: resolvedGroupName,
+        group_type: resolvedGroupType
       };
 
       const res = await fetch('/api/agent/create_document', {
@@ -445,10 +471,6 @@
       const fileName = `${safeName}.${fileExt}`;
       const fileObj = new File([blob], fileName, { type: mimeType });
 
-      // Clean group name and group type
-      const cleanGName = String(doc.doc_name || 'General').replace(/^\[.*?\]\s*/, '').trim();
-      const groupType = doc.doc_type || 'Project Plan';
-      
       // Determine project
       const proj = $selectedProjectStore || {
         id: doc.project_id,
@@ -456,14 +478,54 @@
         project_code: doc.project_code || '',
         name: doc.project_name || doc.project_code || 'Project'
       };
+      const pId = String(proj.id || proj.project_id || '');
+      const projName = proj.project_code || proj.name || 'Project';
+
+      // Determine target group & group type (preserves existing group, never uses filename as group name)
+      let targetGroupType = doc.group_type || (activeFeedback && activeFeedback.group_type) || doc.doc_type || 'SRS';
+      let targetGroupName = doc.group_name || (activeFeedback && activeFeedback.group_name) || sourceGroupName || ($activeSidebarGroup && $activeSidebarGroup.group_name) || '';
+
+      // If no explicit group name, look up existing group in project matching targetGroupType
+      if (!targetGroupName) {
+        const matched = ($allGroups || []).find(g => 
+          String(g.project_id || '') === pId && 
+          String(g.group_type || '').toLowerCase() === String(targetGroupType).toLowerCase()
+        );
+        if (matched && matched.group_name) {
+          targetGroupName = matched.group_name;
+          targetGroupType = matched.group_type || targetGroupType;
+        } else {
+          targetGroupName = `${targetGroupType} - ${projName}`;
+        }
+      }
+
+      // Clean group name
+      const cleanGName = String(targetGroupName).replace(/^\[.*?\]\s*/, '').trim();
+
+      // Parse skill IDs if present
+      let targetSkillIds = [];
+      if (doc.skill_id) {
+        if (Array.isArray(doc.skill_id)) {
+          targetSkillIds = [...doc.skill_id];
+        } else if (typeof doc.skill_id === 'string' && doc.skill_id.startsWith('[')) {
+          try { targetSkillIds = JSON.parse(doc.skill_id); } catch(e) {}
+        } else if (typeof doc.skill_id === 'string') {
+          targetSkillIds = doc.skill_id.split(',').map(s => s.trim()).filter(Boolean);
+        }
+      } else if (activeFeedback && activeFeedback.skill_ids) {
+        targetSkillIds = Array.isArray(activeFeedback.skill_ids) ? activeFeedback.skill_ids : [activeFeedback.skill_ids];
+      } else if (selectedSkillIds && selectedSkillIds.length > 0) {
+        targetSkillIds = [...selectedSkillIds];
+      }
 
       // Set active QA Context with pre-attached file
       activeQAContext.set({
         project: proj,
         group_name: cleanGName,
-        group_type: groupType,
+        group_type: targetGroupType,
         file: fileObj,
-        doc_types: doc.doc_type ? [doc.doc_type] : []
+        doc_types: doc.doc_type ? [doc.doc_type] : [targetGroupType],
+        skill_ids: targetSkillIds
       });
 
       // Also set activeSidebarGroup and selectedProjectStore
@@ -471,7 +533,7 @@
       activeSidebarGroup.set({
         project: proj,
         group_name: cleanGName,
-        group_type: groupType,
+        group_type: targetGroupType,
         project_id: proj.id || proj.project_id
       });
 

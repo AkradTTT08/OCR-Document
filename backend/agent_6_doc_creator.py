@@ -1055,13 +1055,27 @@ def get_advanced_engineering_guidelines(doc_type: str, today_str: str) -> str:
 # ENTERPRISE ENGINEERING DIRECTIVES & QUALITY GATES (MANDATORY STANDARDS)
 # ==============================================================================
 
-1. MANDATORY SECTION 1: GENERAL INFORMATION & DOCUMENT CONTROL (100% COMPLETE):
-   - You MUST begin the document with Section 1: General Information & Document Control Table containing:
-     * Document Title, Document Code / Ref ID, Version Number (e.g. 1.0.0 or 1.1.0)
-     * Project Name, Project Code, Baseline Date: {today_str}
-     * Author (Lead Business Analyst / QA Architect), Reviewer, Approver, Target Audience
-     * Executive Project Scope, Business Objectives, and System Boundaries.
-   - Section 1.2 MUST include a Revision History & Defect Resolution Table (Document Version, Date, Author, Summary of Changes: "Initial Baseline / Resolved 100% of previous audit comments and Exit Criteria findings").
+1. MANDATORY SECTION 1: ข้อมูลทั่วไปของเอกสารและโครงการ (GENERAL INFORMATION & DOCUMENT CONTROL - 100% COMPLETE):
+   - You MUST begin the document with Section 1 formatted with clean Markdown tables:
+     # 1. ข้อมูลทั่วไปของเอกสารและโครงการ (General Information)
+     ### 1.1 ตารางข้อมูลควบคุมเอกสาร (Document Control)
+     | หัวข้อ | รายละเอียด |
+     | :--- | :--- |
+     | ชื่อเอกสาร (Document Title) | [ชื่อเอกสารที่ตรวจ] |
+     | รหัสเอกสาร (Document Code) | [รหัสเอกสารตามโครงการ] |
+     | หมายเลขเวอร์ชัน (Version) | Version 1.1 (หรือ 2.0 สำหรับฉบับปรับปรุง) |
+     | ชื่อโครงการ (Project Name) | [ชื่อโครงการ] |
+     | วันที่บังคับใช้ (Baseline Date) | {today_str} |
+     | ผู้จัดทำ (Author) | Lead Business Analyst / QA Architect |
+     | วัตถุประสงค์ (Business Objectives) | สรุปวัตถุประสงค์โครงการและเกณฑ์ความสำเร็จ |
+     | ขอบเขตระบบ (System Scope & Boundaries) | ขอบเขตของระบบ สภาพแวดล้อม และข้อจำกัด |
+
+     ### 1.2 ตารางประวัติการแก้ไขและบันทึกการปิดประเด็น Audit (Revision History & Audit Resolution Log)
+     (ส่วนนี้จำเป็นอย่างยิ่งเพื่อผ่านเกณฑ์ Exit Criteria ข้อ [1.1] และ [2.1])
+     | เวอร์ชัน | วันที่ | ผู้แก้ไข | สรุปรายละเอียดการเปลี่ยนแปลง / การปิดประเด็น Audit | สถานะ |
+     | :--- | :--- | :--- | :--- | :--- |
+     | 1.0.0 | ก่อนหน้า | QA Team | เอกสารร่างฉบับแรกสำหรับเข้ากระบวนการ Audit | ดำเนินการแล้ว |
+     | 1.1.0 | {today_str} | Lead QA Architect | ปรับปรุงแก้ไขประเด็นข้อสั่งการระดับ Critical/High จากรอบก่อนหน้าเรียบร้อยแล้ว 100% ตามข้อเสนอแนะ | ปิดประเด็นสมบูรณ์ (100% Closed) |
 
 2. ZERO REQUIREMENT LOSS (100% Comprehensive Coverage of Knowledge Base & Briefings):
    - You MUST extract, integrate, and satisfy EVERY functional feature, business rule, and constraint found in the Reference Documents, PO Briefings, and Project Knowledge Base.
@@ -1233,9 +1247,10 @@ Please follow these structure and formatting instructions strictly:
         return False, str(e)
 
 
-def create_qa_document_async(gen_id: str, project_id: str, doc_type: str, doc_name: str, skill_id, reference_document_id=None, custom_prompt: str = ""):
+def create_qa_document_async(gen_id: str, project_id: str, doc_type: str, doc_name: str, skill_id, reference_document_id=None, custom_prompt: str = "", source_markdown: str = ""):
     """
     Async background version of QA Document Creator that generates Excel, PDF, and Markdown.
+    Supports surgical refinement mode if source_markdown is provided.
     """
     conn = None
     cursor = None
@@ -1296,6 +1311,23 @@ def create_qa_document_async(gen_id: str, project_id: str, doc_type: str, doc_na
 The user has provided the following specific guidelines, scenarios, or custom instructions. You MUST strictly follow and incorporate them into the generated document:
 {custom_prompt.strip()}
 """
+
+        refinement_section = ""
+        if source_markdown and source_markdown.strip():
+            refinement_section = f"""
+# ==============================================================================
+# REFINEMENT & SURGICAL CORRECTION MODE (TARGETED AUDIT FIXES)
+# ==============================================================================
+You are performing a SURGICAL REFINEMENT of an existing baseline document that underwent QA audit.
+Your primary directives:
+1. PRESERVE 100% of all existing valid sections, architecture, and requirements from the baseline document below. DO NOT discard, summarize, or dilute existing functional requirements.
+2. CORRECT all defects, missing items, and comments specified in the "Additional User Prompt & Specific Requirements" section above.
+3. MANDATORY SECTION 1 (GENERAL INFORMATION) & SECTION 1.2 (REVISION HISTORY):
+   You MUST include Section 1 & Section 1.2 with the Document Control and Revision History tables as detailed in the guidelines, stating explicitly that all Critical/High issues from the previous audit round have been resolved 100%.
+
+### ORIGINAL BASELINE DOCUMENT TO REFINE:
+{source_markdown.strip()[:35000]}
+"""
         
         # 3. Call Gemini
         today_str = datetime.datetime.now().strftime("%d/%m/%Y")
@@ -1313,6 +1345,8 @@ Your task is to generate a formal QA Test Case document based on ALL provided Pr
 # Framework & Structural Instructions (Skill: {skill_name})
 Please follow these instructions strictly to structure and generate the test cases:
 {instructions}
+
+{refinement_section}
 
 {learned_rules_section}
 
@@ -1367,6 +1401,8 @@ Please follow these structure and formatting instructions strictly:
 {instructions}
 
 {engineering_guidelines}
+
+{refinement_section}
 
 {learned_rules_section}
 
