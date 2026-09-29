@@ -72,7 +72,7 @@ def add_exit_criteria_tables(force_reset=False):
         cur.execute("""
             CREATE TABLE IF NOT EXISTS document_exit_evaluation_items (
                 result_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                evaluation_id UUID NOT NULL REFERENCES document_exit_evaluations(evaluation_id) ON DELETE CASCADE,
+                evaluation_id UUID REFERENCES document_exit_evaluations(eval_id) ON DELETE CASCADE,
                 item_id UUID REFERENCES exit_criteria_items(item_id) ON DELETE SET NULL,
                 item_code VARCHAR(50),
                 category VARCHAR(100),
@@ -91,8 +91,10 @@ def add_exit_criteria_tables(force_reset=False):
         # Indexes
         print("Creating indexes...")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_exit_items_template ON exit_criteria_items(template_id);")
+        cur.execute("ALTER TABLE document_exit_evaluations ADD COLUMN IF NOT EXISTS project_id UUID;")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_exit_eval_doc ON document_exit_evaluations(doc_id);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_exit_eval_project ON document_exit_evaluations(project_id);")
+        cur.execute("ALTER TABLE document_exit_evaluations ADD COLUMN IF NOT EXISTS status VARCHAR(30) DEFAULT 'PENDING';")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_exit_eval_status ON document_exit_evaluations(status);")
 
         # Default Universal Template seed items

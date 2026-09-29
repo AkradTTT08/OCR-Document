@@ -128,7 +128,17 @@ class QAConsultAgent:
 {state.kb_context if state.kb_context else 'ไม่พบข้อมูลที่ตรงกันเป๊ะในระบบ (โปรดประเมินจากความรู้ทั่วไปหรือโครงสร้างเอกสาร)'}
 {state.prev_report_context}
 === เอกสารที่ผู้ใช้อัปโหลด ===
-{state.original_text[:8000]}
+{state.original_text}
+
+=== ข้อสั่งการในการตรวจสอบและรายงานผล (Audit Directives) ===
+1. ให้ตรวจสอบเนื้อหาของ 'เอกสารที่ผู้ใช้อัปโหลด' อย่างละเอียดครบถ้วนทุกหน้า ทุก Section ตั้งแต่ต้นจนจบเอกสาร
+2. หากเอกสารเป็นฉบับปรับปรุง (Revision/Refined Document): ให้ตรวจสอบว่าข้อบกพร่องเดิมจากรอบก่อนได้รับการแก้ไขแล้วหรือไม่ หากในเนื้อหาเอกสารที่ส่งตรวจมีข้อมูลครบถ้วนแล้ว (เช่น มี REQ-USR-001, มีโครงสร้าง Acceptance Criteria Given/When/Then, มี Unhappy Path & Error Handling, มีเกณฑ์ Fallback Recommendation, มี Section 4 Non-Functional Requirements, หรือมีตาราง Revision History สมบูรณ์) **ห้ามรายงานเป็นข้อผิดพลาดใหม่โดยเด็ดขาด** ให้ระบุในรายงานว่า "ปัญหาเดิมได้รับการปรับปรุงแก้ไขเรียบร้อยแล้ว (Resolved)"
+3. จัดทำรายการข้อบกพร่องเฉพาะจุดที่ยังผิดพลาด ตกหล่น หรือขัดแย้งอยู่จริงในเนื้อหาเอกสารฉบับนี้เท่านั้น
+4. การตรวจสอบ Metadata และความสอดคล้องของเอกสาร:
+   - ตราประทับแพลตฟอร์มสังเคราะห์เอกสารอัตโนมัติ (เช่น 'QA ENTERPRISE' หรือ System Header/Footer) ถือเป็น System Template ทางเทคนิค ห้ามนำข้อความชื่อเครื่องมือ/ระบบ ไปตัดสินขัดแย้งกับข้อมูลทางการใน Section 1 (ตาราง Document Control) ที่ระบุผู้จัดทำ (Author) หรือ Version ของเอกสาร
+   - หากใน Section 1 Document Control มี Document Title, Version Number, Baseline Date และชื่อผู้จัดทำ (Author) ครบถ้วนชัดเจน ให้ถือว่าสอดคล้องสมบูรณ์ตามมาตรฐาน Governance
+5. การเขียนสูตรคณิตศาสตร์และตัวแปร:
+   - หากสูตรคำนวณ (เช่น Bayesian Popularity Score / Weighted Score) มีการเขียนสมการและระบุความหมายของตัวแปร (เช่น v, m, R, C) ไว้อย่างชัดเจนใน Section 2 ถือว่ามีความชัดเจนและได้มาตรฐาน ให้ผ่านเกณฑ์
 
 {state.instruction}
 """

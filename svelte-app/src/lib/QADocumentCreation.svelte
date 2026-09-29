@@ -55,9 +55,9 @@
     } else if (fb.source_text) {
       sourceRawMarkdown = fb.source_text;
     }
-    if (fb.skill_ids && Array.isArray(fb.skill_ids) && fb.skill_ids.length > 0) {
-      selectedSkillIds = [...fb.skill_ids];
-    }
+    // In Refinement Mode, do NOT force or pre-select AI Skill (let model fix according to specific audit findings)
+    selectedSkillIds = [];
+
     // Deduce Document Type intelligently from doc_type, group_type, or docName
     let resolvedDocType = "";
     const candidateTypes = [fb.doc_type, fb.group_type, sourceGroupType].filter(Boolean);
@@ -127,14 +127,22 @@
       }
     }
 
-    directives.push(`### โครงสร้างบังคับเพื่อให้ผ่าน Exit Criteria Gate ข้อ [1.1] และ [2.1] 100%:`);
-    directives.push(`1. Section 1 (ข้อมูลทั่วไปของเอกสารและโครงการ - General Information):`);
-    directives.push(`   - ต้องมีตาราง 1.1 Document Control: ระบุ Document Title, Version (เช่น Version 1.1 หรือ 2.0), Project Name, Project Code, Baseline Date, Author, วัตถุประสงค์ (Business Objectives), และขอบเขตระบบ (System Scope)`);
-    directives.push(`   - ต้องมีตาราง 1.2 Revision History & Audit Resolution Log: บันทึกว่าเวอร์ชันนี้เป็นฉบับปรับปรุงที่ได้ "แก้ไขประเด็นข้อสั่งการระดับ Critical/High จากรอบก่อนหน้าเรียบร้อยแล้ว 100% ตามข้อเสนอแนะ" (ตรงตามเกณฑ์ข้อ [1.1] และ [2.1])`);
-    directives.push(`2. โหมดผ่าตัดแก้ไข (Surgical Refinement): ให้คงเนื้อหาเดิมและฟังก์ชันเดิมที่ถูกต้องไว้ทั้งหมด 100% และแก้ไขเฉพาะจุดที่ระบุในรายการข้อผิดพลาดด้านบน ห้ามตัดทอนข้อกำหนดสำคัญเดิมทิ้งเด็ดขาด`);
+    directives.push(`### ข้อกำหนดบังคับในการสร้างเอกสารรอบนี้เพื่อรับประกันว่าต้องผ่าน 100% (PASS Quality Gate):`);
+    directives.push(`1. [แก้ทุกข้อผิดพลาด 100%]: นำรายการประเด็นข้อผิดพลาดทั้ง ${fb.findings?.length || 0} ข้อด้านบนไปแก้ไข ปรับปรุง และเติมเต็มลงในเนื้อหาเอกสารให้ครบถ้วนทุกจุด ห้ามตกหล่น`);
+    directives.push(`2. [โครงสร้าง Requirement ทุกข้อ]: ทุกรหัส Requirement (เช่น REQ-USR-001, REQ-MCH-001, REQ-ADM-001) ต้องระบุข้อมูลครบถ้วนบริบูรณ์:`);
+    directives.push(`   - วัตถุประสงค์ (Objective), กลุ่มผู้ใช้ (Actor), Pre-conditions และ Post-conditions`);
+    directives.push(`   - ลำดับขั้นตอนการทำงานปกติ (Main Path / Happy Path)`);
+    directives.push(`   - ลำดับขั้นตอนกรณีเกิดข้อผิดพลาด / ข้อยกเว้น (Unhappy Path & Error Handling) พร้อมข้อความแจ้งเตือนผู้ใช้`);
+    directives.push(`   - เกณฑ์การยอมรับ (Acceptance Criteria) ในรูปแบบ Given... When... Then... ในตารางให้ชัดเจน`);
+    directives.push(`3. [ระบบค้นหาและเกณฑ์ Fallback Recommendation]: ต้องระบุตรรกะ/เกณฑ์การแนะนำร้านอาหารและน้ำดื่มใกล้เคียง (Fallback Recommendation) ให้ชัดเจน เช่น เรียงตามคะแนนความนิยม (Bayesian Popularity Score), เลือกร้านที่ยังเปิดบริการในรัศมีใกล้ที่สุด หรือร้านโปรด กรณีไม่มีร้านอาหารเปิดในบริเวณนั้น`);
+    directives.push(`4. [Section 1 ข้อมูลทั่วไป & Section 1.2 Revision History]:`);
+    directives.push(`   - มีตาราง 1.1 Document Control: ระบุ Document Title, Version (เช่น Version 1.1.0), Project Name, Project Code, Baseline Date, Author, วัตถุประสงค์, และขอบเขตระบบ`);
+    directives.push(`   - มีตาราง 1.2 Revision History & Audit Resolution Log: บันทึกว่าเวอร์ชันนี้เป็นฉบับปรับปรุงที่ได้ "แก้ไขประเด็นข้อสั่งการระดับ Critical/High จากรอบก่อนหน้าเรียบร้อยแล้ว 100% ตามข้อเสนอแนะ" ห้ามตัดจบตาราง`);
+    directives.push(`5. [Section 4 Non-Functional Requirements]: ต้องมีหมวด Section 4 Non-Functional Requirements สมบูรณ์ครบทุกหัวข้อ (Performance, Security, Reliability & Availability >= 99.9%, PDPA Compliance, Compatibility)`);
+    directives.push(`6. [โหมดผ่าตัดแก้ไข]: คงเนื้อหาและ Requirement เดิมที่ถูกต้องไว้ทั้งหมด 100% ห้ามตัดทอนออก`);
 
     customPrompt = directives.join('\n');
-    toast(`โหลดข้อมูลข้อผิดพลาด ${fb.findings?.length || 0} ประเด็นเข้าสู่โหมดปรับปรุงเอกสารแล้ว`, 'info', 4000);
+    toast(`โหลดข้อมูลข้อผิดพลาด ${fb.findings?.length || 0} ประเด็นเข้าสู่โหมดปรับปรุงเอกสารแล้ว (ปรับไม่ต้องเลือก AI Skill)`, 'info', 4000);
   }
 
   function clearRefinementMode() {
@@ -435,11 +443,14 @@
       const token = (typeof window !== 'undefined' && window.localStorage) ? (localStorage.getItem('jwt_token') || '') : '';
       const currentUsername = (typeof window !== 'undefined' && window.localStorage) ? (localStorage.getItem('auth_user') || '') : '';
 
+      // In Refinement Mode, strictly use empty skills so audit checking skills do not distort the generation
+      const effectiveSkillIds = activeFeedback ? [] : selectedSkillIds;
+
       const payload = {
         project_id: $selectedProjectStore.id || $selectedProjectStore.project_id,
         doc_type: docType,
         doc_name: docName.trim(),
-        skill_id: selectedSkillIds,
+        skill_id: effectiveSkillIds,
         reference_document_id: selectedKbDocIds,
         custom_prompt: customPrompt.trim(),
         source_markdown: sourceRawMarkdown,
@@ -538,19 +549,9 @@
       // Clean group name
       const cleanGName = String(targetGroupName).replace(/^\[.*?\]\s*/, '').trim();
 
-      // Parse skill IDs if present
+      // AI Skill selection is optional - do NOT force or carry over old skill when transferring to QA Consult
       let targetSkillIds = [];
-      if (doc.skill_id) {
-        if (Array.isArray(doc.skill_id)) {
-          targetSkillIds = [...doc.skill_id];
-        } else if (typeof doc.skill_id === 'string' && doc.skill_id.startsWith('[')) {
-          try { targetSkillIds = JSON.parse(doc.skill_id); } catch(e) {}
-        } else if (typeof doc.skill_id === 'string') {
-          targetSkillIds = doc.skill_id.split(',').map(s => s.trim()).filter(Boolean);
-        }
-      } else if (activeFeedback && activeFeedback.skill_ids) {
-        targetSkillIds = Array.isArray(activeFeedback.skill_ids) ? activeFeedback.skill_ids : [activeFeedback.skill_ids];
-      } else if (selectedSkillIds && selectedSkillIds.length > 0) {
+      if (selectedSkillIds && selectedSkillIds.length > 0) {
         targetSkillIds = [...selectedSkillIds];
       }
 
@@ -801,17 +802,37 @@
           <span style="font-size: 11px; color: #94a3b8; margin-top: 4px; display: block;">ระบุชนิดเอกสารเพื่อให้ AI หยิบและวิเคราะห์ข้อมูลในโครงการมาสร้างได้อย่างตรงเป้าหมาย</span>
         </div>
 
-        <div class="form-group half-width">
-          <label for="skillSelect">เลือก AI Skill / Framework (เลือกได้มากกว่า 1):</label>
-          <CustomMultiSelect 
-            id="skillSelect" 
-            bind:values={selectedSkillIds} 
-            options={skillOptions} 
-            placeholder="เลือก AI Skill (เลือกได้มากกว่า 1)..." 
-            disabled={skills.length === 0} 
-          />
-          <span style="font-size: 11px; color: #94a3b8; margin-top: 4px; display: block;">สามารถเลือกหลาย Skill พร้อมกันเพื่อผสาน Framework และโครงสร้างมาตรฐานในการสร้างเอกสาร</span>
-        </div>
+        {#if activeFeedback}
+          <!-- แบบที่ 1: โหมดส่งเอกสารกลับมาแก้ไข (ไม่ต้องเลือก Skill แต่หยิบข้อผิดพลาดมาแก้ตรงๆ ในเอกสารเพื่อลดการผิดเพี้ยน) -->
+          <div class="form-group half-width" style="display: flex; flex-direction: column;">
+            <label style="color: #38bdf8; display: flex; align-items: center; gap: 6px;">
+              <span>⚡</span> โหมดการแก้ไขเอกสาร (Correction Mode):
+            </label>
+            <div style="background: rgba(14, 165, 233, 0.08); border: 1px solid rgba(56, 189, 248, 0.35); border-radius: 8px; padding: 8px 12px; display: flex; align-items: center; gap: 10px; min-height: 42px;">
+              <span style="font-size: 20px;">🎯</span>
+              <div style="display: flex; flex-direction: column;">
+                <span style="font-size: 12.5px; font-weight: 700; color: #38bdf8;">แก้ไขตามข้อผิดพลาดโดยตรง (Direct Findings-Driven Fix)</span>
+                <span style="font-size: 11px; color: #cbd5e1;">ไม่ต้องเลือก AI Skill เพื่อป้องกันไม่ให้โครงสร้างเอกสารผิดเพี้ยน ระบบจะนำข้อบกพร่องที่ส่งมาไปผ่าตัดแก้ไขในเนื้อหาเดิมตรงๆ</span>
+              </div>
+            </div>
+            <span style="font-size: 11px; color: #38bdf8; margin-top: 4px; display: block;">
+              💡 ไม่นำ Skill ตรวจ (เช่น QA SRS) มาใช้สร้างเอกสาร แต่จะแก้ตรงจุดตามข้อผิดพลาดที่ระบุไว้ใน Prompt ด้านล่างครบถ้วน 100%
+            </span>
+          </div>
+        {:else}
+          <!-- แบบที่ 2: โหมดเข้ามาสร้างเอกสารใหม่ครั้งแรก (เปิดให้เลือก AI Skill ในการสร้างเอกสารได้ตามปกติ) -->
+          <div class="form-group half-width">
+            <label for="skillSelect">เลือก AI Skill / Framework (เลือกได้มากกว่า 1):</label>
+            <CustomMultiSelect 
+              id="skillSelect" 
+              bind:values={selectedSkillIds} 
+              options={skillOptions} 
+              placeholder="เลือก AI Skill ในการสร้างเอกสาร (เช่น Create SRS, Create Test Case)..." 
+              disabled={skills.length === 0} 
+            />
+            <span style="font-size: 11px; color: #94a3b8; margin-top: 4px; display: block;">สามารถเลือก Skill เพื่อกำหนด Framework และโครงสร้างมาตรฐานในการสร้างเอกสารใหม่</span>
+          </div>
+        {/if}
       </div>
 
       <div class="form-group" style="z-index: 70;">
@@ -2145,13 +2166,53 @@
   }
 
   .btn-refine-action {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 8px !important;
     background: linear-gradient(135deg, #f59e0b 0%, #ec4899 50%, #8b5cf6 100%) !important;
-    box-shadow: 0 4px 18px rgba(236, 72, 153, 0.5) !important;
-    font-weight: 700 !important;
+    color: #ffffff !important;
+    border: 1px solid rgba(255, 255, 255, 0.25) !important;
+    padding: 10px 22px !important;
+    border-radius: 9999px !important;
+    font-size: 13.5px !important;
+    font-weight: 600 !important;
+    cursor: pointer !important;
+    box-shadow: 0 4px 18px rgba(236, 72, 153, 0.45), inset 0 1px 1px rgba(255, 255, 255, 0.3) !important;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+    outline: none !important;
   }
   .btn-refine-action:hover:not(:disabled) {
     transform: translateY(-2px) !important;
-    box-shadow: 0 6px 24px rgba(236, 72, 153, 0.7) !important;
+    box-shadow: 0 6px 26px rgba(236, 72, 153, 0.65), 0 0 12px rgba(139, 92, 246, 0.4) !important;
+    border-color: rgba(255, 255, 255, 0.45) !important;
+  }
+  .btn-refine-action:active:not(:disabled) {
+    transform: translateY(0px) scale(0.98) !important;
+    box-shadow: 0 2px 10px rgba(236, 72, 153, 0.4) !important;
+  }
+
+  .btn-cancel {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: #cbd5e1;
+    padding: 10px 20px;
+    border-radius: 9999px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    outline: none;
+  }
+  .btn-cancel:hover {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.3);
+    color: #ffffff;
+    transform: translateY(-1px);
   }
 
   /* ── QA Result Badges in History Table ── */

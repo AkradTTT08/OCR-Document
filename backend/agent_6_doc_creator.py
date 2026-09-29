@@ -3,6 +3,8 @@ import logging
 import os
 import datetime
 import uuid
+import re
+import html
 from dotenv import load_dotenv
 
 # Ensure environment variables are loaded
@@ -224,8 +226,72 @@ def simple_markdown_to_html(md_text: str) -> str:
     return '\n'.join(html_lines)
 
 
-def build_generic_document_html(doc_name: str, doc_type: str, project_name: str, project_code: str, skill_name: str, today_str: str, rendered_markdown: str) -> str:
+def sanitize_engineering_markdown(text: str) -> str:
+    """
+    Sanitizes markdown output from LLM:
+    1. Removes LaTeX math wrappers '$' and '$$' which trigger QA typo & formula ambiguity findings.
+    2. Converts common LaTeX mathematical symbols into plain text (e.g. \\le -> <=, \\ge -> >=, \\cdot -> *).
+    3. Converts LaTeX \\frac{a}{b} -> (a / b), \\text{...} -> ...
+    4. Removes stray '$' characters around performance variables like $P95 \\le 1.5s$ or $P95 <= 1.5s$.
+    """
+    if not text:
+        return ""
+    # 1. Clean LaTeX operators
+    text = re.sub(r'\\le(?:q)?(?![a-zA-Z])', '<=', text)
+    text = re.sub(r'\\ge(?:q)?(?![a-zA-Z])', '>=', text)
+    text = re.sub(r'\\(?:cdot|times)', '*', text)
+    text = re.sub(r'\\frac\{([^}]+)\}\{([^}]+)\}', r'(\1 / \2)', text)
+    text = re.sub(r'\\text\{([^}]+)\}', r'\1', text)
+    
+    # 2. Display math $$ ... $$
+    text = re.sub(r'\$\$(.+?)\$\$', r'\1', text, flags=re.DOTALL)
+    
+    # 3. Inline math $ ... $
+    def _strip_dollar(m):
+        content = m.group(1)
+        if re.match(r'^\d+(?:\.\d+)?$', content.strip()):
+            return f"${content}"
+        return content
+
+    text = re.sub(r'\$([^$\n]+?)\$', _strip_dollar, text)
+    
+    # 4. Remove any lone '$' that is not followed by a digit
+    text = re.sub(r'\$(?!\s*\d)', '', text)
+    return text
+
+
+def extract_document_metadata(md_text: str):
+    """
+    Extracts version, author, and date directly from the document markdown table to ensure
+    100% harmony between Header cards and Document Control sections.
+    """
+    version = "1.0.0"
+    author = "Lead Business Analyst / QA Architect"
+    date_val = None
+    
+    # 1. Version extraction
+    v_match = re.search(r'(?:หมายเลขเวอร์ชัน|Version)[^|\n\r]*[|:]\s*(?:Version\s*)?([0-9]+\.[0-9]+(?:\.[0-9]+)?)', md_text, re.IGNORECASE)
+    if v_match:
+        version = v_match.group(1).strip()
+        
+    # 2. Author extraction
+    a_match = re.search(r'(?:ผู้จัดทำ|Author)[^|\n\r]*[|:]\s*([^|\n\r]+)', md_text, re.IGNORECASE)
+    if a_match:
+        cand = a_match.group(1).strip()
+        if cand and not cand.startswith('[') and len(cand) < 100:
+            author = cand
+            
+    # 3. Date extraction
+    d_match = re.search(r'(?:วันที่บังคับใช้|Baseline Date|วันที่|Date)[^|\n\r]*[|:]\s*([0-9]{1,2}[/-][0-9]{1,2}[/-][0-9]{4})', md_text, re.IGNORECASE)
+    if d_match:
+        date_val = d_match.group(1).strip()
+        
+    return version, author, date_val
+
+
+def build_generic_document_html(doc_name: str, doc_type: str, project_name: str, project_code: str, skill_name: str, today_str: str, rendered_markdown: str, doc_version: str = "1.0.0", doc_author: str = "Lead Business Analyst / QA Architect", doc_date: str = None) -> str:
     """Builds an enterprise-grade HTML document for SRS, SDD, TOR, UAT, Manuals, etc."""
+    effective_date = doc_date or today_str
     return f"""<!DOCTYPE html>
 <html lang="th">
 <head>
@@ -541,8 +607,8 @@ def build_generic_document_html(doc_name: str, doc_type: str, project_name: str,
 <body>
     <div class="system-header-bar">
         <div class="system-logo">
-            <span class="system-logo-badge">SPECTRA</span>
-            <span>Autonomous QA & Test Synthesis Platform</span>
+            <span class="system-logo-badge">QA ENTERPRISE</span>
+            <span>Document Specification Baseline</span>
         </div>
         <div>CONFIDENTIAL &bull; SPECIFICATION BASELINE</div>
     </div>
@@ -562,38 +628,14 @@ def build_generic_document_html(doc_name: str, doc_type: str, project_name: str,
                 <span class="doc-meta-value">{doc_type}</span>
             </div>
             <div class="doc-meta-item">
-                <span class="doc-meta-label">Framework / Skill</span>
-                <span class="doc-meta-value">{skill_name}</span>
+                <span class="doc-meta-label">Version</span>
+                <span class="doc-meta-value">Version {doc_version}</span>
             </div>
             <div class="doc-meta-item">
-                <span class="doc-meta-label">Generated Date</span>
-                <span class="doc-meta-value">{today_str}</span>
+                <span class="doc-meta-label">Baseline Date</span>
+                <span class="doc-meta-value">{effective_date}</span>
             </div>
         </div>
-    </div>
-
-    <div class="doc-control-card">
-        <div class="doc-control-title">📋 Document Control & Metadata</div>
-        <table class="doc-control-table">
-            <thead>
-                <tr>
-                    <th style="width: 15%;">Version</th>
-                    <th style="width: 20%;">Date</th>
-                    <th style="width: 30%;">Author / Engine</th>
-                    <th style="width: 20%;">Status</th>
-                    <th style="width: 15%;">Classification</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr>
-                    <td><strong>1.0.0</strong></td>
-                    <td>{today_str}</td>
-                    <td>Spectra AI (Gemini 3.1 Pro)</td>
-                    <td><span class="badge badge-success">Approved Baseline</span></td>
-                    <td>Internal Spec</td>
-                </tr>
-            </tbody>
-        </table>
     </div>
 
     <div class="doc-body">
@@ -601,8 +643,8 @@ def build_generic_document_html(doc_name: str, doc_type: str, project_name: str,
     </div>
 
     <div class="doc-footer">
-        <div>Spectra QA Platform &bull; Automated Document Synthesis</div>
-        <div>Generated with Gemini 3.1 Pro &bull; {today_str}</div>
+        <div>Spectra QA Platform &bull; Document Management Baseline</div>
+        <div>Baseline Date &bull; {effective_date}</div>
     </div>
 </body>
 </html>"""
@@ -1100,6 +1142,13 @@ def get_advanced_engineering_guidelines(doc_type: str, today_str: str) -> str:
    - Core Domain & Operational Logic:
      * Complete lifecycle states (e.g. Draft -> Pending Review -> Approved -> Rejected -> Archived).
      * Anti-abuse & Duplicate Prevention: Exact duplicate detection rules (e.g. Merchant duplication checked by Normalized Name matching >= 80% and GPS Distance <= 50 meters, with Admin notification and override options).
+     * Content Moderation & Anti-Abuse (REQ-ADM-001 / Admin & Moderation):
+       - Automated Action Threshold: Any content, review, or merchant receiving >= 5 unique user flags within 24 hours is automatically hidden pending Admin investigation.
+       - Anti-Trolling & Malicious Flag Prevention (ป้องกันการ Flag เพื่อกลั่นแกล้งกัน):
+         1) Account Age & Trust Weighting: Flags from verified user accounts (> 30 days old) carry normal weight (1.0); newly registered accounts (< 7 days old) require Admin manual confirmation before taking automated actions.
+         2) Rate Limiting: A single user is limited to submitting at most 3 report flags per hour.
+         3) False Flag Penalty: Users submitting repeatedly rejected, fraudulent, or abusive flags will have their reporting privilege revoked and account penalized.
+         4) Instant Notification & 1-Click Appeal: The reported owner receives an immediate push/email notification with a direct 1-click Appeal form, guaranteeing Admin SLA review within 24 hours.
      * Search & Filter Mechanics: Keyword search, Area/District name search (e.g. "บางแสน", "สยาม"), Distance radius filter, Category filter, and Operating Hours filter (including 24-Hour mode and Special Public Holiday exceptions).
      * Scope & Platform Boundary: Explicitly distinguish Mobile App (iOS/Android) features vs. Web Management Portal features.
 
@@ -1127,7 +1176,7 @@ def get_advanced_engineering_guidelines(doc_type: str, today_str: str) -> str:
    - Quantified Non-Functional Requirements (NFR):
      * Availability & Uptime: >= 99.9% uptime per calendar month.
      * Concurrency & Peak Capacity: Minimum concurrent users (CCU) handling (e.g. >= 5,000 CCU during peak lunch hours 11:30-13:00 and dinner 17:30-19:30).
-     * Latency & Response Times: API P95 latency <= 1.5 seconds, P99 <= 3.0 seconds under peak load.
+     * Latency & Response Times: API P95 latency <= 1.5 seconds, P99 <= 3.0 seconds under peak load (write as plain text, DO NOT use LaTeX '$').
      * Compatibility: iOS 15.0+, Android 11.0+, Modern Browsers (Chrome 110+, Safari 16+, Edge).
 
 5. MANDATORY UNHAPPY PATH & EXCEPTION/ERROR HANDLING FOR EVERY REQUIREMENT:
@@ -1137,15 +1186,38 @@ def get_advanced_engineering_guidelines(doc_type: str, today_str: str) -> str:
      * Post-conditions and Error Messages returned to the user.
      * Acceptance Criteria in Given-When-Then format.
 
-6. MATHEMATICAL FORMULA TRANSPARENCY & VARIABLE DEFINITIONS:
-   - When any mathematical formula, algorithm, or weighting formula is stated in requirements (e.g. Score = (R*v + C*m)/(v+m)):
-     * You MUST clearly define the exact meaning of EVERY variable (e.g., R = Item's Average Rating, v = Total number of ratings/votes, C = Overall mean rating across entire system/category, m = Minimum votes required to establish credibility).
-     * You MUST provide explicit rationale/justification for any chosen constants (e.g., "m = 5 is chosen as the minimum baseline threshold to prevent a single 5-star review from outranking seasoned items").
+6. MATHEMATICAL FORMULA TRANSPARENCY & STRICT BAN ON LATEX '$' DELIMITERS:
+   - STRICT BAN ON LATEX '$' AND '$$' SYMBOLS:
+     * NEVER wrap mathematical formulas, scores, or variables in LaTeX dollar signs ('$' or '$$').
+     * Write Bayesian Popularity Score and other formulas in clean, plain readable text notation, e.g.:
+       Weighted Score = (v / (v + m)) * R + (m / (v + m)) * C
+     * Clearly define every single variable:
+       - v = จำนวนรีวิวหรือจำนวนคะแนนโหวตทั้งหมดของรายการนั้น
+       - m = เกณฑ์รีวิวขั้นต่ำเพื่อความน่าเชื่อถือ (กำหนดค่าคงที่ m = 5 พร้อมเหตุผลป้องกัน 5-star bias)
+       - R = คะแนนเฉลี่ยของรายการนั้น (Average Rating)
+       - C = ค่าเฉลี่ยคะแนนของทุกรายการในระบบ (System Mean Rating)
+     * In Section 4 Performance Requirements, write latency as plain text: `P95 <= 1.5s` and `P99 <= 3.0s` (NEVER `$P95 \\le 1.5s$`).
+     * Any stray '$' character outside of standard USD currency will trigger a QA audit failure!
 
 7. REMARK HYGIENE & SEPARATION OF SYSTEM DESIGN VS. FUNCTIONAL REQUIREMENTS:
    - Functional Requirement Remarks: Must contain ONLY testable assertions, QA guidelines, or business acceptance constraints.
    - Implementation Specifics (e.g. "ใช้ PostGIS Bounding Box Query", SQL queries, ORM code): DO NOT place them inside Functional Requirement remarks. Move all database query mechanics, indexing strategies, and spatial query details into Section 2 (System Architecture & Technical Specifications / System Design).
    - Business Slogans (e.g. "Core Value ของระบบ"): Do NOT leave as abstract slogans; translate them into testable, verifiable acceptance criteria.
+
+8. MANDATORY SECTION 4: ข้อกำหนดที่ไม่ใช่เชิงฟังก์ชัน (NON-FUNCTIONAL REQUIREMENTS - 100% COMPLETE):
+   - You MUST include Section 4 with comprehensive tables for:
+     * 4.1 ประสิทธิภาพของระบบ (Performance Requirements): API Latency P95 <= 1.5s, P99 <= 3.0s, รองรับ CCU >= 5,000 คนพร้อมกันในช่วงเวลาเร่งด่วน (Peak Lunch & Dinner Hours)
+     * 4.2 ความมั่นคงปลอดภัยและการปกป้องข้อมูล (Security & Privacy Requirements): TLS 1.3, AES-256 for data at rest, JWT Session Lifecycle, PDPA Consent Management & Self-Service Account/Data Deletion (Right to Erasure)
+     * 4.3 ความพร้อมใช้งานและความเชื่อถือได้ (Reliability & Availability): Uptime SLA >= 99.9% ต่อเดือน, ระบบสำรองข้อมูลอัตโนมัติ (Automated Daily Backup), Disaster Recovery RTO <= 4 ชม. และ RPO <= 1 ชม.
+     * 4.4 ความเข้ากันได้ของระบบ (Compatibility): Mobile iOS 15.0+, Android 11.0+, Web Browser Chrome 110+, Safari 16+, Edge
+
+9. MANDATORY FALLBACK RECOMMENDATION LOGIC (ร้านอาหารและน้ำดื่มใกล้เคียง):
+   - ในโมดูลค้นหาหรือระบบแนะนำร้านอาหารใกล้เคียง ต้องระบุตรรกะ/เกณฑ์ Fallback Recommendation อย่างชัดเจน:
+     * หากผู้ใช้ไม่เปิด GPS: Fallback ให้เลือกย่าน/ตำบล/อำเภอด้วยตนเอง
+     * หากไม่มีร้านอาหารเปิดในรัศมีปัจจุบัน: Fallback นำเสนอ "ร้านอาหารและเครื่องดื่มยอดนิยม (Popularity Ranking ด้วย Bayesian Score)" หรือขยายรัศมีการค้นหาอัตโนมัติ พร้อมข้อความแจ้งเตือนที่ชัดเจน
+
+10. MANDATORY COMPLETE REVISION HISTORY TABLE:
+    - ตาราง 1.2 Revision History & Audit Resolution Log ต้องเขียนให้เสร็จสมบูรณ์จนถึงคอลัมน์สุดท้ายและแถวสุดท้าย ห้ามตัดจบกลางคันอย่างเด็ดขาด
 """
 
 def create_qa_document(project_id: str, doc_type: str, doc_name: str, skill_id, reference_document_id=None, custom_prompt: str = ""):
@@ -1166,11 +1238,9 @@ def create_qa_document(project_id: str, doc_type: str, doc_name: str, skill_id, 
             
         # 2. Fetch Skill Instructions (supporting multiple skills)
         target_skill_ids = parse_id_list(skill_id)
-        if not target_skill_ids:
-            cursor.execute("SELECT skill_name, target_doc_type, markdown_instructions FROM agent_skills LIMIT 1")
-            skill_rows = cursor.fetchall()
-        else:
-            cursor.execute("SELECT skill_name, target_doc_type, markdown_instructions FROM agent_skills WHERE skill_id::text = ANY(%s)", (target_skill_ids,))
+        skill_rows = []
+        if target_skill_ids:
+            cursor.execute("SELECT skill_name, target_doc_type, markdown_instructions FROM agent_skills WHERE skill_id::text = ANY(%s) OR skill_name = ANY(%s)", (list(target_skill_ids), list(target_skill_ids)))
             skill_rows = cursor.fetchall()
 
         # Fetch learned QA rules from continuous learning database
@@ -1180,9 +1250,9 @@ def create_qa_document(project_id: str, doc_type: str, doc_name: str, skill_id, 
         conn.close()
 
         if not skill_rows:
-            skill_name = "Default QA Framework"
+            skill_name = "Universal QA Standard"
             target_doc_type = doc_type
-            instructions = "Produce a comprehensive, structured QA document."
+            instructions = "Produce a comprehensive, structured, production-ready document adhering to standard software engineering guidelines."
         else:
             skill_name = " + ".join([r[0] for r in skill_rows])
             target_doc_type = skill_rows[0][1] or doc_type
@@ -1246,6 +1316,7 @@ Please follow these structure and formatting instructions strictly:
                 logger.warning(f"Failed to log API usage in Agent 6: {log_err}")
 
         doc_content = (doc_content or "").strip()
+        doc_content = sanitize_engineering_markdown(doc_content)
         
         if doc_content.startswith("```markdown"):
             doc_content = doc_content[11:]
@@ -1284,13 +1355,7 @@ def create_qa_document_async(gen_id: str, project_id: str, doc_type: str, doc_na
         # 2. Fetch Skill (supporting multiple skills by ID or Name)
         target_skill_ids = parse_id_list(skill_id)
         skill_rows = []
-        if not target_skill_ids:
-            try:
-                cursor.execute("SELECT skill_name, target_doc_type, markdown_instructions FROM agent_skills LIMIT 1")
-                skill_rows = cursor.fetchall()
-            except Exception:
-                conn.rollback()
-        else:
+        if target_skill_ids:
             try:
                 cursor.execute(
                     "SELECT skill_name, target_doc_type, markdown_instructions FROM agent_skills "
@@ -1301,19 +1366,14 @@ def create_qa_document_async(gen_id: str, project_id: str, doc_type: str, doc_na
             except Exception as skill_err:
                 conn.rollback()
                 logger.warning(f"Note: error querying skills {target_skill_ids}: {skill_err}")
-                try:
-                    cursor.execute("SELECT skill_name, target_doc_type, markdown_instructions FROM agent_skills LIMIT 1")
-                    skill_rows = cursor.fetchall()
-                except Exception:
-                    conn.rollback()
 
         # Fetch learned rules from previous audits
         learned_rules_section = fetch_agent_learned_rules(cursor, project_id, doc_type)
 
         if not skill_rows:
-            skill_name = "Default QA Framework"
+            skill_name = "Universal QA Standard"
             target_doc_type = doc_type
-            instructions = "Produce a comprehensive, structured QA document."
+            instructions = "Produce a comprehensive, structured, production-ready document adhering to standard software engineering guidelines."
         else:
             skill_name = " + ".join([r[0] for r in skill_rows if r[0]])
             target_doc_type = skill_rows[0][1] or doc_type
@@ -1341,12 +1401,18 @@ Your primary directives:
    You MUST include Section 1 & Section 1.2 with the Document Control and Revision History tables as detailed in the guidelines, stating explicitly that all Critical/High issues from the previous audit round have been resolved 100%.
 
 ### ORIGINAL BASELINE DOCUMENT TO REFINE:
-{source_markdown.strip()[:35000]}
+{source_markdown.strip()[:65000]}
 """
         
         # 3. Call Gemini
         today_str = datetime.datetime.now().strftime("%d/%m/%Y")
         
+        # Framework Header & Guidelines
+        if source_markdown and source_markdown.strip():
+            framework_header = "# Direct Surgical Refinement Mode (Zero Skill Distortion)\nNo external audit checking skill is applied. The original baseline document must be preserved and directly corrected based on the reported QA audit findings to eliminate distortion."
+        else:
+            framework_header = f"# Framework & Guidelines (Skill: {skill_name})\nPlease follow these structure and formatting instructions strictly:\n{instructions}"
+
         if doc_type in ["Test Case", "TestCase"]:
             prompt = f"""
 You are an expert QA Automation Engineer, Business Analyst, and Technical Writer.
@@ -1357,9 +1423,7 @@ Your task is to generate a formal QA Test Case document based on ALL provided Pr
 - Document Type: {doc_type}
 - Project: {project_name} ({project_code})
 
-# Framework & Structural Instructions (Skill: {skill_name})
-Please follow these instructions strictly to structure and generate the test cases:
-{instructions}
+{framework_header}
 
 {refinement_section}
 
@@ -1411,9 +1475,7 @@ You MUST analyze, cross-reference, and synthesize ALL provided Project Knowledge
 - Project: {project_name} ({project_code})
 - Date of Baseline: {today_str}
 
-# Framework & Guidelines (Skill: {skill_name})
-Please follow these structure and formatting instructions strictly:
-{instructions}
+{framework_header}
 
 {engineering_guidelines}
 
@@ -1661,11 +1723,17 @@ Please follow these structure and formatting instructions strictly:
                 clean_md = clean_md[3:]
             if clean_md.endswith("```"):
                 clean_md = clean_md[:-3]
-            doc_markdown = clean_md.strip()
+            doc_markdown = sanitize_engineering_markdown(clean_md.strip())
+
+            # Extract dynamic metadata from markdown to avoid top header vs. section 1 conflicts
+            doc_version, doc_author, doc_date = extract_document_metadata(doc_markdown)
 
             # Generate HTML for PDF using System Template
             rendered_markdown = simple_markdown_to_html(doc_markdown)
-            html_body = build_generic_document_html(doc_name, doc_type, project_name, project_code, skill_name, today_str, rendered_markdown)
+            html_body = build_generic_document_html(
+                doc_name, doc_type, project_name, project_code, skill_name, today_str, rendered_markdown,
+                doc_version=doc_version, doc_author=doc_author, doc_date=doc_date
+            )
 
         # Render PDF
         render_html_to_pdf(html_body, pdf_file_path)

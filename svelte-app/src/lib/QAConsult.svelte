@@ -148,8 +148,10 @@
       } else if (ctx.group_type) {
         selectedDocTypes = [ctx.group_type];
       }
-      if (ctx.skill_ids && Array.isArray(ctx.skill_ids)) {
+      if (ctx.skill_ids && Array.isArray(ctx.skill_ids) && ctx.skill_ids.length > 0) {
         selectedSkills = [...ctx.skill_ids];
+      } else {
+        selectedSkills = [];
       }
     } else {
       // Check if this group is currently scanning
@@ -1081,6 +1083,33 @@
 
   let isSendingToDocCreation = false;
 
+  /**
+   * Compute total correction items: qa_findings + exit criteria FAIL items (de-duplicated)
+   */
+  function getTotalCorrectionCount() {
+    if (!scanResult) return 0;
+    const qaCount = (scanResult.qa_findings || []).length;
+    const exitFailCount = getExitCriteriaFailedItems().length;
+    return qaCount + exitFailCount;
+  }
+
+  /**
+   * Extract FAIL items from exit criteria evaluation as structured findings
+   */
+  function getExitCriteriaFailedItems() {
+    if (!scanResult?.exit_criteria_eval?.items) return [];
+    return scanResult.exit_criteria_eval.items
+      .filter(item => item.status === 'FAIL')
+      .map(item => ({
+        check_type: `Exit Criteria [${item.item_code}] - ${item.category || ''}`,
+        issue: item.remarks || item.question_text || '',
+        severity: item.severity || 'Major',
+        found_incorrect: item.evidence_text || '',
+        correct_value: item.target_metric || '',
+        recommendation: `แก้ไขให้ผ่านเกณฑ์: ${item.question_text || ''}`
+      }));
+  }
+
   async function sendFindingsToDocCreation() {
     if (!scanResult) return;
     
@@ -1092,7 +1121,10 @@
       // Strip extension if present (.pdf, .docx, .md)
       cleanDocName = cleanDocName.replace(/\.[^/.]+$/, "");
       
-      const findingsList = scanResult.qa_findings || [];
+      // Merge qa_findings + exit criteria failed items for a complete correction list
+      const qaFindings = scanResult.qa_findings || [];
+      const exitFailItems = getExitCriteriaFailedItems();
+      const findingsList = [...qaFindings, ...exitFailItems];
       const exitEval = scanResult.exit_criteria_eval || null;
 
       const payload = {
@@ -1101,14 +1133,14 @@
         project_name: activeProj?.name || activeProj?.project_name || '',
         group_name: scanGroupName,
         group_type: scanGroupType,
-        skill_ids: selectedSkills || [],
+        skill_ids: [],
         doc_name: cleanDocName,
         doc_type: targetDocType,
         findings: findingsList,
         exit_criteria_eval: exitEval,
         total_pages: scanResult.total_pages || 1,
         source_filename: scanResult.filename || cleanDocName,
-        raw_markdown: scanResult.markdown || scanResult.raw_text || '',
+        raw_markdown: scanResult.markdown || scanResult.extracted_text || scanResult.raw_text || '',
         source_text: scanResult.report || '',
         created_at: new Date().toISOString()
       };
@@ -1724,7 +1756,7 @@
                 <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
                 <path d="M12 8v4l3 3"/>
               </svg>
-              {isSendingToDocCreation ? 'กำลังส่งข้อมูล...' : `🔄 ส่งแก้ไขใน QA Doc Creation (${scanResult.qa_findings?.length || 0} ข้อ)`}
+              {isSendingToDocCreation ? 'กำลังส่งข้อมูล...' : `🔄 ส่งแก้ไขใน QA Doc Creation (${getTotalCorrectionCount()} ข้อ)`}
             </button>
           {/if}
 
@@ -1786,27 +1818,40 @@
           <button class="btn-quick-nav" on:click={() => scrollToSection('qa-findings-section')}>
             📊 QA Audit Findings ({scanResult.qa_findings.length})
           </button>
+        {:else}
+          <button class="btn-quick-nav" on:click={() => scrollToSection('qa-findings-section')} style="border-color: rgba(52, 211, 153, 0.3);">
+            ✅ QA Audit Findings (ผ่าน)
+          </button>
         {/if}
         <button class="btn-quick-nav highlight-btn" on:click={() => scrollToSection('consult-report-section')}>
           📝 Spectra QA Consult Report (รายงานวิเคราะห์)
         </button>
       </div>
 
-      <!-- QA Findings Report Card -->
-      {#if scanResult.qa_findings && scanResult.qa_findings.length > 0}
+      <!-- QA Findings Report Card (Always show) -->
         <div class="qa-findings-card glass-panel" id="qa-findings-section" style="margin-bottom: 20px;">
           <div class="gate-result-header" style="margin-bottom: 16px;">
             <div class="gate-header-title">
               <h3>📊 QA Audit Findings Report</h3>
-              <span class="template-badge">ประเด็นที่พบจากการวิเคราะห์</span>
+              {#if scanResult.qa_findings && scanResult.qa_findings.length > 0}
+                <span class="template-badge">ประเด็นที่พบจากการวิเคราะห์</span>
+              {:else}
+                <span class="template-badge" style="background: rgba(52, 211, 153, 0.15); color: #34d399; border-color: rgba(52, 211, 153, 0.3);">✅ ผ่านการตรวจสอบ</span>
+              {/if}
             </div>
             <div class="gate-header-actions" style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-              <span class="gate-status-pill status-info">
-                พบ {scanResult.qa_findings.length} รายการ
-              </span>
-              <button class="btn-mini-autofix" on:click={sendFindingsToDocCreation} disabled={isSendingToDocCreation}>
-                🔄 ส่งแก้ไขใน QA Doc Creation
-              </button>
+              {#if scanResult.qa_findings && scanResult.qa_findings.length > 0}
+                <span class="gate-status-pill status-info">
+                  พบ {scanResult.qa_findings.length} รายการ
+                </span>
+                <button class="btn-mini-autofix" on:click={sendFindingsToDocCreation} disabled={isSendingToDocCreation}>
+                  🔄 ส่งแก้ไขใน QA Doc Creation
+                </button>
+              {:else}
+                <span class="gate-status-pill status-passed">
+                  ✅ ไม่พบข้อผิดพลาด
+                </span>
+              {/if}
               <button class="btn-table-toggle" on:click={() => isFindingsTableExpanded = !isFindingsTableExpanded}>
                 {isFindingsTableExpanded ? '🔽 ย่อตาราง' : '🔼 ขยายเต็ม'}
               </button>
@@ -1826,30 +1871,41 @@
                 </tr>
               </thead>
               <tbody>
-                {#each scanResult.qa_findings as finding, i}
-                  <tr class="row-status-{finding.severity === 'Critical' || finding.severity === 'High' ? 'fail' : finding.severity === 'Medium' ? 'na' : 'pass'}">
-                    <td class="item-code-cell" style="text-align: center;">{i + 1}</td>
-                    <td class="category-cell">{finding.check_type || '-'}</td>
-                    <td class="question-cell">
-                      <strong>{finding.issue || '-'}</strong>
-                      {#if finding.found_incorrect && finding.found_incorrect !== '-'}
-                        <div class="evidence-text" style="margin-top: 8px;">
-                          <span style="color: #f87171;">ข้อความในเอกสาร:</span> {finding.found_incorrect}
-                        </div>
-                      {/if}
+                {#if scanResult.qa_findings && scanResult.qa_findings.length > 0}
+                  {#each scanResult.qa_findings as finding, i}
+                    <tr class="row-status-{finding.severity === 'Critical' || finding.severity === 'High' ? 'fail' : finding.severity === 'Medium' ? 'na' : 'pass'}">
+                      <td class="item-code-cell" style="text-align: center;">{i + 1}</td>
+                      <td class="category-cell">{finding.check_type || '-'}</td>
+                      <td class="question-cell">
+                        <strong>{finding.issue || '-'}</strong>
+                        {#if finding.found_incorrect && finding.found_incorrect !== '-'}
+                          <div class="evidence-text" style="margin-top: 8px;">
+                            <span style="color: #f87171;">ข้อความในเอกสาร:</span> {finding.found_incorrect}
+                          </div>
+                        {/if}
+                      </td>
+                      <td class="severity-cell" style="text-align: center;">
+                        <span class="badge-sev badge-sev-{finding.severity.toLowerCase()}">{finding.severity}</span>
+                      </td>
+                      <td class="remarks-cell">{finding.correct_value || '-'}</td>
+                      <td class="remarks-cell">{finding.recommendation || '-'}</td>
+                    </tr>
+                  {/each}
+                {:else}
+                  <tr>
+                    <td colspan="6" style="text-align: center; padding: 40px 20px;">
+                      <div style="display: flex; flex-direction: column; align-items: center; gap: 12px;">
+                        <div style="font-size: 48px; opacity: 0.9;">✅</div>
+                        <div style="font-size: 16px; font-weight: 600; color: #34d399;">ไม่พบข้อผิดพลาดในเอกสาร</div>
+                        <div style="font-size: 13px; color: #9ca3af; max-width: 400px;">เอกสารผ่านการตรวจสอบ QA Audit เรียบร้อย ไม่พบประเด็นข้อบกพร่องที่ต้องแก้ไข</div>
+                      </div>
                     </td>
-                    <td class="severity-cell" style="text-align: center;">
-                      <span class="badge-sev badge-sev-{finding.severity.toLowerCase()}">{finding.severity}</span>
-                    </td>
-                    <td class="remarks-cell">{finding.correct_value || '-'}</td>
-                    <td class="remarks-cell">{finding.recommendation || '-'}</td>
                   </tr>
-                {/each}
+                {/if}
               </tbody>
             </table>
           </div>
         </div>
-      {/if}
 
       <!-- Exit Criteria Review Gate Card -->
       {#if scanResult.exit_criteria_eval}

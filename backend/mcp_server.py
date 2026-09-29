@@ -327,7 +327,7 @@ def qa_consult(
             skill_instructions="",
             kb_context=kb_context,
             prev_report_context="",
-            original_text=document_content[:8000],
+            original_text=document_content[:120000],
             instruction=full_instruction
         )
         

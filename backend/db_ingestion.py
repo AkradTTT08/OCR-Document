@@ -1626,10 +1626,10 @@ def log_api_usage(endpoint_name, model_name, usage_metadata, filename=None):
         cursor = conn.cursor()
         
         insert_query = """
-            INSERT INTO api_usage_logs (endpoint_name, model_name, filename, prompt_tokens, completion_tokens, total_tokens, estimated_cost_usd)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO api_usage_logs (endpoint_name, service_name, model_name, filename, prompt_tokens, completion_tokens, total_tokens, estimated_cost_usd)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         """
-        params = (endpoint_name or 'AI_Agent', model_name or 'gemini-2.5-flash', filename, prompt_tokens, completion_tokens, total_tokens, cost_usd)
+        params = (endpoint_name or 'AI_Agent', endpoint_name or 'AI_Agent', model_name or 'gemini-2.5-flash', filename, prompt_tokens, completion_tokens, total_tokens, cost_usd)
         
         try:
             cursor.execute(insert_query, params)
@@ -1643,6 +1643,7 @@ def log_api_usage(endpoint_name, model_name, usage_metadata, filename=None):
                 CREATE TABLE IF NOT EXISTS api_usage_logs (
                     log_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                     endpoint_name VARCHAR(100),
+                    service_name VARCHAR(100),
                     model_name VARCHAR(100),
                     filename VARCHAR(255),
                     prompt_tokens INT DEFAULT 0,
@@ -1652,6 +1653,8 @@ def log_api_usage(endpoint_name, model_name, usage_metadata, filename=None):
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
                 ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS endpoint_name VARCHAR(100);
+                ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS service_name VARCHAR(100);
+                ALTER TABLE api_usage_logs ALTER COLUMN service_name DROP NOT NULL;
                 ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS model_name VARCHAR(100);
                 ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS filename VARCHAR(255);
                 ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS prompt_tokens INT DEFAULT 0;
