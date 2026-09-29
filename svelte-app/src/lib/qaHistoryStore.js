@@ -189,7 +189,11 @@ export const allGroups = derived(
       }
     }
 
-    return Array.from(groupMap.values());
+    return Array.from(groupMap.values()).sort((a, b) => {
+      const tA = new Date(a.latest_date || 0).getTime();
+      const tB = new Date(b.latest_date || 0).getTime();
+      return tB - tA;
+    });
   }
 );
 
@@ -206,7 +210,13 @@ export async function loadQAHistoryFromDB() {
           const dbIds = new Set(data.transactions.map(t => String(t.id)));
           const unpersisted = current.filter(item => !item.is_processing && item.id && !dbIds.has(String(item.id)));
           const merged = [...inProgress, ...unpersisted, ...data.transactions];
-          return merged;
+          return merged.sort((a, b) => {
+            if (a.is_processing && !b.is_processing) return -1;
+            if (!a.is_processing && b.is_processing) return 1;
+            const tA = new Date(a.date || a.created_at || 0).getTime();
+            const tB = new Date(b.date || b.created_at || 0).getTime();
+            return tB - tA;
+          });
         });
       }
     }

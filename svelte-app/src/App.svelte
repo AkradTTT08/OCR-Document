@@ -452,6 +452,10 @@
       const gPid = String(g.project_id || '');
       const gCode = String(g.project_code || '').trim().toLowerCase();
       return !gPid || !pId || gPid === pId || (pCode && gCode && gCode === pCode);
+    }).sort((a, b) => {
+      const tA = new Date(a.latest_date || 0).getTime();
+      const tB = new Date(b.latest_date || 0).getTime();
+      return tB - tA;
     });
   })();
 
@@ -487,6 +491,12 @@
         return cleanHGroup === cleanCtxGroup || cleanHGroup.includes(cleanCtxGroup) || cleanCtxGroup.includes(cleanHGroup);
       }
       return true; // Show all project history if no group context selected
+    }).sort((a, b) => {
+      if (a.is_processing && !b.is_processing) return -1;
+      if (!a.is_processing && b.is_processing) return 1;
+      const tA = new Date(a.date || a.created_at || 0).getTime();
+      const tB = new Date(b.date || b.created_at || 0).getTime();
+      return tB - tA;
     });
   })();
 </script>

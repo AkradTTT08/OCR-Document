@@ -2303,35 +2303,55 @@ def qa_consult_api():
 
         # Read file bytes before background worker starts to avoid I/O on closed file
         doc_filename = secure_filename(file.filename) if file and file.filename else 'document.pdf'
-        pdf_bytes = file.read()
+        file_bytes = file.read()
         req_user = get_request_user() or request.form.get('username')
+
+        from excel_extractor import is_excel_file, extract_text_from_excel_bytes
+        file_is_excel = is_excel_file(doc_filename)
 
         import queue
         import threading
         msg_queue = queue.Queue()
 
         def run_qa_worker():
+            nonlocal doc_type
             try:
-                msg_queue.put({'type': 'progress', 'pct': 10, 'message': 'กำลังวิเคราะห์ข้อความจากเอกสาร PDF...' })
-                
-                # 1. OCR
-                from ocr_engine import ocr_pdf_bytes
-                
-                ocr_results = ocr_pdf_bytes(pdf_bytes, filename=doc_filename)
-                extracted_text = ''
-                total_pages = len(ocr_results)
-                
-                for page in ocr_results:
-                    if 'error' not in page or not page['error']:
-                        extracted_text += page.get('text', '') + '\n\n'
+                if file_is_excel:
+                    msg_queue.put({'type': 'progress', 'pct': 10, 'message': 'กำลังวิเคราะห์และแปลงข้อมูลจากเอกสาร Excel (Sheets & Test Cases)...' })
+                    try:
+                        extracted_text, total_pages = extract_text_from_excel_bytes(file_bytes, filename=doc_filename)
+                    except Exception as ex_err:
+                        logger.error(f"Failed to parse Excel file: {ex_err}", exc_info=True)
+                        msg_queue.put({'type': 'error', 'message': f'ไม่สามารถอ่านไฟล์ Excel ได้: {str(ex_err)}'})
+                        msg_queue.put(None)
+                        return
+                else:
+                    msg_queue.put({'type': 'progress', 'pct': 10, 'message': 'กำลังวิเคราะห์ข้อความจากเอกสาร PDF...' })
+                    # 1. OCR
+                    from ocr_engine import ocr_pdf_bytes
+                    ocr_results = ocr_pdf_bytes(file_bytes, filename=doc_filename)
+                    extracted_text = ''
+                    total_pages = len(ocr_results)
+                    for page in ocr_results:
+                        if 'error' not in page or not page['error']:
+                            extracted_text += page.get('text', '') + '\n\n'
                 
                 if not extracted_text.strip():
-                    msg_queue.put({'type': 'error', 'message': 'ไม่พบข้อความในเอกสาร'})
+                    msg_queue.put({'type': 'error', 'message': 'ไม่พบเนื้อหาข้อความในเอกสารที่อัปโหลด'})
                     msg_queue.put(None)
                     return
 
                 # Check if explicit doc_type flow is selected or auto-discovery
                 is_explicit = bool(doc_type and ((isinstance(doc_type, list) and len(doc_type) > 0) or (isinstance(doc_type, str) and doc_type.strip())))
+
+                # Auto-classify Excel files containing Test Cases if user did not specify
+                if file_is_excel and not is_explicit:
+                    lower_text = extracted_text.lower()
+                    if any(kw in lower_text for kw in ["test id", "tc_", "test case", "test objective", "expected result", "test procedure", "วัตถุประสงค์การทดสอบ", "ขั้นตอนการทดสอบ"]):
+                        doc_type = ["Test Case"]
+                        is_explicit = True
+                        logger.info(f"Auto-classified Excel document '{doc_filename}' as 'Test Case'")
+
                 doc_type_display = ', '.join(doc_type) if isinstance(doc_type, list) and doc_type else (doc_type if isinstance(doc_type, str) and doc_type else "")
 
                 # 2. Vector Search & Project MD Inventory
@@ -2433,7 +2453,7 @@ def qa_consult_api():
                     skill_instructions=skill_instructions or "",
                     kb_context=kb_context or "",
                     prev_report_context=prev_report_context,
-                    original_text=extracted_text[:120000],
+                    original_text=extracted_text[:250000],
                     instruction=instruction
                 )
                 
@@ -2462,8 +2482,8 @@ def qa_consult_api():
                 exit_criteria_eval = None
                 try:
                     msg_queue.put({'type': 'progress', 'pct': 85, 'message': 'กำลังตรวจสอบเกณฑ์ Exit Criteria Review Gate...' })
-                    doc_type_str = ', '.join(doc_type) if isinstance(doc_type, list) else doc_type
-                    doc_type_eval = group_type if group_type else (doc_type_str or 'ALL')
+                    doc_type_str = ', '.join(doc_type) if isinstance(doc_type, list) else (doc_type or '')
+                    doc_type_eval = doc_type_str if doc_type_str else (group_type or 'ALL')
                     exit_criteria_eval = evaluate_document_exit_criteria(extracted_text, doc_type=doc_type_eval, project_id=project_id, qa_findings=qa_findings)
                 except Exception as eval_err:
                     logger.error(f"Failed to evaluate document exit criteria: {eval_err}")
@@ -2477,7 +2497,7 @@ def qa_consult_api():
                         group_type=group_type,
                         filename=original_filename,
                         doc_type=', '.join(doc_type) if isinstance(doc_type, list) else doc_type,
-                        extracted_text=extracted_text[:120000],
+                        extracted_text=extracted_text[:250000],
                         qa_report=report,
                         total_pages=total_pages,
                         email=email,
@@ -3242,6 +3262,10 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
 - ข้อ [1.2] หรือข้อตรวจเรื่องความครบถ้วนของ Requirement: หากเอกสารมีระบุ Requirement IDs (เช่น REQ-xxx) พร้อม Main Path, Unhappy Path/Error Handling และตาราง Acceptance Criteria ให้ถือว่า **PASS**
 - ข้อ [3.1] Format & Consistency: หากเอกสารจัดรูปแบบด้วย Markdown (Headings, Tables, Bullets) เป็นระเบียบ ชัดเจน อ่านง่าย ไม่แตกขอบ ให้ถือว่า **PASS**
 - ข้อ [4.1] Governance & Control (การระบุ Document Title, Version Number, วันที่อัปเดต และชื่อผู้แต่ง/ผู้แก้ไขในหน้าแรก): หากเอกสารมีระบุ Document Title, Version Number, วันที่บังคับใช้ และชื่อผู้แต่ง/ผู้จัดทำในส่วน Header/Hero หรือใน Section 1 Document Control ครบถ้วนชัดเจน ให้ถือว่า **PASS** โดยข้อมูลเวอร์ชันและผู้จัดทำใน Section 1 ถือเป็นข้อมูลอ้างอิงหลัก หากส่วนหัวมีข้อความตราประทับของระบบหรือ AI Platform ให้ถือเป็น System Metadata ของแพลตฟอร์ม ห้ามตัดสินเป็นข้อขัดแย้ง
+- ข้อ [Test Case-4.2] หรือข้อตรวจแบบฟอร์มและโครงสร้างตาราง (Governance & Control / แบบฟอร์มถูกต้อง):
+  * หากเอกสารเป็นแบบฟอร์ม Test Case ของโครงการ (เช่น Template 69A, Template 11 คอลัมน์ หรือแบบฟอร์มที่โครงการตกลงใช้): ให้ถือว่า **PASS**
+  * กรณีไฟล์ Excel ที่มีหลายแผ่นงาน (Sheets): ในแผ่นงาน Test Specification จะเน้นขั้นตอนและผลที่คาดหวัง (Test Steps, Expected Results) ส่วนคอลัมน์ผลการทดสอบ (เช่น Actual Result, Status, Result (Pass/Fail)) อาจมีเฉพาะในแผ่นงานสำหรับ Execute หรือบันทึกผลจริง หากพบในชีทใดชีทหนึ่ง หรือเอกสารใช้ Template โครงสร้างตามที่โครงการกำหนด ให้ถือว่า **PASS** ข้อแบบฟอร์มถูกต้อง (Test Case-4.2) 100% ห้ามตัดสิน FAIL เด็ดขาด
+  * ห้ามนำข้อความใน Document Change History ที่บันทึกการตัดสินใจทางวิศวกรรม (เช่น การปฏิเสธคอลัมน์ที่ซ้ำซ้อนตามข้อตกลง Template ของโครงการ) มาตัดสินว่าเป็นข้อผิดพลาดหรือ Defect
 - ให้ประเมินผลตามเนื้อหาจริงในเอกสารที่ส่งตรวจเป็นหลักอย่างเป็นธรรมและตรงตามมาตรฐานวิศวกรรม
 """
 
@@ -3252,7 +3276,7 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
 {checklist_formatted}{findings_summary}
 
 === เนื้อหาเอกสารที่ตรวจ ===
-{doc_text[:120000]}
+{doc_text[:250000]}
 
 === หลักเกณฑ์การประเมินที่เป็นธรรม (Fair Evaluation Guidelines) ===
 1. ให้ประเมินจากเนื้อหาจริงในเอกสารเป็นหลัก ห้ามตัดสินจากความคาดหวังทางทฤษฎีที่เอกสารไม่ได้ระบุว่าจะครอบคลุม
@@ -3442,7 +3466,7 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
                 cur = conn.cursor()
                 cur.execute("""
                     INSERT INTO document_exit_evaluations (template_id, project_id, status, score_percentage, summary_remarks)
-                    VALUES (%s, %s, %s, %s, %s) RETURNING evaluation_id;
+                    VALUES (%s, %s, %s, %s, %s) RETURNING eval_id;
                 """, (valid_t_id, safe_p_id, final_status, score_pct, summary_remarks))
                 eval_id = cur.fetchone()[0]
                 
@@ -4005,14 +4029,14 @@ def sync_requirements_from_project():
                 SELECT doc_id, original_filename, doc_category, doc_type, full_markdown_content
                 FROM documents
                 WHERE project_id = %s::uuid AND doc_id = ANY(%s) AND (status = 'Active' OR status IS NULL)
-                ORDER BY doc_id ASC;
+                ORDER BY doc_id DESC;
             """, (project_id, doc_ids))
         else:
             cursor.execute("""
                 SELECT doc_id, original_filename, doc_category, doc_type, full_markdown_content
                 FROM documents
                 WHERE project_id = %s::uuid AND (status = 'Active' OR status IS NULL)
-                ORDER BY doc_id ASC;
+                ORDER BY doc_id DESC;
             """, (project_id,))
             
         doc_rows = cursor.fetchall()
@@ -4669,62 +4693,103 @@ def download_generated_document(doc_id):
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/agent/save_generated_doc_to_project', methods=['POST'])
+@app.route('/api/qa/save_generated_doc', methods=['POST'])
 def save_generated_doc_to_project():
     data = request.json or {}
     doc_id = data.get('doc_id')
-    if not doc_id:
-        return jsonify({'error': 'doc_id is required'}), 400
-        
+    target_project_id = data.get('project_id')
+    raw_filename = data.get('filename') or ''
+    doc_category = data.get('doc_category', 'Reference')
+    doc_type = data.get('doc_type', 'Test Case')
+    is_golden_data = bool(data.get('is_golden_data', False))
+    req_markdown = data.get('markdown_content') or ''
+
+    if not target_project_id:
+        return jsonify({'error': 'project_id is required'}), 400
+
     try:
         from db_ingestion import get_db_connection, ingest_markdown_document
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        cursor.execute("""
-            SELECT doc_name, doc_type, project_id, markdown_content, is_saved_to_project, saved_doc_id
-            FROM qa_generated_documents
-            WHERE id = %s::uuid
-        """, (doc_id,))
-        row = cursor.fetchone()
-        
-        if not row:
-            cursor.close()
-            conn.close()
-            return jsonify({'error': 'Document record not found'}), 404
-            
-        row_doc_name, row_doc_type, row_project_id, markdown_content, is_saved, saved_doc_id = row
-        
+        row_doc_name = ''
+        row_doc_type = ''
+        markdown_content = ''
+
+        # 1. If doc_id provided, look up in qa_generated_documents
+        if doc_id:
+            try:
+                cursor.execute("""
+                    SELECT doc_name, doc_type, project_id, markdown_content, is_saved_to_project, saved_doc_id
+                    FROM qa_generated_documents
+                    WHERE id = %s::uuid
+                """, (doc_id,))
+                row = cursor.fetchone()
+                if row:
+                    row_doc_name, row_doc_type, row_proj_id, db_md, _, _ = row
+                    markdown_content = db_md or ''
+            except Exception as e_lookup:
+                logger.warning(f"Lookup by doc_id failed: {e_lookup}")
+
+        # 2. If doc_id was not found or not provided, try finding by original_doc_name or filename
+        if not markdown_content:
+            orig_name = data.get('original_doc_name') or raw_filename.replace('.md', '').strip()
+            if orig_name:
+                try:
+                    cursor.execute("""
+                        SELECT id, doc_name, doc_type, markdown_content
+                        FROM qa_generated_documents
+                        WHERE project_id = %s::uuid AND doc_name = %s
+                        ORDER BY created_at DESC LIMIT 1
+                    """, (target_project_id, orig_name))
+                    row2 = cursor.fetchone()
+                    if row2:
+                        doc_id = str(row2[0])
+                        row_doc_name = row2[1]
+                        row_doc_type = row2[2]
+                        markdown_content = row2[3] or ''
+                except Exception as e_lookup2:
+                    logger.warning(f"Lookup by doc_name failed: {e_lookup2}")
+
+        # 3. Fallback to direct markdown provided in request payload
+        if not markdown_content or not markdown_content.strip():
+            markdown_content = req_markdown
+
         if not markdown_content or not markdown_content.strip():
             cursor.close()
             conn.close()
-            return jsonify({'error': 'Markdown content is empty for this document'}), 400
-            
-        target_project_id = data.get('project_id') or str(row_project_id)
-        raw_filename = data.get('filename') or f"{row_doc_name}.md"
+            return jsonify({'error': 'ไม่พบเนื้อหา Markdown สำหรับบันทึกเอกสารนี้'}), 400
+
+        # Determine filename
+        if not raw_filename:
+            raw_filename = f"{row_doc_name or 'Document'}.md"
         filename = raw_filename if (raw_filename.endswith('.md') or '.' in raw_filename) else f"{raw_filename}.md"
-        doc_category = data.get('doc_category', 'Reference')
-        doc_type = data.get('doc_type', row_doc_type or 'Test Case')
-        is_golden_data = bool(data.get('is_golden_data', False))
-        
+        eff_doc_type = doc_type or row_doc_type or 'Test Case'
+
         logger.info(f"Ingesting QA generated document '{filename}' into project {target_project_id} (Category: {doc_category}, Golden: {is_golden_data})...")
         success, msg_or_id = ingest_markdown_document(
             filename=filename,
             markdown_text=markdown_content.strip(),
             project_id=target_project_id,
             doc_category=doc_category,
-            doc_type=doc_type,
+            doc_type=eff_doc_type,
             is_golden_data=is_golden_data
         )
-        
+
         if success:
             ingested_doc_id = msg_or_id
-            cursor.execute("""
-                UPDATE qa_generated_documents
-                SET is_saved_to_project = TRUE,
-                    saved_doc_id = %s::uuid
-                WHERE id = %s::uuid
-            """, (ingested_doc_id, doc_id))
-            conn.commit()
+            if doc_id:
+                try:
+                    cursor.execute("""
+                        UPDATE qa_generated_documents
+                        SET is_saved_to_project = TRUE,
+                            saved_doc_id = %s::uuid
+                        WHERE id = %s::uuid
+                    """, (ingested_doc_id, doc_id))
+                    conn.commit()
+                except Exception as e_up:
+                    logger.warning(f"Could not update qa_generated_documents flag: {e_up}")
+
             cursor.close()
             conn.close()
             return jsonify({

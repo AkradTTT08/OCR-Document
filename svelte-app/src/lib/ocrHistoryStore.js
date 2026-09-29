@@ -29,7 +29,7 @@ export async function loadOCRHistory() {
                 date: row.created_at,
                 filename: row.filename,
                 ...(row.result_json || {}) // Spread the result back so it acts like the original scanResult
-            }));
+            })).sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime());
             ocrHistory.set(formattedResults);
             try {
                 localStorage.setItem(STORAGE_KEY, JSON.stringify(formattedResults.slice(0, 30)));

@@ -1,0 +1,98 @@
+=== SHEET: Introduction ===
+Row  1: A:Introduction
+Row  5: A:Introduction
+Row  6: A:เอกสารชุดนี้เรียกว่า System Testing Template มีวัตถุประสงค์เพื่อ
+1. จัดทำขึ้นเพื่อไว้ใช้สำหรับทดสอบระบบ จะต้องอยู่บนพื้นฐานของ Requirement ที่ระบุไว้
+Row  9: A:Author : | C:Mananchai Sinsuwan
+Row 10: A:Version : | C:13
+Row 11: A:Last Updated Date : | C:25/09/2569
+Row 12: A:Structure of this workbook:
+Row 13: A:This workbook the following sheets and forms:
+Row 14: B:Introduction | E:สำหรับอธิบายการใช้งานของ Template และแสดงรายละเอียดต่าง ๆ ของ Template
+Row 15: B:Document Change History | E:สำหรับบันทึกประวัติการแก้ไขเอกสารฉบับนี้ในแต่ละเวอร์ชัน (Date, Version, Prepared By)
+Row 16: B:Glossary | E:สำหรับอธิบายคำศัพท์เฉพาะทาง/ตัวย่อที่ใช้ในเอกสารและระบบ (เช่น LPI, NSW, TIFFA, EzySuite)
+Row 17: B:Basic Test / Test Config | E:สำหรับการทดสอบเบื้องต้น ซึ่งประกอบด้วย รายการไฟล์ติดตั้ง (File List), การทดสอบการติดตั้งระบบ (System Installation), การตั้งค่าระบบ (System Configuration)
+Row 18: B:Execute Test | E:สำหรับสรุปผลการทดสอบระบบ (System Testing) แยกตาม Module/Function ของระบบ พร้อมจำนวน Test Case และเวลาประมาณการทดสอบต่อ Module
+Row 19: B:Test Case | E:สำหรับเขียน Test Case Specification และอธิบายกรณีต่างๆ ที่ทำการทดสอบและบอกผลลัพธ์ที่ได้จากการทดสอบระบบ
+Row 22: A:Template Change History:
+Row 23: A:Version | B:Name | E:Date | F:Title or Brief Description
+Row 26: A:Design Review — Figma Consistency Check (v.4, ปิดรอบการตรวจสอบแล้ว)
+Row 27: A:ตรวจสอบ Figma Design "69A-TIFFA-RGP" หน้า RGP - Final_V2 (node-id 6530-44904) เทียบกับ SRS V5.0 เรียบร้อยแล้ว โครงสร้างหลัก (หน้าหลัก, 1.Draft LPI, 2.ขอจากเมนู Invoice, 3.ขอจากเมนูใบขน, CIS) ตรงกับ SRS ทุกจุด จาก Comment Thread ทั้งหมดในไฟล์ คัดกรองได้ 7 ประเด็นที่มีเนื้อหาชัดเจนเพียงพอต่อการสรุปเป็น Business Rule และนำมาเพิ่ม Test Case ใหม่ 5 ข้อในรอบนี้ (69AA1046, 69AA2050, 69AB1011, 69AB1012, 69AB3013) ดังรายการด้านล่าง
+Row 29: A:รายการที่นำมาปรับ Test Case:
+
+=== SHEET: Document Change History ===
+Row  1: A:Document Change History
+Row  5: B:Document Change History:
+Row  6: B:Date | C:Version | D:Prepared By | G:Detail
+Row  7: B:2026-07-09 00:00:00 | C:v.1 | D:Mananchai Sinsuwan | G:สร้าง Test Case ชุดแรกจาก SRS 69A-TIFFA-RGP v3.0
+Row  8: B:2026-07-26 00:00:00 | C:v.2 | D:Mananchai Sinsuwan | G:ผู้ใช้อัปโหลด SRS ซ้ำ (69A_REQ_SRS.pdf) — ตรวจสอบซ้ำตาม PHASE 0-6 พบว่าเอกสารไม่มีการเปลี่ยนแปลง (Hash ตรงกับต้นฉบับ) Test Case ทั้ง 136 ข้อยังคงถูกต้องครบถ้วน ไม่ต้องแก้ไขเนื้อหา
+Row  9: B:2026-07-26 00:00:00 | C:v.3 | D:Mananchai Sinsuwan | G:เพิ่มคอลัมน์ 'จำนวน TC' และ 'เวลาประมาณ (ชม.)' ใน Sheet Exucute Test ต่อ Module พร้อมแถวรวม (Total) เพื่อช่วยวางแผนเวลาทดสอบ (คำนวณจาก 15 นาที/TC)
+Row 10: B:2026-08-26 00:00:00 | C:v.4 | D:Mananchai Sinsuwan | G:ผู้ใช้ขอให้เปรียบเทียบกับ Figma "69A-TIFFA-RGP" (RGP - Final_V2, node-id 6530-44904) หลัง Login ให้เข้าถึง อ่านโครงสร้าง Frame และ Comment Thread ทั้งหมด — โครงสร้างหลักตรงกับ SRS อยู่แล้ว พบ 7 Comment ที่ชัดเจนไม่มีข้อโต้แย้ง จึงเพิ่ม TC ใหม่ 5 ข้อ (69AA1046, 69AA2050, 69AB1011-1012, 69AB3013) รวมเป็น 141 TC จากเดิม 136 TC พบอีก 5 ประเด็นที่เนื้อหาไม่ชัดเจนพอหรือขัดกับ SRS ที่เขียนไว้ (โดยเฉพาะ Comment ที่อาจหมายถึง Checkbox ผู้รับมอบอำนาจ REQ0023 ถูกเอาออก) ไม่ได้แก้ TC ตามนั้น บันทึกเป็นคำถามเปิดใน Introduction Sheet แทน เพื่อรอ BA/ทีมออกแบบยืนยัน
+Row 11: B:2026-08-28 00:00:00 | C:v.5 | D:Mananchai Sinsuwan
+Row 12: B:2026-08-28 00:00:00 | C:v.6 | D:Mananchai Sinsuwan
+Row 13: B:2026-08-28 00:00:00 | C:v.7 | D:Mananchai Sinsuwan
+Row 14: B:2026-08-28 00:00:00 | C:v.8 | D:Mananchai Sinsuwan
+Row 15: B:2026-09-24 00:00:00 | C:v.9 | D:Mananchai Sinsuwan
+Row 16: B:2026-09-24 00:00:00 | C:v.10 | D:Mananchai Sinsuwan | G:สร้างเวอร์ชันใหม่ตามคำขอผู้ใช้ หลังอัปโหลด SRS 69A_REQ_SRS (11).pdf (V7.0) ซ้ำ — ตรวจ MD5 f19878aba620bb7dd4e247e43e967798 ตรงกับไฟล์ที่ใช้ทำ v.9 ทุก byte ไม่มี REQ เปลี่ยน จึงคงเนื้อหา Test Case 158 ข้อตาม v.9 (ผ่าน spectra-qa-remote qa_consult แล้ว 24/09/2026)
+Row 17: B:2026-09-24 00:00:00 | C:v.11 | D:Mananchai Sinsuwan | G:แก้ไขตามผลตรวจ spectra-qa-remote (qa_consult) และการตรวจเทียบ SRS: (1) แก้ TC ที่ยังอ้าง Checkbox มีผู้รับมอบอำนาจซึ่ง SRS ยกเลิกแล้ว 69AA2023/2024/2025/2026/2031/2051 ให้ตรง REQ0032-REQ0035 (2) แก้ 69AA2001/2002 เป็น 3 Tab ตาม REQ0025/REQ0037 (3) ปรับ Expected Result ให้วัดผลได้ 69AA1010/1054/1055/1056/2030/2040 (4) เปลี่ยน Type 69AA2049 และ 69AA2002 เป็น Positive, 69AA2023 เป็น Negative (5) เพิ่ม Reference TOR, Test Environment, Pre-condition ทั่วไป, ช่อง Reviewer/Approver ใน Introduction (6) ใช้ปี พ.ศ. ทั้งเอกสาร และระบุช่วง REQ ในหัวทุก Sheet — จำนวน TC คงเดิม 158 ข้อ
+Row 18: B:2026-09-25 00:00:00 | C:v.12 | D:Mananchai Sinsuwan | G:สร้าง Test Case ชุดใหม่ทั้งหมดจาก SRS 69A-TIFFA-RGP V7.0 (18/09/2569) โดยไม่อิง Content จาก v1-v11 เดิม ตามคำขอผู้ใช้ "เริ่มทำใหม่ทั้งชุด" — วิเคราะห์ PHASE 0-6 ครบใหม่ทั้งหมด รวมข้อมูลจาก TOR และ MOM 6 ครั้งจาก spectra-qa-remote Knowledge Base เพื่อประกอบการวิเคราะห์ Hidden Scenarios. รวม 156 Test Case ครอบคลุม 54/54 REQ (REQ0001-0020, REQ0025-0043, REQ0052-0066) + SRS Sec.1.2 (ไม่มี REQ ID). แก้ไขบั๊กที่พบใน v11 เพิ่มเติม 2 จุด: (1) 69AA1023-เทียบเท่า สถานะ Invoice ที่ถูกต้องตาม REQ0005 คือ "ขอใบอนุญาตเรียบร้อยแล้ว" ไม่ใช่ "ไม่ต้องขอใบอนุญาต" (2) เงื่อนไข Lock ยกเลิก/แก้ไข LPI ตาม REQ0011 คือใบขนถึงสถานะ "ชำระเงินสำเร็จ" (ไม่ใช่สถานะ 02) และมีข้อยกเว้นกรณีใบขนถูก Cancel. พบข้อขัดแย้งระหว่าง MOM ประชุมครั้งที่ 7 (12/03/2569) กับ SRS V7.0 ใน 3 จุด (ชื่อผู้แจ้ง, ประเภทผู้รับมอบอำนาจ, Summary หน้า Invoice) — ยึด SRS เป็นหลักเนื่องจากเป็นเอกสารที่ Sign-off ล่าสุด แต่ใส่ Remark "รอ BA ยืนยัน" ไว้ที่ TC ที่เกี่ยวข้องแทนการเดาเอง
+Row 19: B:2026-09-25 00:00:00 | C:v.13 | D:Mananchai Sinsuwan | G:ส่งตรวจ spectra-qa-remote (qa_consult) แบบแบ่งส่ง 11 ชุด ครอบคลุมทุก Sheet/TC — ผล SUCCESS ทุกชุด ไม่พบ Critical ประเด็นที่ยืนยันแล้วว่าเป็นปัญหาจริงและแก้ไข: (1) 69AA1005 Expected Result ใช้คำว่า "หรือ" กำกวม แก้เป็นข้อความเดียวชัดเจน (2) 69AA1032 Objective วงเล็บ "(ใบขนถูก Cancel)" กำกวม แก้เป็น "(ใบขนเปลี่ยนเป็นสถานะ Cancel)" (3) 69AA1059 Expected Result "ไม่สูญหายโดยไม่แจ้งเตือน" กำกวม ตัดออกให้กระชับชัดเจน (4) 69AA3002 Expected Result "ใช้ทดสอบ Integrate ได้จริง" วัดผลไม่ได้ แก้เป็นเกณฑ์ที่ตรวจสอบได้ (5) เพิ่ม TC ใหม่ 69AA2048 (REQ0034) บันทึกคำถามเปิดกรณีมี Profile NSW ตรงเงื่อนไขมากกว่า 1 รายการพร้อมกัน ซึ่ง SRS ไม่ได้ระบุพฤติกรรมไว้ (พบจาก spectra ชุดที่ 6/11) ไม่ได้สันนิษฐานเอง รวมเป็น 157 TC (54/54 REQ ครอบคลุม). ปฏิเสธข้อเสนอของ spectra ที่ให้เพิ่มคอลัมน์ Priority/Test Environment/User Role/Actual Result/Status เนื่องจากขัดกับ Template 69A ที่ผู้ใช้ยืนยันให้คงไว้ตามเดิม (11 คอลัมน์) — บันทึกเป็นข้อเสนอที่ปฏิเสธ ไม่ใช่ข้อผิดพลาดที่ต้องแก้
+
+=== SHEET: Glossary ===
+Row  1: B:Glossary
+Row  5: B:คำศัพท์ (Term) | C:คำอธิบาย (Definition)
+Row  6: B:LPI | C:License Per Invoice — รูปแบบข้อมูลใบอนุญาตนำเข้า/ส่งออกที่ผูกกับ Invoice หนึ่งใบ ใช้ยื่นขอใบอนุญาตต่อหน่วยงานควบคุม
+Row  7: B:Draft LPI | C:สถานะเริ่มต้นของ LPI ก่อนส่งข้อมูลไปยังหน่วยงาน ยังแก้ไขข้อมูลได้อย่างอิสระ
+Row  8: B:HS Code | C:Harmonized System Code — รหัสพิกัดศุลกากรสากลที่ใช้จำแนกประเภทสินค้า เป็นตัวกำหนดว่าสินค้ารายการใดต้องขอใบอนุญาตจากหน่วยงานใด
+Row  9: B:Permission_Goods | C:ตารางข้อมูลหลัก (Master Data) ที่ใช้ตรวจสอบว่า HS Code ใดต้องขอใบอนุญาตจากหน่วยงานใดบ้าง
+Row 10: B:Authority / หน่วยงาน | C:หน่วยงานราชการที่มีอำนาจออกใบอนุญาตสินค้าควบคุม เช่น อย. (สำนักงานคณะกรรมการอาหารและยา) ซึ่งเป็นหน่วยงานเดียวที่ระบบรองรับใน Phase นี้
+Row 11: B:NSW | C:National Single Window — ระบบเชื่อมโยงข้อมูลอิเล็กทรอนิกส์ ณ จุดเดียวของภาครัฐ ใช้รับ-ส่งคำขอใบอนุญาตกับหน่วยงานราชการ
+Row 12: B:NSW ID | C:รหัสประจำตัว 29 หลักที่ลงทะเบียนไว้กับระบบ NSW สำหรับระบุตัวตนผู้ยื่นคำขอ/ผู้รับมอบอำนาจ
+Row 13: B:Ezybus | C:ระบบตัวกลาง (Middleware) รับ-ส่งข้อมูลคำขอใบอนุญาตและเอกสารตอบกลับระหว่างระบบ EzySuite กับหน่วยงานราชการผ่าน NSW
+Row 14: B:EzySuite | C:ระบบหลักฝั่งผู้ใช้งาน TIFFA ที่เชื่อมต่อรับข้อมูลตอบกลับจาก Ezybus และให้บริการ Open API แก่ผู้ใช้ภายนอก
+Row 15: B:MGT (หน้า MGT) | C:หน้าจอจัดการข้อมูลคำขอใบอนุญาตแบบละเอียด แบ่งเป็น Tab ส่วนควบคุม, ส่วนรายการ และสรุป สำหรับกรอก/ตรวจสอบข้อมูลก่อนส่งคำขอ
+Row 16: B:TIFFA | C:Thai International Freight Forwarders Association — ผู้พัฒนาและดูแลระบบ 69A-TIFFA-RGP รวมถึงเป็นผู้ดูแล Master Data บางส่วน เช่น Master Permission Goods
+Row 17: B:Production Profile | C:ข้อมูล Profile ที่ลงทะเบียนไว้กับระบบ NSW สำหรับยืนยันสิทธิ์การยื่นขอใบอนุญาตในนามบริษัท/หน่วยงานนั้นๆ
+Row 18: B:ผู้รับมอบอำนาจ | C:บุคคลที่บริษัทผู้นำเข้ามอบหมายให้ดำเนินการยื่นขอใบอนุญาตแทน ต้องมีเลขบัตรประชาชน 13 หลักและข้อมูลลงทะเบียนกับ NSW
+Row 19: B:Declaration / ใบขน | C:เอกสารใบขนสินค้าขาเข้า-ขาออกที่ต้องผ่านการตรวจสอบว่าสินค้าที่บรรจุอยู่มีใบอนุญาตครบถ้วนก่อนส่งไปยังกรมศุลกากร
+Row 20: B:Client Information Center | C:หน้าจอจัดการข้อมูลบริษัทลูกค้า (Client) รวมถึงข้อมูลผู้รับมอบอำนาจของแต่ละบริษัท
+Row 21: B:Status: Draft (สีเทา) | C:LPI ที่เพิ่งถูกสร้างขึ้น ยังไม่เคยส่งข้อมูลไปยังหน่วยงาน
+Row 22: B:Status: Draft (สีแดง) | C:LPI ที่เคยส่งแล้วได้รับสถานะ Error และผู้ใช้แก้ไขข้อมูลแล้วแต่ยังไม่ได้ส่งซ้ำ
+Row 23: B:Status: Sent | C:LPI ที่ส่งข้อมูลไปยังหน่วยงานแล้ว อยู่ระหว่างรอผลการพิจารณา
+Row 24: B:Status: Error | C:LPI ที่หน่วยงานตอบกลับว่าข้อมูลผิดพลาดหรือถูกปฏิเสธ
+Row 25: B:Status: Completed | C:LPI ที่หน่วยงานอนุมัติแล้วและออกเลขที่ใบอนุญาตให้เรียบร้อย
+Row 26: B:Status: Cancel | C:LPI ที่ถูกยกเลิกคำขอหลังได้รับการอนุมัติแล้ว (ทำได้เฉพาะสถานะ Completed เท่านั้น)
+Row 27: B:SEC1.2 (Req No. Placeholder) | C:รหัสอ้างอิงที่ใช้แทน REQ ID สำหรับ Test Case ในหัวข้อ 1.2 EzySuite Open API เนื่องจาก SRS V5.0 ระบุไว้ว่า "ไม่พบข้อมูล" (Section นี้ยังไม่มีการกำหนด Functional Requirement เป็น REQ ID อย่างเป็นทางการ) จึงใช้เลขอ้างอิงตามหมายเลขหัวข้อในเอกสาร SRS (Section 1.2) แทน เพื่อคงไว้ซึ่ง Traceability
+Row 28: B:BVA | C:Boundary Value Analysis — เทคนิคออกแบบ Test Case โดยทดสอบค่าที่ขอบเขต (ต่ำสุด/สูงสุด/เกินขอบเขต) ของ Field ที่มีข้อจำกัด
+Row 29: B:Positive / Negative Case | C:Positive คือ Test Case ที่ทดสอบ Flow การทำงานปกติและคาดหวังผลสำเร็จ / Negative คือ Test Case ที่ทดสอบกรณีข้อมูลผิดพลาดหรือขอบเขตผิดปกติ คาดหวังให้ระบบจัดการข้อผิดพลาดได้ถูกต้อง
+
+=== SHEET: Basic Test ===
+Row  1: B:Basic Test
+Row  5: B:File List
+Row  6: B:No. | C:File Name | E:Location
+Row  7: B:N/A | C:ไม่อยู่ในขอบเขตของเอกสารฉบับนี้ — เอกสารนี้ครอบคลุมเฉพาะ Functional/System Test Case เท่านั้น ไม่รวมการทดสอบ Deployment/Installation ซึ่งมีคู่มือการติดตั้งระบบ (System Installation Manual) แยกต่างหากของโครงการ
+Row 12: B:System Installation
+Row 13: B:No. | C:Setup Procedures
+Row 14: B:N/A | C:ไม่อยู่ในขอบเขตของเอกสารฉบับนี้ — เอกสารนี้ครอบคลุมเฉพาะ Functional/System Test Case เท่านั้น ไม่รวมการทดสอบ Deployment/Installation ซึ่งมีคู่มือการติดตั้งระบบ (System Installation Manual) แยกต่างหากของโครงการ
+Row 19: B:System Configuration
+Row 20: B:No. | C:Configuration Procedures
+Row 21: B:N/A | C:ไม่อยู่ในขอบเขตของเอกสารฉบับนี้ — เอกสารนี้ครอบคลุมเฉพาะ Functional/System Test Case เท่านั้น ไม่รวมการทดสอบ Deployment/Installation ซึ่งมีคู่มือการติดตั้งระบบ (System Installation Manual) แยกต่างหากของโครงการ
+
+=== SHEET: Execute Test ===
+Row  1: B:Execute Test
+Row  6: C:Project Name : | D:69A-TIFFA-RGP
+Row  8: C:Project ID: | D:69A
+Row 10: C:Project Release / Version : | D:13
+Row 13: B:System Test
+Row 14: B:REF # | C:Module | D:Function | E:Pass
+(Meet criteria for evaluating)* | F:Remark | H:จำนวน TC | I:เวลาประมาณ (ชม.)
+Row 15: C:Restricted Good Permit | D:ขอใบอนุญาตสินค้า | H:55 | I:13.75
+Row 16: C:Restricted Good Permit | D:ขอใบอนุญาตสินค้า (หน้า MGT) | H:48 | I:12
+Row 17: C:Restricted Good Permit | D:EzySuite Open API | H:8 | I:2
+Row 18: C:Declaration | D:Modify Invoice | H:13 | I:3.25
+Row 19: C:Declaration | D:Modify Declaration | H:8 | I:2
+Row 20: C:Declaration | D:Modify TIFFA ID | H:12 | I:3
+Row 21: C:Declaration | D:Modify Client Information Center | H:8 | I:2
+Row 22: C:Declaration | D:Modify Customer Management | H:5 | I:1.25
+Row 23: D:รวม (Total) | H:157 | I:39.25
+

@@ -1,0 +1,1688 @@
+# Sheet: Introduction
+| Introduction |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| Introduction |  |  |  |  |  |
+| เอกสารชุดนี้เรียกว่า System Testing Template มีวัตถุประสงค์เพื่อ <br> 1. จัดทำขึ้นเพื่อไว้ใช้สำหรับทดสอบระบบ จะต้องอยู่บนพื้นฐานของ Requirement ที่ระบุไว้ |  |  |  |  |  |
+| Author : |  | Mananchai Sinsuwan |  |  |  |
+| Version : |  | 13 |  |  |  |
+| Last Updated Date : |  | 25/09/2569 |  |  |  |
+| Structure of this workbook: |  |  |  |  |  |
+| This workbook the following sheets and forms: |  |  |  |  |  |
+|  | Introduction |  |  | สำหรับอธิบายการใช้งานของ Template และแสดงรายละเอียดต่าง ๆ ของ Template |  |
+|  | Document Change History |  |  | สำหรับบันทึกประวัติการแก้ไขเอกสารฉบับนี้ในแต่ละเวอร์ชัน (Date, Version, Prepared By) |  |
+|  | Glossary |  |  | สำหรับอธิบายคำศัพท์เฉพาะทาง/ตัวย่อที่ใช้ในเอกสารและระบบ (เช่น LPI, NSW, TIFFA, EzySuite) |  |
+|  | Basic Test / Test Config |  |  | สำหรับการทดสอบเบื้องต้น ซึ่งประกอบด้วย รายการไฟล์ติดตั้ง (File List), การทดสอบการติดตั้งระบบ (System Installation), การตั้งค่าระบบ (System Configuration) |  |
+|  | Execute Test |  |  | สำหรับสรุปผลการทดสอบระบบ (System Testing) แยกตาม Module/Function ของระบบ พร้อมจำนวน Test Case และเวลาประมาณการทดสอบต่อ Module |  |
+|  | Test Case |  |  | สำหรับเขียน Test Case Specification และอธิบายกรณีต่างๆ ที่ทำการทดสอบและบอกผลลัพธ์ที่ได้จากการทดสอบระบบ |  |
+| Template Change History: |  |  |  |  |  |
+| Version | Name |  |  | Date | Title or Brief Description |
+| Design Review — Figma Consistency Check (v.4, ปิดรอบการตรวจสอบแล้ว) |  |  |  |  |  |
+| ตรวจสอบ Figma Design "69A-TIFFA-RGP" หน้า RGP - Final_V2 (node-id 6530-44904) เทียบกับ SRS V5.0 เรียบร้อยแล้ว โครงสร้างหลัก (หน้าหลัก, 1.Draft LPI, 2.ขอจากเมนู Invoice, 3.ขอจากเมนูใบขน, CIS) ตรงกับ SRS ทุกจุด จาก Comment Thread ทั้งหมดในไฟล์ คัดกรองได้ 7 ประเด็นที่มีเนื้อหาชัดเจนเพียงพอต่อการสรุปเป็น Business Rule และนำมาเพิ่ม Test Case ใหม่ 5 ข้อในรอบนี้ (69AA1046, 69AA2050, 69AB1011, 69AB1012, 69AB3013) ดังรายการด้านล่าง |  |  |  |  |  |
+| รายการที่นำมาปรับ Test Case: |  |  |  |  |  |
+| #361/#360/#354 (Label สถานะใบอนุญาต) -> เพิ่ม TC 69AB1011 |  |  |  |  |  |
+| #358 (ไอคอนต้องตรงสถานะจริงทุกแถว) -> เพิ่ม TC 69AB1012 |  |  |  |  |  |
+| #353 (ดูเอกสารตอบกลับหน่วยงานอื่นได้) -> เพิ่ม TC 69AA1046 |  |  |  |  |  |
+| #348 (ปุ่มไม่มีเลข Lot มีผลทั้งใบ Invoice) -> เพิ่ม TC 69AA2050 |  |  |  |  |  |
+| #345 (ประเภทผู้รับมอบอำนาจ 4 แบบ) -> เพิ่ม TC 69AB3013 |  |  |  |  |  |
+| ผลการพิจารณา Comment อื่นๆ (มติ: ไม่นำมาปรับ Test Case ในรอบนี้) |  |  |  |  |  |
+| Comment #346, #355, #343, #357, #349 มีเนื้อหาไม่เพียงพอต่อการสรุปเป็น Business Rule ที่ชัดเจน (บางรายการอาจขัดกับ SRS V5.0 ที่ได้รับอนุมัติแล้ว เช่น ข้อบ่งชี้เรื่อง Checkbox ผู้รับมอบอำนาจใน REQ0023) มติของทีมคือยึดตาม SRS V5.0 เป็นหลักในรอบนี้ และให้ BA ยืนยันความถูกต้องของ Comment เหล่านี้กับทีมออกแบบในรอบการปรับปรุงเอกสาร SRS ครั้งถัดไป แยกต่างหากจากเอกสาร Test Case ฉบับนี้ (ดูรายละเอียดเต็มใน QA_Feedback_and_Improvement.md ของโปรเจกต์) |  |  |  |  |  |
+| เอกสารอ้างอิง (Reference Documents): |  |  |  |  |  |
+| 1) 69A_REQ_SRS (11).pdf — System Requirement Specification  2) TOR_69A-TIFFA-RGP_26-01-19.pdf — Terms of Reference ของโครงการ  \|  หมายเหตุ v.12: สร้าง Test Case ใหม่ทั้งหมดจาก SRS V7.0 ไม่ได้ต่อยอดจาก v1-v11 อ้างอิงข้อมูลเพิ่มเติมจาก TOR และ MOM 6 ฉบับ (spectra-qa-remote Knowledge Base) — ดูรายละเอียดที่ 69A_Spectra_Project_Data.md |  |  |  |  |  |
+| สภาพแวดล้อมทดสอบ (Test Environment): TEST = http://ezysuite-ttt.com \| UAT = https://ezysuite-uat.tiffaedi.com \| Platform: Web Application |  |  |  |  |  |
+| Pre-condition ทั่วไปของทุก Test Case: ผู้ทดสอบ Login สำเร็จ และบริษัทมีสิทธิ์ Menu ขอใบอนุญาตตาม Quotation (ยกเว้น TC ที่ระบุเงื่อนไขอื่นใน Test Step) — การตอบกลับจากหน่วยงาน (NSW/Ezybus) ใช้ Test Environment ของหน่วยงานหรือ Mock Response |  |  |  |  |  |
+| รูปแบบวันที่: ใช้ปีพุทธศักราช (พ.ศ.) รูปแบบ DD/MM/YYYY ทั้งเอกสาร |  |  |  |  |  |
+| Reviewed By : ____________________   Approved By : ____________________ |  |  |  |  |  |
+
+---
+
+# Sheet: Document Change History
+### ข้อมูลทั่วไปของเอกสาร (Document & Project Metadata):
+- Document Change History
+- Document Change History:
+
+### ตารางรายการทดสอบ (Test Cases / Specifications Matrix):
+| Col_1 | Date | Version | Prepared By | Col_5 | Col_6 | Detail |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+|  | 2026-07-09 00:00:00 | v.1 | Mananchai Sinsuwan |  |  | สร้าง Test Case ชุดแรกจาก SRS 69A-TIFFA-RGP v3.0 |
+|  | 2026-07-26 00:00:00 | v.2 | Mananchai Sinsuwan |  |  | ผู้ใช้อัปโหลด SRS ซ้ำ (69A_REQ_SRS.pdf) — ตรวจสอบซ้ำตาม PHASE 0-6 พบว่าเอกสารไม่มีการเปลี่ยนแปลง (Hash ตรงกับต้นฉบับ) Test Case ทั้ง 136 ข้อยังคงถูกต้องครบถ้วน ไม่ต้องแก้ไขเนื้อหา |
+|  | 2026-07-26 00:00:00 | v.3 | Mananchai Sinsuwan |  |  | เพิ่มคอลัมน์ 'จำนวน TC' และ 'เวลาประมาณ (ชม.)' ใน Sheet Exucute Test ต่อ Module พร้อมแถวรวม (Total) เพื่อช่วยวางแผนเวลาทดสอบ (คำนวณจาก 15 นาที/TC) |
+|  | 2026-08-26 00:00:00 | v.4 | Mananchai Sinsuwan |  |  | ผู้ใช้ขอให้เปรียบเทียบกับ Figma "69A-TIFFA-RGP" (RGP - Final_V2, node-id 6530-44904) หลัง Login ให้เข้าถึง อ่านโครงสร้าง Frame และ Comment Thread ทั้งหมด — โครงสร้างหลักตรงกับ SRS อยู่แล้ว พบ 7 Comment ที่ชัดเจนไม่มีข้อโต้แย้ง จึงเพิ่ม TC ใหม่ 5 ข้อ (69AA1046, 69AA2050, 69AB1011-1012, 69AB3013) รวมเป็น 141 TC จากเดิม 136 TC พบอีก 5 ประเด็นที่เนื้อหาไม่ชัดเจนพอหรือขัดกับ SRS ที่เขียนไว้ (โดยเฉพาะ Comment ที่อาจหมายถึง Checkbox ผู้รับมอบอำนาจ REQ0023 ถูกเอาออก) ไม่ได้แก้ TC ตามนั้น บันทึกเป็นคำถามเปิดใน Introduction Sheet แทน เพื่อรอ BA/ทีมออกแบบยืนยัน |
+|  | 2026-08-28 00:00:00 | v.5 | Mananchai Sinsuwan |  |  |  |
+|  | 2026-08-28 00:00:00 | v.6 | Mananchai Sinsuwan |  |  |  |
+|  | 2026-08-28 00:00:00 | v.7 | Mananchai Sinsuwan |  |  |  |
+|  | 2026-08-28 00:00:00 | v.8 | Mananchai Sinsuwan |  |  |  |
+|  | 2026-09-24 00:00:00 | v.9 | Mananchai Sinsuwan |  |  |  |
+|  | 2026-09-24 00:00:00 | v.10 | Mananchai Sinsuwan |  |  | สร้างเวอร์ชันใหม่ตามคำขอผู้ใช้ หลังอัปโหลด SRS 69A_REQ_SRS (11).pdf (V7.0) ซ้ำ — ตรวจ MD5 f19878aba620bb7dd4e247e43e967798 ตรงกับไฟล์ที่ใช้ทำ v.9 ทุก byte ไม่มี REQ เปลี่ยน จึงคงเนื้อหา Test Case 158 ข้อตาม v.9 (ผ่าน spectra-qa-remote qa_consult แล้ว 24/09/2026) |
+|  | 2026-09-24 00:00:00 | v.11 | Mananchai Sinsuwan |  |  | แก้ไขตามผลตรวจ spectra-qa-remote (qa_consult) และการตรวจเทียบ SRS: (1) แก้ TC ที่ยังอ้าง Checkbox มีผู้รับมอบอำนาจซึ่ง SRS ยกเลิกแล้ว 69AA2023/2024/2025/2026/2031/2051 ให้ตรง REQ0032-REQ0035 (2) แก้ 69AA2001/2002 เป็น 3 Tab ตาม REQ0025/REQ0037 (3) ปรับ Expected Result ให้วัดผลได้ 69AA1010/1054/1055/1056/2030/2040 (4) เปลี่ยน Type 69AA2049 และ 69AA2002 เป็น Positive, 69AA2023 เป็น Negative (5) เพิ่ม Reference TOR, Test Environment, Pre-condition ทั่วไป, ช่อง Reviewer/Approver ใน Introduction (6) ใช้ปี พ.ศ. ทั้งเอกสาร และระบุช่วง REQ ในหัวทุก Sheet — จำนวน TC คงเดิม 158 ข้อ |
+|  | 2026-09-25 00:00:00 | v.12 | Mananchai Sinsuwan |  |  | สร้าง Test Case ชุดใหม่ทั้งหมดจาก SRS 69A-TIFFA-RGP V7.0 (18/09/2569) โดยไม่อิง Content จาก v1-v11 เดิม ตามคำขอผู้ใช้ "เริ่มทำใหม่ทั้งชุด" — วิเคราะห์ PHASE 0-6 ครบใหม่ทั้งหมด รวมข้อมูลจาก TOR และ MOM 6 ครั้งจาก spectra-qa-remote Knowledge Base เพื่อประกอบการวิเคราะห์ Hidden Scenarios. รวม 156 Test Case ครอบคลุม 54/54 REQ (REQ0001-0020, REQ0025-0043, REQ0052-0066) + SRS Sec.1.2 (ไม่มี REQ ID). แก้ไขบั๊กที่พบใน v11 เพิ่มเติม 2 จุด: (1) 69AA1023-เทียบเท่า สถานะ Invoice ที่ถูกต้องตาม REQ0005 คือ "ขอใบอนุญาตเรียบร้อยแล้ว" ไม่ใช่ "ไม่ต้องขอใบอนุญาต" (2) เงื่อนไข Lock ยกเลิก/แก้ไข LPI ตาม REQ0011 คือใบขนถึงสถานะ "ชำระเงินสำเร็จ" (ไม่ใช่สถานะ 02) และมีข้อยกเว้นกรณีใบขนถูก Cancel. พบข้อขัดแย้งระหว่าง MOM ประชุมครั้งที่ 7 (12/03/2569) กับ SRS V7.0 ใน 3 จุด (ชื่อผู้แจ้ง, ประเภทผู้รับมอบอำนาจ, Summary หน้า Invoice) — ยึด SRS เป็นหลักเนื่องจากเป็นเอกสารที่ Sign-off ล่าสุด แต่ใส่ Remark "รอ BA ยืนยัน" ไว้ที่ TC ที่เกี่ยวข้องแทนการเดาเอง |
+|  | 2026-09-25 00:00:00 | v.13 | Mananchai Sinsuwan |  |  | ส่งตรวจ spectra-qa-remote (qa_consult) แบบแบ่งส่ง 11 ชุด ครอบคลุมทุก Sheet/TC — ผล SUCCESS ทุกชุด ไม่พบ Critical ประเด็นที่ยืนยันแล้วว่าเป็นปัญหาจริงและแก้ไข: (1) 69AA1005 Expected Result ใช้คำว่า "หรือ" กำกวม แก้เป็นข้อความเดียวชัดเจน (2) 69AA1032 Objective วงเล็บ "(ใบขนถูก Cancel)" กำกวม แก้เป็น "(ใบขนเปลี่ยนเป็นสถานะ Cancel)" (3) 69AA1059 Expected Result "ไม่สูญหายโดยไม่แจ้งเตือน" กำกวม ตัดออกให้กระชับชัดเจน (4) 69AA3002 Expected Result "ใช้ทดสอบ Integrate ได้จริง" วัดผลไม่ได้ แก้เป็นเกณฑ์ที่ตรวจสอบได้ (5) เพิ่ม TC ใหม่ 69AA2048 (REQ0034) บันทึกคำถามเปิดกรณีมี Profile NSW ตรงเงื่อนไขมากกว่า 1 รายการพร้อมกัน ซึ่ง SRS ไม่ได้ระบุพฤติกรรมไว้ (พบจาก spectra ชุดที่ 6/11) ไม่ได้สันนิษฐานเอง รวมเป็น 157 TC (54/54 REQ ครอบคลุม). ปฏิเสธข้อเสนอของ spectra ที่ให้เพิ่มคอลัมน์ Priority/Test Environment/User Role/Actual Result/Status เนื่องจากขัดกับ Template 69A ที่ผู้ใช้ยืนยันให้คงไว้ตามเดิม (11 คอลัมน์) — บันทึกเป็นข้อเสนอที่ปฏิเสธ ไม่ใช่ข้อผิดพลาดที่ต้องแก้ |
+
+### รายละเอียดของแต่ละ Test Case (Detailed Breakdown):
+#### [Row-1]
+- **Date:** 2026-07-09 00:00:00
+- **Version:** v.1
+- **Prepared By:** Mananchai Sinsuwan
+- **Detail:** สร้าง Test Case ชุดแรกจาก SRS 69A-TIFFA-RGP v3.0
+
+#### [Row-2]
+- **Date:** 2026-07-26 00:00:00
+- **Version:** v.2
+- **Prepared By:** Mananchai Sinsuwan
+- **Detail:** ผู้ใช้อัปโหลด SRS ซ้ำ (69A_REQ_SRS.pdf) — ตรวจสอบซ้ำตาม PHASE 0-6 พบว่าเอกสารไม่มีการเปลี่ยนแปลง (Hash ตรงกับต้นฉบับ) Test Case ทั้ง 136 ข้อยังคงถูกต้องครบถ้วน ไม่ต้องแก้ไขเนื้อหา
+
+#### [Row-3]
+- **Date:** 2026-07-26 00:00:00
+- **Version:** v.3
+- **Prepared By:** Mananchai Sinsuwan
+- **Detail:** เพิ่มคอลัมน์ 'จำนวน TC' และ 'เวลาประมาณ (ชม.)' ใน Sheet Exucute Test ต่อ Module พร้อมแถวรวม (Total) เพื่อช่วยวางแผนเวลาทดสอบ (คำนวณจาก 15 นาที/TC)
+
+#### [Row-4]
+- **Date:** 2026-08-26 00:00:00
+- **Version:** v.4
+- **Prepared By:** Mananchai Sinsuwan
+- **Detail:** ผู้ใช้ขอให้เปรียบเทียบกับ Figma "69A-TIFFA-RGP" (RGP - Final_V2, node-id 6530-44904) หลัง Login ให้เข้าถึง อ่านโครงสร้าง Frame และ Comment Thread ทั้งหมด — โครงสร้างหลักตรงกับ SRS อยู่แล้ว พบ 7 Comment ที่ชัดเจนไม่มีข้อโต้แย้ง จึงเพิ่ม TC ใหม่ 5 ข้อ (69AA1046, 69AA2050, 69AB1011-1012, 69AB3013) รวมเป็น 141 TC จากเดิม 136 TC พบอีก 5 ประเด็นที่เนื้อหาไม่ชัดเจนพอหรือขัดกับ SRS ที่เขียนไว้ (โดยเฉพาะ Comment ที่อาจหมายถึง Checkbox ผู้รับมอบอำนาจ REQ0023 ถูกเอาออก) ไม่ได้แก้ TC ตามนั้น บันทึกเป็นคำถามเปิดใน Introduction Sheet แทน เพื่อรอ BA/ทีมออกแบบยืนยัน
+
+#### [Row-5]
+- **Date:** 2026-08-28 00:00:00
+- **Version:** v.5
+- **Prepared By:** Mananchai Sinsuwan
+
+#### [Row-6]
+- **Date:** 2026-08-28 00:00:00
+- **Version:** v.6
+- **Prepared By:** Mananchai Sinsuwan
+
+#### [Row-7]
+- **Date:** 2026-08-28 00:00:00
+- **Version:** v.7
+- **Prepared By:** Mananchai Sinsuwan
+
+#### [Row-8]
+- **Date:** 2026-08-28 00:00:00
+- **Version:** v.8
+- **Prepared By:** Mananchai Sinsuwan
+
+#### [Row-9]
+- **Date:** 2026-09-24 00:00:00
+- **Version:** v.9
+- **Prepared By:** Mananchai Sinsuwan
+
+#### [Row-10]
+- **Date:** 2026-09-24 00:00:00
+- **Version:** v.10
+- **Prepared By:** Mananchai Sinsuwan
+- **Detail:** สร้างเวอร์ชันใหม่ตามคำขอผู้ใช้ หลังอัปโหลด SRS 69A_REQ_SRS (11).pdf (V7.0) ซ้ำ — ตรวจ MD5 f19878aba620bb7dd4e247e43e967798 ตรงกับไฟล์ที่ใช้ทำ v.9 ทุก byte ไม่มี REQ เปลี่ยน จึงคงเนื้อหา Test Case 158 ข้อตาม v.9 (ผ่าน spectra-qa-remote qa_consult แล้ว 24/09/2026)
+
+#### [Row-11]
+- **Date:** 2026-09-24 00:00:00
+- **Version:** v.11
+- **Prepared By:** Mananchai Sinsuwan
+- **Detail:** แก้ไขตามผลตรวจ spectra-qa-remote (qa_consult) และการตรวจเทียบ SRS: (1) แก้ TC ที่ยังอ้าง Checkbox มีผู้รับมอบอำนาจซึ่ง SRS ยกเลิกแล้ว 69AA2023/2024/2025/2026/2031/2051 ให้ตรง REQ0032-REQ0035 (2) แก้ 69AA2001/2002 เป็น 3 Tab ตาม REQ0025/REQ0037 (3) ปรับ Expected Result ให้วัดผลได้ 69AA1010/1054/1055/1056/2030/2040 (4) เปลี่ยน Type 69AA2049 และ 69AA2002 เป็น Positive, 69AA2023 เป็น Negative (5) เพิ่ม Reference TOR, Test Environment, Pre-condition ทั่วไป, ช่อง Reviewer/Approver ใน Introduction (6) ใช้ปี พ.ศ. ทั้งเอกสาร และระบุช่วง REQ ในหัวทุก Sheet — จำนวน TC คงเดิม 158 ข้อ
+
+#### [Row-12]
+- **Date:** 2026-09-25 00:00:00
+- **Version:** v.12
+- **Prepared By:** Mananchai Sinsuwan
+- **Detail:** สร้าง Test Case ชุดใหม่ทั้งหมดจาก SRS 69A-TIFFA-RGP V7.0 (18/09/2569) โดยไม่อิง Content จาก v1-v11 เดิม ตามคำขอผู้ใช้ "เริ่มทำใหม่ทั้งชุด" — วิเคราะห์ PHASE 0-6 ครบใหม่ทั้งหมด รวมข้อมูลจาก TOR และ MOM 6 ครั้งจาก spectra-qa-remote Knowledge Base เพื่อประกอบการวิเคราะห์ Hidden Scenarios. รวม 156 Test Case ครอบคลุม 54/54 REQ (REQ0001-0020, REQ0025-0043, REQ0052-0066) + SRS Sec.1.2 (ไม่มี REQ ID). แก้ไขบั๊กที่พบใน v11 เพิ่มเติม 2 จุด: (1) 69AA1023-เทียบเท่า สถานะ Invoice ที่ถูกต้องตาม REQ0005 คือ "ขอใบอนุญาตเรียบร้อยแล้ว" ไม่ใช่ "ไม่ต้องขอใบอนุญาต" (2) เงื่อนไข Lock ยกเลิก/แก้ไข LPI ตาม REQ0011 คือใบขนถึงสถานะ "ชำระเงินสำเร็จ" (ไม่ใช่สถานะ 02) และมีข้อยกเว้นกรณีใบขนถูก Cancel. พบข้อขัดแย้งระหว่าง MOM ประชุมครั้งที่ 7 (12/03/2569) กับ SRS V7.0 ใน 3 จุด (ชื่อผู้แจ้ง, ประเภทผู้รับมอบอำนาจ, Summary หน้า Invoice) — ยึด SRS เป็นหลักเนื่องจากเป็นเอกสารที่ Sign-off ล่าสุด แต่ใส่ Remark "รอ BA ยืนยัน" ไว้ที่ TC ที่เกี่ยวข้องแทนการเดาเอง
+
+#### [Row-13]
+- **Date:** 2026-09-25 00:00:00
+- **Version:** v.13
+- **Prepared By:** Mananchai Sinsuwan
+- **Detail:** ส่งตรวจ spectra-qa-remote (qa_consult) แบบแบ่งส่ง 11 ชุด ครอบคลุมทุก Sheet/TC — ผล SUCCESS ทุกชุด ไม่พบ Critical ประเด็นที่ยืนยันแล้วว่าเป็นปัญหาจริงและแก้ไข: (1) 69AA1005 Expected Result ใช้คำว่า "หรือ" กำกวม แก้เป็นข้อความเดียวชัดเจน (2) 69AA1032 Objective วงเล็บ "(ใบขนถูก Cancel)" กำกวม แก้เป็น "(ใบขนเปลี่ยนเป็นสถานะ Cancel)" (3) 69AA1059 Expected Result "ไม่สูญหายโดยไม่แจ้งเตือน" กำกวม ตัดออกให้กระชับชัดเจน (4) 69AA3002 Expected Result "ใช้ทดสอบ Integrate ได้จริง" วัดผลไม่ได้ แก้เป็นเกณฑ์ที่ตรวจสอบได้ (5) เพิ่ม TC ใหม่ 69AA2048 (REQ0034) บันทึกคำถามเปิดกรณีมี Profile NSW ตรงเงื่อนไขมากกว่า 1 รายการพร้อมกัน ซึ่ง SRS ไม่ได้ระบุพฤติกรรมไว้ (พบจาก spectra ชุดที่ 6/11) ไม่ได้สันนิษฐานเอง รวมเป็น 157 TC (54/54 REQ ครอบคลุม). ปฏิเสธข้อเสนอของ spectra ที่ให้เพิ่มคอลัมน์ Priority/Test Environment/User Role/Actual Result/Status เนื่องจากขัดกับ Template 69A ที่ผู้ใช้ยืนยันให้คงไว้ตามเดิม (11 คอลัมน์) — บันทึกเป็นข้อเสนอที่ปฏิเสธ ไม่ใช่ข้อผิดพลาดที่ต้องแก้
+
+
+---
+
+# Sheet: Glossary
+| Col_1 | Glossary |
+| :--- | :--- | :--- |
+|  | คำศัพท์ (Term) | คำอธิบาย (Definition) |
+|  | LPI | License Per Invoice — รูปแบบข้อมูลใบอนุญาตนำเข้า/ส่งออกที่ผูกกับ Invoice หนึ่งใบ ใช้ยื่นขอใบอนุญาตต่อหน่วยงานควบคุม |
+|  | Draft LPI | สถานะเริ่มต้นของ LPI ก่อนส่งข้อมูลไปยังหน่วยงาน ยังแก้ไขข้อมูลได้อย่างอิสระ |
+|  | HS Code | Harmonized System Code — รหัสพิกัดศุลกากรสากลที่ใช้จำแนกประเภทสินค้า เป็นตัวกำหนดว่าสินค้ารายการใดต้องขอใบอนุญาตจากหน่วยงานใด |
+|  | Permission_Goods | ตารางข้อมูลหลัก (Master Data) ที่ใช้ตรวจสอบว่า HS Code ใดต้องขอใบอนุญาตจากหน่วยงานใดบ้าง |
+|  | Authority / หน่วยงาน | หน่วยงานราชการที่มีอำนาจออกใบอนุญาตสินค้าควบคุม เช่น อย. (สำนักงานคณะกรรมการอาหารและยา) ซึ่งเป็นหน่วยงานเดียวที่ระบบรองรับใน Phase นี้ |
+|  | NSW | National Single Window — ระบบเชื่อมโยงข้อมูลอิเล็กทรอนิกส์ ณ จุดเดียวของภาครัฐ ใช้รับ-ส่งคำขอใบอนุญาตกับหน่วยงานราชการ |
+|  | NSW ID | รหัสประจำตัว 29 หลักที่ลงทะเบียนไว้กับระบบ NSW สำหรับระบุตัวตนผู้ยื่นคำขอ/ผู้รับมอบอำนาจ |
+|  | Ezybus | ระบบตัวกลาง (Middleware) รับ-ส่งข้อมูลคำขอใบอนุญาตและเอกสารตอบกลับระหว่างระบบ EzySuite กับหน่วยงานราชการผ่าน NSW |
+|  | EzySuite | ระบบหลักฝั่งผู้ใช้งาน TIFFA ที่เชื่อมต่อรับข้อมูลตอบกลับจาก Ezybus และให้บริการ Open API แก่ผู้ใช้ภายนอก |
+|  | MGT (หน้า MGT) | หน้าจอจัดการข้อมูลคำขอใบอนุญาตแบบละเอียด แบ่งเป็น Tab ส่วนควบคุม, ส่วนรายการ และสรุป สำหรับกรอก/ตรวจสอบข้อมูลก่อนส่งคำขอ |
+|  | TIFFA | Thai International Freight Forwarders Association — ผู้พัฒนาและดูแลระบบ 69A-TIFFA-RGP รวมถึงเป็นผู้ดูแล Master Data บางส่วน เช่น Master Permission Goods |
+|  | Production Profile | ข้อมูล Profile ที่ลงทะเบียนไว้กับระบบ NSW สำหรับยืนยันสิทธิ์การยื่นขอใบอนุญาตในนามบริษัท/หน่วยงานนั้นๆ |
+|  | ผู้รับมอบอำนาจ | บุคคลที่บริษัทผู้นำเข้ามอบหมายให้ดำเนินการยื่นขอใบอนุญาตแทน ต้องมีเลขบัตรประชาชน 13 หลักและข้อมูลลงทะเบียนกับ NSW |
+|  | Declaration / ใบขน | เอกสารใบขนสินค้าขาเข้า-ขาออกที่ต้องผ่านการตรวจสอบว่าสินค้าที่บรรจุอยู่มีใบอนุญาตครบถ้วนก่อนส่งไปยังกรมศุลกากร |
+|  | Client Information Center | หน้าจอจัดการข้อมูลบริษัทลูกค้า (Client) รวมถึงข้อมูลผู้รับมอบอำนาจของแต่ละบริษัท |
+|  | Status: Draft (สีเทา) | LPI ที่เพิ่งถูกสร้างขึ้น ยังไม่เคยส่งข้อมูลไปยังหน่วยงาน |
+|  | Status: Draft (สีแดง) | LPI ที่เคยส่งแล้วได้รับสถานะ Error และผู้ใช้แก้ไขข้อมูลแล้วแต่ยังไม่ได้ส่งซ้ำ |
+|  | Status: Sent | LPI ที่ส่งข้อมูลไปยังหน่วยงานแล้ว อยู่ระหว่างรอผลการพิจารณา |
+|  | Status: Error | LPI ที่หน่วยงานตอบกลับว่าข้อมูลผิดพลาดหรือถูกปฏิเสธ |
+|  | Status: Completed | LPI ที่หน่วยงานอนุมัติแล้วและออกเลขที่ใบอนุญาตให้เรียบร้อย |
+|  | Status: Cancel | LPI ที่ถูกยกเลิกคำขอหลังได้รับการอนุมัติแล้ว (ทำได้เฉพาะสถานะ Completed เท่านั้น) |
+|  | SEC1.2 (Req No. Placeholder) | รหัสอ้างอิงที่ใช้แทน REQ ID สำหรับ Test Case ในหัวข้อ 1.2 EzySuite Open API เนื่องจาก SRS V5.0 ระบุไว้ว่า "ไม่พบข้อมูล" (Section นี้ยังไม่มีการกำหนด Functional Requirement เป็น REQ ID อย่างเป็นทางการ) จึงใช้เลขอ้างอิงตามหมายเลขหัวข้อในเอกสาร SRS (Section 1.2) แทน เพื่อคงไว้ซึ่ง Traceability |
+|  | BVA | Boundary Value Analysis — เทคนิคออกแบบ Test Case โดยทดสอบค่าที่ขอบเขต (ต่ำสุด/สูงสุด/เกินขอบเขต) ของ Field ที่มีข้อจำกัด |
+|  | Positive / Negative Case | Positive คือ Test Case ที่ทดสอบ Flow การทำงานปกติและคาดหวังผลสำเร็จ / Negative คือ Test Case ที่ทดสอบกรณีข้อมูลผิดพลาดหรือขอบเขตผิดปกติ คาดหวังให้ระบบจัดการข้อผิดพลาดได้ถูกต้อง |
+
+---
+
+# Sheet: Basic Test
+### ข้อมูลทั่วไปของเอกสาร (Document & Project Metadata):
+- Basic Test
+- File List
+
+### ตารางรายการทดสอบ (Test Cases / Specifications Matrix):
+| Col_1 | No. | File Name | Col_4 | Location |
+| :--- | :--- | :--- | :--- | :--- |
+|  | N/A | ไม่อยู่ในขอบเขตของเอกสารฉบับนี้ — เอกสารนี้ครอบคลุมเฉพาะ Functional/System Test Case เท่านั้น ไม่รวมการทดสอบ Deployment/Installation ซึ่งมีคู่มือการติดตั้งระบบ (System Installation Manual) แยกต่างหากของโครงการ |  |  |
+|  | System Installation |  |  |  |
+|  | No. | Setup Procedures |  |  |
+|  | N/A | ไม่อยู่ในขอบเขตของเอกสารฉบับนี้ — เอกสารนี้ครอบคลุมเฉพาะ Functional/System Test Case เท่านั้น ไม่รวมการทดสอบ Deployment/Installation ซึ่งมีคู่มือการติดตั้งระบบ (System Installation Manual) แยกต่างหากของโครงการ |  |  |
+|  | System Configuration |  |  |  |
+|  | No. | Configuration Procedures |  |  |
+|  | N/A | ไม่อยู่ในขอบเขตของเอกสารฉบับนี้ — เอกสารนี้ครอบคลุมเฉพาะ Functional/System Test Case เท่านั้น ไม่รวมการทดสอบ Deployment/Installation ซึ่งมีคู่มือการติดตั้งระบบ (System Installation Manual) แยกต่างหากของโครงการ |  |  |
+
+### รายละเอียดของแต่ละ Test Case (Detailed Breakdown):
+#### [Row-1]
+- **No.:** N/A
+- **File Name:** ไม่อยู่ในขอบเขตของเอกสารฉบับนี้ — เอกสารนี้ครอบคลุมเฉพาะ Functional/System Test Case เท่านั้น ไม่รวมการทดสอบ Deployment/Installation ซึ่งมีคู่มือการติดตั้งระบบ (System Installation Manual) แยกต่างหากของโครงการ
+
+#### [Row-2]
+- **No.:** System Installation
+
+#### [Row-3]
+- **No.:** No.
+- **File Name:** Setup Procedures
+
+#### [Row-4]
+- **No.:** N/A
+- **File Name:** ไม่อยู่ในขอบเขตของเอกสารฉบับนี้ — เอกสารนี้ครอบคลุมเฉพาะ Functional/System Test Case เท่านั้น ไม่รวมการทดสอบ Deployment/Installation ซึ่งมีคู่มือการติดตั้งระบบ (System Installation Manual) แยกต่างหากของโครงการ
+
+#### [Row-5]
+- **No.:** System Configuration
+
+#### [Row-6]
+- **No.:** No.
+- **File Name:** Configuration Procedures
+
+#### [Row-7]
+- **No.:** N/A
+- **File Name:** ไม่อยู่ในขอบเขตของเอกสารฉบับนี้ — เอกสารนี้ครอบคลุมเฉพาะ Functional/System Test Case เท่านั้น ไม่รวมการทดสอบ Deployment/Installation ซึ่งมีคู่มือการติดตั้งระบบ (System Installation Manual) แยกต่างหากของโครงการ
+
+
+---
+
+# Sheet: Execute Test
+### ข้อมูลทั่วไปของเอกสาร (Document & Project Metadata):
+- Execute Test
+- Project Name : | 69A-TIFFA-RGP
+- Project ID: | 69A
+- Project Release / Version : | 13
+- System Test
+
+### ตารางรายการทดสอบ (Test Cases / Specifications Matrix):
+| Col_1 | REF # | Module | Function | Pass (Meet criteria for evaluating)* | Remark | Col_7 | จำนวน TC | เวลาประมาณ (ชม.) |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+|  |  | Restricted Good Permit | ขอใบอนุญาตสินค้า |  |  |  | 55 | 13.75 |
+|  |  | Restricted Good Permit | ขอใบอนุญาตสินค้า (หน้า MGT) |  |  |  | 48 | 12 |
+|  |  | Restricted Good Permit | EzySuite Open API |  |  |  | 8 | 2 |
+|  |  | Declaration | Modify Invoice |  |  |  | 13 | 3.25 |
+|  |  | Declaration | Modify Declaration |  |  |  | 8 | 2 |
+|  |  | Declaration | Modify TIFFA ID |  |  |  | 12 | 3 |
+|  |  | Declaration | Modify Client Information Center |  |  |  | 8 | 2 |
+|  |  | Declaration | Modify Customer Management |  |  |  | 5 | 1.25 |
+|  |  |  | รวม (Total) |  |  |  | 157 | 39.25 |
+
+### รายละเอียดของแต่ละ Test Case (Detailed Breakdown):
+#### [Row-1]
+- **Module:** Restricted Good Permit
+- **Function:** ขอใบอนุญาตสินค้า
+- **จำนวน TC:** 55
+- **เวลาประมาณ (ชม.):** 13.75
+
+#### [Row-2]
+- **Module:** Restricted Good Permit
+- **Function:** ขอใบอนุญาตสินค้า (หน้า MGT)
+- **จำนวน TC:** 48
+- **เวลาประมาณ (ชม.):** 12
+
+#### [Row-3]
+- **Module:** Restricted Good Permit
+- **Function:** EzySuite Open API
+- **จำนวน TC:** 8
+- **เวลาประมาณ (ชม.):** 2
+
+#### [Row-4]
+- **Module:** Declaration
+- **Function:** Modify Invoice
+- **จำนวน TC:** 13
+- **เวลาประมาณ (ชม.):** 3.25
+
+#### [Row-5]
+- **Module:** Declaration
+- **Function:** Modify Declaration
+- **จำนวน TC:** 8
+- **เวลาประมาณ (ชม.):** 2
+
+#### [Row-6]
+- **Module:** Declaration
+- **Function:** Modify TIFFA ID
+- **จำนวน TC:** 12
+- **เวลาประมาณ (ชม.):** 3
+
+#### [Row-7]
+- **Module:** Declaration
+- **Function:** Modify Client Information Center
+- **จำนวน TC:** 8
+- **เวลาประมาณ (ชม.):** 2
+
+#### [Row-8]
+- **Module:** Declaration
+- **Function:** Modify Customer Management
+- **จำนวน TC:** 5
+- **เวลาประมาณ (ชม.):** 1.25
+
+#### [Row-9]
+- **Function:** รวม (Total)
+- **จำนวน TC:** 157
+- **เวลาประมาณ (ชม.):** 39.25
+
+
+---
+
+# Sheet: Test Case Permit
+### ข้อมูลทั่วไปของเอกสาร (Document & Project Metadata):
+- Test Case
+- Project Name : | 69A-TIFFA-RGP | Create Date : | 25/09/2569
+- Project ID: | 69A | Start Test Date : | 25/09/2569
+- Tester Name : | Mananchai Sinsuwan | Finish Test Date : | 25/09/2569
+- Project Release / Version : | 13 | Module / Function: | ขอใบอนุญาตสินค้า
+- FUNCTIONAL REQUIREMENTS (Requirements No.) : | REQ0001-REQ0020
+
+### ตารางรายการทดสอบ (Test Cases / Specifications Matrix):
+| Col_1 | Test Case ID | Test Case Objective | Test Step | Test Data | Test Type | Expected Result | Remark | Automate | Req No. | Platforms | Updated By |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+|  | 69AA1001 | สร้าง Draft LPI จากหน้า Invoice โดยกดปุ่มขอใบอนุญาต | 1. สร้าง Invoice ที่มีสินค้า HS Code อยู่ใน Table Permission_Goods (ควบคุมโดย 1 หน่วยงาน) <br> 2. กดปุ่ม "ขอใบอนุญาต" ในหน้า Invoice <br> 3. ตรวจสอบผลลัพธ์ในหน้า Permit | Invoice: สินค้า HS Code ควบคุมโดย อย. 1 รายการ | Positive | ระบบสร้าง Draft LPI สำเร็จ สถานะ Draft (สีเทา) และจัด Group เข้าหน่วยงาน อย. อัตโนมัติ |  | TRUE | REQ0001 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1002 | สร้าง Draft LPI จากหน้าหลัก Restricted Good Permit โดยเลือก Invoice | 1. เข้าหน้าหลัก Restricted Good Permit <br> 2. กดปุ่มสร้าง Draft LPI <br> 3. เลือก Invoice ที่มีสินค้าควบคุม <br> 4. ยืนยันการสร้าง | Invoice ที่มีสินค้าควบคุมและยังไม่เคยสร้าง LPI | Positive | ระบบสร้าง Draft LPI สำเร็จ จัด Group หน่วยงานอัตโนมัติตาม HS Code ถูกต้อง |  | TRUE | REQ0001 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1003 | สร้าง Draft LPI จากใบขน โดยสร้าง Invoice ใน Modal ใบขนแล้วกดขอใบอนุญาต | 1. สร้างใบขนสินค้าขาเข้า <br> 2. เปิด Modal สร้าง Invoice ในใบขน <br> 3. กรอกข้อมูล Invoice ที่มีสินค้าควบคุม <br> 4. กดปุ่ม "ขอใบอนุญาต" ใน Modal Invoice | ใบขนใหม่ + Invoice สินค้าควบคุม 1 รายการ | Positive | ระบบสร้าง Draft LPI สำเร็จจาก Modal ใบขน และผูกกับ Invoice/ใบขนนั้นอัตโนมัติ |  | TRUE | REQ0001 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1004 | สร้าง Draft LPI จาก Invoice ที่มีสินค้าควบคุมโดยหลายหน่วยงาน | 1. สร้าง Invoice ที่มีสินค้า 2 รายการ HS Code ควบคุมคนละหน่วยงาน <br> 2. กดปุ่ม "ขอใบอนุญาต" <br> 3. ตรวจสอบการจัด Group ในหน้า Permit | Invoice: สินค้า A (HS Code ควบคุมโดย อย.), สินค้า B (HS Code ควบคุมโดยหน่วยงานอื่นใน Permission_Goods) | Positive | ระบบจัด Group สินค้าแยกเป็น LPI ตามหน่วยงานที่ตรวจสอบได้จาก Permission_Goods อย่างถูกต้อง ครบทุกหน่วยงาน |  | TRUE | REQ0001 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1005 | สร้าง Draft LPI จาก Invoice ที่ไม่มีสินค้าควบคุมเลย | 1. สร้าง Invoice ที่สินค้าทุกรายการมี HS Code ไม่อยู่ใน Permission_Goods <br> 2. ตรวจสอบปุ่ม "ขอใบอนุญาต" ในหน้า Invoice | Invoice: สินค้าที่ HS Code ไม่อยู่ใน Table Permission_Goods | Negative | ระบบไม่แสดงสินค้ารายการใดให้เลือกขอใบอนุญาตในหน้า Invoice และปุ่ม "ขอใบอนุญาต" ถูก Disable |  | FALSE | REQ0001 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1006 | กดปุ่มขอใบอนุญาตซ้ำสองครั้งติดกันอย่างรวดเร็ว (Double Click) จาก Invoice เดียวกัน | 1. สร้าง Invoice ที่มีสินค้าควบคุม <br> 2. กดปุ่ม "ขอใบอนุญาต" สองครั้งติดกันเร็วๆ <br> 3. ตรวจสอบจำนวน Draft LPI ที่ถูกสร้าง | Invoice ที่มีสินค้าควบคุม 1 รายการ | Negative | ระบบสร้าง Draft LPI เพียง 1 รายการเท่านั้น ไม่เกิด Duplicate LPI จากการกดซ้ำ | Edge Case: Double Submit | FALSE | REQ0001 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1007 | ตรวจสอบ Display Mode Default เมื่อเข้าหน้า Permit ครั้งแรก | 1. Login เข้าระบบ <br> 2. เข้าหน้า Restricted Good Permit ครั้งแรก <br> 3. สังเกต Display Mode ที่แสดง | N/A | Positive | ระบบแสดงผลแบบ Card Group By Authority เป็นค่าเริ่มต้น (Default) |  | FALSE | REQ0002 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1008 | สลับ Display Mode จาก Card เป็น Table | 1. เข้าหน้า Permit (Display Mode: Card) <br> 2. กดสลับเป็น Display Mode แบบ Table <br> 3. ตรวจสอบข้อมูลที่แสดง | N/A | Positive | ระบบแสดงผลแบบตารางซ้อนตาราง โดยมีข้อมูล Invoice No. และหน่วยงานเรียงตามลำดับที่กำหนด |  | FALSE | REQ0002 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1009 | สลับ Display Mode จาก Table กลับเป็น Card Group By Authority | 1. เข้าหน้า Permit และสลับเป็น Display Mode แบบ Table <br> 2. กดสลับกลับเป็น Card <br> 3. ตรวจสอบการจัดกลุ่มข้อมูล | N/A | Positive | ระบบแสดงผลกลับมาเป็น Card จัดกลุ่มตามหน่วยงาน (Authority) ถูกต้องครบถ้วน |  | FALSE | REQ0002 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1010 | ตรวจสอบสถานะ LPI แสดงผลถูกต้อง: Draft (สีเทา) | 1. สร้าง LPI ใหม่ <br> 2. ตรวจสอบสถานะที่แสดงในหน้า Permit | LPI ที่อยู่ในเงื่อนไข: สร้าง LPI ครั้งแรกแล้วยังไม่ส่งคำขอ | Positive | ระบบแสดงสถานะ "Draft (สีเทา)" ถูกต้องตรงตามเงื่อนไข |  | FALSE | REQ0003 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1011 | ตรวจสอบสถานะ LPI แสดงผลถูกต้อง: Sent | 1. กดส่งคำขอ LPI ที่กรอกครบถ้วน <br> 2. ตรวจสอบสถานะที่แสดงในหน้า Permit | LPI ที่อยู่ในเงื่อนไข: ส่ง LPI ไปหาหน่วยงานแล้วรอการตอบกลับ | Positive | ระบบแสดงสถานะ "Sent" ถูกต้องตรงตามเงื่อนไข |  | FALSE | REQ0003 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1012 | ตรวจสอบสถานะ LPI แสดงผลถูกต้อง: Error | 1. จำลองผลตอบกลับ Error จากหน่วยงาน <br> 2. ตรวจสอบสถานะที่แสดงในหน้า Permit | LPI ที่อยู่ในเงื่อนไข: หน่วยงานตอบกลับเป็น Error หรือ Reject | Positive | ระบบแสดงสถานะ "Error" ถูกต้องตรงตามเงื่อนไข |  | FALSE | REQ0003 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1013 | ตรวจสอบสถานะ LPI แสดงผลถูกต้อง: Draft (สีแดง) | 1. แก้ไขข้อมูล LPI ที่มีสถานะ Error โดยยังไม่กดส่ง <br> 2. ตรวจสอบสถานะที่แสดงในหน้า Permit | LPI ที่อยู่ในเงื่อนไข: ได้รับสถานะ Error มาแล้วและแก้ไขข้อมูลแต่ยังไม่ส่งใหม่ | Positive | ระบบแสดงสถานะ "Draft (สีแดง)" ถูกต้องตรงตามเงื่อนไข |  | FALSE | REQ0003 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1014 | ตรวจสอบสถานะ LPI แสดงผลถูกต้อง: Completed | 1. จำลองผลตอบกลับอนุมัติจากหน่วยงาน <br> 2. ตรวจสอบสถานะที่แสดงในหน้า Permit | LPI ที่อยู่ในเงื่อนไข: หน่วยงานตอบกลับว่าผ่านและได้เลขที่ใบอนุญาตแล้ว | Positive | ระบบแสดงสถานะ "Completed" ถูกต้องตรงตามเงื่อนไข |  | FALSE | REQ0003 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1015 | ตรวจสอบสถานะ LPI แสดงผลถูกต้อง: Cancel | 1. กดยกเลิก LPI ที่สถานะ Completed <br> 2. ตรวจสอบสถานะที่แสดงในหน้า Permit | LPI ที่อยู่ในเงื่อนไข: ยกเลิก LPI หลังจากขอใบอนุญาตผ่านแล้ว | Positive | ระบบแสดงสถานะ "Cancel" ถูกต้องตรงตามเงื่อนไข |  | FALSE | REQ0003 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1016 | Filter รายการ LPI ตามสถานะเดียว (Sent) | 1. เข้าหน้า Permit ที่มี LPI หลายสถานะปะปนกัน <br> 2. เลือก Filter สถานะ = Sent <br> 3. ตรวจสอบรายการที่แสดง | LPI อย่างน้อย 1 รายการในแต่ละสถานะ | Positive | ระบบแสดงเฉพาะ LPI ที่มีสถานะ Sent เท่านั้น |  | TRUE | REQ0003 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1017 | Filter รายการ LPI สถานะ Draft ให้ครอบคลุมทั้งสีแดงและสีเทา | 1. เข้าหน้า Permit ที่มี LPI สถานะ Draft ทั้งสีเทาและสีแดง <br> 2. เลือก Filter สถานะ = Draft <br> 3. ตรวจสอบรายการที่แสดง | LPI สถานะ Draft (สีเทา) และ Draft (สีแดง) อย่างน้อยสถานะละ 1 รายการ | Positive | ระบบแสดง LPI สถานะ Draft ทั้งสีเทาและสีแดงรวมกันในผลลัพธ์เดียว |  | TRUE | REQ0003 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1018 | Filter สถานะที่ไม่มีรายการ LPI ตรงเงื่อนไข | 1. เข้าหน้า Permit <br> 2. เลือก Filter สถานะที่ไม่มี LPI อยู่ในสถานะนั้นเลย เช่น Cancel <br> 3. ตรวจสอบผลลัพธ์ | ไม่มี LPI สถานะ Cancel ในระบบขณะทดสอบ | Negative | ระบบแสดงข้อความหรือหน้าจอว่าง "ไม่พบข้อมูล" ไม่มี Error หรือหน้าจอค้าง |  | FALSE | REQ0003 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1019 | ดูรายการสินค้าใน LPI ผ่าน Display Mode แบบ Card | 1. เข้าหน้า Permit (Display Mode: Card) <br> 2. คลิก "ดูรายการสินค้า" ที่ LPI การ์ดใดการ์ดหนึ่ง <br> 3. ตรวจสอบ Modal ที่เปิดขึ้น | LPI ที่มีรายการสินค้าอย่างน้อย 1 รายการ | Positive | ระบบแสดง Modal รายละเอียดสินค้าของ LPI นั้นถูกต้องครบถ้วน |  | TRUE | REQ0004 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1020 | ดูรายการสินค้าใน LPI ผ่าน Display Mode แบบ Table | 1. เข้าหน้า Permit และสลับเป็น Display Mode แบบ Table <br> 2. ตรวจสอบข้อมูลรายการสินค้าที่แสดงในตาราง | LPI ที่มีรายการสินค้าอย่างน้อย 1 รายการ | Positive | ระบบแสดงรายการสินค้าของ LPI ในรูปแบบตารางได้ถูกต้องโดยไม่ต้องเปิด Modal |  | TRUE | REQ0004 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1021 | ส่ง LPI ครบทุกหน่วยงานที่ต้องขอ แล้วตรวจสอบสถานะใน Invoice | 1. สร้าง Draft LPI ที่ถูกจัด Group ครบทุกหน่วยงานที่สินค้าต้องขอ <br> 2. กรอกข้อมูลและส่งคำขอให้ครบทุกหน่วยงาน <br> 3. กลับไปตรวจสอบสถานะการขอใบอนุญาตในหน้า Invoice | Invoice ที่มีสินค้าต้องขอใบอนุญาต 1 หน่วยงาน | Positive | สถานะการขอใบอนุญาตใน Invoice เปลี่ยนเป็น "ขอใบอนุญาตเรียบร้อยแล้ว" |  | TRUE | REQ0005 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1022 | ส่ง LPI เพียงบางหน่วยงาน (ยังไม่ครบ) แล้วตรวจสอบสถานะใน Invoice | 1. สร้าง Draft LPI ที่ถูกจัด Group เป็น 2 หน่วยงานขึ้นไป <br> 2. ส่งคำขอเพียง 1 หน่วยงาน <br> 3. ตรวจสอบสถานะการขอใบอนุญาตในหน้า Invoice | Invoice ที่มีสินค้าต้องขอใบอนุญาต 2 หน่วยงาน | Negative | สถานะการขอใบอนุญาตใน Invoice ยังคงเป็น "ต้องขอใบอนุญาต" จนกว่าจะส่งครบทุกหน่วยงาน |  | TRUE | REQ0005 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1023 | เข้าเว็บไซต์หน่วยงาน อย. ผ่านระบบ (หน่วยงานที่ยื่นผ่านระบบได้ใน Phase นี้) | 1. เข้าหน้า Permit ของ LPI หน่วยงาน อย. <br> 2. ตรวจสอบว่าสามารถยื่นคำขอผ่านระบบได้ปกติโดยไม่ต้องออกเว็บไซต์ภายนอก | LPI หน่วยงาน อย. | Positive | ระบบให้ยื่นขอ LPI หน่วยงาน อย. ผ่านระบบได้ครบกระบวนการ ไม่ต้องออกเว็บไซต์ภายนอก |  | FALSE | REQ0006 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1024 | ตรวจสอบ Link ไปเว็บไซต์หน่วยงานโดยตรง กรณีหน่วยงานที่ระบบยื่นขอ LPI ผ่านไม่ได้ | 1. เข้าหน้า Permit ของ LPI หน่วยงานที่ไม่ใช่ อย. (หน่วยงานที่ระบบยังยื่นผ่านไม่ได้ใน Phase นี้) <br> 2. ตรวจสอบว่าระบบมี Link ให้เข้าเว็บไซต์หน่วยงานนั้นโดยตรง | LPI หน่วยงานอื่นที่ไม่ใช่ อย. | Negative | ระบบแสดง Link ให้เข้าเว็บไซต์หน่วยงานนั้นโดยตรงแทนการยื่นผ่านระบบ | รอ BA ยืนยันรายชื่อหน่วยงานที่รองรับใน Phase นี้ — SRS REQ0006 ระบุไว้กว้างๆ ว่า "เพิ่มรายละเอียดหน่วยงานที่สามารถขอ LPI ได้ และแผนที่จะทำต่อ" ยังไม่ระบุรายชื่อหน่วยงานอื่นที่ชัดเจน | FALSE | REQ0006 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1025 | แสดงสถานะ LPI แยกตามหน่วยงานเมื่อ LPI ถูกส่งหลายหน่วยงาน | 1. สร้าง Draft LPI ที่จัด Group เป็น 2 หน่วยงาน <br> 2. ส่งคำขอหน่วยงานที่ 1 เท่านั้น <br> 3. ตรวจสอบสถานะที่แสดงของแต่ละหน่วยงาน | LPI ที่มี 2 หน่วยงาน (อย. และหน่วยงานอื่นใน Permission_Goods) | Positive | ระบบแสดงสถานะของแต่ละหน่วยงานแยกจากกันอย่างถูกต้อง (หน่วยงานที่ส่งแล้ว = Sent, หน่วยงานที่ยังไม่ส่ง = Draft) |  | TRUE | REQ0007 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1026 | แสดงเลขที่ใบอนุญาตที่หน้าหลักเมื่อ LPI ได้สถานะ Completed | 1. ส่ง LPI จนได้รับผลตอบกลับอนุมัติจากหน่วยงาน (Completed) <br> 2. กลับไปที่หน้าหลัก Permit <br> 3. ตรวจสอบเลขที่ใบอนุญาตที่แสดง | LPI ที่ได้รับอนุมัติแล้ว 1 รายการ | Positive | หน้าหลักแสดงเลขที่ใบอนุญาตของ LPI ที่ได้สถานะ Completed ถูกต้องตรงกับที่หน่วยงานออกให้ |  | TRUE | REQ0008 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1027 | ยกเลิกคำขอ LPI ที่สถานะ Completed | 1. เปิด LPI ที่สถานะ Completed <br> 2. กดปุ่มยกเลิกคำขอ <br> 3. ยืนยันการยกเลิก <br> 4. ตรวจสอบสถานะ LPI, เลขที่ใบอนุญาต และสถานะความพร้อมของใบขน | LPI สถานะ Completed 1 รายการ ผูกกับใบขนที่ยังไม่ถึงสถานะชำระเงินสำเร็จ | Positive | LPI เปลี่ยนเป็นสถานะ Cancel เลขที่ใบอนุญาตเดิมหายไป ระบบแจ้งเตือนให้ขอใบอนุญาตใหม่อีกครั้ง และสถานะความพร้อมของใบขนกลับเป็น "ยังไม่พร้อมส่ง" |  | FALSE | REQ0009 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1028 | พยายามยกเลิกคำขอ LPI ที่สถานะยังไม่ Completed (เช่น Draft หรือ Sent) | 1. เปิด LPI ที่สถานะ Draft หรือ Sent <br> 2. ตรวจสอบปุ่มยกเลิกคำขอ | LPI สถานะ Draft หรือ Sent 1 รายการ | Negative | ปุ่มยกเลิกคำขอถูก Disable หรือไม่แสดง เนื่องจากยกเลิกได้เฉพาะสถานะ Completed เท่านั้น |  | FALSE | REQ0009 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1029 | เพิ่มสินค้าที่ระบบไม่ได้ระบุว่าต้องขอใบอนุญาตเข้าไปใน LPI ด้วยตนเอง | 1. เปิด Invoice ที่มีสินค้าซึ่ง HS Code ไม่ถูกระบุว่าต้องขอใบอนุญาต <br> 2. เลือกสินค้ารายการนั้นเพิ่มเติมเพื่อนำไปขอใบอนุญาต <br> 3. ตรวจสอบว่าสินค้าถูกเพิ่มเข้า LPI | Invoice: สินค้าที่ HS Code ไม่อยู่ใน Permission_Goods 1 รายการ | Positive | ระบบให้เลือกสินค้ารายการนั้นเพิ่มเข้า LPI ได้สำเร็จ แม้ระบบจะไม่ได้ตรวจพบว่าต้องขอใบอนุญาตโดยอัตโนมัติ |  | FALSE | REQ0010 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1030 | พยายามแก้ไข/ยกเลิก LPI ที่ผูกกับใบขนซึ่งยังไม่ถึงสถานะชำระเงินสำเร็จ | 1. สร้าง LPI สถานะ Completed และนำไปผูกกับใบขน <br> 2. ตรวจสอบสถานะใบขน (ยังไม่ถึง "ชำระเงินสำเร็จ") <br> 3. เปิด LPI แล้วลองยกเลิก/แก้ไข | ใบขนสถานะก่อน "ชำระเงินสำเร็จ" (เช่น รอตรวจปล่อย) | Positive | ระบบยังให้ยกเลิก/แก้ไข LPI ได้ตามปกติ เนื่องจากใบขนยังไม่ถึงสถานะชำระเงินสำเร็จ |  | FALSE | REQ0011 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1031 | พยายามยกเลิก/แก้ไข LPI ที่ผูกกับใบขนซึ่งมีสถานะชำระเงินสำเร็จแล้ว | 1. สร้าง LPI สถานะ Completed และนำไปผูกกับใบขน <br> 2. ดำเนินการใบขนจนได้สถานะ "ชำระเงินสำเร็จ" <br> 3. เปิด LPI แล้วลองยกเลิก/แก้ไข | ใบขนสถานะ "ชำระเงินสำเร็จ" | Negative | ระบบไม่อนุญาตให้ยกเลิกหรือแก้ไข LPI นั้น พร้อมแจ้งเตือนเหตุผล |  | FALSE | REQ0011 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1032 | ยกเลิกใบขนที่มีสถานะชำระเงินสำเร็จแล้ว (ใบขนเปลี่ยนเป็นสถานะ Cancel) แล้วตรวจสอบ LPI ที่ผูกอยู่ | 1. LPI สถานะ Completed ผูกกับใบขนที่สถานะชำระเงินสำเร็จแล้ว <br> 2. ยกเลิกใบขนนั้น (Declaration Cancel) <br> 3. ตรวจสอบเลขที่ LPI ในใบขนที่ถูกยกเลิก <br> 4. นำเลขที่ LPI เดิมไปใช้กับใบขนอื่น | ใบขนสถานะชำระเงินสำเร็จ ที่ถูกยกเลิก (Cancel) | Positive | เลขที่ LPI ยังคงอยู่ในใบขนที่ถูกยกเลิกเพื่อเก็บเป็นประวัติ และสามารถนำเลขที่ LPI เดิมไปใช้กับใบขนอื่นได้ | แก้ไขจาก v11: เงื่อนไข Lock คือใบขนถึงสถานะ "ชำระเงินสำเร็จ" (ไม่ใช่สถานะ 02) ตาม REQ0011 | FALSE | REQ0011 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1033 | ดูเอกสารตอบกลับจากหน่วยงานที่ส่งผ่าน Ezybus เข้า EzySuite | 1. เปิด LPI ที่ได้รับเอกสารตอบกลับจากหน่วยงานแล้ว <br> 2. กดดูเอกสารตอบกลับ <br> 3. ตรวจสอบเนื้อหาเอกสาร | LPI ที่มีเอกสารตอบกลับจากหน่วยงานเข้าระบบแล้ว | Positive | ระบบแสดง/เปิดเอกสารตอบกลับที่ถูกส่งจากหน่วยงานผ่าน Ezybus เข้า EzySuite ได้ถูกต้อง |  | FALSE | REQ0012 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1034 | ดูเอกสารตอบกลับของ LPI ที่ยังไม่มีเอกสารตอบกลับส่งเข้ามา | 1. เปิด LPI สถานะ Sent ที่ยังไม่มีเอกสารตอบกลับ <br> 2. ตรวจสอบปุ่ม/ส่วนแสดงเอกสารตอบกลับ | LPI สถานะ Sent ที่ยังไม่มีเอกสารตอบกลับ | Negative | ระบบแสดงข้อความว่ายังไม่มีเอกสารตอบกลับ ไม่ Error หรือแสดงเอกสารว่างเปล่า |  | FALSE | REQ0012 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1035 | ตรวจสอบหน้า Invoice ที่ไม่มี Menu ขอใบอนุญาต (Quotation ไม่มีเมนูนี้) | 1. เปิด Invoice ที่สร้างจาก Quotation ที่ไม่มี Menu ขอใบอนุญาต <br> 2. ตรวจสอบว่ามีการแจ้งเตือนต้องขอใบอนุญาตหรือไม่ <br> 3. ตรวจสอบปุ่ม "+ใบอนุญาต" | Invoice จาก Quotation ที่ไม่มี Menu ขอใบอนุญาต | Positive | หน้า Invoice ไม่แสดงแจ้งเตือนต้องขอใบอนุญาต และมีปุ่ม "+ใบอนุญาต" ให้กรอกเลขใบอนุญาตและเลือกหน่วยงานได้เอง |  | FALSE | REQ0013 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1036 | ตรวจสอบหน้า Declaration ที่ไม่มี Menu ขอใบอนุญาต (Quotation ไม่มีเมนูนี้) | 1. เปิด Declaration ที่ผูกกับ Invoice จาก Quotation ที่ไม่มี Menu ขอใบอนุญาต <br> 2. ตรวจสอบว่ามีการแจ้งเตือนต้องขอใบอนุญาตหรือไม่ <br> 3. ตรวจสอบปุ่ม "+ใบอนุญาต" | Declaration จาก Quotation ที่ไม่มี Menu ขอใบอนุญาต | Positive | หน้า Declaration ไม่แสดงแจ้งเตือนต้องขอใบอนุญาต และมีปุ่ม "+ใบอนุญาต" ให้กรอกเลขใบอนุญาตและเลือกหน่วยงานได้เอง |  | FALSE | REQ0013 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1037 | กรอกเลขใบอนุญาตผ่านปุ่ม "+ใบอนุญาต" ด้วยข้อมูลว่าง | 1. เปิด Invoice ที่ไม่มี Menu ขอใบอนุญาต <br> 2. กดปุ่ม "+ใบอนุญาต" <br> 3. ไม่กรอกเลขใบอนุญาตและไม่เลือกหน่วยงาน แล้วกดบันทึก | เลขใบอนุญาต: (ว่าง), หน่วยงาน: (ไม่เลือก) | Negative | ระบบแจ้งเตือนให้กรอกเลขใบอนุญาตและเลือกหน่วยงานก่อนบันทึก ไม่บันทึกข้อมูลว่าง |  | FALSE | REQ0013 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1038 | ตรวจสอบสิทธิ์การใช้งานของบุคคลภายนอกที่ TIFFA สร้างบริษัทแยกให้ตาม Zoho Sync | 1. Login ด้วยบัญชีบุคคลภายนอกที่ TIFFA สร้างบริษัทแยกให้ <br> 2. ตรวจสอบ Quotation และสิทธิ์การใช้งาน Feature ขอใบอนุญาต | Account บุคคลภายนอกที่ได้รับ Quotation มอบสิทธิ์จาก Zoho Sync | Positive | ระบบให้สิทธิ์การใช้งานตรงตาม Quotation ที่ได้รับจากการ Sync Zoho ถูกต้อง |  | FALSE | REQ0014 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1039 | ขอใบอนุญาตกรณีพิเศษสำหรับสินค้าที่ระบบตรวจสอบแล้วว่าไม่ต้องขอใบอนุญาต | 1. เปิด Invoice ที่มีสินค้า HS Code ไม่อยู่ใน Permission_Goods <br> 2. คลิก "เพิ่มรายการขอ LPI (กรณีพิเศษ)" <br> 3. ตรวจสอบว่าสามารถเริ่มขอใบอนุญาตให้สินค้ารายการนั้นได้ | Invoice: สินค้าที่ระบบตรวจสอบแล้วไม่ต้องขอใบอนุญาต | Positive | ระบบอนุญาตให้เริ่มขอใบอนุญาตกรณีพิเศษสำหรับสินค้ารายการนั้นได้ แม้ระบบจะตรวจสอบว่าไม่ต้องขอ |  | FALSE | REQ0015 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1040 | เลือกสินค้าและหน่วยงานมากกว่า 1 รายการใน Modal เพิ่มรายการขอ LPI (กรณีพิเศษ) | 1. คลิก "เพิ่มรายการขอ LPI (กรณีพิเศษ)" <br> 2. เลือกสินค้า 2 รายการขึ้นไปใน Modal <br> 3. เลือกหน่วยงาน 2 หน่วยงานขึ้นไป <br> 4. กดบันทึก | Invoice ที่มีสินค้าอย่างน้อย 2 รายการ, หน่วยงานให้เลือกอย่างน้อย 2 หน่วยงาน | Positive | ระบบบันทึกสำเร็จ และนำสินค้าทั้งหมดที่เลือกไปเพิ่มในหน่วยงานที่เลือกไว้ครบถ้วน |  | TRUE | REQ0016 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1041 | เปิด Modal เพิ่มรายการขอ LPI (กรณีพิเศษ) โดยไม่เลือกสินค้าและไม่เลือกหน่วยงาน | 1. คลิก "เพิ่มรายการขอ LPI (กรณีพิเศษ)" <br> 2. ไม่เลือกสินค้าและไม่เลือกหน่วยงาน <br> 3. กดบันทึก | สินค้าที่เลือก: ไม่มี, หน่วยงานที่เลือก: ไม่มี | Negative | ระบบแจ้งเตือนให้เลือกสินค้าและหน่วยงานอย่างน้อย 1 รายการ ไม่บันทึกข้อมูลว่าง |  | FALSE | REQ0016 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1042 | บันทึก Modal กรณีพิเศษด้วยสินค้าที่มีลำดับรายการซ้ำกับที่มีอยู่แล้วในหน่วยงานเดียวกัน | 1. เปิด Modal เพิ่มรายการขอ LPI (กรณีพิเศษ) <br> 2. เลือกสินค้าที่ลำดับรายการนั้นถูกเพิ่มในหน่วยงานเดียวกันไว้แล้ว <br> 3. กดบันทึก | สินค้าลำดับที่ถูกเพิ่มในหน่วยงาน อย. ไว้แล้วก่อนหน้านี้ | Negative | ระบบแสดงข้อความแจ้งเตือน "ไม่สามารถบันทึกได้ สินค้าที่เลือกเพิ่มในหน่วยงาน พบรายการซ้ำกัน" และไม่บันทึกข้อมูล |  | TRUE | REQ0017 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1043 | ตรวจสอบรูปแบบเลข Draft No. ที่ระบบ Generate ให้เมื่อบันทึก LPI ครั้งแรก (Invoice ขาเข้า) | 1. สร้าง Draft LPI จาก Invoice ประเภทขาเข้า (Import) <br> 2. บันทึกครั้งแรก <br> 3. ตรวจสอบรูปแบบเลข Draft No. | Invoice ประเภท Import | Positive | ระบบ Generate เลข Draft No. รูปแบบ DF-LIYYMMDDXXXXXX ถูกต้อง (เช่น DF-LI260924000001) โดย XXXXXX เริ่มจาก 000001 และเรียงลำดับต่อเนื่อง |  | TRUE | REQ0018 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1044 | ตรวจสอบรูปแบบเลข Draft No. สำหรับ Invoice ขาออก (Export) | 1. สร้าง Draft LPI จาก Invoice ประเภทขาออก (Export) <br> 2. บันทึกครั้งแรก <br> 3. ตรวจสอบรูปแบบเลข Draft No. | Invoice ประเภท Export | Positive | ระบบ Generate เลข Draft No. รูปแบบ DF-LEYYMMDDXXXXXX ถูกต้อง (เช่น DF-LE260924000001) |  | TRUE | REQ0018 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1045 | ตรวจสอบ Run Number ของ Draft No. ไม่ซ้ำกันเมื่อสร้าง LPI หลายรายการในวันเดียวกัน | 1. สร้าง Draft LPI รายการที่ 1 ในวันเดียวกัน <br> 2. สร้าง Draft LPI รายการที่ 2 ในวันเดียวกัน <br> 3. เปรียบเทียบ Run Number (XXXXXX) ของทั้งสองรายการ | Draft LPI 2 รายการ วันที่เดียวกัน ประเภท Invoice เดียวกัน | Positive | Run Number เรียงลำดับต่อเนื่องไม่ซ้ำกัน (เช่น 000001 และ 000002) |  | FALSE | REQ0018 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1046 | ส่งคำขอ LPI ใหม่อีกครั้งจากเลขที่ LPI เดิมที่ถูก Cancel โดย Copy Version ล่าสุด | 1. เปิด LPI ที่สถานะ Cancel <br> 2. กดปุ่มส่งคำขออีกครั้ง (Copy Version ล่าสุด) <br> 3. ตรวจสอบข้อมูลตั้งต้นที่ระบบสร้างให้ <br> 4. แก้ไขข้อมูลตามต้องการแล้วส่งคำขอใหม่ | LPI สถานะ Cancel ที่มีประวัติ Version ก่อนหน้า | Positive | ระบบสร้าง LPI ของหน่วยงานนั้นใหม่โดยใช้ข้อมูลจาก Version ล่าสุดเป็นค่าตั้งต้น สามารถแก้ไขและส่งคำขอใหม่ได้สำเร็จ |  | FALSE | REQ0019 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1047 | ตรวจสอบเลขที่ LPI เดิมยังคงแสดงในประวัติหลังถูก Cancel | 1. ยกเลิก LPI ที่สถานะ Completed <br> 2. ตรวจสอบเลขที่ LPI เดิมในหน้า Timeline/ประวัติ | LPI ที่เพิ่งถูกยกเลิก | Positive | เลขที่ LPI เดิมยังคงปรากฏในประวัติเพื่อการอ้างอิง ไม่ถูกลบทิ้ง |  | FALSE | REQ0019 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1048 | ออกฟอร์มเอกสารใบอนุญาตเมื่อ LPI สถานะ Completed | 1. เปิด LPI สถานะ Completed <br> 2. กดปุ่มออกฟอร์มเอกสารใบอนุญาต (Print/Export) <br> 3. ตรวจสอบเอกสารที่ได้ | LPI สถานะ Completed 1 รายการ | Positive | ระบบออกฟอร์มเอกสารใบอนุญาตได้ถูกต้องครบถ้วนตามข้อมูล LPI นั้น |  | TRUE | REQ0020 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1049 | ออกฟอร์มเอกสารยกเลิกใบอนุญาตเมื่อ LPI สถานะ Cancel | 1. เปิด LPI สถานะ Cancel <br> 2. กดปุ่มออกฟอร์มเอกสารยกเลิกใบอนุญาต <br> 3. ตรวจสอบเอกสารที่ได้ | LPI สถานะ Cancel 1 รายการ | Positive | ระบบออกฟอร์มเอกสารยกเลิกใบอนุญาตได้ถูกต้องครบถ้วน |  | TRUE | REQ0020 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1050 | พยายามออกฟอร์มเอกสารใบอนุญาตเมื่อ LPI ยังไม่ถึงสถานะ Completed | 1. เปิด LPI สถานะ Draft หรือ Sent <br> 2. ตรวจสอบปุ่มออกฟอร์มเอกสารใบอนุญาต | LPI สถานะ Draft หรือ Sent | Negative | ปุ่มออกฟอร์มเอกสารใบอนุญาตถูก Disable หรือไม่แสดง เนื่องจากยังไม่ได้สถานะ Completed |  | FALSE | REQ0020 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1058 | เข้าหน้า Permit ด้วยบัญชีที่ไม่มีสิทธิ์เข้าถึง Module Restricted Good Permit | 1. Login ด้วยบัญชีที่ไม่ได้รับสิทธิ์ Module นี้ <br> 2. พยายามเข้าหน้า Restricted Good Permit ผ่าน URL โดยตรง | Account ที่ไม่มีสิทธิ์เข้า Module Restricted Good Permit | Negative | ระบบปฏิเสธการเข้าถึงและแสดงข้อความแจ้งเตือนไม่มีสิทธิ์ (Access Denied) ไม่แสดงข้อมูล LPI ใดๆ |  | FALSE | REQ0003 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1059 | Session หมดอายุขณะกำลังกรอกและส่งคำขอ LPI | 1. เปิดหน้า Permit และเริ่มกรอกข้อมูลเพื่อส่งคำขอ LPI <br> 2. ปล่อยให้ Session หมดอายุระหว่างกรอกข้อมูล <br> 3. กดส่งคำขอ | Session Timeout ระหว่างทำรายการ | Negative | ระบบแจ้งเตือนให้ Login ใหม่ก่อนดำเนินการต่อ และไม่มีการส่งข้อมูล LPI ที่ยังไม่สมบูรณ์เข้าสู่ระบบ | Edge Case: Session Expiry | FALSE | REQ0018 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1060 | โหลดหน้า Permit ที่มีรายการ LPI มากกว่า 100 รายการ | 1. เข้าหน้า Permit ที่มี LPI มากกว่า 100 รายการในระบบ <br> 2. จับเวลาการโหลดหน้าจนกว่าข้อมูลจะแสดงครบ | LPI มากกว่า 100 รายการ | Negative | หน้าจอโหลดข้อมูลสำเร็จภายในเวลาที่เหมาะสม (ไม่เกิน 3 วินาที) ไม่มีข้อมูลตกหล่นหรือหน้าจอค้าง | Edge Case: Performance | FALSE | REQ0003 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1061 | สองผู้ใช้กดส่งคำขอ LPI เดียวกันพร้อมกัน (Concurrent) | 1. เปิด LPI Draft เดียวกันด้วยผู้ใช้ 2 คนพร้อมกันคนละเครื่อง <br> 2. ทั้งสองคนกดส่งคำขอพร้อมกัน <br> 3. ตรวจสอบผลลัพธ์และสถานะ LPI | LPI Draft 1 รายการ เปิดพร้อมกัน 2 Session | Negative | ระบบส่งคำขอสำเร็จเพียงครั้งเดียว ผู้ใช้อีกคนได้รับแจ้งเตือนว่าข้อมูลถูกอัปเดต/ส่งไปแล้ว ไม่เกิดการส่งซ้ำซ้อน | Edge Case: Concurrent Request | FALSE | REQ0001 | Web Application | Mananchai Sinsuwan |
+|  | 69AA1062 | ลบ Invoice ต้นทางที่มี Draft LPI ผูกอยู่ (Cascade Effect) | 1. สร้าง Draft LPI จาก Invoice <br> 2. กลับไปที่ Invoice ต้นทางแล้วพยายามลบ Invoice นั้น <br> 3. ตรวจสอบผลลัพธ์ | Invoice ที่มี Draft LPI ผูกอยู่แล้ว | Negative | ระบบป้องกันการลบ Invoice ที่มี LPI ผูกอยู่ หรือแจ้งเตือนผลกระทบที่จะเกิดกับ LPI ก่อนยืนยันการลบ | Edge Case: Cascade Effect | FALSE | REQ0001 | Web Application | Mananchai Sinsuwan |
+
+### รายละเอียดของแต่ละ Test Case (Detailed Breakdown):
+#### [69AA1001]
+- **Test Case ID:** 69AA1001
+- **Test Case Objective:** สร้าง Draft LPI จากหน้า Invoice โดยกดปุ่มขอใบอนุญาต
+- **Test Step:** 1. สร้าง Invoice ที่มีสินค้า HS Code อยู่ใน Table Permission_Goods (ควบคุมโดย 1 หน่วยงาน)
+2. กดปุ่ม "ขอใบอนุญาต" ในหน้า Invoice
+3. ตรวจสอบผลลัพธ์ในหน้า Permit
+- **Test Data:** Invoice: สินค้า HS Code ควบคุมโดย อย. 1 รายการ
+- **Test Type:** Positive
+- **Expected Result:** ระบบสร้าง Draft LPI สำเร็จ สถานะ Draft (สีเทา) และจัด Group เข้าหน่วยงาน อย. อัตโนมัติ
+- **Automate:** TRUE
+- **Req No.:** REQ0001
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1002]
+- **Test Case ID:** 69AA1002
+- **Test Case Objective:** สร้าง Draft LPI จากหน้าหลัก Restricted Good Permit โดยเลือก Invoice
+- **Test Step:** 1. เข้าหน้าหลัก Restricted Good Permit
+2. กดปุ่มสร้าง Draft LPI
+3. เลือก Invoice ที่มีสินค้าควบคุม
+4. ยืนยันการสร้าง
+- **Test Data:** Invoice ที่มีสินค้าควบคุมและยังไม่เคยสร้าง LPI
+- **Test Type:** Positive
+- **Expected Result:** ระบบสร้าง Draft LPI สำเร็จ จัด Group หน่วยงานอัตโนมัติตาม HS Code ถูกต้อง
+- **Automate:** TRUE
+- **Req No.:** REQ0001
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1003]
+- **Test Case ID:** 69AA1003
+- **Test Case Objective:** สร้าง Draft LPI จากใบขน โดยสร้าง Invoice ใน Modal ใบขนแล้วกดขอใบอนุญาต
+- **Test Step:** 1. สร้างใบขนสินค้าขาเข้า
+2. เปิด Modal สร้าง Invoice ในใบขน
+3. กรอกข้อมูล Invoice ที่มีสินค้าควบคุม
+4. กดปุ่ม "ขอใบอนุญาต" ใน Modal Invoice
+- **Test Data:** ใบขนใหม่ + Invoice สินค้าควบคุม 1 รายการ
+- **Test Type:** Positive
+- **Expected Result:** ระบบสร้าง Draft LPI สำเร็จจาก Modal ใบขน และผูกกับ Invoice/ใบขนนั้นอัตโนมัติ
+- **Automate:** TRUE
+- **Req No.:** REQ0001
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1004]
+- **Test Case ID:** 69AA1004
+- **Test Case Objective:** สร้าง Draft LPI จาก Invoice ที่มีสินค้าควบคุมโดยหลายหน่วยงาน
+- **Test Step:** 1. สร้าง Invoice ที่มีสินค้า 2 รายการ HS Code ควบคุมคนละหน่วยงาน
+2. กดปุ่ม "ขอใบอนุญาต"
+3. ตรวจสอบการจัด Group ในหน้า Permit
+- **Test Data:** Invoice: สินค้า A (HS Code ควบคุมโดย อย.), สินค้า B (HS Code ควบคุมโดยหน่วยงานอื่นใน Permission_Goods)
+- **Test Type:** Positive
+- **Expected Result:** ระบบจัด Group สินค้าแยกเป็น LPI ตามหน่วยงานที่ตรวจสอบได้จาก Permission_Goods อย่างถูกต้อง ครบทุกหน่วยงาน
+- **Automate:** TRUE
+- **Req No.:** REQ0001
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1005]
+- **Test Case ID:** 69AA1005
+- **Test Case Objective:** สร้าง Draft LPI จาก Invoice ที่ไม่มีสินค้าควบคุมเลย
+- **Test Step:** 1. สร้าง Invoice ที่สินค้าทุกรายการมี HS Code ไม่อยู่ใน Permission_Goods
+2. ตรวจสอบปุ่ม "ขอใบอนุญาต" ในหน้า Invoice
+- **Test Data:** Invoice: สินค้าที่ HS Code ไม่อยู่ใน Table Permission_Goods
+- **Test Type:** Negative
+- **Expected Result:** ระบบไม่แสดงสินค้ารายการใดให้เลือกขอใบอนุญาตในหน้า Invoice และปุ่ม "ขอใบอนุญาต" ถูก Disable
+- **Automate:** FALSE
+- **Req No.:** REQ0001
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1006]
+- **Test Case ID:** 69AA1006
+- **Test Case Objective:** กดปุ่มขอใบอนุญาตซ้ำสองครั้งติดกันอย่างรวดเร็ว (Double Click) จาก Invoice เดียวกัน
+- **Test Step:** 1. สร้าง Invoice ที่มีสินค้าควบคุม
+2. กดปุ่ม "ขอใบอนุญาต" สองครั้งติดกันเร็วๆ
+3. ตรวจสอบจำนวน Draft LPI ที่ถูกสร้าง
+- **Test Data:** Invoice ที่มีสินค้าควบคุม 1 รายการ
+- **Test Type:** Negative
+- **Expected Result:** ระบบสร้าง Draft LPI เพียง 1 รายการเท่านั้น ไม่เกิด Duplicate LPI จากการกดซ้ำ
+- **Remark:** Edge Case: Double Submit
+- **Automate:** FALSE
+- **Req No.:** REQ0001
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1007]
+- **Test Case ID:** 69AA1007
+- **Test Case Objective:** ตรวจสอบ Display Mode Default เมื่อเข้าหน้า Permit ครั้งแรก
+- **Test Step:** 1. Login เข้าระบบ
+2. เข้าหน้า Restricted Good Permit ครั้งแรก
+3. สังเกต Display Mode ที่แสดง
+- **Test Data:** N/A
+- **Test Type:** Positive
+- **Expected Result:** ระบบแสดงผลแบบ Card Group By Authority เป็นค่าเริ่มต้น (Default)
+- **Automate:** FALSE
+- **Req No.:** REQ0002
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1008]
+- **Test Case ID:** 69AA1008
+- **Test Case Objective:** สลับ Display Mode จาก Card เป็น Table
+- **Test Step:** 1. เข้าหน้า Permit (Display Mode: Card)
+2. กดสลับเป็น Display Mode แบบ Table
+3. ตรวจสอบข้อมูลที่แสดง
+- **Test Data:** N/A
+- **Test Type:** Positive
+- **Expected Result:** ระบบแสดงผลแบบตารางซ้อนตาราง โดยมีข้อมูล Invoice No. และหน่วยงานเรียงตามลำดับที่กำหนด
+- **Automate:** FALSE
+- **Req No.:** REQ0002
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1009]
+- **Test Case ID:** 69AA1009
+- **Test Case Objective:** สลับ Display Mode จาก Table กลับเป็น Card Group By Authority
+- **Test Step:** 1. เข้าหน้า Permit และสลับเป็น Display Mode แบบ Table
+2. กดสลับกลับเป็น Card
+3. ตรวจสอบการจัดกลุ่มข้อมูล
+- **Test Data:** N/A
+- **Test Type:** Positive
+- **Expected Result:** ระบบแสดงผลกลับมาเป็น Card จัดกลุ่มตามหน่วยงาน (Authority) ถูกต้องครบถ้วน
+- **Automate:** FALSE
+- **Req No.:** REQ0002
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1010]
+- **Test Case ID:** 69AA1010
+- **Test Case Objective:** ตรวจสอบสถานะ LPI แสดงผลถูกต้อง: Draft (สีเทา)
+- **Test Step:** 1. สร้าง LPI ใหม่
+2. ตรวจสอบสถานะที่แสดงในหน้า Permit
+- **Test Data:** LPI ที่อยู่ในเงื่อนไข: สร้าง LPI ครั้งแรกแล้วยังไม่ส่งคำขอ
+- **Test Type:** Positive
+- **Expected Result:** ระบบแสดงสถานะ "Draft (สีเทา)" ถูกต้องตรงตามเงื่อนไข
+- **Automate:** FALSE
+- **Req No.:** REQ0003
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1011]
+- **Test Case ID:** 69AA1011
+- **Test Case Objective:** ตรวจสอบสถานะ LPI แสดงผลถูกต้อง: Sent
+- **Test Step:** 1. กดส่งคำขอ LPI ที่กรอกครบถ้วน
+2. ตรวจสอบสถานะที่แสดงในหน้า Permit
+- **Test Data:** LPI ที่อยู่ในเงื่อนไข: ส่ง LPI ไปหาหน่วยงานแล้วรอการตอบกลับ
+- **Test Type:** Positive
+- **Expected Result:** ระบบแสดงสถานะ "Sent" ถูกต้องตรงตามเงื่อนไข
+- **Automate:** FALSE
+- **Req No.:** REQ0003
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1012]
+- **Test Case ID:** 69AA1012
+- **Test Case Objective:** ตรวจสอบสถานะ LPI แสดงผลถูกต้อง: Error
+- **Test Step:** 1. จำลองผลตอบกลับ Error จากหน่วยงาน
+2. ตรวจสอบสถานะที่แสดงในหน้า Permit
+- **Test Data:** LPI ที่อยู่ในเงื่อนไข: หน่วยงานตอบกลับเป็น Error หรือ Reject
+- **Test Type:** Positive
+- **Expected Result:** ระบบแสดงสถานะ "Error" ถูกต้องตรงตามเงื่อนไข
+- **Automate:** FALSE
+- **Req No.:** REQ0003
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1013]
+- **Test Case ID:** 69AA1013
+- **Test Case Objective:** ตรวจสอบสถานะ LPI แสดงผลถูกต้อง: Draft (สีแดง)
+- **Test Step:** 1. แก้ไขข้อมูล LPI ที่มีสถานะ Error โดยยังไม่กดส่ง
+2. ตรวจสอบสถานะที่แสดงในหน้า Permit
+- **Test Data:** LPI ที่อยู่ในเงื่อนไข: ได้รับสถานะ Error มาแล้วและแก้ไขข้อมูลแต่ยังไม่ส่งใหม่
+- **Test Type:** Positive
+- **Expected Result:** ระบบแสดงสถานะ "Draft (สีแดง)" ถูกต้องตรงตามเงื่อนไข
+- **Automate:** FALSE
+- **Req No.:** REQ0003
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1014]
+- **Test Case ID:** 69AA1014
+- **Test Case Objective:** ตรวจสอบสถานะ LPI แสดงผลถูกต้อง: Completed
+- **Test Step:** 1. จำลองผลตอบกลับอนุมัติจากหน่วยงาน
+2. ตรวจสอบสถานะที่แสดงในหน้า Permit
+- **Test Data:** LPI ที่อยู่ในเงื่อนไข: หน่วยงานตอบกลับว่าผ่านและได้เลขที่ใบอนุญาตแล้ว
+- **Test Type:** Positive
+- **Expected Result:** ระบบแสดงสถานะ "Completed" ถูกต้องตรงตามเงื่อนไข
+- **Automate:** FALSE
+- **Req No.:** REQ0003
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1015]
+- **Test Case ID:** 69AA1015
+- **Test Case Objective:** ตรวจสอบสถานะ LPI แสดงผลถูกต้อง: Cancel
+- **Test Step:** 1. กดยกเลิก LPI ที่สถานะ Completed
+2. ตรวจสอบสถานะที่แสดงในหน้า Permit
+- **Test Data:** LPI ที่อยู่ในเงื่อนไข: ยกเลิก LPI หลังจากขอใบอนุญาตผ่านแล้ว
+- **Test Type:** Positive
+- **Expected Result:** ระบบแสดงสถานะ "Cancel" ถูกต้องตรงตามเงื่อนไข
+- **Automate:** FALSE
+- **Req No.:** REQ0003
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1016]
+- **Test Case ID:** 69AA1016
+- **Test Case Objective:** Filter รายการ LPI ตามสถานะเดียว (Sent)
+- **Test Step:** 1. เข้าหน้า Permit ที่มี LPI หลายสถานะปะปนกัน
+2. เลือก Filter สถานะ = Sent
+3. ตรวจสอบรายการที่แสดง
+- **Test Data:** LPI อย่างน้อย 1 รายการในแต่ละสถานะ
+- **Test Type:** Positive
+- **Expected Result:** ระบบแสดงเฉพาะ LPI ที่มีสถานะ Sent เท่านั้น
+- **Automate:** TRUE
+- **Req No.:** REQ0003
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1017]
+- **Test Case ID:** 69AA1017
+- **Test Case Objective:** Filter รายการ LPI สถานะ Draft ให้ครอบคลุมทั้งสีแดงและสีเทา
+- **Test Step:** 1. เข้าหน้า Permit ที่มี LPI สถานะ Draft ทั้งสีเทาและสีแดง
+2. เลือก Filter สถานะ = Draft
+3. ตรวจสอบรายการที่แสดง
+- **Test Data:** LPI สถานะ Draft (สีเทา) และ Draft (สีแดง) อย่างน้อยสถานะละ 1 รายการ
+- **Test Type:** Positive
+- **Expected Result:** ระบบแสดง LPI สถานะ Draft ทั้งสีเทาและสีแดงรวมกันในผลลัพธ์เดียว
+- **Automate:** TRUE
+- **Req No.:** REQ0003
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1018]
+- **Test Case ID:** 69AA1018
+- **Test Case Objective:** Filter สถานะที่ไม่มีรายการ LPI ตรงเงื่อนไข
+- **Test Step:** 1. เข้าหน้า Permit
+2. เลือก Filter สถานะที่ไม่มี LPI อยู่ในสถานะนั้นเลย เช่น Cancel
+3. ตรวจสอบผลลัพธ์
+- **Test Data:** ไม่มี LPI สถานะ Cancel ในระบบขณะทดสอบ
+- **Test Type:** Negative
+- **Expected Result:** ระบบแสดงข้อความหรือหน้าจอว่าง "ไม่พบข้อมูล" ไม่มี Error หรือหน้าจอค้าง
+- **Automate:** FALSE
+- **Req No.:** REQ0003
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1019]
+- **Test Case ID:** 69AA1019
+- **Test Case Objective:** ดูรายการสินค้าใน LPI ผ่าน Display Mode แบบ Card
+- **Test Step:** 1. เข้าหน้า Permit (Display Mode: Card)
+2. คลิก "ดูรายการสินค้า" ที่ LPI การ์ดใดการ์ดหนึ่ง
+3. ตรวจสอบ Modal ที่เปิดขึ้น
+- **Test Data:** LPI ที่มีรายการสินค้าอย่างน้อย 1 รายการ
+- **Test Type:** Positive
+- **Expected Result:** ระบบแสดง Modal รายละเอียดสินค้าของ LPI นั้นถูกต้องครบถ้วน
+- **Automate:** TRUE
+- **Req No.:** REQ0004
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1020]
+- **Test Case ID:** 69AA1020
+- **Test Case Objective:** ดูรายการสินค้าใน LPI ผ่าน Display Mode แบบ Table
+- **Test Step:** 1. เข้าหน้า Permit และสลับเป็น Display Mode แบบ Table
+2. ตรวจสอบข้อมูลรายการสินค้าที่แสดงในตาราง
+- **Test Data:** LPI ที่มีรายการสินค้าอย่างน้อย 1 รายการ
+- **Test Type:** Positive
+- **Expected Result:** ระบบแสดงรายการสินค้าของ LPI ในรูปแบบตารางได้ถูกต้องโดยไม่ต้องเปิด Modal
+- **Automate:** TRUE
+- **Req No.:** REQ0004
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1021]
+- **Test Case ID:** 69AA1021
+- **Test Case Objective:** ส่ง LPI ครบทุกหน่วยงานที่ต้องขอ แล้วตรวจสอบสถานะใน Invoice
+- **Test Step:** 1. สร้าง Draft LPI ที่ถูกจัด Group ครบทุกหน่วยงานที่สินค้าต้องขอ
+2. กรอกข้อมูลและส่งคำขอให้ครบทุกหน่วยงาน
+3. กลับไปตรวจสอบสถานะการขอใบอนุญาตในหน้า Invoice
+- **Test Data:** Invoice ที่มีสินค้าต้องขอใบอนุญาต 1 หน่วยงาน
+- **Test Type:** Positive
+- **Expected Result:** สถานะการขอใบอนุญาตใน Invoice เปลี่ยนเป็น "ขอใบอนุญาตเรียบร้อยแล้ว"
+- **Automate:** TRUE
+- **Req No.:** REQ0005
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1022]
+- **Test Case ID:** 69AA1022
+- **Test Case Objective:** ส่ง LPI เพียงบางหน่วยงาน (ยังไม่ครบ) แล้วตรวจสอบสถานะใน Invoice
+- **Test Step:** 1. สร้าง Draft LPI ที่ถูกจัด Group เป็น 2 หน่วยงานขึ้นไป
+2. ส่งคำขอเพียง 1 หน่วยงาน
+3. ตรวจสอบสถานะการขอใบอนุญาตในหน้า Invoice
+- **Test Data:** Invoice ที่มีสินค้าต้องขอใบอนุญาต 2 หน่วยงาน
+- **Test Type:** Negative
+- **Expected Result:** สถานะการขอใบอนุญาตใน Invoice ยังคงเป็น "ต้องขอใบอนุญาต" จนกว่าจะส่งครบทุกหน่วยงาน
+- **Automate:** TRUE
+- **Req No.:** REQ0005
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1023]
+- **Test Case ID:** 69AA1023
+- **Test Case Objective:** เข้าเว็บไซต์หน่วยงาน อย. ผ่านระบบ (หน่วยงานที่ยื่นผ่านระบบได้ใน Phase นี้)
+- **Test Step:** 1. เข้าหน้า Permit ของ LPI หน่วยงาน อย.
+2. ตรวจสอบว่าสามารถยื่นคำขอผ่านระบบได้ปกติโดยไม่ต้องออกเว็บไซต์ภายนอก
+- **Test Data:** LPI หน่วยงาน อย.
+- **Test Type:** Positive
+- **Expected Result:** ระบบให้ยื่นขอ LPI หน่วยงาน อย. ผ่านระบบได้ครบกระบวนการ ไม่ต้องออกเว็บไซต์ภายนอก
+- **Automate:** FALSE
+- **Req No.:** REQ0006
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1024]
+- **Test Case ID:** 69AA1024
+- **Test Case Objective:** ตรวจสอบ Link ไปเว็บไซต์หน่วยงานโดยตรง กรณีหน่วยงานที่ระบบยื่นขอ LPI ผ่านไม่ได้
+- **Test Step:** 1. เข้าหน้า Permit ของ LPI หน่วยงานที่ไม่ใช่ อย. (หน่วยงานที่ระบบยังยื่นผ่านไม่ได้ใน Phase นี้)
+2. ตรวจสอบว่าระบบมี Link ให้เข้าเว็บไซต์หน่วยงานนั้นโดยตรง
+- **Test Data:** LPI หน่วยงานอื่นที่ไม่ใช่ อย.
+- **Test Type:** Negative
+- **Expected Result:** ระบบแสดง Link ให้เข้าเว็บไซต์หน่วยงานนั้นโดยตรงแทนการยื่นผ่านระบบ
+- **Remark:** รอ BA ยืนยันรายชื่อหน่วยงานที่รองรับใน Phase นี้ — SRS REQ0006 ระบุไว้กว้างๆ ว่า "เพิ่มรายละเอียดหน่วยงานที่สามารถขอ LPI ได้ และแผนที่จะทำต่อ" ยังไม่ระบุรายชื่อหน่วยงานอื่นที่ชัดเจน
+- **Automate:** FALSE
+- **Req No.:** REQ0006
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1025]
+- **Test Case ID:** 69AA1025
+- **Test Case Objective:** แสดงสถานะ LPI แยกตามหน่วยงานเมื่อ LPI ถูกส่งหลายหน่วยงาน
+- **Test Step:** 1. สร้าง Draft LPI ที่จัด Group เป็น 2 หน่วยงาน
+2. ส่งคำขอหน่วยงานที่ 1 เท่านั้น
+3. ตรวจสอบสถานะที่แสดงของแต่ละหน่วยงาน
+- **Test Data:** LPI ที่มี 2 หน่วยงาน (อย. และหน่วยงานอื่นใน Permission_Goods)
+- **Test Type:** Positive
+- **Expected Result:** ระบบแสดงสถานะของแต่ละหน่วยงานแยกจากกันอย่างถูกต้อง (หน่วยงานที่ส่งแล้ว = Sent, หน่วยงานที่ยังไม่ส่ง = Draft)
+- **Automate:** TRUE
+- **Req No.:** REQ0007
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1026]
+- **Test Case ID:** 69AA1026
+- **Test Case Objective:** แสดงเลขที่ใบอนุญาตที่หน้าหลักเมื่อ LPI ได้สถานะ Completed
+- **Test Step:** 1. ส่ง LPI จนได้รับผลตอบกลับอนุมัติจากหน่วยงาน (Completed)
+2. กลับไปที่หน้าหลัก Permit
+3. ตรวจสอบเลขที่ใบอนุญาตที่แสดง
+- **Test Data:** LPI ที่ได้รับอนุมัติแล้ว 1 รายการ
+- **Test Type:** Positive
+- **Expected Result:** หน้าหลักแสดงเลขที่ใบอนุญาตของ LPI ที่ได้สถานะ Completed ถูกต้องตรงกับที่หน่วยงานออกให้
+- **Automate:** TRUE
+- **Req No.:** REQ0008
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1027]
+- **Test Case ID:** 69AA1027
+- **Test Case Objective:** ยกเลิกคำขอ LPI ที่สถานะ Completed
+- **Test Step:** 1. เปิด LPI ที่สถานะ Completed
+2. กดปุ่มยกเลิกคำขอ
+3. ยืนยันการยกเลิก
+4. ตรวจสอบสถานะ LPI, เลขที่ใบอนุญาต และสถานะความพร้อมของใบขน
+- **Test Data:** LPI สถานะ Completed 1 รายการ ผูกกับใบขนที่ยังไม่ถึงสถานะชำระเงินสำเร็จ
+- **Test Type:** Positive
+- **Expected Result:** LPI เปลี่ยนเป็นสถานะ Cancel เลขที่ใบอนุญาตเดิมหายไป ระบบแจ้งเตือนให้ขอใบอนุญาตใหม่อีกครั้ง และสถานะความพร้อมของใบขนกลับเป็น "ยังไม่พร้อมส่ง"
+- **Automate:** FALSE
+- **Req No.:** REQ0009
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1028]
+- **Test Case ID:** 69AA1028
+- **Test Case Objective:** พยายามยกเลิกคำขอ LPI ที่สถานะยังไม่ Completed (เช่น Draft หรือ Sent)
+- **Test Step:** 1. เปิด LPI ที่สถานะ Draft หรือ Sent
+2. ตรวจสอบปุ่มยกเลิกคำขอ
+- **Test Data:** LPI สถานะ Draft หรือ Sent 1 รายการ
+- **Test Type:** Negative
+- **Expected Result:** ปุ่มยกเลิกคำขอถูก Disable หรือไม่แสดง เนื่องจากยกเลิกได้เฉพาะสถานะ Completed เท่านั้น
+- **Automate:** FALSE
+- **Req No.:** REQ0009
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1029]
+- **Test Case ID:** 69AA1029
+- **Test Case Objective:** เพิ่มสินค้าที่ระบบไม่ได้ระบุว่าต้องขอใบอนุญาตเข้าไปใน LPI ด้วยตนเอง
+- **Test Step:** 1. เปิด Invoice ที่มีสินค้าซึ่ง HS Code ไม่ถูกระบุว่าต้องขอใบอนุญาต
+2. เลือกสินค้ารายการนั้นเพิ่มเติมเพื่อนำไปขอใบอนุญาต
+3. ตรวจสอบว่าสินค้าถูกเพิ่มเข้า LPI
+- **Test Data:** Invoice: สินค้าที่ HS Code ไม่อยู่ใน Permission_Goods 1 รายการ
+- **Test Type:** Positive
+- **Expected Result:** ระบบให้เลือกสินค้ารายการนั้นเพิ่มเข้า LPI ได้สำเร็จ แม้ระบบจะไม่ได้ตรวจพบว่าต้องขอใบอนุญาตโดยอัตโนมัติ
+- **Automate:** FALSE
+- **Req No.:** REQ0010
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1030]
+- **Test Case ID:** 69AA1030
+- **Test Case Objective:** พยายามแก้ไข/ยกเลิก LPI ที่ผูกกับใบขนซึ่งยังไม่ถึงสถานะชำระเงินสำเร็จ
+- **Test Step:** 1. สร้าง LPI สถานะ Completed และนำไปผูกกับใบขน
+2. ตรวจสอบสถานะใบขน (ยังไม่ถึง "ชำระเงินสำเร็จ")
+3. เปิด LPI แล้วลองยกเลิก/แก้ไข
+- **Test Data:** ใบขนสถานะก่อน "ชำระเงินสำเร็จ" (เช่น รอตรวจปล่อย)
+- **Test Type:** Positive
+- **Expected Result:** ระบบยังให้ยกเลิก/แก้ไข LPI ได้ตามปกติ เนื่องจากใบขนยังไม่ถึงสถานะชำระเงินสำเร็จ
+- **Automate:** FALSE
+- **Req No.:** REQ0011
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1031]
+- **Test Case ID:** 69AA1031
+- **Test Case Objective:** พยายามยกเลิก/แก้ไข LPI ที่ผูกกับใบขนซึ่งมีสถานะชำระเงินสำเร็จแล้ว
+- **Test Step:** 1. สร้าง LPI สถานะ Completed และนำไปผูกกับใบขน
+2. ดำเนินการใบขนจนได้สถานะ "ชำระเงินสำเร็จ"
+3. เปิด LPI แล้วลองยกเลิก/แก้ไข
+- **Test Data:** ใบขนสถานะ "ชำระเงินสำเร็จ"
+- **Test Type:** Negative
+- **Expected Result:** ระบบไม่อนุญาตให้ยกเลิกหรือแก้ไข LPI นั้น พร้อมแจ้งเตือนเหตุผล
+- **Automate:** FALSE
+- **Req No.:** REQ0011
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1032]
+- **Test Case ID:** 69AA1032
+- **Test Case Objective:** ยกเลิกใบขนที่มีสถานะชำระเงินสำเร็จแล้ว (ใบขนเปลี่ยนเป็นสถานะ Cancel) แล้วตรวจสอบ LPI ที่ผูกอยู่
+- **Test Step:** 1. LPI สถานะ Completed ผูกกับใบขนที่สถานะชำระเงินสำเร็จแล้ว
+2. ยกเลิกใบขนนั้น (Declaration Cancel)
+3. ตรวจสอบเลขที่ LPI ในใบขนที่ถูกยกเลิก
+4. นำเลขที่ LPI เดิมไปใช้กับใบขนอื่น
+- **Test Data:** ใบขนสถานะชำระเงินสำเร็จ ที่ถูกยกเลิก (Cancel)
+- **Test Type:** Positive
+- **Expected Result:** เลขที่ LPI ยังคงอยู่ในใบขนที่ถูกยกเลิกเพื่อเก็บเป็นประวัติ และสามารถนำเลขที่ LPI เดิมไปใช้กับใบขนอื่นได้
+- **Remark:** แก้ไขจาก v11: เงื่อนไข Lock คือใบขนถึงสถานะ "ชำระเงินสำเร็จ" (ไม่ใช่สถานะ 02) ตาม REQ0011
+- **Automate:** FALSE
+- **Req No.:** REQ0011
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1033]
+- **Test Case ID:** 69AA1033
+- **Test Case Objective:** ดูเอกสารตอบกลับจากหน่วยงานที่ส่งผ่าน Ezybus เข้า EzySuite
+- **Test Step:** 1. เปิด LPI ที่ได้รับเอกสารตอบกลับจากหน่วยงานแล้ว
+2. กดดูเอกสารตอบกลับ
+3. ตรวจสอบเนื้อหาเอกสาร
+- **Test Data:** LPI ที่มีเอกสารตอบกลับจากหน่วยงานเข้าระบบแล้ว
+- **Test Type:** Positive
+- **Expected Result:** ระบบแสดง/เปิดเอกสารตอบกลับที่ถูกส่งจากหน่วยงานผ่าน Ezybus เข้า EzySuite ได้ถูกต้อง
+- **Automate:** FALSE
+- **Req No.:** REQ0012
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1034]
+- **Test Case ID:** 69AA1034
+- **Test Case Objective:** ดูเอกสารตอบกลับของ LPI ที่ยังไม่มีเอกสารตอบกลับส่งเข้ามา
+- **Test Step:** 1. เปิด LPI สถานะ Sent ที่ยังไม่มีเอกสารตอบกลับ
+2. ตรวจสอบปุ่ม/ส่วนแสดงเอกสารตอบกลับ
+- **Test Data:** LPI สถานะ Sent ที่ยังไม่มีเอกสารตอบกลับ
+- **Test Type:** Negative
+- **Expected Result:** ระบบแสดงข้อความว่ายังไม่มีเอกสารตอบกลับ ไม่ Error หรือแสดงเอกสารว่างเปล่า
+- **Automate:** FALSE
+- **Req No.:** REQ0012
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1035]
+- **Test Case ID:** 69AA1035
+- **Test Case Objective:** ตรวจสอบหน้า Invoice ที่ไม่มี Menu ขอใบอนุญาต (Quotation ไม่มีเมนูนี้)
+- **Test Step:** 1. เปิด Invoice ที่สร้างจาก Quotation ที่ไม่มี Menu ขอใบอนุญาต
+2. ตรวจสอบว่ามีการแจ้งเตือนต้องขอใบอนุญาตหรือไม่
+3. ตรวจสอบปุ่ม "+ใบอนุญาต"
+- **Test Data:** Invoice จาก Quotation ที่ไม่มี Menu ขอใบอนุญาต
+- **Test Type:** Positive
+- **Expected Result:** หน้า Invoice ไม่แสดงแจ้งเตือนต้องขอใบอนุญาต และมีปุ่ม "+ใบอนุญาต" ให้กรอกเลขใบอนุญาตและเลือกหน่วยงานได้เอง
+- **Automate:** FALSE
+- **Req No.:** REQ0013
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1036]
+- **Test Case ID:** 69AA1036
+- **Test Case Objective:** ตรวจสอบหน้า Declaration ที่ไม่มี Menu ขอใบอนุญาต (Quotation ไม่มีเมนูนี้)
+- **Test Step:** 1. เปิด Declaration ที่ผูกกับ Invoice จาก Quotation ที่ไม่มี Menu ขอใบอนุญาต
+2. ตรวจสอบว่ามีการแจ้งเตือนต้องขอใบอนุญาตหรือไม่
+3. ตรวจสอบปุ่ม "+ใบอนุญาต"
+- **Test Data:** Declaration จาก Quotation ที่ไม่มี Menu ขอใบอนุญาต
+- **Test Type:** Positive
+- **Expected Result:** หน้า Declaration ไม่แสดงแจ้งเตือนต้องขอใบอนุญาต และมีปุ่ม "+ใบอนุญาต" ให้กรอกเลขใบอนุญาตและเลือกหน่วยงานได้เอง
+- **Automate:** FALSE
+- **Req No.:** REQ0013
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1037]
+- **Test Case ID:** 69AA1037
+- **Test Case Objective:** กรอกเลขใบอนุญาตผ่านปุ่ม "+ใบอนุญาต" ด้วยข้อมูลว่าง
+- **Test Step:** 1. เปิด Invoice ที่ไม่มี Menu ขอใบอนุญาต
+2. กดปุ่ม "+ใบอนุญาต"
+3. ไม่กรอกเลขใบอนุญาตและไม่เลือกหน่วยงาน แล้วกดบันทึก
+- **Test Data:** เลขใบอนุญาต: (ว่าง), หน่วยงาน: (ไม่เลือก)
+- **Test Type:** Negative
+- **Expected Result:** ระบบแจ้งเตือนให้กรอกเลขใบอนุญาตและเลือกหน่วยงานก่อนบันทึก ไม่บันทึกข้อมูลว่าง
+- **Automate:** FALSE
+- **Req No.:** REQ0013
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1038]
+- **Test Case ID:** 69AA1038
+- **Test Case Objective:** ตรวจสอบสิทธิ์การใช้งานของบุคคลภายนอกที่ TIFFA สร้างบริษัทแยกให้ตาม Zoho Sync
+- **Test Step:** 1. Login ด้วยบัญชีบุคคลภายนอกที่ TIFFA สร้างบริษัทแยกให้
+2. ตรวจสอบ Quotation และสิทธิ์การใช้งาน Feature ขอใบอนุญาต
+- **Test Data:** Account บุคคลภายนอกที่ได้รับ Quotation มอบสิทธิ์จาก Zoho Sync
+- **Test Type:** Positive
+- **Expected Result:** ระบบให้สิทธิ์การใช้งานตรงตาม Quotation ที่ได้รับจากการ Sync Zoho ถูกต้อง
+- **Automate:** FALSE
+- **Req No.:** REQ0014
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1039]
+- **Test Case ID:** 69AA1039
+- **Test Case Objective:** ขอใบอนุญาตกรณีพิเศษสำหรับสินค้าที่ระบบตรวจสอบแล้วว่าไม่ต้องขอใบอนุญาต
+- **Test Step:** 1. เปิด Invoice ที่มีสินค้า HS Code ไม่อยู่ใน Permission_Goods
+2. คลิก "เพิ่มรายการขอ LPI (กรณีพิเศษ)"
+3. ตรวจสอบว่าสามารถเริ่มขอใบอนุญาตให้สินค้ารายการนั้นได้
+- **Test Data:** Invoice: สินค้าที่ระบบตรวจสอบแล้วไม่ต้องขอใบอนุญาต
+- **Test Type:** Positive
+- **Expected Result:** ระบบอนุญาตให้เริ่มขอใบอนุญาตกรณีพิเศษสำหรับสินค้ารายการนั้นได้ แม้ระบบจะตรวจสอบว่าไม่ต้องขอ
+- **Automate:** FALSE
+- **Req No.:** REQ0015
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1040]
+- **Test Case ID:** 69AA1040
+- **Test Case Objective:** เลือกสินค้าและหน่วยงานมากกว่า 1 รายการใน Modal เพิ่มรายการขอ LPI (กรณีพิเศษ)
+- **Test Step:** 1. คลิก "เพิ่มรายการขอ LPI (กรณีพิเศษ)"
+2. เลือกสินค้า 2 รายการขึ้นไปใน Modal
+3. เลือกหน่วยงาน 2 หน่วยงานขึ้นไป
+4. กดบันทึก
+- **Test Data:** Invoice ที่มีสินค้าอย่างน้อย 2 รายการ, หน่วยงานให้เลือกอย่างน้อย 2 หน่วยงาน
+- **Test Type:** Positive
+- **Expected Result:** ระบบบันทึกสำเร็จ และนำสินค้าทั้งหมดที่เลือกไปเพิ่มในหน่วยงานที่เลือกไว้ครบถ้วน
+- **Automate:** TRUE
+- **Req No.:** REQ0016
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1041]
+- **Test Case ID:** 69AA1041
+- **Test Case Objective:** เปิด Modal เพิ่มรายการขอ LPI (กรณีพิเศษ) โดยไม่เลือกสินค้าและไม่เลือกหน่วยงาน
+- **Test Step:** 1. คลิก "เพิ่มรายการขอ LPI (กรณีพิเศษ)"
+2. ไม่เลือกสินค้าและไม่เลือกหน่วยงาน
+3. กดบันทึก
+- **Test Data:** สินค้าที่เลือก: ไม่มี, หน่วยงานที่เลือก: ไม่มี
+- **Test Type:** Negative
+- **Expected Result:** ระบบแจ้งเตือนให้เลือกสินค้าและหน่วยงานอย่างน้อย 1 รายการ ไม่บันทึกข้อมูลว่าง
+- **Automate:** FALSE
+- **Req No.:** REQ0016
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1042]
+- **Test Case ID:** 69AA1042
+- **Test Case Objective:** บันทึก Modal กรณีพิเศษด้วยสินค้าที่มีลำดับรายการซ้ำกับที่มีอยู่แล้วในหน่วยงานเดียวกัน
+- **Test Step:** 1. เปิด Modal เพิ่มรายการขอ LPI (กรณีพิเศษ)
+2. เลือกสินค้าที่ลำดับรายการนั้นถูกเพิ่มในหน่วยงานเดียวกันไว้แล้ว
+3. กดบันทึก
+- **Test Data:** สินค้าลำดับที่ถูกเพิ่มในหน่วยงาน อย. ไว้แล้วก่อนหน้านี้
+- **Test Type:** Negative
+- **Expected Result:** ระบบแสดงข้อความแจ้งเตือน "ไม่สามารถบันทึกได้ สินค้าที่เลือกเพิ่มในหน่วยงาน พบรายการซ้ำกัน" และไม่บันทึกข้อมูล
+- **Automate:** TRUE
+- **Req No.:** REQ0017
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1043]
+- **Test Case ID:** 69AA1043
+- **Test Case Objective:** ตรวจสอบรูปแบบเลข Draft No. ที่ระบบ Generate ให้เมื่อบันทึก LPI ครั้งแรก (Invoice ขาเข้า)
+- **Test Step:** 1. สร้าง Draft LPI จาก Invoice ประเภทขาเข้า (Import)
+2. บันทึกครั้งแรก
+3. ตรวจสอบรูปแบบเลข Draft No.
+- **Test Data:** Invoice ประเภท Import
+- **Test Type:** Positive
+- **Expected Result:** ระบบ Generate เลข Draft No. รูปแบบ DF-LIYYMMDDXXXXXX ถูกต้อง (เช่น DF-LI260924000001) โดย XXXXXX เริ่มจาก 000001 และเรียงลำดับต่อเนื่อง
+- **Automate:** TRUE
+- **Req No.:** REQ0018
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1044]
+- **Test Case ID:** 69AA1044
+- **Test Case Objective:** ตรวจสอบรูปแบบเลข Draft No. สำหรับ Invoice ขาออก (Export)
+- **Test Step:** 1. สร้าง Draft LPI จาก Invoice ประเภทขาออก (Export)
+2. บันทึกครั้งแรก
+3. ตรวจสอบรูปแบบเลข Draft No.
+- **Test Data:** Invoice ประเภท Export
+- **Test Type:** Positive
+- **Expected Result:** ระบบ Generate เลข Draft No. รูปแบบ DF-LEYYMMDDXXXXXX ถูกต้อง (เช่น DF-LE260924000001)
+- **Automate:** TRUE
+- **Req No.:** REQ0018
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1045]
+- **Test Case ID:** 69AA1045
+- **Test Case Objective:** ตรวจสอบ Run Number ของ Draft No. ไม่ซ้ำกันเมื่อสร้าง LPI หลายรายการในวันเดียวกัน
+- **Test Step:** 1. สร้าง Draft LPI รายการที่ 1 ในวันเดียวกัน
+2. สร้าง Draft LPI รายการที่ 2 ในวันเดียวกัน
+3. เปรียบเทียบ Run Number (XXXXXX) ของทั้งสองรายการ
+- **Test Data:** Draft LPI 2 รายการ วันที่เดียวกัน ประเภท Invoice เดียวกัน
+- **Test Type:** Positive
+- **Expected Result:** Run Number เรียงลำดับต่อเนื่องไม่ซ้ำกัน (เช่น 000001 และ 000002)
+- **Automate:** FALSE
+- **Req No.:** REQ0018
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1046]
+- **Test Case ID:** 69AA1046
+- **Test Case Objective:** ส่งคำขอ LPI ใหม่อีกครั้งจากเลขที่ LPI เดิมที่ถูก Cancel โดย Copy Version ล่าสุด
+- **Test Step:** 1. เปิด LPI ที่สถานะ Cancel
+2. กดปุ่มส่งคำขออีกครั้ง (Copy Version ล่าสุด)
+3. ตรวจสอบข้อมูลตั้งต้นที่ระบบสร้างให้
+4. แก้ไขข้อมูลตามต้องการแล้วส่งคำขอใหม่
+- **Test Data:** LPI สถานะ Cancel ที่มีประวัติ Version ก่อนหน้า
+- **Test Type:** Positive
+- **Expected Result:** ระบบสร้าง LPI ของหน่วยงานนั้นใหม่โดยใช้ข้อมูลจาก Version ล่าสุดเป็นค่าตั้งต้น สามารถแก้ไขและส่งคำขอใหม่ได้สำเร็จ
+- **Automate:** FALSE
+- **Req No.:** REQ0019
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1047]
+- **Test Case ID:** 69AA1047
+- **Test Case Objective:** ตรวจสอบเลขที่ LPI เดิมยังคงแสดงในประวัติหลังถูก Cancel
+- **Test Step:** 1. ยกเลิก LPI ที่สถานะ Completed
+2. ตรวจสอบเลขที่ LPI เดิมในหน้า Timeline/ประวัติ
+- **Test Data:** LPI ที่เพิ่งถูกยกเลิก
+- **Test Type:** Positive
+- **Expected Result:** เลขที่ LPI เดิมยังคงปรากฏในประวัติเพื่อการอ้างอิง ไม่ถูกลบทิ้ง
+- **Automate:** FALSE
+- **Req No.:** REQ0019
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1048]
+- **Test Case ID:** 69AA1048
+- **Test Case Objective:** ออกฟอร์มเอกสารใบอนุญาตเมื่อ LPI สถานะ Completed
+- **Test Step:** 1. เปิด LPI สถานะ Completed
+2. กดปุ่มออกฟอร์มเอกสารใบอนุญาต (Print/Export)
+3. ตรวจสอบเอกสารที่ได้
+- **Test Data:** LPI สถานะ Completed 1 รายการ
+- **Test Type:** Positive
+- **Expected Result:** ระบบออกฟอร์มเอกสารใบอนุญาตได้ถูกต้องครบถ้วนตามข้อมูล LPI นั้น
+- **Automate:** TRUE
+- **Req No.:** REQ0020
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1049]
+- **Test Case ID:** 69AA1049
+- **Test Case Objective:** ออกฟอร์มเอกสารยกเลิกใบอนุญาตเมื่อ LPI สถานะ Cancel
+- **Test Step:** 1. เปิด LPI สถานะ Cancel
+2. กดปุ่มออกฟอร์มเอกสารยกเลิกใบอนุญาต
+3. ตรวจสอบเอกสารที่ได้
+- **Test Data:** LPI สถานะ Cancel 1 รายการ
+- **Test Type:** Positive
+- **Expected Result:** ระบบออกฟอร์มเอกสารยกเลิกใบอนุญาตได้ถูกต้องครบถ้วน
+- **Automate:** TRUE
+- **Req No.:** REQ0020
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1050]
+- **Test Case ID:** 69AA1050
+- **Test Case Objective:** พยายามออกฟอร์มเอกสารใบอนุญาตเมื่อ LPI ยังไม่ถึงสถานะ Completed
+- **Test Step:** 1. เปิด LPI สถานะ Draft หรือ Sent
+2. ตรวจสอบปุ่มออกฟอร์มเอกสารใบอนุญาต
+- **Test Data:** LPI สถานะ Draft หรือ Sent
+- **Test Type:** Negative
+- **Expected Result:** ปุ่มออกฟอร์มเอกสารใบอนุญาตถูก Disable หรือไม่แสดง เนื่องจากยังไม่ได้สถานะ Completed
+- **Automate:** FALSE
+- **Req No.:** REQ0020
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1058]
+- **Test Case ID:** 69AA1058
+- **Test Case Objective:** เข้าหน้า Permit ด้วยบัญชีที่ไม่มีสิทธิ์เข้าถึง Module Restricted Good Permit
+- **Test Step:** 1. Login ด้วยบัญชีที่ไม่ได้รับสิทธิ์ Module นี้
+2. พยายามเข้าหน้า Restricted Good Permit ผ่าน URL โดยตรง
+- **Test Data:** Account ที่ไม่มีสิทธิ์เข้า Module Restricted Good Permit
+- **Test Type:** Negative
+- **Expected Result:** ระบบปฏิเสธการเข้าถึงและแสดงข้อความแจ้งเตือนไม่มีสิทธิ์ (Access Denied) ไม่แสดงข้อมูล LPI ใดๆ
+- **Automate:** FALSE
+- **Req No.:** REQ0003
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1059]
+- **Test Case ID:** 69AA1059
+- **Test Case Objective:** Session หมดอายุขณะกำลังกรอกและส่งคำขอ LPI
+- **Test Step:** 1. เปิดหน้า Permit และเริ่มกรอกข้อมูลเพื่อส่งคำขอ LPI
+2. ปล่อยให้ Session หมดอายุระหว่างกรอกข้อมูล
+3. กดส่งคำขอ
+- **Test Data:** Session Timeout ระหว่างทำรายการ
+- **Test Type:** Negative
+- **Expected Result:** ระบบแจ้งเตือนให้ Login ใหม่ก่อนดำเนินการต่อ และไม่มีการส่งข้อมูล LPI ที่ยังไม่สมบูรณ์เข้าสู่ระบบ
+- **Remark:** Edge Case: Session Expiry
+- **Automate:** FALSE
+- **Req No.:** REQ0018
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1060]
+- **Test Case ID:** 69AA1060
+- **Test Case Objective:** โหลดหน้า Permit ที่มีรายการ LPI มากกว่า 100 รายการ
+- **Test Step:** 1. เข้าหน้า Permit ที่มี LPI มากกว่า 100 รายการในระบบ
+2. จับเวลาการโหลดหน้าจนกว่าข้อมูลจะแสดงครบ
+- **Test Data:** LPI มากกว่า 100 รายการ
+- **Test Type:** Negative
+- **Expected Result:** หน้าจอโหลดข้อมูลสำเร็จภายในเวลาที่เหมาะสม (ไม่เกิน 3 วินาที) ไม่มีข้อมูลตกหล่นหรือหน้าจอค้าง
+- **Remark:** Edge Case: Performance
+- **Automate:** FALSE
+- **Req No.:** REQ0003
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1061]
+- **Test Case ID:** 69AA1061
+- **Test Case Objective:** สองผู้ใช้กดส่งคำขอ LPI เดียวกันพร้อมกัน (Concurrent)
+- **Test Step:** 1. เปิด LPI Draft เดียวกันด้วยผู้ใช้ 2 คนพร้อมกันคนละเครื่อง
+2. ทั้งสองคนกดส่งคำขอพร้อมกัน
+3. ตรวจสอบผลลัพธ์และสถานะ LPI
+- **Test Data:** LPI Draft 1 รายการ เปิดพร้อมกัน 2 Session
+- **Test Type:** Negative
+- **Expected Result:** ระบบส่งคำขอสำเร็จเพียงครั้งเดียว ผู้ใช้อีกคนได้รับแจ้งเตือนว่าข้อมูลถูกอัปเดต/ส่งไปแล้ว ไม่เกิดการส่งซ้ำซ้อน
+- **Remark:** Edge Case: Concurrent Request
+- **Automate:** FALSE
+- **Req No.:** REQ0001
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA1062]
+- **Test Case ID:** 69AA1062
+- **Test Case Objective:** ลบ Invoice ต้นทางที่มี Draft LPI ผูกอยู่ (Cascade Effect)
+- **Test Step:** 1. สร้าง Draft LPI จาก Invoice
+2. กลับไปที่ Invoice ต้นทางแล้วพยายามลบ Invoice นั้น
+3. ตรวจสอบผลลัพธ์
+- **Test Data:** Invoice ที่มี Draft LPI ผูกอยู่แล้ว
+- **Test Type:** Negative
+- **Expected Result:** ระบบป้องกันการลบ Invoice ที่มี LPI ผูกอยู่ หรือแจ้งเตือนผลกระทบที่จะเกิดกับ LPI ก่อนยืนยันการลบ
+- **Remark:** Edge Case: Cascade Effect
+- **Automate:** FALSE
+- **Req No.:** REQ0001
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+
+---
+
+# Sheet: Test Case Permit MGT
+### ข้อมูลทั่วไปของเอกสาร (Document & Project Metadata):
+- Test Case
+- Project Name : | 69A-TIFFA-RGP | Create Date : | 25/09/2569
+- Project ID: | 69A | Start Test Date : | 25/09/2569
+- Tester Name : | Mananchai Sinsuwan | Finish Test Date : | 25/09/2569
+- Project Release / Version : | 13 | Module / Function: | ขอใบอนุญาตสินค้า (หน้า MGT)
+- FUNCTIONAL REQUIREMENTS (Requirements No.) : | REQ0025-REQ0043
+
+### ตารางรายการทดสอบ (Test Cases / Specifications Matrix):
+| Col_1 | Test Case ID | Test Case Objective | Test Step | Test Data | Test Type | Expected Result | Remark | Automate | Req No. | Platforms | Updated By |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+|  | 69AA2001 | ตรวจสอบโครงสร้างหน้า MGT เมื่อสร้าง LPI จาก Invoice มีครบ 3 ส่วน | 1. สร้าง Draft LPI จาก Invoice <br> 2. เปิดหน้า MGT ของ LPI นั้น <br> 3. ตรวจสอบ Tab ที่แสดง | LPI ที่สร้างจาก Invoice | Positive | หน้า MGT แสดงครบ 3 ส่วน คือ ส่วนควบคุม, ส่วนรายการ, และสรุป |  | FALSE | REQ0025 | Web Application | Mananchai Sinsuwan |
+|  | 69AA2002 | ตรวจสอบโครงสร้างหน้า MGT เมื่อสร้าง LPI จากใบขนมีครบ 3 ส่วน | 1. สร้าง Draft LPI จากใบขน <br> 2. เปิดหน้า MGT ของ LPI นั้น <br> 3. ตรวจสอบ Tab ที่แสดง | LPI ที่สร้างจากใบขน | Positive | หน้า MGT แสดงครบ 3 ส่วน คือ ส่วนควบคุม, ส่วนรายการ, และสรุป |  | FALSE | REQ0025 | Web Application | Mananchai Sinsuwan |
+|  | 69AA2003 | ตรวจสอบเนื้อหา Tab สรุป แสดงจำนวนหน่วยงานและรายการที่ถูกควบคุมถูกต้อง | 1. เปิดหน้า MGT ของ LPI ที่มีสินค้าถูกควบคุมโดย 2 หน่วยงาน <br> 2. เข้า Tab สรุป <br> 3. ตรวจสอบจำนวนหน่วยงานและรายการที่แสดง | LPI ที่มีสินค้าควบคุมโดย 2 หน่วยงาน | Positive | Tab สรุป แสดงจำนวนหน่วยงานและรายการสินค้าที่ถูกควบคุมตรงกับข้อมูลจริงครบถ้วน |  | TRUE | REQ0025 | Web Application | Mananchai Sinsuwan |
+|  | 69AA2004 | ตรวจสอบ Field ส่วนของเอกสารถูกระบุอัตโนมัติตามหน่วยงานที่ขอใบอนุญาต | 1. เปิดหน้า MGT Tab ส่วนควบคุม ของ LPI หน่วยงาน อย. <br> 2. ตรวจสอบ Field "ส่วนของเอกสาร" | LPI หน่วยงาน อย. | Positive | ระบบระบุส่วนของเอกสารให้ตรงตามหน่วยงาน อย. โดยอัตโนมัติ |  | FALSE | REQ0026 | Web Application | Mananchai Sinsuwan |
+|  | 69AA2005 | ตรวจสอบข้อมูลผู้นำเข้าถูกดึงจาก Invoice มาแสดงในส่วนควบคุม | 1. เปิดหน้า MGT Tab ส่วนควบคุม <br> 2. ตรวจสอบ Field ข้อมูลผู้นำเข้าเทียบกับข้อมูลผู้ซื้อใน Invoice ต้นทาง | LPI ที่สร้างจาก Invoice ซึ่งมีข้อมูลผู้ซื้อครบถ้วน | Positive | ข้อมูลผู้นำเข้าในส่วนควบคุมตรงกับข้อมูลผู้ซื้อจาก Invoice ทุก Field |  | TRUE | REQ0026 | Web Application | Mananchai Sinsuwan |
+|  | 69AA2006 | กรอกข้อมูลขนส่งสินค้าเพิ่มเติมในส่วนควบคุม | 1. เปิดหน้า MGT Tab ส่วนควบคุม <br> 2. กรอก License Type, วันที่นำเข้า, ประเทศต้นทางบรรทุก, ประเทศปลายทาง <br> 3. บันทึก | License Type: Import License, วันที่นำเข้า: 25/09/2569, ประเทศต้นทางบรรทุก: China, ประเทศปลายทาง: Thailand | Positive | ระบบบันทึกข้อมูลขนส่งสินค้าที่กรอกเพิ่มเติมสำเร็จ |  | TRUE | REQ0026 | Web Application | Mananchai Sinsuwan |
+|  | 69AA2007 | กรอกข้อมูลผู้ขอใบอนุญาต (ผู้แจ้ง) พร้อมข้อมูลเพิ่มเติมสำหรับผู้รับมอบอำนาจ | 1. เปิดหน้า MGT Tab ส่วนควบคุม <br> 2. ตรวจสอบชื่อผู้แจ้งข้อมูล (ระบบนำจาก User ที่กรอกและส่ง) <br> 3. กรอกข้อมูลผู้รับมอบอำนาจเพิ่มเติม (ถ้ามี) | User ที่ Login ปัจจุบัน: มานะชัย สินสุวรรณ | Positive | ระบบระบุชื่อผู้แจ้งข้อมูลเป็น User ที่ Login และกรอกส่งข้อมูลโดยอัตโนมัติ พร้อมให้กรอกข้อมูลผู้รับมอบอำนาจเพิ่มเติมได้ | รอ BA ยืนยัน: MOM ครั้งที่ 7 (12/03/2569) ระบุว่าชื่อผู้แจ้งบางกรณีควรเลือกได้ไม่ผูกกับผู้ Login แต่ SRS REQ0026/REQ0035 ยังระบุว่านำจาก User ที่ Login เป็นหลัก | TRUE | REQ0026 | Web Application | Mananchai Sinsuwan |
+|  | 69AA2008 | ตรวจสอบ Validation เมื่อกรอกข้อมูลครบถ้วนถูกต้องทั้งส่วนควบคุมและส่วนรายการ | 1. กรอกข้อมูลส่วนควบคุมและส่วนรายการให้ครบทุก Field บังคับและถูก Format <br> 2. กดปุ่มตรวจสอบข้อมูล (Validate) | ข้อมูลครบถ้วนตาม Field บังคับทุกส่วน | Positive | ระบบตรวจสอบผ่านทั้งหมด ไม่มีข้อความแจ้งเตือน |  | TRUE | REQ0027 | Web Application | Mananchai Sinsuwan |
+|  | 69AA2009 | ตรวจสอบ Validation เมื่อไม่กรอก Field บังคับในส่วนควบคุม | 1. เว้นว่าง Field บังคับในส่วนควบคุม เช่น ชื่อบริษัท <br> 2. กดปุ่มตรวจสอบข้อมูลหรือกดส่ง | Field ชื่อบริษัท: (ว่าง) | Negative | ระบบแจ้งเตือนให้กรอก Field ที่จำเป็นให้ครบก่อนดำเนินการต่อ และไม่ปลดล็อคปุ่มส่ง |  | FALSE | REQ0027 | Web Application | Mananchai Sinsuwan |
+|  | 69AA2010 | ตรวจสอบ Validation เมื่อไม่กรอก Field บังคับในส่วนรายการ | 1. เว้นว่าง Field บังคับในส่วนรายการ เช่น ชื่อสินค้า (ภาษาไทย) <br> 2. กดปุ่มตรวจสอบข้อมูลหรือกดส่ง | Field ชื่อสินค้า (ภาษาไทย): (ว่าง) | Negative | ระบบแจ้งเตือนให้กรอก Field ที่จำเป็นให้ครบก่อนดำเนินการต่อ และไม่ปลดล็อคปุ่มส่ง |  | FALSE | REQ0027 | Web Application | Mananchai Sinsuwan |
+|  | 69AA2011 | ตรวจสอบ Validation Format ตามเอกสาร FF - Restricted goods permit message_V1_10 เมื่อกรอก HS Code ผิด Format | 1. กรอก HS Code ในส่วนรายการด้วยรูปแบบที่ไม่ตรงตาม Schema (เช่น มีตัวอักษรปน) <br> 2. กดปุ่มตรวจสอบข้อมูล | HS Code: "1234AB!!" | Negative | ระบบแจ้งเตือนรูปแบบข้อมูล HS Code ไม่ถูกต้องตาม Format ที่กำหนด และไม่ปลดล็อคปุ่มส่ง |  | FALSE | REQ0027 | Web Application | Mananchai Sinsuwan |
+|  | 69AA2012 | กรอกอักขระพิเศษ SQL Injection ในช่องข้อมูล Free Text เช่น Remark | 1. กรอก Remark ด้วยข้อความ ' OR 1=1 -- <br> 2. บันทึกและกดตรวจสอบข้อมูล | Remark: ' OR 1=1 -- | Negative | ระบบไม่เกิด Error หรือช่องโหว่ด้านความปลอดภัย บันทึกข้อความเป็น String ปกติหรือปฏิเสธอักขระต้องห้ามพร้อมแจ้งเตือน | Security Test | FALSE | REQ0027 | Web Application | Mananchai Sinsuwan |
+|  | 69AA2013 | ปุ่มส่งข้อมูลถูกปลดล็อคเมื่อกรอกและตรวจสอบข้อมูลผ่านทั้งหมด | 1. กรอกข้อมูลครบถ้วนถูกต้องทั้งส่วนควบคุมและส่วนรายการ <br> 2. กดตรวจสอบข้อมูล <br> 3. สังเกตสถานะปุ่มส่งข้อมูล | ข้อมูลครบถ้วนถูกต้อง | Positive | ปุ่มส่งข้อมูลเปลี่ยนจาก Disable เป็น Enable สามารถกดส่งไปยังหน่วยงานที่ระบุใน LPI ได้ |  | TRUE | REQ0028 | Web Application | Mananchai Sinsuwan |
+|  | 69AA2014 | ปุ่มส่งข้อมูลยังคง Lock เมื่อตรวจสอบข้อมูลไม่ผ่าน | 1. กรอกข้อมูลไม่ครบถ้วน <br> 2. กดตรวจสอบข้อมูล <br> 3. สังเกตสถานะปุ่มส่งข้อมูล | ข้อมูลไม่ครบถ้วน | Negative | ปุ่มส่งข้อมูลยังคง Disable ไม่สามารถกดส่งได้จนกว่าจะแก้ไขข้อมูลให้ผ่านการตรวจสอบ |  | FALSE | REQ0028 | Web Application | Mananchai Sinsuwan |
+|  | 69AA2015 | ตรวจสอบ Timeline แสดงประวัติเฉพาะหน่วยงานที่ขอใบอนุญาตในหน้านั้น | 1. เปิดหน้า MGT ของ LPI หน่วยงาน อย. ที่มีประวัติการส่งคำขอหลายครั้ง <br> 2. ตรวจสอบ Timeline ที่แสดง | LPI หน่วยงาน อย. ที่มีประวัติ Sent/Error หลายครั้ง | Positive | Timeline แสดงเฉพาะประวัติการขอใบอนุญาตของหน่วยงาน อย. เท่านั้น ไม่ปนกับหน่วยงานอื่น |  | TRUE | REQ0029 | Web Application | Mananchai Sinsuwan |
+|  | 69AA2016 | ตรวจสอบข้อมูลถูกกรอกอัตโนมัติเมื่อสร้าง LPI จาก Invoice หรือใบขน Tab Invoice | 1. สร้าง LPI จาก Invoice <br> 2. เปิดหน้า MGT <br> 3. ตรวจสอบข้อมูลผู้นำเข้า/ข้อมูลขนส่งสินค้าในส่วนควบคุม และข้อมูลสินค้าในส่วนรายการ | LPI ที่สร้างจาก Invoice ซึ่งมีข้อมูลครบถ้วน | Positive | ระบบกรอกข้อมูลผู้นำเข้า, ข้อมูลขนส่งสินค้าในส่วนควบคุม และข้อมูลสินค้าในส่วนรายการให้อัตโนมัติถูกต้องตรงกับ Invoice |  | TRUE | REQ0030 | Web Application | Mananchai Sinsuwan |
+|  | 69AA2017 | ส่ง LPI ที่กรอกครบถ้วนผ่านการตรวจสอบทั้งหมดไปยังหน่วยงาน | 1. กรอกข้อมูลครบถ้วนถูกต้อง <br> 2. กดตรวจสอบข้อมูลจนปุ่มส่งถูกปลดล็อค <br> 3. กดส่ง LPI | ข้อมูลครบถ้วนถูกต้องตาม Schema FF - Restricted goods permit message_V1_10 | Positive | ระบบส่งข้อมูลในรูปแบบ XML ตาม Schema FF - Restricted goods permit message_V1_10 ไปยังหน่วยงานสำเร็จ และสถานะ LPI เปลี่ยนเป็น Sent |  | TRUE | REQ0031 | Web Application | Mananchai Sinsuwan |
+|  | 69AA2018 | พยายามส่ง LPI ทั้งที่ข้อมูลยังไม่ผ่านการตรวจสอบ (Bypass ปุ่ม Lock) | 1. กรอกข้อมูลไม่ครบถ้วน <br> 2. พยายามกดส่งข้อมูลโดยตรง (เช่น ผ่าน Keyboard Shortcut หรือ API เรียกตรง) | ข้อมูลไม่ครบถ้วน | Negative | ระบบปฏิเสธการส่งข้อมูลแม้จะพยายาม Bypass ปุ่ม Lock และแจ้งเตือนข้อมูลไม่ครบถ้วน | Security Test: Business Logic Bypass | FALSE | REQ0031 | Web Application | Mananchai Sinsuwan |
+|  | 69AA2019 | ระบุว่าบริษัทผู้นำเข้ามีการมอบอำนาจ ระบบแสดง Field เลขบัตรผู้รับมอบอำนาจแบบ Dropdown จาก Client Information | 1. เปิดหน้า MGT ของ LPI ที่บริษัทผู้นำเข้าถูกระบุว่ามีผู้รับมอบอำนาจใน Client Information <br> 2. ตรวจสอบ Field เลขบัตรผู้รับมอบอำนาจในส่วนควบคุม | บริษัทผู้นำเข้าที่มีข้อมูลผู้รับมอบอำนาจระบุไว้ใน Client Information แล้ว | Positive | ระบบแสดง Field เลขบัตรผู้รับมอบอำนาจเป็น Dropdown ให้เลือกตามรายชื่อที่บริษัทผู้นำเข้ามอบอำนาจไว้ใน Client Information | แก้ไขจาก v11: ไม่มี Checkbox ให้ติ๊กมีผู้รับมอบอำนาจ ระบบตรวจจากข้อมูล Client Information โดยตรงตาม REQ0033 | TRUE | REQ0033 | Web Application | Mananchai Sinsuwan |
+|  | 69AA2020 | เลือกเลขบัตรผู้รับมอบอำนาจจาก Dropdown แล้วตรวจสอบผลใน Ref No ที่ส่ง XML | 1. เลือกเลขบัตรผู้รับมอบอำนาจจาก Dropdown ในส่วนควบคุม <br> 2. ส่ง LPI ไปยังหน่วยงาน <br> 3. ตรวจสอบ Ref No ที่ใช้ส่งใน Profile ของ XML | เลือกผู้รับมอบอำนาจ 1 รายการจาก Dropdown | Positive | Ref No ที่ส่งใน XML อ้างอิงตาม Profile ของผู้รับมอบอำนาจที่เลือกไว้ถูกต้องตาม REQ0032 |  | TRUE | REQ0032 | Web Application | Mananchai Sinsuwan |
+|  | 69AA2021 | บริษัทผู้นำเข้าไม่มีการระบุมอบอำนาจ แต่ Company Tax ID ตรงกับ NSW ID Digit 5-17 และ Business Type = e-licensing | 1. เปิดหน้า MGT ของ LPI ที่บริษัทผู้นำเข้าไม่มีข้อมูลมอบอำนาจใน Client Information <br> 2. ตรวจสอบว่า Company Tax ID ตรงกับ NSW ID Digit 5-17 ของ Profile ที่มี Business Type = e-licensing <br> 3. ตรวจสอบ Profile ที่ระบบเลือกใช้ | Company Tax ID ตรงกับ NSW ID Digit 5-17 ของ Profile Business Type = e-licensing | Positive | ระบบนำ Profile ที่ตรงเงื่อนไข (NSW ID Digit 5-17 ตรงกับ Tax ID และ Business Type = e-licensing) ไปใช้ในการส่ง LPI โดยอัตโนมัติ ไม่ต้องเลือกผู้รับมอบอำนาจเอง | แก้ไขจาก v11: ตรวจสอบอัตโนมัติจาก Tax ID ไม่ใช่การติ๊ก Checkbox ตาม REQ0034 | TRUE | REQ0034 | Web Application | Mananchai Sinsuwan |
+|  | 69AA2022 | บริษัทผู้นำเข้าไม่มีการระบุมอบอำนาจ และ Company Tax ID ไม่ตรงกับ NSW ID/Business Type ใดเลย | 1. เปิดหน้า MGT ของ LPI ที่บริษัทผู้นำเข้าไม่มีข้อมูลมอบอำนาจ และไม่มี Profile NSW ที่ Tax ID ตรงกัน <br> 2. ตรวจสอบข้อความแจ้งเตือนที่ระบบแสดง | Company Tax ID ไม่ตรงกับ NSW ID Digit 5-17 ของ Profile ใดเลย หรือ Business Type ไม่ใช่ e-licensing | Negative | ระบบแจ้งเตือน "กรุณาระบุข้อมูลของบริษัทที่ลงทะเบียนใน NSW หรือใช้ข้อมูลผู้รับมอบอำนาจ" และไม่สามารถดำเนินการส่งต่อได้จนกว่าจะแก้ไข | แก้ไขจาก v11: ข้อความแจ้งเตือนต้องตรงตาม REQ0034 เป๊ะ | FALSE | REQ0034 | Web Application | Mananchai Sinsuwan |
+|  | 69AA2023 | ตรวจสอบ Tab ส่วนควบคุมแสดงเฉพาะหน่วยงาน อย. ตาม Scope ของ SRS ฉบับนี้ | 1. เปิดหน้า MGT Tab ส่วนควบคุม <br> 2. ตรวจสอบตัวเลือกหน่วยงานที่แสดง | N/A | Positive | ระบบแสดงเฉพาะหน่วยงาน อย. เท่านั้นตาม Scope ของ SRS V7.0 (Phase นี้) |  | FALSE | REQ0035 | Web Application | Mananchai Sinsuwan |
+|  | 69AA2024 | ตรวจสอบ Field ข้อมูลผู้นำเข้าครบทุก Field ตามที่ SRS กำหนด (เลขผู้เสียภาษี/ชื่อบริษัท/ที่อยู่/ลำดับสาขา/เลขบัตรผู้รับมอบอำนาจ) | 1. เปิดหน้า MGT Tab ส่วนควบคุม <br> 2. ตรวจสอบว่ามี Field ครบ: เลขผู้เสียภาษี, ชื่อบริษัท (ภาษาอังกฤษ), รายละเอียดที่อยู่, ลำดับสาขา, เลขบัตรผู้รับมอบอำนาจ | N/A | Positive | หน้าจอแสดง Field ข้อมูลผู้นำเข้าครบทั้ง 5 Field ตามที่ SRS REQ0035 กำหนด และข้อมูลถูกดึงมาจากข้อมูลผู้ซื้อใน Invoice ยกเว้นเลขบัตรผู้รับมอบอำนาจที่มาจาก Client Information |  | TRUE | REQ0035 | Web Application | Mananchai Sinsuwan |
+|  | 69AA2025 | ตรวจสอบ Field ข้อมูลขนส่งสินค้าครบทุก Field (License Type/วันที่นำเข้า/ประเทศต้นทางบรรทุก/ประเทศปลายทาง) | 1. เปิดหน้า MGT Tab ส่วนควบคุม <br> 2. ตรวจสอบว่ามี Field ครบ: License Type, วันที่นำเข้า, ประเทศต้นทางบรรทุก, ประเทศปลายทาง | N/A | Positive | หน้าจอแสดง Field ข้อมูลขนส่งสินค้าครบทั้ง 4 Field ตามที่ SRS REQ0035 กำหนด |  | TRUE | REQ0035 | Web Application | Mananchai Sinsuwan |
+|  | 69AA2026 | ตรวจสอบ XML ที่ส่งออกมีเลขบัตรผู้แจ้งข้อมูลตามที่ SRS กำหนดเป็นข้อมูลเพิ่มเติม | 1. กรอกข้อมูลผู้ขอใบอนุญาตครบถ้วน (ชื่อผู้แจ้งข้อมูล) <br> 2. ส่ง LPI ไปยังหน่วยงาน <br> 3. ตรวจสอบเนื้อหา XML ที่ส่งออก | ข้อมูลผู้แจ้งข้อมูลครบถ้วน | Positive | XML ที่ส่งออกมีเลขบัตรผู้แจ้งข้อมูลแนบไปด้วยตามที่ SRS REQ0035 กำหนด |  | TRUE | REQ0035 | Web Application | Mananchai Sinsuwan |
+|  | 69AA2027 | กรอกเลขผู้เสียภาษีในส่วนควบคุมด้วยความยาวเกิน 13 หลัก (Boundary) | 1. เปิดหน้า MGT Tab ส่วนควบคุม <br> 2. พยายามแก้ไข Field เลขผู้เสียภาษีเป็นตัวเลข 14 หลัก <br> 3. ตรวจสอบผลลัพธ์ | เลขผู้เสียภาษี: 14 หลัก (เกิน Max Length มาตรฐาน 13 หลัก) | Negative | ระบบไม่ยอมรับข้อมูลที่เกิน 13 หลัก และแจ้งเตือนรูปแบบข้อมูลไม่ถูกต้อง (Field นี้ปกติแก้ไขไม่ได้เพราะดึงจาก Invoice แต่ต้องทดสอบกรณีแก้ไขผ่าน Invoice Modal) | BVA: Max Length เลขผู้เสียภาษี 13 หลัก | FALSE | REQ0035 | Web Application | Mananchai Sinsuwan |
+|  | 69AA2028 | ตรวจสอบ Field ส่วนข้อมูลรายการครบทุก Field ตามที่ SRS กำหนด | 1. เปิดหน้า MGT Tab ส่วนรายการ <br> 2. ตรวจสอบ Field: Invoice Item Number, ชื่อสินค้า (ไทย/อังกฤษ), HS Code, ลักษณะผลิตภัณฑ์, ยี่ห้อสินค้า, ปริมาณตาม Invoice, รหัสสถิติ, ประเทศต้นทางบรรทุก, ประเทศผู้ซื้อ, เลขสารบบ, Remark | LPI ที่มีสินค้า 1 รายการ | Positive | หน้าจอแสดง Field ครบทุกรายการตามที่ SRS REQ0036 กำหนด และข้อมูลตั้งต้น Default ได้จาก Master Product |  | TRUE | REQ0036 | Web Application | Mananchai Sinsuwan |
+|  | 69AA2029 | ตรวจสอบ Field ข้อมูลส่วนรายละเอียดการผลิตครบทุก Field (Lot/วันที่ผลิต/วันที่หมดอายุ/ปริมาณ/จำนวน) | 1. เปิดหน้า MGT Tab ส่วนรายการ <br> 2. ตรวจสอบ Field: หมายเลข Lot, วันที่ผลิตสินค้า, วันที่หมดอายุ, ปริมาณตาม Invoice, ปริมาณ, Unit (ปริมาณ), จำนวน, Unit (จำนวน) | LPI ที่มีสินค้า 1 รายการ | Positive | หน้าจอแสดง Field ข้อมูลส่วนรายละเอียดการผลิตครบทั้ง 8 Field ตามที่ SRS REQ0036 กำหนด |  | TRUE | REQ0036 | Web Application | Mananchai Sinsuwan |
+|  | 69AA2030 | ข้อมูลรายการสินค้าถูก Default ค่าจาก Master Product เมื่อเลือกสินค้าที่มีอยู่ใน Master | 1. เปิดหน้า MGT Tab ส่วนรายการ <br> 2. เลือกสินค้าที่มีข้อมูลอยู่ใน Master Product แล้ว <br> 3. ตรวจสอบว่า Field ต่างๆ ถูกกรอกอัตโนมัติ | สินค้าที่มีข้อมูลอยู่ใน Master Product | Positive | ระบบดึงข้อมูล Default ของสินค้าจาก Master Product มากรอกให้อัตโนมัติ (ชื่อสินค้า, HS Code, ยี่ห้อ ฯลฯ) |  | TRUE | REQ0036 | Web Application | Mananchai Sinsuwan |
+|  | 69AA2031 | กรอกปริมาณ Lot เกินกว่าปริมาณตาม Invoice จริง | 1. เปิดหน้า MGT Tab ส่วนรายการ ส่วนรายละเอียดการผลิต <br> 2. กรอกปริมาณตาม Invoice ของ Lot มากกว่าปริมาณจริงในรายการสินค้า <br> 3. บันทึก | ปริมาณตาม Invoice จริง: 100 KGM, กรอกปริมาณ Lot: 150 KGM | Negative | ระบบปฏิเสธการกรอกและแจ้งเตือนว่าปริมาณ Lot ต้องไม่เกินปริมาณตาม Invoice จริง | BVA: ปริมาณ Lot ต้องไม่เกินปริมาณ Invoice ตาม REQ0036 | FALSE | REQ0036 | Web Application | Mananchai Sinsuwan |
+|  | 69AA2032 | กรอกปริมาณ Lot เป็นค่าติดลบหรือ 0 | 1. เปิดหน้า MGT Tab ส่วนรายการ ส่วนรายละเอียดการผลิต <br> 2. กรอกปริมาณเป็น -5 หรือ 0 <br> 3. บันทึก | ปริมาณ: -5 หรือ 0 | Negative | ระบบไม่ยอมรับค่าติดลบหรือ 0 สำหรับปริมาณสินค้า และแจ้งเตือนให้กรอกค่าที่ถูกต้อง |  | FALSE | REQ0036 | Web Application | Mananchai Sinsuwan |
+|  | 69AA2033 | กรอกวันที่หมดอายุสินค้าก่อนวันที่ผลิตสินค้า | 1. เปิดหน้า MGT Tab ส่วนรายการ ส่วนรายละเอียดการผลิต <br> 2. กรอกวันที่ผลิตสินค้า = 20/09/2569 และวันที่หมดอายุ = 10/09/2569 <br> 3. บันทึก | วันที่ผลิต: 20/09/2569, วันที่หมดอายุ: 10/09/2569 | Negative | ระบบแจ้งเตือนว่าวันที่หมดอายุต้องไม่ก่อนวันที่ผลิตสินค้า ไม่บันทึกข้อมูลที่ขัดแย้งกัน |  | FALSE | REQ0036 | Web Application | Mananchai Sinsuwan |
+|  | 69AA2034 | ตรวจสอบ Tab ที่แสดงเมื่อสร้าง LPI จากหน้าหลัก (เลือกข้อมูล Invoice / ข้อมูลส่วนควบคุม / สรุป) | 1. สร้าง Draft LPI จากหน้าหลัก <br> 2. เปิดหน้า MGT <br> 3. ตรวจสอบ Tab ที่แสดง | LPI ที่สร้างจากหน้าหลัก | Positive | ระบบแสดง Tab ครบ 3 อย่าง: เลือกข้อมูล Invoice, ข้อมูลส่วนควบคุม (ยังไม่มีหน่วยงาน), และสรุป |  | FALSE | REQ0037 | Web Application | Mananchai Sinsuwan |
+|  | 69AA2035 | ตรวจสอบ Tab เลือกข้อมูล Invoice แสดงเฉพาะ Invoice ขาเข้าเท่านั้น | 1. เปิดหน้า MGT ที่สร้างจากหน้าหลัก Tab เลือกข้อมูล Invoice <br> 2. ตรวจสอบรายการ Invoice ที่แสดงให้เลือก | มี Invoice ทั้งขาเข้าและขาออกในระบบ | Positive | ระบบแสดงเฉพาะ Invoice ขาเข้า (Import) เท่านั้นให้เลือกใน Phase นี้ |  | TRUE | REQ0037 | Web Application | Mananchai Sinsuwan |
+|  | 69AA2036 | ตรวจสอบ Tab ข้อมูลส่วนควบคุมยังไม่มีหน่วยงานก่อนไปถึง Tab สรุป | 1. เปิดหน้า MGT ที่สร้างจากหน้าหลัก Tab ข้อมูลส่วนควบคุม <br> 2. ตรวจสอบว่ามีการระบุหน่วยงานหรือไม่ | N/A | Positive | Tab ข้อมูลส่วนควบคุมยังไม่ระบุหน่วยงาน เนื่องจากระบบจะสรุปให้ใน Tab สรุปเท่านั้น |  | FALSE | REQ0037 | Web Application | Mananchai Sinsuwan |
+|  | 69AA2037 | บันทึก Draft LPI ที่สร้างจากหน้าหลัก แล้วตรวจสอบการจัด Group ตามหน่วยงาน | 1. เลือก Invoice และกรอกข้อมูลใน MGT ที่สร้างจากหน้าหลัก <br> 2. กดบันทึก <br> 3. ตรวจสอบการจัด Group สินค้าตามหน่วยงานใน Draft LPI | Invoice ที่มีสินค้าควบคุมหลายหน่วยงาน เลือกจากหน้าหลัก | Positive | ระบบแบ่ง Group สินค้าตามหน่วยงานและจัดอยู่ใน Draft LPI เดียวกัน เหมือนกับการสร้างจาก Invoice โดยตรง |  | TRUE | REQ0038 | Web Application | Mananchai Sinsuwan |
+|  | 69AA2038 | ตรวจสอบสถานะ LPI ที่สร้างจากหน้าขอใบอนุญาตครั้งแรกก่อนระบุข้อมูล Group หน่วยงาน | 1. สร้าง Draft LPI จากหน้าหลักครั้งแรก <br> 2. ยังไม่ระบุข้อมูลเพิ่มเติมใน Group หน่วยงานที่ระบบสร้างไว้ให้ <br> 3. ตรวจสอบสถานะและปุ่มส่งของ LPI | LPI ที่เพิ่งสร้างจากหน้าหลักครั้งแรก ยังไม่กรอกข้อมูล Group หน่วยงาน | Negative | LPI ยังไม่มีสถานะ (ไม่ใช่ Draft) และไม่สามารถส่งคำขอได้จนกว่าจะระบุข้อมูลเพิ่มเติมใน Group หน่วยงานให้ครบก่อน |  | FALSE | REQ0039 | Web Application | Mananchai Sinsuwan |
+|  | 69AA2039 | ระบุข้อมูลเพิ่มเติมใน Group หน่วยงานครบถ้วน แล้วตรวจสอบสถานะเปลี่ยนเป็น Draft | 1. สร้าง Draft LPI จากหน้าหลักครั้งแรก <br> 2. กรอกข้อมูลเพิ่มเติมใน Group หน่วยงานให้ครบ <br> 3. บันทึก <br> 4. ตรวจสอบสถานะ LPI | ข้อมูล Group หน่วยงานครบถ้วน | Positive | สถานะ LPI เปลี่ยนเป็น Draft หลังจากระบุข้อมูล Group หน่วยงานครบถ้วนแล้ว |  | TRUE | REQ0039 | Web Application | Mananchai Sinsuwan |
+|  | 69AA2040 | ตรวจสอบข้อมูลที่ดึงมาจาก Invoice แก้ไขไม่ได้โดยตรงในหน้า MGT | 1. สร้าง Draft LPI จาก Invoice <br> 2. เปิดหน้า MGT <br> 3. พยายามแก้ไขข้อมูลผู้นำเข้าหรือข้อมูล Invoice ที่ถูกดึงมาโดยตรงในหน้า MGT | LPI ที่สร้างจาก Invoice | Negative | Field ที่ดึงข้อมูลมาจาก Invoice ถูก Lock ไม่สามารถแก้ไขได้โดยตรงในหน้า MGT |  | FALSE | REQ0040 | Web Application | Mananchai Sinsuwan |
+|  | 69AA2041 | ตรวจสอบการแยกสินค้าตามหน่วยงานอัตโนมัติเมื่อสร้าง Draft LPI จาก Invoice | 1. สร้าง Draft LPI จาก Invoice ที่มีสินค้าควบคุมหลายหน่วยงาน <br> 2. ตรวจสอบการแยกสินค้าในแต่ละ Group หน่วยงาน | Invoice ที่มีสินค้าควบคุม 2 หน่วยงานขึ้นไป | Positive | ระบบแยกสินค้าตามหน่วยงานให้อัตโนมัติถูกต้องครบถ้วน |  | TRUE | REQ0040 | Web Application | Mananchai Sinsuwan |
+|  | 69AA2042 | แก้ไขข้อมูล Invoice ผ่าน Modal Invoice ในหน้า MGT แล้วตรวจสอบว่า Update ให้ทุก Group หน่วยงาน | 1. เปิดหน้า MGT ของ LPI ที่มีหลาย Group หน่วยงานจาก Invoice เดียวกัน <br> 2. เปิด Modal Invoice ในหน้า MGT แล้วแก้ไขข้อมูลสินค้า <br> 3. บันทึก <br> 4. ตรวจสอบข้อมูลในทุก Group หน่วยงาน | LPI ที่มี 2 Group หน่วยงานจาก Invoice เดียวกัน | Positive | ระบบ Update ข้อมูลที่แก้ไขให้กับทุก Group หน่วยงานใน LPI นั้นถูกต้อง |  | TRUE | REQ0041 | Web Application | Mananchai Sinsuwan |
+|  | 69AA2043 | พยายามแก้ไขข้อมูลที่มาจาก Invoice โดยตรงในหน้า MGT (ไม่ผ่าน Modal Invoice) | 1. เปิดหน้า MGT ของ LPI ที่สร้างจาก Invoice <br> 2. พยายามแก้ไข Field ข้อมูลสินค้าที่มาจาก Invoice โดยตรงในหน้า MGT | N/A | Negative | ระบบไม่อนุญาตให้แก้ไขข้อมูลที่มาจาก Invoice โดยตรงในหน้า MGT ต้องแก้ผ่าน Modal Invoice เท่านั้น |  | FALSE | REQ0041 | Web Application | Mananchai Sinsuwan |
+|  | 69AA2044 | เลือกหน่วยงานที่ต้องการส่งคำขอใน Tab สรุป แล้วกดส่ง | 1. เปิด Tab สรุป <br> 2. เลือกหน่วยงานที่ต้องการส่งคำขอ <br> 3. กดส่งคำขอใบอนุญาต | LPI ที่มีหน่วยงานให้เลือกอย่างน้อย 1 หน่วยงาน | Positive | ระบบส่งคำขอเฉพาะหน่วยงานที่ถูกเลือกไว้ใน Tab สรุปสำเร็จ |  | TRUE | REQ0042 | Web Application | Mananchai Sinsuwan |
+|  | 69AA2045 | ไม่เลือกหน่วยงานใดเลยใน Tab สรุป แล้วพยายามกดส่ง | 1. เปิด Tab สรุป <br> 2. ไม่เลือกหน่วยงานใดเลย <br> 3. กดส่งคำขอใบอนุญาต | ไม่เลือกหน่วยงานใน Tab สรุป | Negative | ระบบไม่สามารถส่งข้อมูลได้ และแจ้งเตือนให้เลือกหน่วยงานอย่างน้อย 1 หน่วยงานก่อน |  | FALSE | REQ0042 | Web Application | Mananchai Sinsuwan |
+|  | 69AA2046 | ตรวจสอบ Tab สรุปแสดง Timeline Status แยกรายหน่วยงาน | 1. ส่งคำขอ LPI ไปหลายหน่วยงาน <br> 2. เปิด Tab สรุป <br> 3. ตรวจสอบ Timeline Status ของแต่ละหน่วยงาน | LPI ที่ส่งคำขอไปแล้ว 2 หน่วยงานขึ้นไป | Positive | Tab สรุปแสดง Timeline Status แยกรายหน่วยงานถูกต้อง พร้อม Ref. No ของแต่ละหน่วยงานที่ทำการขอ LPI |  | TRUE | REQ0043 | Web Application | Mananchai Sinsuwan |
+|  | 69AA2047 | ตรวจสอบ Ref. No ใน Tab สรุปของหน่วยงานที่ยังไม่ได้ส่งคำขอ | 1. เปิด Tab สรุป ของ LPI ที่มีหน่วยงานหนึ่งยังไม่ได้ส่งคำขอ <br> 2. ตรวจสอบ Ref. No ของหน่วยงานนั้น | หน่วยงานที่ยังไม่ได้ส่งคำขอ | Negative | ระบบแสดงว่ายังไม่มี Ref. No สำหรับหน่วยงานที่ยังไม่ได้ส่งคำขอ ไม่แสดงค่าว่างที่ทำให้เข้าใจผิดว่าส่งแล้ว |  | FALSE | REQ0043 | Web Application | Mananchai Sinsuwan |
+|  | 69AA2048 | บริษัทผู้นำเข้าไม่มีการระบุมอบอำนาจ และ Company Tax ID ตรงกับเงื่อนไข NSW ID Digit 5-17 + Business Type=e-licensing ของ Profile มากกว่า 1 รายการ | 1. เปิดหน้า MGT ของ LPI ที่บริษัทผู้นำเข้าไม่มีข้อมูลมอบอำนาจใน Client Information <br> 2. เตรียมข้อมูลให้มี Profile NSW มากกว่า 1 รายการที่ Tax ID/Business Type ตรงตามเงื่อนไข REQ0034 พร้อมกัน <br> 3. ตรวจสอบว่าระบบเลือก Profile ใดไปใช้ และมีการแจ้งเตือนหรือให้ผู้ใช้เลือกหรือไม่ | Profile NSW 2 รายการขึ้นไปที่ตรงเงื่อนไข NSW ID Digit 5-17 = Tax ID และ Business Type = e-licensing พร้อมกัน | Negative | ระบบมีพฤติกรรมที่ชัดเจนและสม่ำเสมอเมื่อพบ Profile ที่ตรงเงื่อนไขมากกว่า 1 รายการ (เช่น เลือกอัตโนมัติตามลำดับที่กำหนด หรือแสดงให้ผู้ใช้เลือก) โดยไม่เกิด Error หรือส่งข้อมูลผิด Profile | รอ BA ยืนยัน: SRS REQ0034 ไม่ได้ระบุพฤติกรรมของระบบไว้ชัดเจนสำหรับกรณีมี Profile ที่ตรงเงื่อนไขมากกว่า 1 รายการพร้อมกัน (พบจากผลตรวจ spectra-qa-remote ชุดที่ 6/11) — เพิ่ม TC นี้เพื่อบันทึกเป็นคำถามเปิด ไม่ได้สันนิษฐานพฤติกรรมเอง | FALSE | REQ0034 | Web Application | Mananchai Sinsuwan |
+
+### รายละเอียดของแต่ละ Test Case (Detailed Breakdown):
+#### [69AA2001]
+- **Test Case ID:** 69AA2001
+- **Test Case Objective:** ตรวจสอบโครงสร้างหน้า MGT เมื่อสร้าง LPI จาก Invoice มีครบ 3 ส่วน
+- **Test Step:** 1. สร้าง Draft LPI จาก Invoice
+2. เปิดหน้า MGT ของ LPI นั้น
+3. ตรวจสอบ Tab ที่แสดง
+- **Test Data:** LPI ที่สร้างจาก Invoice
+- **Test Type:** Positive
+- **Expected Result:** หน้า MGT แสดงครบ 3 ส่วน คือ ส่วนควบคุม, ส่วนรายการ, และสรุป
+- **Automate:** FALSE
+- **Req No.:** REQ0025
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA2002]
+- **Test Case ID:** 69AA2002
+- **Test Case Objective:** ตรวจสอบโครงสร้างหน้า MGT เมื่อสร้าง LPI จากใบขนมีครบ 3 ส่วน
+- **Test Step:** 1. สร้าง Draft LPI จากใบขน
+2. เปิดหน้า MGT ของ LPI นั้น
+3. ตรวจสอบ Tab ที่แสดง
+- **Test Data:** LPI ที่สร้างจากใบขน
+- **Test Type:** Positive
+- **Expected Result:** หน้า MGT แสดงครบ 3 ส่วน คือ ส่วนควบคุม, ส่วนรายการ, และสรุป
+- **Automate:** FALSE
+- **Req No.:** REQ0025
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA2003]
+- **Test Case ID:** 69AA2003
+- **Test Case Objective:** ตรวจสอบเนื้อหา Tab สรุป แสดงจำนวนหน่วยงานและรายการที่ถูกควบคุมถูกต้อง
+- **Test Step:** 1. เปิดหน้า MGT ของ LPI ที่มีสินค้าถูกควบคุมโดย 2 หน่วยงาน
+2. เข้า Tab สรุป
+3. ตรวจสอบจำนวนหน่วยงานและรายการที่แสดง
+- **Test Data:** LPI ที่มีสินค้าควบคุมโดย 2 หน่วยงาน
+- **Test Type:** Positive
+- **Expected Result:** Tab สรุป แสดงจำนวนหน่วยงานและรายการสินค้าที่ถูกควบคุมตรงกับข้อมูลจริงครบถ้วน
+- **Automate:** TRUE
+- **Req No.:** REQ0025
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA2004]
+- **Test Case ID:** 69AA2004
+- **Test Case Objective:** ตรวจสอบ Field ส่วนของเอกสารถูกระบุอัตโนมัติตามหน่วยงานที่ขอใบอนุญาต
+- **Test Step:** 1. เปิดหน้า MGT Tab ส่วนควบคุม ของ LPI หน่วยงาน อย.
+2. ตรวจสอบ Field "ส่วนของเอกสาร"
+- **Test Data:** LPI หน่วยงาน อย.
+- **Test Type:** Positive
+- **Expected Result:** ระบบระบุส่วนของเอกสารให้ตรงตามหน่วยงาน อย. โดยอัตโนมัติ
+- **Automate:** FALSE
+- **Req No.:** REQ0026
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA2005]
+- **Test Case ID:** 69AA2005
+- **Test Case Objective:** ตรวจสอบข้อมูลผู้นำเข้าถูกดึงจาก Invoice มาแสดงในส่วนควบคุม
+- **Test Step:** 1. เปิดหน้า MGT Tab ส่วนควบคุม
+2. ตรวจสอบ Field ข้อมูลผู้นำเข้าเทียบกับข้อมูลผู้ซื้อใน Invoice ต้นทาง
+- **Test Data:** LPI ที่สร้างจาก Invoice ซึ่งมีข้อมูลผู้ซื้อครบถ้วน
+- **Test Type:** Positive
+- **Expected Result:** ข้อมูลผู้นำเข้าในส่วนควบคุมตรงกับข้อมูลผู้ซื้อจาก Invoice ทุก Field
+- **Automate:** TRUE
+- **Req No.:** REQ0026
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA2006]
+- **Test Case ID:** 69AA2006
+- **Test Case Objective:** กรอกข้อมูลขนส่งสินค้าเพิ่มเติมในส่วนควบคุม
+- **Test Step:** 1. เปิดหน้า MGT Tab ส่วนควบคุม
+2. กรอก License Type, วันที่นำเข้า, ประเทศต้นทางบรรทุก, ประเทศปลายทาง
+3. บันทึก
+- **Test Data:** License Type: Import License, วันที่นำเข้า: 25/09/2569, ประเทศต้นทางบรรทุก: China, ประเทศปลายทาง: Thailand
+- **Test Type:** Positive
+- **Expected Result:** ระบบบันทึกข้อมูลขนส่งสินค้าที่กรอกเพิ่มเติมสำเร็จ
+- **Automate:** TRUE
+- **Req No.:** REQ0026
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA2007]
+- **Test Case ID:** 69AA2007
+- **Test Case Objective:** กรอกข้อมูลผู้ขอใบอนุญาต (ผู้แจ้ง) พร้อมข้อมูลเพิ่มเติมสำหรับผู้รับมอบอำนาจ
+- **Test Step:** 1. เปิดหน้า MGT Tab ส่วนควบคุม
+2. ตรวจสอบชื่อผู้แจ้งข้อมูล (ระบบนำจาก User ที่กรอกและส่ง)
+3. กรอกข้อมูลผู้รับมอบอำนาจเพิ่มเติม (ถ้ามี)
+- **Test Data:** User ที่ Login ปัจจุบัน: มานะชัย สินสุวรรณ
+- **Test Type:** Positive
+- **Expected Result:** ระบบระบุชื่อผู้แจ้งข้อมูลเป็น User ที่ Login และกรอกส่งข้อมูลโดยอัตโนมัติ พร้อมให้กรอกข้อมูลผู้รับมอบอำนาจเพิ่มเติมได้
+- **Remark:** รอ BA ยืนยัน: MOM ครั้งที่ 7 (12/03/2569) ระบุว่าชื่อผู้แจ้งบางกรณีควรเลือกได้ไม่ผูกกับผู้ Login แต่ SRS REQ0026/REQ0035 ยังระบุว่านำจาก User ที่ Login เป็นหลัก
+- **Automate:** TRUE
+- **Req No.:** REQ0026
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA2008]
+- **Test Case ID:** 69AA2008
+- **Test Case Objective:** ตรวจสอบ Validation เมื่อกรอกข้อมูลครบถ้วนถูกต้องทั้งส่วนควบคุมและส่วนรายการ
+- **Test Step:** 1. กรอกข้อมูลส่วนควบคุมและส่วนรายการให้ครบทุก Field บังคับและถูก Format
+2. กดปุ่มตรวจสอบข้อมูล (Validate)
+- **Test Data:** ข้อมูลครบถ้วนตาม Field บังคับทุกส่วน
+- **Test Type:** Positive
+- **Expected Result:** ระบบตรวจสอบผ่านทั้งหมด ไม่มีข้อความแจ้งเตือน
+- **Automate:** TRUE
+- **Req No.:** REQ0027
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA2009]
+- **Test Case ID:** 69AA2009
+- **Test Case Objective:** ตรวจสอบ Validation เมื่อไม่กรอก Field บังคับในส่วนควบคุม
+- **Test Step:** 1. เว้นว่าง Field บังคับในส่วนควบคุม เช่น ชื่อบริษัท
+2. กดปุ่มตรวจสอบข้อมูลหรือกดส่ง
+- **Test Data:** Field ชื่อบริษัท: (ว่าง)
+- **Test Type:** Negative
+- **Expected Result:** ระบบแจ้งเตือนให้กรอก Field ที่จำเป็นให้ครบก่อนดำเนินการต่อ และไม่ปลดล็อคปุ่มส่ง
+- **Automate:** FALSE
+- **Req No.:** REQ0027
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA2010]
+- **Test Case ID:** 69AA2010
+- **Test Case Objective:** ตรวจสอบ Validation เมื่อไม่กรอก Field บังคับในส่วนรายการ
+- **Test Step:** 1. เว้นว่าง Field บังคับในส่วนรายการ เช่น ชื่อสินค้า (ภาษาไทย)
+2. กดปุ่มตรวจสอบข้อมูลหรือกดส่ง
+- **Test Data:** Field ชื่อสินค้า (ภาษาไทย): (ว่าง)
+- **Test Type:** Negative
+- **Expected Result:** ระบบแจ้งเตือนให้กรอก Field ที่จำเป็นให้ครบก่อนดำเนินการต่อ และไม่ปลดล็อคปุ่มส่ง
+- **Automate:** FALSE
+- **Req No.:** REQ0027
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA2011]
+- **Test Case ID:** 69AA2011
+- **Test Case Objective:** ตรวจสอบ Validation Format ตามเอกสาร FF - Restricted goods permit message_V1_10 เมื่อกรอก HS Code ผิด Format
+- **Test Step:** 1. กรอก HS Code ในส่วนรายการด้วยรูปแบบที่ไม่ตรงตาม Schema (เช่น มีตัวอักษรปน)
+2. กดปุ่มตรวจสอบข้อมูล
+- **Test Data:** HS Code: "1234AB!!"
+- **Test Type:** Negative
+- **Expected Result:** ระบบแจ้งเตือนรูปแบบข้อมูล HS Code ไม่ถูกต้องตาม Format ที่กำหนด และไม่ปลดล็อคปุ่มส่ง
+- **Automate:** FALSE
+- **Req No.:** REQ0027
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA2012]
+- **Test Case ID:** 69AA2012
+- **Test Case Objective:** กรอกอักขระพิเศษ SQL Injection ในช่องข้อมูล Free Text เช่น Remark
+- **Test Step:** 1. กรอก Remark ด้วยข้อความ ' OR 1=1 --
+2. บันทึกและกดตรวจสอบข้อมูล
+- **Test Data:** Remark: ' OR 1=1 --
+- **Test Type:** Negative
+- **Expected Result:** ระบบไม่เกิด Error หรือช่องโหว่ด้านความปลอดภัย บันทึกข้อความเป็น String ปกติหรือปฏิเสธอักขระต้องห้ามพร้อมแจ้งเตือน
+- **Remark:** Security Test
+- **Automate:** FALSE
+- **Req No.:** REQ0027
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA2013]
+- **Test Case ID:** 69AA2013
+- **Test Case Objective:** ปุ่มส่งข้อมูลถูกปลดล็อคเมื่อกรอกและตรวจสอบข้อมูลผ่านทั้งหมด
+- **Test Step:** 1. กรอกข้อมูลครบถ้วนถูกต้องทั้งส่วนควบคุมและส่วนรายการ
+2. กดตรวจสอบข้อมูล
+3. สังเกตสถานะปุ่มส่งข้อมูล
+- **Test Data:** ข้อมูลครบถ้วนถูกต้อง
+- **Test Type:** Positive
+- **Expected Result:** ปุ่มส่งข้อมูลเปลี่ยนจาก Disable เป็น Enable สามารถกดส่งไปยังหน่วยงานที่ระบุใน LPI ได้
+- **Automate:** TRUE
+- **Req No.:** REQ0028
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA2014]
+- **Test Case ID:** 69AA2014
+- **Test Case Objective:** ปุ่มส่งข้อมูลยังคง Lock เมื่อตรวจสอบข้อมูลไม่ผ่าน
+- **Test Step:** 1. กรอกข้อมูลไม่ครบถ้วน
+2. กดตรวจสอบข้อมูล
+3. สังเกตสถานะปุ่มส่งข้อมูล
+- **Test Data:** ข้อมูลไม่ครบถ้วน
+- **Test Type:** Negative
+- **Expected Result:** ปุ่มส่งข้อมูลยังคง Disable ไม่สามารถกดส่งได้จนกว่าจะแก้ไขข้อมูลให้ผ่านการตรวจสอบ
+- **Automate:** FALSE
+- **Req No.:** REQ0028
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA2015]
+- **Test Case ID:** 69AA2015
+- **Test Case Objective:** ตรวจสอบ Timeline แสดงประวัติเฉพาะหน่วยงานที่ขอใบอนุญาตในหน้านั้น
+- **Test Step:** 1. เปิดหน้า MGT ของ LPI หน่วยงาน อย. ที่มีประวัติการส่งคำขอหลายครั้ง
+2. ตรวจสอบ Timeline ที่แสดง
+- **Test Data:** LPI หน่วยงาน อย. ที่มีประวัติ Sent/Error หลายครั้ง
+- **Test Type:** Positive
+- **Expected Result:** Timeline แสดงเฉพาะประวัติการขอใบอนุญาตของหน่วยงาน อย. เท่านั้น ไม่ปนกับหน่วยงานอื่น
+- **Automate:** TRUE
+- **Req No.:** REQ0029
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA2016]
+- **Test Case ID:** 69AA2016
+- **Test Case Objective:** ตรวจสอบข้อมูลถูกกรอกอัตโนมัติเมื่อสร้าง LPI จาก Invoice หรือใบขน Tab Invoice
+- **Test Step:** 1. สร้าง LPI จาก Invoice
+2. เปิดหน้า MGT
+3. ตรวจสอบข้อมูลผู้นำเข้า/ข้อมูลขนส่งสินค้าในส่วนควบคุม และข้อมูลสินค้าในส่วนรายการ
+- **Test Data:** LPI ที่สร้างจาก Invoice ซึ่งมีข้อมูลครบถ้วน
+- **Test Type:** Positive
+- **Expected Result:** ระบบกรอกข้อมูลผู้นำเข้า, ข้อมูลขนส่งสินค้าในส่วนควบคุม และข้อมูลสินค้าในส่วนรายการให้อัตโนมัติถูกต้องตรงกับ Invoice
+- **Automate:** TRUE
+- **Req No.:** REQ0030
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA2017]
+- **Test Case ID:** 69AA2017
+- **Test Case Objective:** ส่ง LPI ที่กรอกครบถ้วนผ่านการตรวจสอบทั้งหมดไปยังหน่วยงาน
+- **Test Step:** 1. กรอกข้อมูลครบถ้วนถูกต้อง
+2. กดตรวจสอบข้อมูลจนปุ่มส่งถูกปลดล็อค
+3. กดส่ง LPI
+- **Test Data:** ข้อมูลครบถ้วนถูกต้องตาม Schema FF - Restricted goods permit message_V1_10
+- **Test Type:** Positive
+- **Expected Result:** ระบบส่งข้อมูลในรูปแบบ XML ตาม Schema FF - Restricted goods permit message_V1_10 ไปยังหน่วยงานสำเร็จ และสถานะ LPI เปลี่ยนเป็น Sent
+- **Automate:** TRUE
+- **Req No.:** REQ0031
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA2018]
+- **Test Case ID:** 69AA2018
+- **Test Case Objective:** พยายามส่ง LPI ทั้งที่ข้อมูลยังไม่ผ่านการตรวจสอบ (Bypass ปุ่ม Lock)
+- **Test Step:** 1. กรอกข้อมูลไม่ครบถ้วน
+2. พยายามกดส่งข้อมูลโดยตรง (เช่น ผ่าน Keyboard Shortcut หรือ API เรียกตรง)
+- **Test Data:** ข้อมูลไม่ครบถ้วน
+- **Test Type:** Negative
+- **Expected Result:** ระบบปฏิเสธการส่งข้อมูลแม้จะพยายาม Bypass ปุ่ม Lock และแจ้งเตือนข้อมูลไม่ครบถ้วน
+- **Remark:** Security Test: Business Logic Bypass
+- **Automate:** FALSE
+- **Req No.:** REQ0031
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA2019]
+- **Test Case ID:** 69AA2019
+- **Test Case Objective:** ระบุว่าบริษัทผู้นำเข้ามีการมอบอำนาจ ระบบแสดง Field เลขบัตรผู้รับมอบอำนาจแบบ Dropdown จาก Client Information
+- **Test Step:** 1. เปิดหน้า MGT ของ LPI ที่บริษัทผู้นำเข้าถูกระบุว่ามีผู้รับมอบอำนาจใน Client Information
+2. ตรวจสอบ Field เลขบัตรผู้รับมอบอำนาจในส่วนควบคุม
+- **Test Data:** บริษัทผู้นำเข้าที่มีข้อมูลผู้รับมอบอำนาจระบุไว้ใน Client Information แล้ว
+- **Test Type:** Positive
+- **Expected Result:** ระบบแสดง Field เลขบัตรผู้รับมอบอำนาจเป็น Dropdown ให้เลือกตามรายชื่อที่บริษัทผู้นำเข้ามอบอำนาจไว้ใน Client Information
+- **Remark:** แก้ไขจาก v11: ไม่มี Checkbox ให้ติ๊กมีผู้รับมอบอำนาจ ระบบตรวจจากข้อมูล Client Information โดยตรงตาม REQ0033
+- **Automate:** TRUE
+- **Req No.:** REQ0033
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA2020]
+- **Test Case ID:** 69AA2020
+- **Test Case Objective:** เลือกเลขบัตรผู้รับมอบอำนาจจาก Dropdown แล้วตรวจสอบผลใน Ref No ที่ส่ง XML
+- **Test Step:** 1. เลือกเลขบัตรผู้รับมอบอำนาจจาก Dropdown ในส่วนควบคุม
+2. ส่ง LPI ไปยังหน่วยงาน
+3. ตรวจสอบ Ref No ที่ใช้ส่งใน Profile ของ XML
+- **Test Data:** เลือกผู้รับมอบอำนาจ 1 รายการจาก Dropdown
+- **Test Type:** Positive
+- **Expected Result:** Ref No ที่ส่งใน XML อ้างอิงตาม Profile ของผู้รับมอบอำนาจที่เลือกไว้ถูกต้องตาม REQ0032
+- **Automate:** TRUE
+- **Req No.:** REQ0032
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA2021]
+- **Test Case ID:** 69AA2021
+- **Test Case Objective:** บริษัทผู้นำเข้าไม่มีการระบุมอบอำนาจ แต่ Company Tax ID ตรงกับ NSW ID Digit 5-17 และ Business Type = e-licensing
+- **Test Step:** 1. เปิดหน้า MGT ของ LPI ที่บริษัทผู้นำเข้าไม่มีข้อมูลมอบอำนาจใน Client Information
+2. ตรวจสอบว่า Company Tax ID ตรงกับ NSW ID Digit 5-17 ของ Profile ที่มี Business Type = e-licensing
+3. ตรวจสอบ Profile ที่ระบบเลือกใช้
+- **Test Data:** Company Tax ID ตรงกับ NSW ID Digit 5-17 ของ Profile Business Type = e-licensing
+- **Test Type:** Positive
+- **Expected Result:** ระบบนำ Profile ที่ตรงเงื่อนไข (NSW ID Digit 5-17 ตรงกับ Tax ID และ Business Type = e-licensing) ไปใช้ในการส่ง LPI โดยอัตโนมัติ ไม่ต้องเลือกผู้รับมอบอำนาจเอง
+- **Remark:** แก้ไขจาก v11: ตรวจสอบอัตโนมัติจาก Tax ID ไม่ใช่การติ๊ก Checkbox ตาม REQ0034
+- **Automate:** TRUE
+- **Req No.:** REQ0034
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA2022]
+- **Test Case ID:** 69AA2022
+- **Test Case Objective:** บริษัทผู้นำเข้าไม่มีการระบุมอบอำนาจ และ Company Tax ID ไม่ตรงกับ NSW ID/Business Type ใดเลย
+- **Test Step:** 1. เปิดหน้า MGT ของ LPI ที่บริษัทผู้นำเข้าไม่มีข้อมูลมอบอำนาจ และไม่มี Profile NSW ที่ Tax ID ตรงกัน
+2. ตรวจสอบข้อความแจ้งเตือนที่ระบบแสดง
+- **Test Data:** Company Tax ID ไม่ตรงกับ NSW ID Digit 5-17 ของ Profile ใดเลย หรือ Business Type ไม่ใช่ e-licensing
+- **Test Type:** Negative
+- **Expected Result:** ระบบแจ้งเตือน "กรุณาระบุข้อมูลของบริษัทที่ลงทะเบียนใน NSW หรือใช้ข้อมูลผู้รับมอบอำนาจ" และไม่สามารถดำเนินการส่งต่อได้จนกว่าจะแก้ไข
+- **Remark:** แก้ไขจาก v11: ข้อความแจ้งเตือนต้องตรงตาม REQ0034 เป๊ะ
+- **Automate:** FALSE
+- **Req No.:** REQ0034
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA2023]
+- **Test Case ID:** 69AA2023
+- **Test Case Objective:** ตรวจสอบ Tab ส่วนควบคุมแสดงเฉพาะหน่วยงาน อย. ตาม Scope ของ SRS ฉบับนี้
+- **Test Step:** 1. เปิดหน้า MGT Tab ส่วนควบคุม
+2. ตรวจสอบตัวเลือกหน่วยงานที่แสดง
+- **Test Data:** N/A
+- **Test Type:** Positive
+- **Expected Result:** ระบบแสดงเฉพาะหน่วยงาน อย. เท่านั้นตาม Scope ของ SRS V7.0 (Phase นี้)
+- **Automate:** FALSE
+- **Req No.:** REQ0035
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA2024]
+- **Test Case ID:** 69AA2024
+- **Test Case Objective:** ตรวจสอบ Field ข้อมูลผู้นำเข้าครบทุก Field ตามที่ SRS กำหนด (เลขผู้เสียภาษี/ชื่อบริษัท/ที่อยู่/ลำดับสาขา/เลขบัตรผู้รับมอบอำนาจ)
+- **Test Step:** 1. เปิดหน้า MGT Tab ส่วนควบคุม
+2. ตรวจสอบว่ามี Field ครบ: เลขผู้เสียภาษี, ชื่อบริษัท (ภาษาอังกฤษ), รายละเอียดที่อยู่, ลำดับสาขา, เลขบัตรผู้รับมอบอำนาจ
+- **Test Data:** N/A
+- **Test Type:** Positive
+- **Expected Result:** หน้าจอแสดง Field ข้อมูลผู้นำเข้าครบทั้ง 5 Field ตามที่ SRS REQ0035 กำหนด และข้อมูลถูกดึงมาจากข้อมูลผู้ซื้อใน Invoice ยกเว้นเลขบัตรผู้รับมอบอำนาจที่มาจาก Client Information
+- **Automate:** TRUE
+- **Req No.:** REQ0035
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA2025]
+- **Test Case ID:** 69AA2025
+- **Test Case Objective:** ตรวจสอบ Field ข้อมูลขนส่งสินค้าครบทุก Field (License Type/วันที่นำเข้า/ประเทศต้นทางบรรทุก/ประเทศปลายทาง)
+- **Test Step:** 1. เปิดหน้า MGT Tab ส่วนควบคุม
+2. ตรวจสอบว่ามี Field ครบ: License Type, วันที่นำเข้า, ประเทศต้นทางบรรทุก, ประเทศปลายทาง
+- **Test Data:** N/A
+- **Test Type:** Positive
+- **Expected Result:** หน้าจอแสดง Field ข้อมูลขนส่งสินค้าครบทั้ง 4 Field ตามที่ SRS REQ0035 กำหนด
+- **Automate:** TRUE
+- **Req No.:** REQ0035
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA2026]
+- **Test Case ID:** 69AA2026
+- **Test Case Objective:** ตรวจสอบ XML ที่ส่งออกมีเลขบัตรผู้แจ้งข้อมูลตามที่ SRS กำหนดเป็นข้อมูลเพิ่มเติม
+- **Test Step:** 1. กรอกข้อมูลผู้ขอใบอนุญาตครบถ้วน (ชื่อผู้แจ้งข้อมูล)
+2. ส่ง LPI ไปยังหน่วยงาน
+3. ตรวจสอบเนื้อหา XML ที่ส่งออก
+- **Test Data:** ข้อมูลผู้แจ้งข้อมูลครบถ้วน
+- **Test Type:** Positive
+- **Expected Result:** XML ที่ส่งออกมีเลขบัตรผู้แจ้งข้อมูลแนบไปด้วยตามที่ SRS REQ0035 กำหนด
+- **Automate:** TRUE
+- **Req No.:** REQ0035
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA2027]
+- **Test Case ID:** 69AA2027
+- **Test Case Objective:** กรอกเลขผู้เสียภาษีในส่วนควบคุมด้วยความยาวเกิน 13 หลัก (Boundary)
+- **Test Step:** 1. เปิดหน้า MGT Tab ส่วนควบคุม
+2. พยายามแก้ไข Field เลขผู้เสียภาษีเป็นตัวเลข 14 หลัก
+3. ตรวจสอบผลลัพธ์
+- **Test Data:** เลขผู้เสียภาษี: 14 หลัก (เกิน Max Length มาตรฐาน 13 หลัก)
+- **Test Type:** Negative
+- **Expected Result:** ระบบไม่ยอมรับข้อมูลที่เกิน 13 หลัก และแจ้งเตือนรูปแบบข้อมูลไม่ถูกต้อง (Field นี้ปกติแก้ไขไม่ได้เพราะดึงจาก Invoice แต่ต้องทดสอบกรณีแก้ไขผ่าน Invoice Modal)
+- **Remark:** BVA: Max Length เลขผู้เสียภาษี 13 หลัก
+- **Automate:** FALSE
+- **Req No.:** REQ0035
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA2028]
+- **Test Case ID:** 69AA2028
+- **Test Case Objective:** ตรวจสอบ Field ส่วนข้อมูลรายการครบทุก Field ตามที่ SRS กำหนด
+- **Test Step:** 1. เปิดหน้า MGT Tab ส่วนรายการ
+2. ตรวจสอบ Field: Invoice Item Number, ชื่อสินค้า (ไทย/อังกฤษ), HS Code, ลักษณะผลิตภัณฑ์, ยี่ห้อสินค้า, ปริมาณตาม Invoice, รหัสสถิติ, ประเทศต้นทางบรรทุก, ประเทศผู้ซื้อ, เลขสารบบ, Remark
+- **Test Data:** LPI ที่มีสินค้า 1 รายการ
+- **Test Type:** Positive
+- **Expected Result:** หน้าจอแสดง Field ครบทุกรายการตามที่ SRS REQ0036 กำหนด และข้อมูลตั้งต้น Default ได้จาก Master Product
+- **Automate:** TRUE
+- **Req No.:** REQ0036
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA2029]
+- **Test Case ID:** 69AA2029
+- **Test Case Objective:** ตรวจสอบ Field ข้อมูลส่วนรายละเอียดการผลิตครบทุก Field (Lot/วันที่ผลิต/วันที่หมดอายุ/ปริมาณ/จำนวน)
+- **Test Step:** 1. เปิดหน้า MGT Tab ส่วนรายการ
+2. ตรวจสอบ Field: หมายเลข Lot, วันที่ผลิตสินค้า, วันที่หมดอายุ, ปริมาณตาม Invoice, ปริมาณ, Unit (ปริมาณ), จำนวน, Unit (จำนวน)
+- **Test Data:** LPI ที่มีสินค้า 1 รายการ
+- **Test Type:** Positive
+- **Expected Result:** หน้าจอแสดง Field ข้อมูลส่วนรายละเอียดการผลิตครบทั้ง 8 Field ตามที่ SRS REQ0036 กำหนด
+- **Automate:** TRUE
+- **Req No.:** REQ0036
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA2030]
+- **Test Case ID:** 69AA2030
+- **Test Case Objective:** ข้อมูลรายการสินค้าถูก Default ค่าจาก Master Product เมื่อเลือกสินค้าที่มีอยู่ใน Master
+- **Test Step:** 1. เปิดหน้า MGT Tab ส่วนรายการ
+2. เลือกสินค้าที่มีข้อมูลอยู่ใน Master Product แล้ว
+3. ตรวจสอบว่า Field ต่างๆ ถูกกรอกอัตโนมัติ
+- **Test Data:** สินค้าที่มีข้อมูลอยู่ใน Master Product
+- **Test Type:** Positive
+- **Expected Result:** ระบบดึงข้อมูล Default ของสินค้าจาก Master Product มากรอกให้อัตโนมัติ (ชื่อสินค้า, HS Code, ยี่ห้อ ฯลฯ)
+- **Automate:** TRUE
+- **Req No.:** REQ0036
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA2031]
+- **Test Case ID:** 69AA2031
+- **Test Case Objective:** กรอกปริมาณ Lot เกินกว่าปริมาณตาม Invoice จริง
+- **Test Step:** 1. เปิดหน้า MGT Tab ส่วนรายการ ส่วนรายละเอียดการผลิต
+2. กรอกปริมาณตาม Invoice ของ Lot มากกว่าปริมาณจริงในรายการสินค้า
+3. บันทึก
+- **Test Data:** ปริมาณตาม Invoice จริง: 100 KGM, กรอกปริมาณ Lot: 150 KGM
+- **Test Type:** Negative
+- **Expected Result:** ระบบปฏิเสธการกรอกและแจ้งเตือนว่าปริมาณ Lot ต้องไม่เกินปริมาณตาม Invoice จริง
+- **Remark:** BVA: ปริมาณ Lot ต้องไม่เกินปริมาณ Invoice ตาม REQ0036
+- **Automate:** FALSE
+- **Req No.:** REQ0036
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA2032]
+- **Test Case ID:** 69AA2032
+- **Test Case Objective:** กรอกปริมาณ Lot เป็นค่าติดลบหรือ 0
+- **Test Step:** 1. เปิดหน้า MGT Tab ส่วนรายการ ส่วนรายละเอียดการผลิต
+2. กรอกปริมาณเป็น -5 หรือ 0
+3. บันทึก
+- **Test Data:** ปริมาณ: -5 หรือ 0
+- **Test Type:** Negative
+- **Expected Result:** ระบบไม่ยอมรับค่าติดลบหรือ 0 สำหรับปริมาณสินค้า และแจ้งเตือนให้กรอกค่าที่ถูกต้อง
+- **Automate:** FALSE
+- **Req No.:** REQ0036
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA2033]
+- **Test Case ID:** 69AA2033
+- **Test Case Objective:** กรอกวันที่หมดอายุสินค้าก่อนวันที่ผลิตสินค้า
+- **Test Step:** 1. เปิดหน้า MGT Tab ส่วนรายการ ส่วนรายละเอียดการผลิต
+2. กรอกวันที่ผลิตสินค้า = 20/09/2569 และวันที่หมดอายุ = 10/09/2569
+3. บันทึก
+- **Test Data:** วันที่ผลิต: 20/09/2569, วันที่หมดอายุ: 10/09/2569
+- **Test Type:** Negative
+- **Expected Result:** ระบบแจ้งเตือนว่าวันที่หมดอายุต้องไม่ก่อนวันที่ผลิตสินค้า ไม่บันทึกข้อมูลที่ขัดแย้งกัน
+- **Automate:** FALSE
+- **Req No.:** REQ0036
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA2034]
+- **Test Case ID:** 69AA2034
+- **Test Case Objective:** ตรวจสอบ Tab ที่แสดงเมื่อสร้าง LPI จากหน้าหลัก (เลือกข้อมูล Invoice / ข้อมูลส่วนควบคุม / สรุป)
+- **Test Step:** 1. สร้าง Draft LPI จากหน้าหลัก
+2. เปิดหน้า MGT
+3. ตรวจสอบ Tab ที่แสดง
+- **Test Data:** LPI ที่สร้างจากหน้าหลัก
+- **Test Type:** Positive
+- **Expected Result:** ระบบแสดง Tab ครบ 3 อย่าง: เลือกข้อมูล Invoice, ข้อมูลส่วนควบคุม (ยังไม่มีหน่วยงาน), และสรุป
+- **Automate:** FALSE
+- **Req No.:** REQ0037
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA2035]
+- **Test Case ID:** 69AA2035
+- **Test Case Objective:** ตรวจสอบ Tab เลือกข้อมูล Invoice แสดงเฉพาะ Invoice ขาเข้าเท่านั้น
+- **Test Step:** 1. เปิดหน้า MGT ที่สร้างจากหน้าหลัก Tab เลือกข้อมูล Invoice
+2. ตรวจสอบรายการ Invoice ที่แสดงให้เลือก
+- **Test Data:** มี Invoice ทั้งขาเข้าและขาออกในระบบ
+- **Test Type:** Positive
+- **Expected Result:** ระบบแสดงเฉพาะ Invoice ขาเข้า (Import) เท่านั้นให้เลือกใน Phase นี้
+- **Automate:** TRUE
+- **Req No.:** REQ0037
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA2036]
+- **Test Case ID:** 69AA2036
+- **Test Case Objective:** ตรวจสอบ Tab ข้อมูลส่วนควบคุมยังไม่มีหน่วยงานก่อนไปถึง Tab สรุป
+- **Test Step:** 1. เปิดหน้า MGT ที่สร้างจากหน้าหลัก Tab ข้อมูลส่วนควบคุม
+2. ตรวจสอบว่ามีการระบุหน่วยงานหรือไม่
+- **Test Data:** N/A
+- **Test Type:** Positive
+- **Expected Result:** Tab ข้อมูลส่วนควบคุมยังไม่ระบุหน่วยงาน เนื่องจากระบบจะสรุปให้ใน Tab สรุปเท่านั้น
+- **Automate:** FALSE
+- **Req No.:** REQ0037
+- **Platforms:** Web Application
+- **Updated By:** Mananchai Sinsuwan
+
+#### [69AA2037]
+- **Test Case ID:** 69AA2037
+- **Test Case

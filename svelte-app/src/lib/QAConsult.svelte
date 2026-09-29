@@ -367,6 +367,10 @@
     const gPid = String(g.project_id || '');
     const gCode = String(g.project_code || '').trim().toLowerCase();
     return !gPid || !pId || gPid === pId || (pCode && gCode && gCode === pCode);
+  }).sort((a, b) => {
+    const tA = new Date(a.latest_date || 0).getTime();
+    const tB = new Date(b.latest_date || 0).getTime();
+    return tB - tA;
   });
 
   $: currentProjectHistory = $qaHistory.filter(h => {
@@ -376,6 +380,12 @@
     const hPid = String(h.project_id || '');
     const hCode = String(h.project_code || '').trim().toLowerCase();
     return !hPid || !pId || hPid === pId || (pCode && hCode && hCode === pCode);
+  }).sort((a, b) => {
+    if (a.is_processing && !b.is_processing) return -1;
+    if (!a.is_processing && b.is_processing) return 1;
+    const tA = new Date(a.date || a.created_at || 0).getTime();
+    const tB = new Date(b.date || b.created_at || 0).getTime();
+    return tB - tA;
   });
 
   $: cleanTargetGroupName = (() => {
@@ -404,6 +414,12 @@
       return cleanHGroup === cleanTargetGroupName || cleanHGroup.includes(cleanTargetGroupName) || cleanTargetGroupName.includes(cleanHGroup);
     }
     return true;
+  }).sort((a, b) => {
+    if (a.is_processing && !b.is_processing) return -1;
+    if (!a.is_processing && b.is_processing) return 1;
+    const tA = new Date(a.date || a.created_at || 0).getTime();
+    const tB = new Date(b.date || b.created_at || 0).getTime();
+    return tB - tA;
   });
 
   function selectExistingGroup(g) {
@@ -809,16 +825,45 @@
     showCreateGroupModal = false;
     isGroupNameSet = true;
   }
+  function isExcelFile(fName) {
+    if (!fName) return false;
+    const lower = fName.toLowerCase();
+    return lower.endsWith('.xlsx') || lower.endsWith('.xls') || lower.endsWith('.xlsm') || lower.endsWith('.csv');
+  }
+
+  function isValidQAFile(fName) {
+    if (!fName) return false;
+    const lower = fName.toLowerCase();
+    return lower.endsWith('.pdf') || isExcelFile(fName);
+  }
+
   function handleDrop(e) {
     e.preventDefault();
     isDragging = false;
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      file = e.dataTransfer.files[0];
+      const selected = e.dataTransfer.files[0];
+      if (!isValidQAFile(selected.name)) {
+        toast("กรุณาเลือกไฟล์ PDF หรือ Excel (.xlsx, .xls) เท่านั้น", "warning");
+        return;
+      }
+      file = selected;
+      if (isExcelFile(file.name) && selectedDocTypes.length === 0) {
+        selectedDocTypes = ['Test Case'];
+      }
     }
   }
+
   function handleFileSelect(e) {
     if (e.target.files && e.target.files.length > 0) {
-      file = e.target.files[0];
+      const selected = e.target.files[0];
+      if (!isValidQAFile(selected.name)) {
+        toast("กรุณาเลือกไฟล์ PDF หรือ Excel (.xlsx, .xls) เท่านั้น", "warning");
+        return;
+      }
+      file = selected;
+      if (isExcelFile(file.name) && selectedDocTypes.length === 0) {
+        selectedDocTypes = ['Test Case'];
+      }
     }
   }
   function triggerFileInput() {
@@ -1536,28 +1581,45 @@
           >
             {#if file}
               <div class="file-info" on:click|stopPropagation on:keydown|stopPropagation role="group">
-                <div class="file-icon">
-                  <svg viewBox="0 0 24 24" fill="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
+                <div class="file-icon" class:excel-icon={isExcelFile(file.name)}>
+                  {#if isExcelFile(file.name)}
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: #10b981; width: 28px; height: 28px;">
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                      <polyline points="14 2 14 8 20 8"></polyline>
+                      <line x1="8" y1="13" x2="16" y2="13"></line>
+                      <line x1="8" y1="17" x2="16" y2="17"></line>
+                      <line x1="10" y1="9" x2="8" y2="9"></line>
+                    </svg>
+                  {:else}
+                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
+                  {/if}
                 </div>
                 <div class="file-details">
-                  <div class="file-name">{file.name}</div>
+                  <div class="file-name" style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+                    <span>{file.name}</span>
+                    {#if isExcelFile(file.name)}
+                      <span style="font-size: 10px; background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4); border-radius: 4px; padding: 1px 6px;">Excel Test Case</span>
+                    {:else}
+                      <span style="font-size: 10px; background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4); border-radius: 4px; padding: 1px 6px;">PDF</span>
+                    {/if}
+                  </div>
                   <div class="file-size">{(file.size / 1024).toFixed(1)} KB</div>
                 </div>
-                <button class="btn-remove" on:click={removeFile}>
+                <button class="btn-remove" on:click={removeFile} title="ลบไฟล์">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
                 </button>
               </div>
             {:else}
               <div class="drop-content">
                 <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
-                <p class="drop-title">ลากไฟล์ PDF มาวางที่นี่</p>
-                <p class="drop-sub">หรือ <span>คลิกเพื่อเลือกไฟล์</span></p>
+                <p class="drop-title">ลากไฟล์ PDF หรือ Excel มาวางที่นี่</p>
+                <p class="drop-sub">หรือ <span>คลิกเพื่อเลือกไฟล์</span> (รองรับ .pdf, .xlsx, .xls สำหรับตรวจ Test case)</p>
               </div>
             {/if}
           </div>
           <input
             type="file"
-            accept=".pdf"
+            accept=".pdf, .xlsx, .xls, .xlsm, application/pdf, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel"
             bind:this={fileInput}
             on:change={handleFileSelect}
             style="display: none;"
@@ -1737,8 +1799,8 @@
               <span class="val" style="margin: 0;">{scanResult.email || "- ไม่ระบุ -"}</span>
             </div>
             <div class="summary-item" style="flex-direction: row; align-items: baseline; gap: 8px;">
-              <span class="lbl" style="margin: 0;">จำนวนหน้า:</span>
-              <span class="val" style="margin: 0;">{scanResult.total_pages ? scanResult.total_pages + ' หน้า' : '- ไม่ทราบ -'}</span>
+              <span class="lbl" style="margin: 0;">{isExcelFile(scanResult.filename) ? 'จำนวนแผ่นงาน:' : 'จำนวนหน้า:'}</span>
+              <span class="val" style="margin: 0;">{scanResult.total_pages ? (isExcelFile(scanResult.filename) ? scanResult.total_pages + ' แผ่นงาน (Sheets)' : scanResult.total_pages + ' หน้า') : '- ไม่ทราบ -'}</span>
             </div>
             {#if scanResult.emailSent}
               <div class="summary-item" style="flex-direction: row; align-items: baseline; gap: 8px;">

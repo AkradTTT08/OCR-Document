@@ -129,17 +129,21 @@
 
     directives.push(`### ข้อกำหนดบังคับในการสร้างเอกสารรอบนี้เพื่อรับประกันว่าต้องผ่าน 100% (PASS Quality Gate):`);
     directives.push(`1. [แก้ทุกข้อผิดพลาด 100%]: นำรายการประเด็นข้อผิดพลาดทั้ง ${fb.findings?.length || 0} ข้อด้านบนไปแก้ไข ปรับปรุง และเติมเต็มลงในเนื้อหาเอกสารให้ครบถ้วนทุกจุด ห้ามตกหล่น`);
-    directives.push(`2. [โครงสร้าง Requirement ทุกข้อ]: ทุกรหัส Requirement (เช่น REQ-USR-001, REQ-MCH-001, REQ-ADM-001) ต้องระบุข้อมูลครบถ้วนบริบูรณ์:`);
-    directives.push(`   - วัตถุประสงค์ (Objective), กลุ่มผู้ใช้ (Actor), Pre-conditions และ Post-conditions`);
-    directives.push(`   - ลำดับขั้นตอนการทำงานปกติ (Main Path / Happy Path)`);
-    directives.push(`   - ลำดับขั้นตอนกรณีเกิดข้อผิดพลาด / ข้อยกเว้น (Unhappy Path & Error Handling) พร้อมข้อความแจ้งเตือนผู้ใช้`);
-    directives.push(`   - เกณฑ์การยอมรับ (Acceptance Criteria) ในรูปแบบ Given... When... Then... ในตารางให้ชัดเจน`);
-    directives.push(`3. [ระบบค้นหาและเกณฑ์ Fallback Recommendation]: ต้องระบุตรรกะ/เกณฑ์การแนะนำร้านอาหารและน้ำดื่มใกล้เคียง (Fallback Recommendation) ให้ชัดเจน เช่น เรียงตามคะแนนความนิยม (Bayesian Popularity Score), เลือกร้านที่ยังเปิดบริการในรัศมีใกล้ที่สุด หรือร้านโปรด กรณีไม่มีร้านอาหารเปิดในบริเวณนั้น`);
-    directives.push(`4. [Section 1 ข้อมูลทั่วไป & Section 1.2 Revision History]:`);
-    directives.push(`   - มีตาราง 1.1 Document Control: ระบุ Document Title, Version (เช่น Version 1.1.0), Project Name, Project Code, Baseline Date, Author, วัตถุประสงค์, และขอบเขตระบบ`);
-    directives.push(`   - มีตาราง 1.2 Revision History & Audit Resolution Log: บันทึกว่าเวอร์ชันนี้เป็นฉบับปรับปรุงที่ได้ "แก้ไขประเด็นข้อสั่งการระดับ Critical/High จากรอบก่อนหน้าเรียบร้อยแล้ว 100% ตามข้อเสนอแนะ" ห้ามตัดจบตาราง`);
-    directives.push(`5. [Section 4 Non-Functional Requirements]: ต้องมีหมวด Section 4 Non-Functional Requirements สมบูรณ์ครบทุกหัวข้อ (Performance, Security, Reliability & Availability >= 99.9%, PDPA Compliance, Compatibility)`);
-    directives.push(`6. [โหมดผ่าตัดแก้ไข]: คงเนื้อหาและ Requirement เดิมที่ถูกต้องไว้ทั้งหมด 100% ห้ามตัดทอนออก`);
+    directives.push(`2. [รักษาขอบเขตโครงการอย่างเคร่งครัด (Strict Project Isolation)]: ต้องสร้างเนื้อหา ขอบเขต และฟังก์ชันการทำงานเฉพาะของโครงการนี้ตาม Knowledge Base เท่านั้น ห้ามนำฟีเจอร์หรือข้อกำหนดของโครงการอื่นที่ไม่เกี่ยวข้องมารวมในเอกสารฉบับนี้โดยเด็ดขาด`);
+
+    if (docType === 'Test Case') {
+      directives.push(`3. [โครงสร้าง Test Case มาตรฐาน]: ทุกกรณีทดสอบต้องระบุข้อมูลครบถ้วน: รหัสทดสอบ (Test Case ID), ชื่อกรณีทดสอบ (Test Scenario), เงื่อนไขเริ่มต้น (Pre-conditions), ขั้นตอนการทดสอบ (Test Steps), ข้อมูลทดสอบ (Test Data), ผลลัพธ์ที่คาดหวัง (Expected Results), และเกณฑ์การยอมรับ (Acceptance Criteria Given... When... Then...) ให้ชัดเจน`);
+      directives.push(`4. [ครอบคลุมทั้งกรณีปกติและกรณีผิดพลาด]: ทดสอบทั้ง Happy Path และ Unhappy Path / Exception Handling (กรณีข้อมูลผิดพลาด, การตรวจสอบสิทธิ์, และข้อความแจ้งเตือนผู้ใช้)`);
+      directives.push(`5. [ตาราง Document Control & Revision History]: มีตาราง 1.1 Document Control และตาราง 1.2 Revision History & Audit Resolution Log บันทึกว่าเวอร์ชันนี้เป็นฉบับปรับปรุงที่ได้แก้ไขข้อผิดพลาดเรียบร้อยแล้ว`);
+      directives.push(`6. [โหมดผ่าตัดแก้ไข]: คงกรณีทดสอบเดิมที่ถูกต้องไว้ทั้งหมด 100% และปรับปรุงเฉพาะจุดที่มีข้อผิดพลาด`);
+    } else {
+      directives.push(`3. [โครงสร้าง Requirement ทุกข้อ]: ทุกรหัส Requirement ต้องระบุข้อมูลครบถ้วนบริบูรณ์: วัตถุประสงค์ (Objective), กลุ่มผู้ใช้ (Actor), Pre-conditions และ Post-conditions, ขั้นตอนปกติ (Happy Path), ขั้นตอนกรณีผิดพลาด (Unhappy Path & Error Handling), และเกณฑ์การยอมรับ (Acceptance Criteria Given... When... Then...) ในตารางให้ชัดเจน`);
+      directives.push(`4. [Section 1 ข้อมูลทั่วไป & Section 1.2 Revision History]:`);
+      directives.push(`   - มีตาราง 1.1 Document Control: ระบุ Document Title, Version (เช่น Version 1.1.0), Project Name, Project Code, Baseline Date, Author, วัตถุประสงค์, และขอบเขตระบบ`);
+      directives.push(`   - มีตาราง 1.2 Revision History & Audit Resolution Log: บันทึกว่าเวอร์ชันนี้เป็นฉบับปรับปรุงที่ได้แก้ไขประเด็นข้อสั่งการระดับ Critical/High จากรอบก่อนหน้าเรียบร้อยแล้ว 100% ตามข้อเสนอแนะ ห้ามตัดจบตาราง`);
+      directives.push(`5. [Section 4 Non-Functional Requirements]: ต้องมีหมวด Section 4 Non-Functional Requirements สมบูรณ์ครบทุกหัวข้อ (Performance, Security, Reliability & Availability >= 99.9%, Compatibility)`);
+      directives.push(`6. [โหมดผ่าตัดแก้ไข]: คงเนื้อหาและ Requirement เดิมที่ถูกต้องไว้ทั้งหมด 100% ห้ามตัดทอนออก`);
+    }
 
     customPrompt = directives.join('\n');
     toast(`โหลดข้อมูลข้อผิดพลาด ${fb.findings?.length || 0} ประเด็นเข้าสู่โหมดปรับปรุงเอกสารแล้ว (ปรับไม่ต้องเลือก AI Skill)`, 'info', 4000);
@@ -389,18 +393,23 @@
       toast('กรุณาระบุชื่อไฟล์', 'warning');
       return;
     }
+    if (!selectedDocForSave) {
+      toast('ไม่พบข้อมูลเอกสารที่ต้องการบันทึก', 'error');
+      return;
+    }
 
     isSavingToProject = true;
     try {
-      const res = await fetch('/api/qa/save_generated_doc', {
+      const res = await fetch('/api/agent/save_generated_doc_to_project', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          doc_id: selectedDocForSave.id,
           project_id: saveForm.project_id,
           filename: saveForm.filename.trim(),
           doc_category: saveForm.doc_category,
           doc_type: saveForm.doc_type,
-          markdown_content: selectedDocForSave.doc_markdown,
+          markdown_content: selectedDocForSave.doc_markdown || selectedDocForSave.markdown_content || '',
           is_golden_data: saveForm.is_golden_data,
           original_doc_name: selectedDocForSave.doc_name
         })
@@ -409,7 +418,16 @@
       if (res.ok && data.success) {
         toast(`บันทึกเอกสารเข้า Knowledge Base เรียบร้อยแล้ว (Doc ID: ${data.doc_id})`, 'success', 4000);
         showSaveModal = false;
+        
+        // Update local document status in generatedHistory
+        if (selectedDocForSave && selectedDocForSave.id) {
+          const savedId = selectedDocForSave.id;
+          generatedHistory = generatedHistory.map(d => 
+            d.id === savedId ? { ...d, is_saved_to_project: true, saved_doc_id: data.doc_id } : d
+          );
+        }
         selectedDocForSave = null;
+
         if ($selectedProjectStore && String($selectedProjectStore.id || $selectedProjectStore.project_id) === String(saveForm.project_id)) {
           fetchKbDocuments(saveForm.project_id);
         }
@@ -423,6 +441,8 @@
       isSavingToProject = false;
     }
   }
+
+  const handleSaveModalSubmit = handleSaveToProject;
 
   async function handleGenerate() {
     if (!docName.trim()) {
@@ -1184,7 +1204,7 @@
         <button class="btn-cancel" on:click={() => showSaveModal = false} disabled={isSavingToProject}>ยกเลิก</button>
         <button 
           class="btn-save" 
-          on:click={handleSaveModalSubmit} 
+          on:click={handleSaveToProject} 
           disabled={isSavingToProject || !saveForm.project_id}
         >
           {#if isSavingToProject}

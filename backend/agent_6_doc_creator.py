@@ -909,6 +909,52 @@ def parse_id_list(val):
         return [x.strip() for x in val.split(',') if x.strip() and x.strip() not in ['undefined', 'null']]
     return [str(val).strip()]
 
+def extract_srs_menu_outline(markdown_text: str) -> str:
+    """Extracts Table of Contents and Menu/Module hierarchy from SRS markdown."""
+    if not markdown_text:
+        return ""
+    
+    lines = markdown_text.split('\n')
+    in_toc = False
+    toc_found = []
+    for line in lines:
+        l = line.strip()
+        if re.search(r'table\s+of\s+contents|สารบัญ', l, re.IGNORECASE):
+            in_toc = True
+            continue
+        if in_toc:
+            if re.match(r'^(page\s+\d+|details|บทนำ|1\.\s+บทนำ)', l, re.IGNORECASE) and len(toc_found) > 8:
+                in_toc = False
+            else:
+                if re.match(r'^(\d+(\.\d+)*|[A-Za-z]\.|\-|\*)\s+', l) or any(k in l for k in ['Permit', 'API', 'Declaration', 'Invoice', 'เมนู', 'Menu', 'Screen', 'หน้าจอ']):
+                    toc_found.append(l)
+    
+    detected_screens = []
+    for line in lines:
+        l = line.strip()
+        if any(keyword in l.lower() for keyword in ['เมนูสำหรับ', 'หน้าจอสำหรับ', 'หน้าจอหลักสำหรับ', 'menu สำหรับ']):
+            detected_screens.append(l)
+        elif re.match(r'^(#+\s+|\d+\.\d+(\.\d+)?\s+)(.*(เมนู|หน้าจอ|Permit|API|Declaration|Invoice|Management|MGT|Center|Profile).*)', l, re.IGNORECASE):
+            detected_screens.append(l)
+
+    result = []
+    if toc_found:
+        result.append("=== SRS Table of Contents / System Modules ===")
+        result.extend(toc_found[:40])
+    if detected_screens:
+        result.append("\n=== Detected Specific Menus / Screens ===")
+        seen = set()
+        for s in detected_screens:
+            cleaned = s.strip('# *')
+            if cleaned not in seen and len(cleaned) > 5:
+                seen.add(cleaned)
+                result.append(f"- {cleaned}")
+                if len(seen) >= 25:
+                    break
+
+    return "\n".join(result)
+
+
 def fetch_comprehensive_project_context(cursor, project_id: str, reference_document_id=None):
     """
     Retrieves ALL available project knowledge:
@@ -916,6 +962,7 @@ def fetch_comprehensive_project_context(cursor, project_id: str, reference_docum
     2. Primary reference document(s) (if specified, supports multiple)
     3. ALL other project documents in Knowledge Base (TOR/SOW, SRS, SDD, Test Cases, Manuals, etc.)
     4. Structured requirements (if available)
+    5. Detected SRS Menus & Module outlines (for test case sheet separation by menu)
     """
     # 1. Project Info
     cursor.execute("SELECT project_code, project_name, description FROM projects WHERE project_id = %s::uuid", (project_id,))
@@ -938,6 +985,7 @@ def fetch_comprehensive_project_context(cursor, project_id: str, reference_docum
 
     primary_ref_context_list = []
     all_docs_context_list = []
+    srs_menu_outlines = []
 
     for d in doc_rows:
         d_id = str(d[0])
@@ -945,6 +993,12 @@ def fetch_comprehensive_project_context(cursor, project_id: str, reference_docum
         d_category = d[2] or "General"
         d_doctype = d[3] or "Document"
         d_content = (d[4] or "").strip()
+
+        is_srs = (d_category and d_category.upper() == 'SRS') or ('srs' in d_filename.lower()) or (d_doctype and 'srs' in d_doctype.lower())
+        if is_srs:
+            outline = extract_srs_menu_outline(d_content)
+            if outline:
+                srs_menu_outlines.append(f"### SRS Document: {d_filename}\n{outline}")
 
         if target_ref_ids and d_id in target_ref_ids:
             primary_ref_context_list.append(f"""
@@ -954,8 +1008,9 @@ def fetch_comprehensive_project_context(cursor, project_id: str, reference_docum
 --- Content End ---
 """)
         else:
-            # Include other project documents, truncating extremely long single files to keep balanced
-            snippet = d_content[:15000] if len(d_content) > 15000 else d_content
+            # If it's an SRS document, give it up to 60,000 characters so no menus are truncated!
+            limit = 60000 if is_srs else 15000
+            snippet = d_content[:limit] if len(d_content) > limit else d_content
             if snippet:
                 all_docs_context_list.append(f"""
 ### Project Document: {d_filename} [Category: {d_category} | Type: {d_doctype}]
@@ -976,6 +1031,21 @@ The user has specifically designated the following {len(primary_ref_context_list
 # Comprehensive Project Knowledge Base ({len(all_docs_context_list)} Documents in Project: {project_code})
 The following documents contain additional project domain knowledge, specifications, architecture, and requirements. You MUST analyze and synthesize across ALL of them to generate the most accurate, thorough, and complete document:
 {''.join(all_docs_context_list)}
+"""
+
+    srs_menus_section = ""
+    if srs_menu_outlines:
+        srs_menus_section = f"""
+# ==============================================================================
+# 📑 DETECTED SRS MENUS & MODULES (วิเคราะห์จากเอกสาร SRS ของโครงการ)
+# ==============================================================================
+ระบบได้ทำการสกัดโครงสร้างเมนูและหน้าจอจากเอกสาร SRS ของโครงการ ดังนี้:
+{chr(10).join(srs_menu_outlines)}
+
+🔴 MANDATORY DIRECTIVE: แยก SHEET ตามเมนูใน SRS อย่างเคร่งครัด
+คุณต้องสร้าง Sheet ใน "test_case_sheets" แยก 1 Sheet ต่อ 1 เมนู/หน้าจอ ที่พบในเอกสาร SRS ด้านบน!
+ห้ามรวมทุกเมนูไว้ใน Sheet เดียวเด็ดขาด! โดยชื่อ Sheet ต้องตั้งเป็น "Test Case [ชื่อเมนู]"!
+==============================================================================
 """
 
     # 3. Fetch Structured Requirements (if available)
@@ -1017,6 +1087,7 @@ The following documents contain additional project domain knowledge, specificati
         "primary_ref_context": primary_ref_context,
         "all_docs_section": all_docs_section,
         "structured_reqs_section": structured_reqs_section,
+        "srs_menus_section": srs_menus_section,
         "total_docs_count": len(doc_rows)
     }
 
@@ -1067,8 +1138,10 @@ def fetch_agent_learned_rules(cursor, project_id: str = None, doc_type: str = "G
         """
         params = [doc_type_clean, doc_type_clean, doc_type_clean]
         if project_id:
-            query += " AND (project_id = %s::uuid OR project_id IS NULL)"
+            query += " AND project_id = %s::uuid"
             params.append(project_id)
+        else:
+            query += " AND project_id IS NULL"
             
         query += " ORDER BY TRIM(LOWER(issue_description)), sev_order ASC, created_at DESC LIMIT 15"
         cursor.execute(query, tuple(params))
@@ -1112,6 +1185,48 @@ def fetch_agent_learned_rules(cursor, project_id: str = None, doc_type: str = "G
 
 
 def get_advanced_engineering_guidelines(doc_type: str, today_str: str) -> str:
+    is_test_case = bool(doc_type and "test" in doc_type.lower())
+
+    if is_test_case:
+        return f"""
+# ==============================================================================
+# ENTERPRISE TEST CASE ENGINEERING DIRECTIVES & QUALITY GATES (MANDATORY STANDARDS)
+# ==============================================================================
+
+1. STRICT PROJECT DOMAIN ISOLATION (ZERO CROSS-PROJECT DATA LEAKAGE):
+   - You MUST formulate all test scenarios, test cases, inputs, and validation logic SOLELY and EXCLUSIVELY from the active project's Knowledge Base, specifications, and business domain.
+   - ABSOLUTE BAN ON FOREIGN DOMAIN DATA: NEVER invent, hallucinate, or import concepts, requirements, or terms from unrelated systems (e.g., restaurant ordering, delivery apps, food reviews, recommendation rankings) unless the active project explicitly defines them.
+   - Every single test case must map directly to legitimate features and requirements of this specific system.
+
+2. MANDATORY DOCUMENT CONTROL & REVISION LOG:
+   - Section 1.1 Document Control Table: Document Title, Document Code, Version (e.g. Version 1.1.0), Project Name, Baseline Date ({today_str}), Author, Objectives, and System Scope.
+   - Section 1.2 Revision History & Audit Resolution Log: Detail the version, date ({today_str}), author, change details, and audit resolution status (100% Closed).
+
+3. RIGOROUS TEST CASE SPECIFICATION STRUCTURE:
+   - Every test case must be clearly structured and unambiguous:
+     * Test Case ID: Structured ID (e.g. TC-xxx-001) aligned with the project's requirement codes.
+     * Test Scenario / Description: Specific, meaningful objective of the test.
+     * Pre-conditions: Explicit required state, system configurations, and user authentication before execution.
+     * Test Steps: Numbered step-by-step procedural actions taken by the actor.
+     * Test Data / Input Parameters: Realistic, valid or invalid domain-specific test payloads (no placeholders).
+     * Expected Results: Clear, verifiable system response, UI state changes, database persistence, and external service messages.
+     * Acceptance Criteria: Formatted clearly in Given... When... Then... format.
+
+4. BALANCED AND EXHAUSTIVE TEST COVERAGE:
+   - Positive Testing (Happy Path): Validate correct business workflows when valid inputs are provided.
+   - Negative Testing (Unhappy Path & Edge Cases):
+     * Input validation (empty fields, max length, invalid formats, special characters, boundary values).
+     * Business rule violations (unauthorized actions, duplicate transactions, expired tokens, conflicting states).
+     * System & Network Resilience: Gateway timeouts, connection dropouts, external API errors, and appropriate user notifications.
+   - Security & Access Control: Role-based permissions, unauthorized route guards, and data privacy validation.
+
+5. ZERO AMBIGUOUS PLACEHOLDERS:
+   - NEVER use placeholders like '[TBD]', '[Pending]', '[Insert Data Here]'. Every test step and expected result must be concrete and actionable.
+
+6. PROFESSIONAL THAI LANGUAGE COMPLIANCE:
+   - The entire document must be written in professional Thai (ภาษาไทย). Standard English technical terms, acronyms, and code identifiers (e.g., API, Token, Status Code) are acceptable in parentheses or standard technical usage.
+"""
+
     return f"""
 # ==============================================================================
 # ENTERPRISE ENGINEERING DIRECTIVES & QUALITY GATES (MANDATORY STANDARDS)
@@ -1139,88 +1254,55 @@ def get_advanced_engineering_guidelines(doc_type: str, today_str: str) -> str:
      | 1.0.0 | ก่อนหน้า | QA Team | เอกสารร่างฉบับแรกสำหรับเข้ากระบวนการ Audit | ดำเนินการแล้ว |
      | 1.1.0 | {today_str} | Lead QA Architect | ปรับปรุงแก้ไขประเด็นข้อสั่งการระดับ Critical/High จากรอบก่อนหน้าเรียบร้อยแล้ว 100% ตามข้อเสนอแนะ | ปิดประเด็นสมบูรณ์ (100% Closed) |
 
-2. ZERO REQUIREMENT LOSS (100% Comprehensive Coverage of Knowledge Base & Briefings):
-   - You MUST extract, integrate, and satisfy EVERY functional feature, business rule, and constraint found in the Reference Documents, PO Briefings, and Project Knowledge Base.
+2. ZERO REQUIREMENT LOSS & STRICT PROJECT DOMAIN ISOLATION:
+   - Extract, integrate, and satisfy EVERY functional feature, business rule, and constraint found in the Reference Documents, PO Briefings, and Project Knowledge Base.
+   - ABSOLUTE BAN ON FOREIGN DOMAIN DATA: NEVER invent, hallucinate, or import concepts, requirements, or terms from unrelated projects. The document MUST strictly and exclusively cover the business domain and features of this active project.
    - Statutory, Privacy & Security Mandates:
-     * Explicit PDPA / GDPR workflows: User Consent handling, Right to Erasure / "Delete Account" (self-service account & personal data deletion flow), Data Anonymization for analytics/heatmaps, and Data Retention rules.
-     * Authentication & Social Logins: Explicitly specify all supported providers stated in requirements (e.g. Email/Password, Google OAuth2, Apple Sign-In, Facebook Login) with session management and token lifecycle (JWT, Refresh Token).
-     * Role-Based Access Control (RBAC): Explicit permissions and capabilities for each user persona (e.g. Guest, Member, Merchant/Owner, System Admin, QA Auditor).
+     * Explicit PDPA / GDPR workflows: User Consent handling, Right to Erasure / Data Deletion, Data Anonymization, and Data Retention rules where applicable.
+     * Authentication & Access Control (RBAC): Explicit permissions and capabilities for each user persona/role defined in the project.
    - Core Domain & Operational Logic:
-     * Complete lifecycle states (e.g. Draft -> Pending Review -> Approved -> Rejected -> Archived).
-     * Anti-abuse & Duplicate Prevention: Exact duplicate detection rules (e.g. Merchant duplication checked by Normalized Name matching >= 80% and GPS Distance <= 50 meters, with Admin notification and override options).
-     * Content Moderation & Anti-Abuse (REQ-ADM-001 / Admin & Moderation):
-       - Automated Action Threshold: Any content, review, or merchant receiving >= 5 unique user flags within 24 hours is automatically hidden pending Admin investigation.
-       - Anti-Trolling & Malicious Flag Prevention (ป้องกันการ Flag เพื่อกลั่นแกล้งกัน):
-         1) Account Age & Trust Weighting: Flags from verified user accounts (> 30 days old) carry normal weight (1.0); newly registered accounts (< 7 days old) require Admin manual confirmation before taking automated actions.
-         2) Rate Limiting: A single user is limited to submitting at most 3 report flags per hour.
-         3) False Flag Penalty: Users submitting repeatedly rejected, fraudulent, or abusive flags will have their reporting privilege revoked and account penalized.
-         4) Instant Notification & 1-Click Appeal: The reported owner receives an immediate push/email notification with a direct 1-click Appeal form, guaranteeing Admin SLA review within 24 hours.
-     * Search & Filter Mechanics: Keyword search, Area/District name search (e.g. "บางแสน", "สยาม"), Distance radius filter, Category filter, and Operating Hours filter (including 24-Hour mode and Special Public Holiday exceptions).
-     * Scope & Platform Boundary: Explicitly distinguish Mobile App (iOS/Android) features vs. Web Management Portal features.
+     * Complete lifecycle states of entities (e.g. Draft -> Pending -> Approved / Rejected -> Closed).
+     * Input validation, duplicate prevention, and transaction consistency suited to the project domain.
 
 3. LOGICAL INTEGRITY & DOCUMENT COHESION (Zero Self-Contradictions & Zero Placeholders):
-   - Chronological & Version Harmony:
-     * Generation / Current Date: {today_str}.
-     * Versioning: Use standard SemVer (e.g. 1.0.0 or 1.1.0).
-     * Document Metadata, Revision History, and referenced source dates MUST be logically consistent.
-   - Zero Unresolved Placeholders:
-     * NEVER output unresolved placeholders such as '[System Analyst / Business Analyst Team]', '[TBD]', '[Insert Name]', '[To Be Decided]'.
-     * Always generate realistic, authoritative names, roles, or definitive specifications.
-   - Document Status & Sign-off Integrity:
-     * Provide fully populated document control tables (Author, Reviewer, Approver, Sign-off Date, Version).
-   - Traceability & Cross-Reference Alignment:
-     * Every security protocol or technology mentioned in overviews (e.g. TLS 1.3, AES-256 encryption at rest, Redis in-memory cache) MUST have explicit, corresponding functional/non-functional requirement IDs (e.g., REQ-SEC-001, REQ-PERF-001).
+   - Chronological & Version Harmony: Generation Date ({today_str}), Versioning using standard SemVer.
+   - Zero Unresolved Placeholders: NEVER output '[TBD]', '[Insert Name]', '[To Be Decided]'. Always generate definitive, realistic specifications.
+   - Traceability: Align all technical specifications with corresponding functional/non-functional requirement IDs.
 
 4. HIGH-PRECISION TESTABILITY & MEASURABILITY (Zero Ambiguity):
-   - Strict Ban on Vague Adjectives: DO NOT use ambiguous terms like "fast", "such as 3 km", "immediately", "most popular", "highest rated" without explicit formulas and thresholds.
-   - Concrete Parameters & Formulas:
-     * Search Radius: Define explicit default value (e.g. Default: 3,000 meters / 3 km), minimum allowed (500m), and maximum allowed (20,000m / 20 km).
-     * Performance & Debounce: UI Search Input Debounce (e.g. 300ms), Cache TTL (e.g. Redis TTL: 60s for search results), Map Cluster aggregation threshold (e.g. markers within 40px grid distance).
-     * Ranking Algorithms: Provide explicit mathematical scoring formula for "Most Popular" or "Best Rated" (e.g. Weighted Score = (R * v + C * m) / (v + m)).
-     * Upload & Content Limits: Specify file constraints (e.g. Max photo size 10MB per image, allowed formats JPEG/PNG/WebP, max 5 images per review), character bounds (Review title 5-100 chars, body 10-1,000 chars), rate limits (e.g. max 3 reviews per merchant per day).
-     * Timezone & Localization: Explicitly state Timezone standard (Asia/Bangkok / UTC+7) for all timestamps and operating hours.
+   - Strict Ban on Vague Adjectives: DO NOT use ambiguous terms like "เร็ว", "เหมาะสม", "ทันที" without explicit numeric metrics or thresholds.
    - Quantified Non-Functional Requirements (NFR):
-     * Availability & Uptime: >= 99.9% uptime per calendar month.
-     * Concurrency & Peak Capacity: Minimum concurrent users (CCU) handling (e.g. >= 5,000 CCU during peak lunch hours 11:30-13:00 and dinner 17:30-19:30).
+     * Availability & Uptime: SLA >= 99.9% uptime per calendar month.
      * Latency & Response Times: API P95 latency <= 1.5 seconds, P99 <= 3.0 seconds under peak load (write as plain text, DO NOT use LaTeX '$').
-     * Compatibility: iOS 15.0+, Android 11.0+, Modern Browsers (Chrome 110+, Safari 16+, Edge).
+     * Concurrency & Capacity: Specify target CCU (Concurrent Users) or TPS based on the project scale.
+     * Compatibility: Modern Web Browsers, APIs, and relevant OS platforms.
 
 5. MANDATORY UNHAPPY PATH & EXCEPTION/ERROR HANDLING FOR EVERY REQUIREMENT:
    - In SRS and Requirement specifications, EVERY functional requirement (e.g. REQ-xxx) MUST have clearly defined:
      * Pre-conditions & Main (Happy) Path
-     * Unhappy Path & Alternate/Exception Handling (e.g., User denies GPS permission -> fallback to manual district selection; No search results found -> display recommendation suggestions; Network disconnect -> cache query retry; Database conflict / Duplication error -> prompt override).
+     * Unhappy Path & Alternate/Exception Handling (e.g., validation failures, network disconnect, authorization failure, data conflict)
      * Post-conditions and Error Messages returned to the user.
      * Acceptance Criteria in Given-When-Then format.
 
 6. MATHEMATICAL FORMULA TRANSPARENCY & STRICT BAN ON LATEX '$' DELIMITERS:
    - STRICT BAN ON LATEX '$' AND '$$' SYMBOLS:
      * NEVER wrap mathematical formulas, scores, or variables in LaTeX dollar signs ('$' or '$$').
-     * Write Bayesian Popularity Score and other formulas in clean, plain readable text notation, e.g.:
-       Weighted Score = (v / (v + m)) * R + (m / (v + m)) * C
-     * Clearly define every single variable:
-       - v = จำนวนรีวิวหรือจำนวนคะแนนโหวตทั้งหมดของรายการนั้น
-       - m = เกณฑ์รีวิวขั้นต่ำเพื่อความน่าเชื่อถือ (กำหนดค่าคงที่ m = 5 พร้อมเหตุผลป้องกัน 5-star bias)
-       - R = คะแนนเฉลี่ยของรายการนั้น (Average Rating)
-       - C = ค่าเฉลี่ยคะแนนของทุกรายการในระบบ (System Mean Rating)
-     * In Section 4 Performance Requirements, write latency as plain text: `P95 <= 1.5s` and `P99 <= 3.0s` (NEVER `$P95 \\le 1.5s$`).
-     * Any stray '$' character outside of standard USD currency will trigger a QA audit failure!
+     * Write mathematical formulas in clean, plain readable text notation with clearly defined variables.
+     * In Section 4 Performance Requirements, write latency as plain text: `P95 <= 1.5s` and `P99 <= 3.0s`.
 
 7. REMARK HYGIENE & SEPARATION OF SYSTEM DESIGN VS. FUNCTIONAL REQUIREMENTS:
    - Functional Requirement Remarks: Must contain ONLY testable assertions, QA guidelines, or business acceptance constraints.
-   - Implementation Specifics (e.g. "ใช้ PostGIS Bounding Box Query", SQL queries, ORM code): DO NOT place them inside Functional Requirement remarks. Move all database query mechanics, indexing strategies, and spatial query details into Section 2 (System Architecture & Technical Specifications / System Design).
-   - Business Slogans (e.g. "Core Value ของระบบ"): Do NOT leave as abstract slogans; translate them into testable, verifiable acceptance criteria.
+   - Implementation Specifics (e.g. SQL queries, ORM code, internal architecture details): Place them into Technical Specifications / System Architecture sections, not inside Functional Requirement remarks.
 
 8. MANDATORY SECTION 4: ข้อกำหนดที่ไม่ใช่เชิงฟังก์ชัน (NON-FUNCTIONAL REQUIREMENTS - 100% COMPLETE):
    - You MUST include Section 4 with comprehensive tables for:
-     * 4.1 ประสิทธิภาพของระบบ (Performance Requirements): API Latency P95 <= 1.5s, P99 <= 3.0s, รองรับ CCU >= 5,000 คนพร้อมกันในช่วงเวลาเร่งด่วน (Peak Lunch & Dinner Hours)
-     * 4.2 ความมั่นคงปลอดภัยและการปกป้องข้อมูล (Security & Privacy Requirements): TLS 1.3, AES-256 for data at rest, JWT Session Lifecycle, PDPA Consent Management & Self-Service Account/Data Deletion (Right to Erasure)
-     * 4.3 ความพร้อมใช้งานและความเชื่อถือได้ (Reliability & Availability): Uptime SLA >= 99.9% ต่อเดือน, ระบบสำรองข้อมูลอัตโนมัติ (Automated Daily Backup), Disaster Recovery RTO <= 4 ชม. และ RPO <= 1 ชม.
-     * 4.4 ความเข้ากันได้ของระบบ (Compatibility): Mobile iOS 15.0+, Android 11.0+, Web Browser Chrome 110+, Safari 16+, Edge
+     * 4.1 ประสิทธิภาพของระบบ (Performance Requirements): API Latency P95 <= 1.5s, P99 <= 3.0s, รองรับการทำงานในสภาวะโหลดสูงสุด
+     * 4.2 ความมั่นคงปลอดภัยและการปกป้องข้อมูล (Security & Privacy Requirements): TLS 1.3, การเข้ารหัสข้อมูลที่เก็บรักษา (Encryption at Rest), การจัดการ Session / Token Lifecycle, PDPA Consent Management
+     * 4.3 ความพร้อมใช้งานและความเชื่อถือได้ (Reliability & Availability): Uptime SLA >= 99.9% ต่อเดือน, ระบบสำรองข้อมูลอัตโนมัติ (Automated Backup), Disaster Recovery RTO <= 4 ชม. และ RPO <= 1 ชม.
+     * 4.4 ความเข้ากันได้ของระบบ (Compatibility): Modern Browsers, ระบบเครือข่าย และสภาพแวดล้อมการทำงานของโครงการ
 
-9. MANDATORY FALLBACK RECOMMENDATION LOGIC (ร้านอาหารและน้ำดื่มใกล้เคียง):
-   - ในโมดูลค้นหาหรือระบบแนะนำร้านอาหารใกล้เคียง ต้องระบุตรรกะ/เกณฑ์ Fallback Recommendation อย่างชัดเจน:
-     * หากผู้ใช้ไม่เปิด GPS: Fallback ให้เลือกย่าน/ตำบล/อำเภอด้วยตนเอง
-     * หากไม่มีร้านอาหารเปิดในรัศมีปัจจุบัน: Fallback นำเสนอ "ร้านอาหารและเครื่องดื่มยอดนิยม (Popularity Ranking ด้วย Bayesian Score)" หรือขยายรัศมีการค้นหาอัตโนมัติ พร้อมข้อความแจ้งเตือนที่ชัดเจน
+9. SYSTEM RESILIENCE & FALLBACK LOGIC:
+   - Where system interfaces, external service integrations, or critical network operations are involved, explicitly specify appropriate fallback, retry, circuit-breaking, and fault tolerance handling suited to this project's requirements.
 
 10. MANDATORY COMPLETE REVISION HISTORY TABLE:
     - ตาราง 1.2 Revision History & Audit Resolution Log ต้องเขียนให้เสร็จสมบูรณ์จนถึงคอลัมน์สุดท้ายและแถวสุดท้าย ห้ามตัดจบกลางคันอย่างเด็ดขาด
@@ -1358,6 +1440,7 @@ def create_qa_document_async(gen_id: str, project_id: str, doc_type: str, doc_na
         primary_ref_context = ctx["primary_ref_context"]
         all_docs_section = ctx["all_docs_section"]
         structured_reqs_section = ctx["structured_reqs_section"]
+        srs_menus_section = ctx.get("srs_menus_section", "")
             
         # 2. Fetch Skill (supporting multiple skills by ID or Name)
         target_skill_ids = parse_id_list(skill_id)
@@ -1422,9 +1505,9 @@ Your primary directives:
 
         if doc_type in ["Test Case", "TestCase"]:
             prompt = f"""
-You are an expert QA Automation Engineer, Business Analyst, and Technical Writer.
-Your task is to generate a formal, production-grade QA Test Case document for Project '{project_name}' ({project_code}) named '{doc_name}'.
-You MUST analyze, cross-reference, and synthesize ALL provided Project Knowledge Base documents (TOR, PO Briefing, SRS, SDD, previous tests, specs) to design comprehensive test cases.
+You are an expert Principal QA Architect, Lead Automation Engineer, and Senior Business Analyst.
+Your task is to generate a comprehensive, production-grade System Testing Specification (Excel Workbook Template) for Project '{project_name}' ({project_code}) named '{doc_name}'.
+You MUST analyze, cross-reference, and synthesize ALL provided Project Knowledge Base documents (TOR, PO Briefing, SRS, SDD, previous tests, specs) to design exhaustive test cases matching the standard 69A Excel Template (11 columns per test sheet, multi-sheet workbook separated by SRS Menu).
 
 # Target Document Information
 - Document Name: {doc_name}
@@ -1435,30 +1518,42 @@ You MUST analyze, cross-reference, and synthesize ALL provided Project Knowledge
 {framework_header}
 
 # ==============================================================================
-# 🔴 MANDATORY LANGUAGE REQUIREMENT: เอกสาร Test Case ทั้งหมดต้องเป็น "ภาษาไทย" 100%
-# (ALL TEST CASE CONTENT MUST BE WRITTEN IN THAI - ZERO ENGLISH DESCRIPTIONS)
+# 🔴 MANDATORY WORKBOOK ARCHITECTURE RULES (แยก SHEET ตามเมนูในเอกสาร SRS)
 # ==============================================================================
-1. ทุกข้อมูลใน Test Case ต้องเขียนและอธิบายเป็น "ภาษาไทย" ทั้งหมด:
-   - "Test case Objective" (วัตถุประสงค์การทดสอบ): ต้องเขียนเป็นภาษาไทยอย่างละเอียด ชัดเจน เช่น "ตรวจสอบว่าผู้ใช้สามารถสร้างเอกสาร LPI โดยเชื่อมโยงกับใบแจ้งหนี้ (Invoice) ที่มีอยู่ในระบบได้สำเร็จ" หรือ "ตรวจสอบระบบป้องกันการสร้าง LPI เมื่อไม่มีการเลือกหรือสร้าง Invoice"
-   - "Test Description / Procedure" (ขั้นตอนการทดสอบ): ต้องเขียนเป็นข้อๆ 1., 2., 3., ... เป็นภาษาไทยอย่างชัดเจน ปฏิบัติตามได้จริง เช่น:
-     1. เข้าสู่ระบบด้วยบัญชีผู้ใช้งาน
-     2. ไปที่เมนูจัดการใบอนุญาต (Permit Menu)
-     3. คลิกปุ่ม 'สร้างใบอนุญาต (Create LPI)'
-     4. เลือก Invoice จากรายการที่ต้องการเชื่อมโยง
-     5. กรอกข้อมูลรายละเอียดใบอนุญาตให้ครบถ้วน
-     6. คลิกปุ่ม 'บันทึก (Save)'
-   - "Test Data" (ข้อมูลทดสอบ): ระบุข้อมูลตัวอย่างที่ใช้ทดสอบเป็นภาษาไทยหรือข้อมูลจำลองที่สมจริง เช่น "ชื่อผู้ใช้: user@tiffa.com\\nรหัสผ่าน: password123\\nเลขที่ Invoice: INV-2025-001"
-   - "Expected Result" (ผลลัพธ์ที่คาดหวัง): ต้องเขียนผลลัพธ์เป็นภาษาไทยอย่างเป็นรูปธรรม วัดผลได้ เช่น "ระบบสร้างเอกสาร LPI สำเร็จ เชื่อมโยงกับ INV-2025-001 และแสดงสถานะเป็น 'ฉบับร่าง (Draft)' พร้อมข้อความแจ้งเตือนบันทึกสำเร็จ"
-   - "Actual Result" (ผลการทดสอบจริง): ระบุเป็น "[-]" หรือ "ระบบทำงานถูกต้องตามขั้นตอนและเงื่อนไขที่กำหนด"
-   - "Result (Pass/Fail)": ระบุเป็น "[-]" หรือ "PASS"
-   - "module_function" ใน metadata: ระบุชื่อโมดูลและฟังก์ชันเป็นภาษาไทย เช่น "ระบบจัดการใบอนุญาตและการส่งออก (Permit Management)"
-2. ห้ามเขียนเนื้อหา Objective, Procedure, Test Data, Expected Result เป็นภาษาอังกฤษล้วนโดยเด็ดขาด!
-3. คำศัพท์เทคนิค รหัสมาตรฐาน ชื่อระบบ ปุ่ม ฟิลด์ หรือคำเฉพาะทาง สามารถใส่วงเล็บภาษาอังกฤษประกอบได้ เช่น "สร้างใบอนุญาต (Create LPI)", "ฉบับร่าง (Draft)", "REQ-001", "TC_RGP_001", "HS Code"
-4. ครอบคลุมการทดสอบครบทุกด้าน:
-   - Positive Test Cases (Happy Path / การทำงานปกติที่ถูกต้อง)
-   - Negative Test Cases (Validation Errors, ข้อมูลไม่ถูกต้อง, ละเว้นข้อมูลจำเป็น)
-   - Boundary Value & Edge Cases (ค่าขอบเขต Min/Max/Limit)
-   - Authorization & Role-Based Access (สิทธิ์การเข้าใช้งานของผู้ใช้แต่ละประเภท)
+1. การแยก Sheet ตามเมนูในเอกสาร SRS อย่างเคร่งครัด (SEPARATE SHEET PER SRS MENU):
+   - คุณต้องอ่านและวิเคราะห์เอกสาร SRS ของโครงการ (ดูสารบัญ Table of Contents, Product Functions, หน้าจอ และเมนูต่างๆ เช่น ขอใบอนุญาตสินค้า, ขอใบอนุญาตหน้า MGT, EzySuite API, Modify Invoice, Modify Declaration, NSW Profile ฯลฯ)
+   - สร้าง Sheet ใน "test_case_sheets" แยก 1 Sheet ต่อ 1 เมนู/หน้าจอ อย่างเคร่งครัด
+   - ตั้งชื่อ Sheet แต่ละเมนูตามรูปแบบ: "Test Case [ชื่อเมนู]" เช่น:
+     * "Test Case Permit" (เมนูขอใบอนุญาตสินค้า)
+     * "Test Case Permit MGT" (เมนูขอใบอนุญาตสินค้า หน้า MGT)
+     * "Test Case EzySuite API" (เมนู EzySuite Open API / API Document List & Management)
+     * "Test Case Modify Invoice" (เมนู Modify Invoice)
+     * "Test Case Modify Declaration" (เมนู Modify Declaration)
+     * "Test Case Modify TIFFA ID" (เมนู Modify TIFFA ID / NSW ID Profile)
+     * "Test Case Modify Client Info" (เมนู Modify Client Information Center)
+     * "Test Case Modify Customer Mgmt" (เมนู Modify Customer Management)
+     (คำเตือน: ต้องสร้างแยก Sheet ให้ครบทุกเมนูที่ระบุใน SRS ของโครงการ ห้ามรวบเป็น Sheet เดียวเด็ดขาด)
+2. โครงสร้างสมุดงาน (Multi-Sheet Workbook Structure):
+   - มี Sheet บทนำ (Introduction), ประวัติการแก้ไข (Change History), คำศัพท์เฉพาะทาง (Glossary), ขอบเขตเบื้องต้น (Basic Test)
+   - หน้าสรุป (Execute Test): ต้องแจกแจงรายการแยกเป็นรายบรรทัดสำหรับ "ทุกเมนูข้างต้น" ในตาราง System Test Summary พร้อมระบุจำนวน TC ของแต่ละเมนู และเวลาประมาณการทดสอบ (0.25 ชม./เคส) พร้อมแถว รวม (Total)
+3. ตารางกรณีทดสอบ 11 คอลัมน์มาตรฐาน (STRICT 11 COLUMNS ในทุก Sheet ของเมนู):
+   ทุก Sheet ของ Test Case ต้องมี 11 คอลัมน์ดังต่อไปนี้เท่านั้น (ห้ามเพิ่ม Actual Result หรือ Result Pass/Fail ในตาราง):
+   1) "Test Case ID": รหัสเคส เช่น 69AA1001, 69AA2001
+   2) "Test Case Objective": วัตถุประสงค์การทดสอบเป็นภาษาไทย ชัดเจน กระชับ
+   3) "Test Step": ขั้นตอนการทดสอบเป็นข้อๆ 1. ..., 2. ..., 3. ... ละเอียด ชัดเจน ปฏิบัติตามได้จริง
+   4) "Test Data": ข้อมูลตัวอย่างที่ใช้ทดสอบที่สมจริงและตรงตามโดเมนระบบ
+   5) "Test Type": ประเภทการทดสอบ ระบุเป็น "Positive" หรือ "Negative"
+   6) "Expected Result": ผลลัพธ์ที่คาดหวังที่วัดผลได้จริงเป็นภาษาไทย
+   7) "Remark": หมายเหตุเพิ่มเติม (เช่น Edge Case, Security Test, หรือว่างไว้)
+   8) "Automate": "TRUE" หรือ "FALSE"
+   9) "Req No.": รหัส Requirement ที่อ้างอิง เช่น REQ0001
+   10) "Platforms": แพลตฟอร์มที่ทดสอบ เช่น "Web Application", "API", "Mobile App"
+   11) "Updated By": ชื่อผู้จัดทำ/ผู้ทดสอบ
+4. ภาษาไทย 100%: คำอธิบาย Objective, Test Step, Test Data, Expected Result ต้องเขียนเป็นภาษาไทยทั้งหมด (คำศัพท์เทคนิคมาตรฐานสามารถใส่วงเล็บภาษาอังกฤษได้)
+5. ครอบคลุมการทดสอบครบถ้วน: Positive (Happy Path), Negative (Validation & Error Handling), Boundary & Edge Cases, และ Authorization/Security ในแต่ละเมนู
+6. การแบ่งแยกโดเมนอย่างเคร่งครัด: ห้ามนำฟังก์ชันหรือเนื้อหาของโครงการอื่นที่ไม่เกี่ยวข้องมาใส่ในเอกสารเด็ดขาด
+
+{srs_menus_section}
 
 {refinement_section}
 
@@ -1473,26 +1568,123 @@ You MUST analyze, cross-reference, and synthesize ALL provided Project Knowledge
 {structured_reqs_section}
 
 # Output Format MUST BE JSON
-You MUST generate the entire document as a strict JSON object with two keys: "metadata" and "test_cases".
-Do NOT include any text outside the JSON markdown block.
-Format:
+You MUST generate the entire workbook as a strict JSON object following this exact schema:
 {{
-  "metadata": {{
-    "project_name": "{project_name} ({project_code})",
-    "tester_name": "AI Agent",
-    "module_function": "ระบุชื่อโมดูลหรือฟังก์ชันเป็นภาษาไทยตามที่วิเคราะห์ได้จากเอกสาร"
+  "workbook_info": {{
+    "project_name": "{project_name}",
+    "project_code": "{project_code}",
+    "doc_name": "{doc_name}",
+    "author": "QA Team",
+    "version": "1.0",
+    "last_updated_date": "{today_str}",
+    "description": "เอกสารชุดนี้เรียกว่า System Testing Template มีวัตถุประสงค์เพื่อจัดทำขึ้นสำหรับทดสอบระบบตาม Requirement ของโครงการ {project_name}"
   }},
-  "test_cases": [
+  "change_history": [
     {{
-      "Test Case ID": "TC_001",
-      "Test case Objective": "ระบุวัตถุประสงค์การทดสอบเป็นภาษาไทย...",
-      "Test Description / Procedure": "1. เข้าสู่ระบบ...\\n2. ไปที่เมนู...\\n3. คลิกปุ่ม...",
-      "Test Data": "ข้อมูลตัวอย่างที่ใช้ทดสอบ...",
-      "Expected Result": "ผลลัพธ์ที่คาดหวังเป็นภาษาไทย...",
-      "Actual Result": "[-]",
-      "Result (Pass/Fail)": "[-]",
-      "Req No.": "REQ-001",
-      "Update by": "AI Agent"
+      "date": "{today_str}",
+      "version": "v.1",
+      "prepared_by": "QA Team",
+      "detail": "สร้าง Test Case แยกตามแต่ละเมนูของระบบตามเอกสาร SRS"
+    }}
+  ],
+  "glossary": [
+    {{
+      "term": "ชื่อคำศัพท์/ตัวย่อสำคัญของระบบ",
+      "definition": "คำอธิบายความหมายและบริบทการใช้งานในระบบ"
+    }}
+  ],
+  "execute_test_summary": [
+    {{
+      "ref_no": "1",
+      "module": "Restricted Good Permit",
+      "function": "ขอใบอนุญาตสินค้า (Permit)",
+      "pass_criteria": "ผ่านเกณฑ์การทดสอบตาม Requirement",
+      "remark": "-",
+      "tc_count": 8,
+      "est_hours": 2.0
+    }},
+    {{
+      "ref_no": "2",
+      "module": "Restricted Good Permit",
+      "function": "ขอใบอนุญาตสินค้า หน้า MGT (Permit MGT)",
+      "pass_criteria": "ผ่านเกณฑ์การทดสอบตาม Requirement",
+      "remark": "-",
+      "tc_count": 6,
+      "est_hours": 1.5
+    }},
+    {{
+      "ref_no": "3",
+      "module": "EzySuite Open API",
+      "function": "API Document List & Management",
+      "pass_criteria": "ผ่านเกณฑ์การทดสอบตาม Requirement",
+      "remark": "-",
+      "tc_count": 5,
+      "est_hours": 1.25
+    }}
+  ],
+  "test_case_sheets": [
+    {{
+      "sheet_name": "Test Case Permit",
+      "module_name": "Restricted Good Permit",
+      "function_name": "ขอใบอนุญาตสินค้า (Permit)",
+      "req_range": "REQ0001-REQ0015",
+      "test_cases": [
+        {{
+          "Test Case ID": "69AA1001",
+          "Test Case Objective": "ตรวจสอบการสร้างคำขอใบอนุญาตสินค้าด้วยข้อมูลที่ถูกต้องครบถ้วน",
+          "Test Step": "1. เข้าสู่เมนูขอใบอนุญาตสินค้า\\n2. กรอกข้อมูลใบอนุญาตและรายการสินค้าควบคุม\\n3. กดปุ่มบันทึกและส่งข้อมูล",
+          "Test Data": "เลขที่คำขอ: PM-2026-001, พิกัดสินค้าควบคุม: 2903.11.00",
+          "Test Type": "Positive",
+          "Expected Result": "ระบบบันทึกคำขอใบอนุญาตสำเร็จและเปลี่ยนสถานะเป็น Submitted",
+          "Remark": "",
+          "Automate": "TRUE",
+          "Req No.": "REQ0001",
+          "Platforms": "Web Application",
+          "Updated By": "QA Team"
+        }}
+      ]
+    }},
+    {{
+      "sheet_name": "Test Case Permit MGT",
+      "module_name": "Restricted Good Permit",
+      "function_name": "ขอใบอนุญาตสินค้า (หน้า MGT)",
+      "req_range": "REQ0016-REQ0030",
+      "test_cases": [
+        {{
+          "Test Case ID": "69AA2001",
+          "Test Case Objective": "ตรวจสอบการค้นหาและกรองรายการใบอนุญาตในหน้า MGT",
+          "Test Step": "1. เข้าสู่เมนูขอใบอนุญาตสินค้า (หน้า MGT)\\n2. ระบุเงื่อนไขการค้นหาตามช่วงวันที่และสถานะ\\n3. กดปุ่มค้นหา",
+          "Test Data": "ช่วงวันที่: 01/01/2026 - 31/01/2026, สถานะ: Approve",
+          "Test Type": "Positive",
+          "Expected Result": "ตารางแสดงรายการใบอนุญาตที่ตรงตามเงื่อนไขได้อย่างถูกต้องครบถ้วน",
+          "Remark": "",
+          "Automate": "TRUE",
+          "Req No.": "REQ0016",
+          "Platforms": "Web Application",
+          "Updated By": "QA Team"
+        }}
+      ]
+    }},
+    {{
+      "sheet_name": "Test Case EzySuite API",
+      "module_name": "EzySuite Open API",
+      "function_name": "API Document List & Management",
+      "req_range": "REQ0031-REQ0045",
+      "test_cases": [
+        {{
+          "Test Case ID": "69AA3001",
+          "Test Case Objective": "ตรวจสอบการดูรายการเอกสาร OPEN API ของระบบ",
+          "Test Step": "1. เข้าสู่เมนู API Document List\\n2. คลิกเลือกดู API Endpoint ที่ต้องการทดสอบ Integrate\\n3. ตรวจสอบข้อมูล Request/Response Schema",
+          "Test Data": "API: /api/v1/permit/query",
+          "Test Type": "Positive",
+          "Expected Result": "ระบบแสดงรายละเอียดเอกสาร API และตัวอย่าง Payload ได้ถูกต้อง",
+          "Remark": "",
+          "Automate": "TRUE",
+          "Req No.": "REQ0031",
+          "Platforms": "Web Application",
+          "Updated By": "QA Team"
+        }}
+      ]
     }}
   ]
 }}
@@ -1576,7 +1768,6 @@ You MUST analyze, cross-reference, and synthesize ALL provided Project Knowledge
             try:
                 data = json.loads(json_text)
             except Exception:
-                # Regex match fallback
                 match = re.search(r'(\{[\s\S]*\})', json_text)
                 if match:
                     try:
@@ -1585,47 +1776,52 @@ You MUST analyze, cross-reference, and synthesize ALL provided Project Knowledge
                         pass
 
             if not data or not isinstance(data, dict):
-                data = {
-                    "metadata": {"project_name": project_name, "tester_name": "AI Agent", "module_function": f"โมดูล {doc_name}"},
-                    "test_cases": [
-                        {
-                            "Test Case ID": "TC_001",
-                            "Test case Objective": f"ตรวจสอบการทำงานของ {doc_name} ให้เป็นไปตามข้อกำหนด",
-                            "Test Description / Procedure": "1. เข้าสู่ระบบด้วยบัญชีผู้ใช้ที่ได้รับสิทธิ์\n2. ไปที่เมนูและเริ่มทดสอบฟังก์ชัน\n3. ดำเนินการตามขั้นตอนที่ระบุในข้อกำหนด\n4. ตรวจสอบผลการตอบสนองของระบบ",
-                            "Test Data": "ข้อมูลตัวอย่างตามข้อกำหนดระบบ",
-                            "Expected Result": "ระบบตอบสนองและทำงานถูกต้องตามข้อกำหนด 100%",
-                            "Actual Result": "[-]",
-                            "Result (Pass/Fail)": "[-]",
-                            "Req No.": "REQ-01",
-                            "Update by": "AI Agent"
-                        }
-                    ]
-                }
+                data = {}
 
-            meta = data.get("metadata", {})
-            tester_val = meta.get("tester_name", "AI Agent")
-            module_val = meta.get("module_function", doc_name)
-            test_cases = data.get("test_cases", [])
+            wb_info = data.get("workbook_info", {})
+            tester_val = wb_info.get("author") or wb_info.get("tester_name") or "QA Team"
+            version_val = str(wb_info.get("version") or "1.0")
+            proj_name_val = wb_info.get("project_name") or project_name
+            proj_code_val = wb_info.get("project_id") or wb_info.get("project_code") or project_code
+            desc_val = wb_info.get("description") or f"เอกสารชุดนี้เรียกว่า System Testing Template มีวัตถุประสงค์เพื่อจัดทำขึ้นสำหรับทดสอบระบบตาม Requirement ของโครงการ {project_name}"
+
+            change_history = data.get("change_history") or [
+                {"date": today_str, "version": f"v.{version_val}", "prepared_by": tester_val, "detail": "สร้าง Test Case ชุดแรกจาก Requirement และ Knowledge Base ของโครงการ"}
+            ]
+
+            glossary_list = data.get("glossary") or [
+                {"term": "Positive Case", "definition": "การทดสอบกรณีทำงานปกติและคาดหวังผลสำเร็จ"},
+                {"term": "Negative Case", "definition": "การทดสอบกรณีข้อมูลผิดพลาดหรือเงื่อนไขขัดแย้ง และคาดหวังให้ระบบจัดการข้อผิดพลาดได้ถูกต้อง"}
+            ]
+
+            raw_sheets = data.get("test_case_sheets")
+            if not raw_sheets or not isinstance(raw_sheets, list):
+                # Fallback to single sheet if model used legacy format with "test_cases"
+                legacy_tcs = data.get("test_cases", [])
+                meta = data.get("metadata", {})
+                mod_name = meta.get("module_function", doc_name)
+                raw_sheets = [{
+                    "sheet_name": f"Test Case {doc_name}"[:31],
+                    "module_name": mod_name,
+                    "function_name": mod_name,
+                    "req_range": "All Requirements",
+                    "test_cases": legacy_tcs
+                }]
 
             def extract_tc_field(tc_item, candidate_keys, default_val=""):
+                if not isinstance(tc_item, dict):
+                    return default_val
                 for k in candidate_keys:
                     if k in tc_item and tc_item[k] is not None and str(tc_item[k]).strip() != "":
                         return tc_item[k]
+                lower_map = {k.lower().replace(" ", "").replace("_", ""): v for k, v in tc_item.items() if v is not None}
+                for k in candidate_keys:
+                    clean_k = k.lower().replace(" ", "").replace("_", "")
+                    if clean_k in lower_map and str(lower_map[clean_k]).strip() != "":
+                        return lower_map[clean_k]
                 return default_val
 
-            field_defs = [
-                ("Test ID", ["Test Case ID", "Test ID", "test_case_id", "test_id", "id", "รหัสการทดสอบ"], ""),
-                ("Test Objective", ["Test case Objective", "Test Objective", "objective", "วัตถุประสงค์", "วัตถุประสงค์การทดสอบ"], ""),
-                ("Test Description / Procedure", ["Test Description / Procedure", "Test Description", "Procedure", "procedure", "steps", "ขั้นตอนการทดสอบ", "ขั้นตอน"], ""),
-                ("Test Data", ["Test Data", "test_data", "data", "ข้อมูลทดสอบ", "ข้อมูลที่ใช้ทดสอบ"], "-"),
-                ("Expected Result", ["Expected Result", "expected_result", "expected", "ผลลัพธ์ที่คาดหวัง"], ""),
-                ("Actual Result", ["Actual Result", "actual_result", "actual", "ผลการทดสอบจริง"], "[-]"),
-                ("Result (Pass/Fail)", ["Result (Pass/Fail)", "Result", "result", "status", "ผลลัพธ์", "ผลการทดสอบ"], "[-]"),
-                ("Req No.", ["Req No.", "Requirement ID", "req_no", "req_id", "รหัสข้อกำหนด", "ข้อกำหนด"], "-"),
-                ("Updated By", ["Update by", "Updated By", "updated_by", "tester", "ผู้ทดสอบ", "ผู้จัดทำ"], tester_val)
-            ]
-
-            # Generate formatted Excel file specifically for Test Case
+            # Generate formatted Excel file specifically for Test Case matching 69A_ST_TC_v13 (2).xlsx
             import openpyxl
             from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
             
@@ -1633,139 +1829,704 @@ You MUST analyze, cross-reference, and synthesize ALL provided Project Knowledge
             excel_file_path = os.path.join(upload_dir, excel_file_name)
 
             wb = openpyxl.Workbook()
-            ws = wb.active
-            ws.title = "Test Cases"
+            font_name = "Browallia New"
+            card_fill = PatternFill(start_color="CDEEFF", end_color="CDEEFF", fill_type="solid")
+            header_fill = PatternFill(start_color="CDEEFF", end_color="CDEEFF", fill_type="solid")
+            white_fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
+            dark_header_fill = PatternFill(start_color="7F7F7F", end_color="7F7F7F", fill_type="solid")
             
-            header_fill = PatternFill(start_color="1E3A8A", end_color="1E3A8A", fill_type="solid")
-            sub_fill = PatternFill(start_color="F1F5F9", end_color="F1F5F9", fill_type="solid")
-            white_bold = Font(bold=True, color="FFFFFF", size=11)
-            bold_font = Font(bold=True, size=10)
-            center_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
-            left_align = Alignment(horizontal="left", vertical="center", wrap_text=True)
-            thin_border = Border(left=Side(style='thin', color='CBD5E1'), right=Side(style='thin', color='CBD5E1'), top=Side(style='thin', color='CBD5E1'), bottom=Side(style='thin', color='CBD5E1'))
-            pass_fill = PatternFill(start_color="DCFCE7", end_color="DCFCE7", fill_type="solid")
-            fail_fill = PatternFill(start_color="FEE2E2", end_color="FEE2E2", fill_type="solid")
+            thin_side = Side(style='thin', color='B0C4DE')
+            dark_side = Side(style='thin', color='000000')
+            cell_border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
+            header_border = Border(left=dark_side, right=dark_side, top=dark_side, bottom=dark_side)
+            thin_border = cell_border
             
-            # Title
-            ws.merge_cells('A1:I1')
-            ws['A1'] = f"SPECTRA QA PLATFORM - {doc_name} ({doc_type})"
-            ws['A1'].fill = header_fill
-            ws['A1'].font = white_bold
-            ws['A1'].alignment = center_align
-            ws.row_dimensions[1].height = 28
+            title_banner_font = Font(name=font_name, size=26, bold=True, color="7F7F7F")
+            title_font = Font(name=font_name, size=16, bold=True)
+            section_white_font = Font(name=font_name, size=14, bold=True, color="FFFFFF")
+            section_font = Font(name=font_name, size=14, bold=True, color="000000")
+            header_font = Font(name=font_name, size=14, bold=True, color="000000")
+            label_font = Font(name=font_name, size=14, bold=True, color="000000")
+            value_font = Font(name=font_name, size=14, bold=False, color="000000")
+            cell_font = Font(name=font_name, size=13)
+            cell_bold = Font(name=font_name, size=13, bold=True)
+            sheet_link_font = Font(name=font_name, size=14, bold=True, color="2E6433")
             
-            # Metadata
-            metadata_map = [
-                ("Project Name / โครงการ :", f"{project_name} ({project_code})", "Create Date / วันที่ :", today_str),
-                ("Module / ฟังก์ชัน :", module_val, "Test Engine / เครื่องมือ :", "Spectra AI (Gemini 3.1 Pro)"),
-                ("Tester / ผู้จัดทำ :", tester_val, "Status / สถานะ :", "Baseline Specification")
+            align_center_top = Alignment(horizontal="center", vertical="top", wrap_text=True)
+            align_left_top = Alignment(horizontal="left", vertical="top", wrap_text=True)
+            align_center_center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            align_left_center = Alignment(horizontal="left", vertical="center", wrap_text=True)
+            align_right_center = Alignment(horizontal="right", vertical="center")
+            align_label = Alignment(horizontal="right", vertical="center")
+            align_value = Alignment(horizontal="left", vertical="center")
+            center_align = align_center_center
+            left_align = align_left_top
+
+            def style_range(ws_target, cell_range, font=None, fill=None, border=None, alignment=None):
+                if ":" in cell_range:
+                    cells = [c for row in ws_target[cell_range] for c in row]
+                else:
+                    cells = [ws_target[cell_range]]
+                for cell in cells:
+                    if font: cell.font = font
+                    if fill: cell.fill = fill
+                    if border: cell.border = border
+                    if alignment: cell.alignment = alignment
+
+            def calc_tc_row_height(step, obj, exp, data):
+                s_lines = len(str(step).split('\n')) if step else 1
+                s_wrap = max(s_lines, len(str(step)) // 45 + 1)
+                o_wrap = len(str(obj)) // 28 + 1 if obj else 1
+                e_wrap = len(str(exp)) // 35 + 1 if exp else 1
+                d_wrap = len(str(data)) // 25 + 1 if data else 1
+                lines = max(s_wrap, o_wrap, e_wrap, d_wrap, 1)
+                return max(30, 16 + (lines * 19))
+
+            # -------------------------------------------------------------
+            # 1. Sheet: Introduction
+            # -------------------------------------------------------------
+            ws_intro = wb.active
+            ws_intro.title = "Introduction"
+            ws_intro.column_dimensions['A'].width = 15.0
+            ws_intro.column_dimensions['B'].width = 6.0
+            ws_intro.column_dimensions['C'].width = 16.0
+            ws_intro.column_dimensions['D'].width = 12.0
+            ws_intro.column_dimensions['E'].width = 14.0
+            ws_intro.column_dimensions['F'].width = 30.0
+            ws_intro.column_dimensions['G'].width = 15.0
+            ws_intro.column_dimensions['H'].width = 15.0
+            ws_intro.column_dimensions['I'].width = 15.0
+
+            # Title Banner A1:I4
+            ws_intro.merge_cells("A1:I4")
+            ws_intro["A1"] = "Introduction"
+            style_range(ws_intro, "A1:I4", font=title_banner_font, fill=white_fill, alignment=align_center_center)
+            for r in range(1, 5): ws_intro.row_dimensions[r].height = 18
+
+            # A5:I5 Section Header
+            ws_intro.merge_cells("A5:I5")
+            ws_intro["A5"] = "Introduction"
+            style_range(ws_intro, "A5:I5", font=header_font, fill=header_fill, border=header_border, alignment=align_left_center)
+            ws_intro.row_dimensions[5].height = 22
+
+            # A6:I7 Description
+            ws_intro.merge_cells("A6:I7")
+            ws_intro["A6"] = desc_val
+            style_range(ws_intro, "A6:I7", font=value_font, fill=white_fill, border=cell_border, alignment=align_left_top)
+            ws_intro.row_dimensions[6].height = 22
+            ws_intro.row_dimensions[7].height = 22
+
+            # Row 8: Spacer
+            ws_intro.row_dimensions[8].height = 10
+
+            # Metadata Card (A9:I11)
+            meta_intro = [
+                (9, "A9:B9", "C9:I9", "Author :", tester_val),
+                (10, "A10:B10", "C10:I10", "Version :", version_val),
+                (11, "A11:B11", "C11:I11", "Last Updated Date :", today_str)
             ]
-            
-            row_idx = 3
-            for r_data in metadata_map:
-                ws.cell(row=row_idx, column=2).value = r_data[0]
-                ws.cell(row=row_idx, column=2).font = bold_font
-                ws.cell(row=row_idx, column=2).fill = sub_fill
-                ws.cell(row=row_idx, column=2).alignment = Alignment(horizontal="right")
+            for r_idx, lbl_range, val_range, lbl_text, val_text in meta_intro:
+                ws_intro.merge_cells(lbl_range)
+                ws_intro[lbl_range.split(':')[0]] = lbl_text
+                style_range(ws_intro, lbl_range, font=label_font, fill=card_fill, border=cell_border, alignment=align_right_center)
                 
-                ws.merge_cells(start_row=row_idx, start_column=3, end_row=row_idx, end_column=4)
-                ws.cell(row=row_idx, column=3).value = r_data[1]
-                
-                ws.cell(row=row_idx, column=6).value = r_data[2]
-                ws.cell(row=row_idx, column=6).font = bold_font
-                ws.cell(row=row_idx, column=6).fill = sub_fill
-                ws.cell(row=row_idx, column=6).alignment = Alignment(horizontal="right")
-                
-                ws.merge_cells(start_row=row_idx, start_column=7, end_row=row_idx, end_column=8)
-                ws.cell(row=row_idx, column=7).value = r_data[3]
-                
-                for col in range(2, 9):
-                    ws.cell(row=row_idx, column=col).border = thin_border
-                row_idx += 1
-                
-            # Headers (Bilingual & High-density)
-            headers = [
-                "Test ID",
-                "Test Objective\n(วัตถุประสงค์การทดสอบ)",
-                "Test Description / Procedure\n(ขั้นตอนการทดสอบ)",
-                "Test Data\n(ข้อมูลทดสอบ)", 
-                "Expected Result\n(ผลลัพธ์ที่คาดหวัง)",
-                "Actual Result\n(ผลการทดสอบจริง)",
-                "Result (Pass/Fail)",
-                "Req No.\n(รหัสข้อกำหนด)",
-                "Updated By\n(ผู้ทดสอบ)"
+                ws_intro.merge_cells(val_range)
+                ws_intro[val_range.split(':')[0]] = val_text
+                style_range(ws_intro, val_range, font=value_font, fill=white_fill, border=cell_border, alignment=align_value)
+                ws_intro.row_dimensions[r_idx].height = 22
+
+            # A12:I12 Structure Header
+            ws_intro.merge_cells("A12:I12")
+            ws_intro["A12"] = "Structure of this workbook:"
+            style_range(ws_intro, "A12:I12", font=header_font, fill=header_fill, border=header_border, alignment=align_left_center)
+            ws_intro.row_dimensions[12].height = 22
+
+            # A13:I13 Subtitle
+            ws_intro.merge_cells("A13:I13")
+            ws_intro["A13"] = "This workbook contains the following sheets and forms:"
+            style_range(ws_intro, "A13:I13", font=cell_bold, alignment=align_left_center)
+            ws_intro.row_dimensions[13].height = 20
+
+            # Table Header for Sheets
+            ws_intro.merge_cells("B14:D14")
+            ws_intro["B14"] = "Sheet Name"
+            style_range(ws_intro, "B14:D14", font=header_font, fill=header_fill, border=header_border, alignment=align_center_center)
+
+            ws_intro.merge_cells("E14:I14")
+            ws_intro["E14"] = "Description / Detail"
+            style_range(ws_intro, "E14:I14", font=header_font, fill=header_fill, border=header_border, alignment=align_center_center)
+            ws_intro.row_dimensions[14].height = 24
+
+            intro_sheets_map = [
+                ("Introduction", "สำหรับอธิบายการใช้งานของ Template และแสดงรายละเอียดต่าง ๆ ของ Template"),
+                ("Document Change History", "สำหรับบันทึกประวัติการแก้ไขเอกสารฉบับนี้ในแต่ละเวอร์ชัน (Date, Version, Prepared By)"),
+                ("Glossary", "สำหรับอธิบายคำศัพท์เฉพาะทาง/ตัวย่อที่ใช้ในเอกสารและระบบ"),
+                ("Basic Test", "สำหรับการทดสอบเบื้องต้น ประกอบด้วย File List, System Installation, System Configuration"),
+                ("Execute Test", "สำหรับสรุปผลการทดสอบระบบ (System Testing) แยกตาม Module/Function พร้อมจำนวน Test Case"),
             ]
-            row_idx += 2
-            for col_idx, h in enumerate(headers, 1):
-                cell = ws.cell(row=row_idx, column=col_idx, value=h)
-                cell.font = white_bold
-                cell.fill = header_fill
-                cell.alignment = center_align
-                cell.border = thin_border
-            ws.row_dimensions[row_idx].height = 28
+            for s_item in raw_sheets:
+                s_name = s_item.get("sheet_name", "Test Case")
+                f_name = s_item.get("function_name") or s_item.get("module_name") or s_name
+                intro_sheets_map.append((s_name, f"สำหรับเขียน Test Case Specification และกรณีทดสอบของ {f_name}"))
+
+            cur_r = 15
+            for s_name, s_desc in intro_sheets_map:
+                ws_intro.merge_cells(f"B{cur_r}:D{cur_r}")
+                ws_intro[f"B{cur_r}"] = s_name
+                style_range(ws_intro, f"B{cur_r}:D{cur_r}", font=sheet_link_font, fill=white_fill, border=cell_border, alignment=align_left_center)
                 
-            widths = [16, 32, 45, 22, 35, 22, 18, 16, 18]
-            for i, w in enumerate(widths, 1):
-                ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = w
+                ws_intro.merge_cells(f"E{cur_r}:I{cur_r}")
+                ws_intro[f"E{cur_r}"] = s_desc
+                style_range(ws_intro, f"E{cur_r}:I{cur_r}", font=cell_font, fill=white_fill, border=cell_border, alignment=align_left_top)
+                ws_intro.row_dimensions[cur_r].height = 24
+                cur_r += 1
+
+            # Template Change History
+            cur_r += 1
+            ws_intro.merge_cells(f"A{cur_r}:C{cur_r}")
+            ws_intro[f"A{cur_r}"] = "Template Change History:"
+            style_range(ws_intro, f"A{cur_r}:C{cur_r}", font=section_white_font, fill=dark_header_fill, border=header_border, alignment=align_left_center)
+            ws_intro.row_dimensions[cur_r].height = 22
+
+            cur_r += 1
+            h_r = cur_r
+            ws_intro[f"A{h_r}"] = "Version"
+            style_range(ws_intro, f"A{h_r}", font=header_font, fill=header_fill, border=header_border, alignment=align_center_center)
+            ws_intro.merge_cells(f"B{h_r}:D{h_r}")
+            ws_intro[f"B{h_r}"] = "Name"
+            style_range(ws_intro, f"B{h_r}:D{h_r}", font=header_font, fill=header_fill, border=header_border, alignment=align_center_center)
+            ws_intro[f"E{h_r}"] = "Date"
+            style_range(ws_intro, f"E{h_r}", font=header_font, fill=header_fill, border=header_border, alignment=align_center_center)
+            ws_intro.merge_cells(f"F{h_r}:I{h_r}")
+            ws_intro[f"F{h_r}"] = "Title or Brief Description"
+            style_range(ws_intro, f"F{h_r}:I{h_r}", font=header_font, fill=header_fill, border=header_border, alignment=align_center_center)
+            ws_intro.row_dimensions[h_r].height = 24
+
+            cur_r += 1
+            ws_intro[f"A{cur_r}"] = version_val
+            style_range(ws_intro, f"A{cur_r}", font=cell_font, fill=white_fill, border=cell_border, alignment=align_center_center)
+            ws_intro.merge_cells(f"B{cur_r}:D{cur_r}")
+            ws_intro[f"B{cur_r}"] = tester_val
+            style_range(ws_intro, f"B{cur_r}:D{cur_r}", font=cell_font, fill=white_fill, border=cell_border, alignment=align_center_center)
+            ws_intro[f"E{cur_r}"] = today_str
+            style_range(ws_intro, f"E{cur_r}", font=cell_font, fill=white_fill, border=cell_border, alignment=align_center_center)
+            ws_intro.merge_cells(f"F{cur_r}:I{cur_r}")
+            ws_intro[f"F{cur_r}"] = f"สร้าง Test Case ชุดแรกจากข้อกำหนด {proj_name_val}"
+            style_range(ws_intro, f"F{cur_r}:I{cur_r}", font=cell_font, fill=white_fill, border=cell_border, alignment=align_left_center)
+            ws_intro.row_dimensions[cur_r].height = 24
+
+            # -------------------------------------------------------------
+            # 2. Sheet: Document Change History
+            # -------------------------------------------------------------
+            ws_hist = wb.create_sheet(title="Document Change History")
+            ws_hist.column_dimensions['A'].width = 3.0
+            ws_hist.column_dimensions['B'].width = 16.0
+            ws_hist.column_dimensions['C'].width = 12.0
+            ws_hist.column_dimensions['D'].width = 14.0
+            ws_hist.column_dimensions['E'].width = 12.0
+            ws_hist.column_dimensions['F'].width = 12.0
+            ws_hist.column_dimensions['G'].width = 25.0
+            ws_hist.column_dimensions['H'].width = 25.0
+            ws_hist.column_dimensions['I'].width = 25.0
+
+            ws_hist.merge_cells("B1:I4")
+            ws_hist["B1"] = "Document Change History"
+            style_range(ws_hist, "B1:I4", font=title_banner_font, fill=white_fill, alignment=align_center_center)
+            for r in range(1, 5): ws_hist.row_dimensions[r].height = 18
+
+            ws_hist.merge_cells("B5:E5")
+            ws_hist["B5"] = "Document Change History:"
+            style_range(ws_hist, "B5:E5", font=section_white_font, fill=dark_header_fill, border=header_border, alignment=align_left_center)
+            ws_hist.row_dimensions[5].height = 22
+
+            ws_hist["B6"] = "Date"
+            style_range(ws_hist, "B6", font=header_font, fill=header_fill, border=header_border, alignment=align_center_center)
+            ws_hist["C6"] = "Version"
+            style_range(ws_hist, "C6", font=header_font, fill=header_fill, border=header_border, alignment=align_center_center)
+            ws_hist.merge_cells("D6:F6")
+            ws_hist["D6"] = "Prepared By"
+            style_range(ws_hist, "D6:F6", font=header_font, fill=header_fill, border=header_border, alignment=align_center_center)
+            ws_hist.merge_cells("G6:I6")
+            ws_hist["G6"] = "Detail"
+            style_range(ws_hist, "G6:I6", font=header_font, fill=header_fill, border=header_border, alignment=align_center_center)
+            ws_hist.row_dimensions[6].height = 28
+
+            if not change_history:
+                change_history = [{"date": today_str, "version": version_val, "prepared_by": tester_val, "detail": f"สร้างชุด Test Case จากข้อกำหนด {proj_name_val}"}]
+            
+            for idx, ch in enumerate(change_history, start=7):
+                ws_hist[f"B{idx}"] = ch.get("date", today_str)
+                style_range(ws_hist, f"B{idx}", font=cell_font, fill=white_fill, border=cell_border, alignment=align_center_center)
+                ws_hist[f"C{idx}"] = ch.get("version", version_val)
+                style_range(ws_hist, f"C{idx}", font=cell_font, fill=white_fill, border=cell_border, alignment=align_center_center)
+                ws_hist.merge_cells(f"D{idx}:F{idx}")
+                ws_hist[f"D{idx}"] = ch.get("prepared_by", tester_val)
+                style_range(ws_hist, f"D{idx}:F{idx}", font=cell_font, fill=white_fill, border=cell_border, alignment=align_left_center)
+                ws_hist.merge_cells(f"G{idx}:I{idx}")
+                ws_hist[f"G{idx}"] = ch.get("detail", "-")
+                style_range(ws_hist, f"G{idx}:I{idx}", font=cell_font, fill=white_fill, border=cell_border, alignment=align_left_center)
+                ws_hist.row_dimensions[idx].height = 24
+
+            # -------------------------------------------------------------
+            # 3. Sheet: Glossary
+            # -------------------------------------------------------------
+            ws_glo = wb.create_sheet(title="Glossary")
+            ws_glo.column_dimensions['A'].width = 3.0
+            ws_glo.column_dimensions['B'].width = 28.0
+            ws_glo.column_dimensions['C'].width = 45.0
+            ws_glo.column_dimensions['D'].width = 45.0
+
+            ws_glo.merge_cells("B1:D4")
+            ws_glo["B1"] = "Glossary"
+            style_range(ws_glo, "B1:D4", font=title_banner_font, fill=white_fill, alignment=align_center_center)
+            for r in range(1, 5): ws_glo.row_dimensions[r].height = 18
+
+            ws_glo["B5"] = "คำศัพท์ (Term)"
+            style_range(ws_glo, "B5", font=header_font, fill=header_fill, border=header_border, alignment=align_center_center)
+            ws_glo.merge_cells("C5:D5")
+            ws_glo["C5"] = "คำอธิบาย (Definition)"
+            style_range(ws_glo, "C5:D5", font=header_font, fill=header_fill, border=header_border, alignment=align_center_center)
+            ws_glo.row_dimensions[5].height = 28
+
+            if not glossary_list:
+                glossary_list = [
+                    {"term": "SRS", "definition": "Software Requirements Specification — เอกสารข้อกำหนดความต้องการของระบบ"},
+                    {"term": "Positive Test", "definition": "การทดสอบกรณีข้อมูลถูกต้องตามเงื่อนไขที่ระบบกำหนด"},
+                    {"term": "Negative Test", "definition": "การทดสอบกรณีข้อมูลไม่ถูกต้อง เพื่อตรวจสอบการป้องกันและแจ้งเตือนของระบบ"}
+                ]
+            for idx, g in enumerate(glossary_list, start=6):
+                ws_glo[f"B{idx}"] = g.get("term", "-")
+                style_range(ws_glo, f"B{idx}", font=cell_bold, fill=white_fill, border=cell_border, alignment=align_center_center)
+                ws_glo.merge_cells(f"C{idx}:D{idx}")
+                ws_glo[f"C{idx}"] = g.get("definition", "-")
+                style_range(ws_glo, f"C{idx}:D{idx}", font=cell_font, fill=white_fill, border=cell_border, alignment=align_left_center)
+                ws_glo.row_dimensions[idx].height = 24
+
+            # -------------------------------------------------------------
+            # 4. Sheet: Basic Test
+            # -------------------------------------------------------------
+            ws_basic = wb.create_sheet(title="Basic Test")
+            ws_basic.column_dimensions['A'].width = 3.0
+            ws_basic.column_dimensions['B'].width = 10.0
+            ws_basic.column_dimensions['C'].width = 25.0
+            ws_basic.column_dimensions['D'].width = 25.0
+            ws_basic.column_dimensions['E'].width = 25.0
+            ws_basic.column_dimensions['F'].width = 25.0
+
+            ws_basic.merge_cells("B1:F4")
+            ws_basic["B1"] = "Basic Test"
+            style_range(ws_basic, "B1:F4", font=title_banner_font, fill=white_fill, alignment=align_center_center)
+            for r in range(1, 5): ws_basic.row_dimensions[r].height = 18
+
+            # Section 1: File List
+            ws_basic.merge_cells("B5:C5")
+            ws_basic["B5"] = "File List"
+            style_range(ws_basic, "B5:C5", font=section_white_font, fill=dark_header_fill, border=header_border, alignment=align_left_center)
+            ws_basic.row_dimensions[5].height = 22
+
+            ws_basic["B6"] = "No."
+            style_range(ws_basic, "B6", font=header_font, fill=header_fill, border=header_border, alignment=align_center_center)
+            ws_basic.merge_cells("C6:D6")
+            ws_basic["C6"] = "File Name"
+            style_range(ws_basic, "C6:D6", font=header_font, fill=header_fill, border=header_border, alignment=align_center_center)
+            ws_basic.merge_cells("E6:F6")
+            ws_basic["E6"] = "Location"
+            style_range(ws_basic, "E6:F6", font=header_font, fill=header_fill, border=header_border, alignment=align_center_center)
+            ws_basic.row_dimensions[6].height = 26
+
+            ws_basic["B7"] = "N/A"
+            style_range(ws_basic, "B7", font=cell_font, fill=white_fill, border=cell_border, alignment=align_center_center)
+            ws_basic.merge_cells("C7:D7")
+            ws_basic["C7"] = "ครอบคลุม Functional/System Test Case ตามข้อกำหนด SRS"
+            style_range(ws_basic, "C7:D7", font=cell_font, fill=white_fill, border=cell_border, alignment=align_left_center)
+            ws_basic.merge_cells("E7:F7")
+            ws_basic["E7"] = "-"
+            style_range(ws_basic, "E7:F7", font=cell_font, fill=white_fill, border=cell_border, alignment=align_center_center)
+            ws_basic.row_dimensions[7].height = 24
+
+            # Section 2: System Installation
+            ws_basic.merge_cells("B10:C10")
+            ws_basic["B10"] = "System Installation"
+            style_range(ws_basic, "B10:C10", font=section_white_font, fill=dark_header_fill, border=header_border, alignment=align_left_center)
+            ws_basic.row_dimensions[10].height = 22
+
+            ws_basic["B11"] = "No."
+            style_range(ws_basic, "B11", font=header_font, fill=header_fill, border=header_border, alignment=align_center_center)
+            ws_basic.merge_cells("C11:F11")
+            ws_basic["C11"] = "Setup Procedures"
+            style_range(ws_basic, "C11:F11", font=header_font, fill=header_fill, border=header_border, alignment=align_center_center)
+            ws_basic.row_dimensions[11].height = 26
+
+            ws_basic["B12"] = "N/A"
+            style_range(ws_basic, "B12", font=cell_font, fill=white_fill, border=cell_border, alignment=align_center_center)
+            ws_basic.merge_cells("C12:F12")
+            ws_basic["C12"] = "ไม่อยู่ในขอบเขตของเอกสารฉบับนี้ — อ้างอิงตามเอกสาร System Installation Guide"
+            style_range(ws_basic, "C12:F12", font=cell_font, fill=white_fill, border=cell_border, alignment=align_left_center)
+            ws_basic.row_dimensions[12].height = 24
+
+            # Section 3: System Configuration
+            ws_basic.merge_cells("B15:C15")
+            ws_basic["B15"] = "System Configuration"
+            style_range(ws_basic, "B15:C15", font=section_white_font, fill=dark_header_fill, border=header_border, alignment=align_left_center)
+            ws_basic.row_dimensions[15].height = 22
+
+            ws_basic["B16"] = "No."
+            style_range(ws_basic, "B16", font=header_font, fill=header_fill, border=header_border, alignment=align_center_center)
+            ws_basic.merge_cells("C16:F16")
+            ws_basic["C16"] = "Configuration Procedures"
+            style_range(ws_basic, "C16:F16", font=header_font, fill=header_fill, border=header_border, alignment=align_center_center)
+            ws_basic.row_dimensions[16].height = 26
+
+            ws_basic["B17"] = "N/A"
+            style_range(ws_basic, "B17", font=cell_font, fill=white_fill, border=cell_border, alignment=align_center_center)
+            ws_basic.merge_cells("C17:F17")
+            ws_basic["C17"] = "ไม่อยู่ในขอบเขตของเอกสารฉบับนี้ — อ้างอิงตามเอกสาร System Configuration Manual"
+            style_range(ws_basic, "C17:F17", font=cell_font, fill=white_fill, border=cell_border, alignment=align_left_center)
+            ws_basic.row_dimensions[17].height = 24
+
+            # -------------------------------------------------------------
+            # 5. Sheet: Execute Test
+            # -------------------------------------------------------------
+            ws_exec = wb.create_sheet(title="Execute Test")
+            ws_exec.column_dimensions['A'].width = 3.0
+            ws_exec.column_dimensions['B'].width = 8.0
+            ws_exec.column_dimensions['C'].width = 25.0
+            ws_exec.column_dimensions['D'].width = 32.0
+            ws_exec.column_dimensions['E'].width = 24.0
+            ws_exec.column_dimensions['F'].width = 12.0
+            ws_exec.column_dimensions['G'].width = 12.0
+            ws_exec.column_dimensions['H'].width = 14.0
+            ws_exec.column_dimensions['I'].width = 16.0
+
+            ws_exec.merge_cells("B1:I4")
+            ws_exec["B1"] = "Execute Test"
+            style_range(ws_exec, "B1:I4", font=title_banner_font, fill=white_fill, alignment=align_center_center)
+            for r in range(1, 5): ws_exec.row_dimensions[r].height = 18
+
+            meta_exec = [
+                (6, "Project Name :", proj_name_val),
+                (8, "Project ID:", proj_code_val),
+                (10, "Project Release / Version :", version_val)
+            ]
+            for r_idx, lbl_txt, val_txt in meta_exec:
+                ws_exec[f"C{r_idx}"] = lbl_txt
+                style_range(ws_exec, f"C{r_idx}", font=label_font, fill=card_fill, border=cell_border, alignment=align_right_center)
+                ws_exec.merge_cells(f"D{r_idx}:F{r_idx}")
+                ws_exec[f"D{r_idx}"] = val_txt
+                style_range(ws_exec, f"D{r_idx}:F{r_idx}", font=value_font, fill=white_fill, border=cell_border, alignment=align_value)
+                ws_exec.row_dimensions[r_idx].height = 22
+
+            ws_exec.merge_cells("B13:D13")
+            ws_exec["B13"] = "System Test"
+            style_range(ws_exec, "B13:D13", font=section_white_font, fill=dark_header_fill, border=header_border, alignment=align_left_center)
+            ws_exec.row_dimensions[13].height = 22
+
+            ws_exec["B14"] = "REF #"
+            style_range(ws_exec, "B14", font=header_font, fill=header_fill, border=header_border, alignment=align_center_center)
+            ws_exec["C14"] = "Module"
+            style_range(ws_exec, "C14", font=header_font, fill=header_fill, border=header_border, alignment=align_center_center)
+            ws_exec["D14"] = "Function"
+            style_range(ws_exec, "D14", font=header_font, fill=header_fill, border=header_border, alignment=align_center_center)
+            ws_exec["E14"] = "Pass\n(Meet criteria for evaluating)*"
+            style_range(ws_exec, "E14", font=header_font, fill=header_fill, border=header_border, alignment=align_center_center)
+            ws_exec.merge_cells("F14:G14")
+            ws_exec["F14"] = "Remark"
+            style_range(ws_exec, "F14:G14", font=header_font, fill=header_fill, border=header_border, alignment=align_center_center)
+            ws_exec["H14"] = "จำนวน TC"
+            style_range(ws_exec, "H14", font=header_font, fill=header_fill, border=header_border, alignment=align_center_center)
+            ws_exec["I14"] = "เวลาประมาณ (ชม.)"
+            style_range(ws_exec, "I14", font=header_font, fill=header_fill, border=header_border, alignment=align_center_center)
+            ws_exec.row_dimensions[14].height = 32
+
+            exec_r = 15
+            total_tc_sum = 0
+            total_hours_sum = 0.0
+
+            exec_summary_list = data.get("execute_test_summary") or []
+            if not exec_summary_list or len(exec_summary_list) < len(raw_sheets):
+                exec_summary_list = []
+                for idx, s_item in enumerate(raw_sheets, 1):
+                    tc_c = len(s_item.get("test_cases", []))
+                    sh_title = s_item.get("sheet_name", f"Test Case {idx}")
+                    func_n = s_item.get("function_name") or sh_title.replace("Test Case", "").strip() or sh_title
+                    exec_summary_list.append({
+                        "ref_no": str(idx),
+                        "module": s_item.get("module_name", proj_name_val),
+                        "function": func_n,
+                        "pass_criteria": "ผ่านเกณฑ์การทดสอบ",
+                        "remark": "-",
+                        "tc_count": tc_c,
+                        "est_hours": round(tc_c * 0.25, 2)
+                    })
+            elif len(exec_summary_list) == len(raw_sheets):
+                for idx, s_item in enumerate(raw_sheets):
+                    actual_cnt = len(s_item.get("test_cases", []))
+                    exec_summary_list[idx]["tc_count"] = actual_cnt
+                    exec_summary_list[idx]["est_hours"] = round(actual_cnt * 0.25, 2)
+
+            for s_row in exec_summary_list:
+                c_cnt = int(s_row.get("tc_count", 0))
+                c_hrs = float(s_row.get("est_hours") or round(c_cnt * 0.25, 2))
+                total_tc_sum += c_cnt
+                total_hours_sum += c_hrs
+
+                ws_exec[f"B{exec_r}"] = str(s_row.get("ref_no", ""))
+                style_range(ws_exec, f"B{exec_r}", font=cell_font, fill=white_fill, border=cell_border, alignment=align_center_center)
+                ws_exec[f"C{exec_r}"] = s_row.get("module", "-")
+                style_range(ws_exec, f"C{exec_r}", font=cell_font, fill=white_fill, border=cell_border, alignment=align_left_center)
+                ws_exec[f"D{exec_r}"] = s_row.get("function", "-")
+                style_range(ws_exec, f"D{exec_r}", font=cell_font, fill=white_fill, border=cell_border, alignment=align_left_center)
+                ws_exec[f"E{exec_r}"] = str(s_row.get("pass_criteria", "ผ่านเกณฑ์การทดสอบ"))
+                style_range(ws_exec, f"E{exec_r}", font=cell_font, fill=white_fill, border=cell_border, alignment=align_center_center)
+                ws_exec.merge_cells(f"F{exec_r}:G{exec_r}")
+                ws_exec[f"F{exec_r}"] = str(s_row.get("remark", "-"))
+                style_range(ws_exec, f"F{exec_r}:G{exec_r}", font=cell_font, fill=white_fill, border=cell_border, alignment=align_center_center)
+                ws_exec[f"H{exec_r}"] = c_cnt
+                style_range(ws_exec, f"H{exec_r}", font=cell_font, fill=white_fill, border=cell_border, alignment=align_center_center)
+                ws_exec[f"I{exec_r}"] = c_hrs
+                style_range(ws_exec, f"I{exec_r}", font=cell_font, fill=white_fill, border=cell_border, alignment=align_center_center)
+                ws_exec.row_dimensions[exec_r].height = 24
+                exec_r += 1
+
+            # Total row
+            ws_exec.merge_cells(f"B{exec_r}:G{exec_r}")
+            ws_exec[f"B{exec_r}"] = "รวม (Total)"
+            style_range(ws_exec, f"B{exec_r}:G{exec_r}", font=header_font, fill=header_fill, border=header_border, alignment=align_right_center)
+            ws_exec[f"H{exec_r}"] = total_tc_sum
+            style_range(ws_exec, f"H{exec_r}", font=header_font, fill=header_fill, border=header_border, alignment=align_center_center)
+            ws_exec[f"I{exec_r}"] = round(total_hours_sum, 2)
+            style_range(ws_exec, f"I{exec_r}", font=header_font, fill=header_fill, border=header_border, alignment=align_center_center)
+            ws_exec.row_dimensions[exec_r].height = 26
+
+            # -------------------------------------------------------------
+            # 6. Test Case Sheets (Exact 11 Columns B to L)
+            # -------------------------------------------------------------
+            existing_sheet_titles = set(wb.sheetnames)
+            for s_idx, s_item in enumerate(raw_sheets, 1):
+                raw_title = s_item.get("sheet_name") or f"Test Case {s_idx}"
+                clean_title = re.sub(r'[\\/*?:\[\]]', '_', raw_title).strip()
+                if not clean_title.lower().startswith("test case"):
+                    clean_title = f"Test Case {clean_title}"
+                clean_title = clean_title[:31].strip()
+                if not clean_title:
+                    clean_title = f"Test Case {s_idx}"
+                unique_title = clean_title
+                dup_c = 1
+                while unique_title in existing_sheet_titles:
+                    unique_title = f"{clean_title[:27]}_{dup_c}"
+                    dup_c += 1
+                existing_sheet_titles.add(unique_title)
+
+                ws_tc = wb.create_sheet(title=unique_title)
                 
-            # Data Rows
-            row_idx += 1
-            for tc in test_cases:
-                for col_idx, (_, candidate_keys, def_val) in enumerate(field_defs, 1):
-                    val = extract_tc_field(tc, candidate_keys, def_val)
-                    cell = ws.cell(row=row_idx, column=col_idx, value=val)
-                    cell.border = thin_border
-                    cell.alignment = center_align if col_idx in [1, 7, 8, 9] else left_align
-                    
-                    if col_idx == 7:
-                        res_str = str(val).upper()
-                        if res_str == "PASS":
-                            cell.fill = pass_fill
-                        elif res_str == "FAIL":
-                            cell.fill = fail_fill
-                row_idx += 1
-                
+                # Column widths matching 69A template
+                col_widths = {
+                    'A': 2.0,
+                    'B': 24.0, # Test Case ID
+                    'C': 28.0, # Test Case Objective
+                    'D': 48.0, # Test Step
+                    'E': 28.0, # Test Data
+                    'F': 15.0, # Test Type
+                    'G': 36.0, # Expected Result
+                    'H': 24.0, # Remark
+                    'I': 14.0, # Automate
+                    'J': 16.0, # Req No.
+                    'K': 18.0, # Platforms
+                    'L': 20.0  # Updated By
+                }
+                for c_letter, c_w in col_widths.items():
+                    ws_tc.column_dimensions[c_letter].width = c_w
+
+                # 1. Title Banner B1:L4
+                ws_tc.merge_cells("B1:L4")
+                ws_tc["B1"] = "Test Case"
+                style_range(ws_tc, "B1:L4", font=title_banner_font, fill=white_fill, alignment=align_center_center)
+                for r_idx in range(1, 5):
+                    ws_tc.row_dimensions[r_idx].height = 18
+
+                # 2. Unified Soft Blue Card B5:L13
+                for r_idx in range(5, 14):
+                    ws_tc.row_dimensions[r_idx].height = 20
+                    for c_idx in range(2, 13):
+                        cell = ws_tc.cell(r_idx, c_idx)
+                        cell.fill = card_fill
+                        t_s = dark_side if r_idx == 5 else None
+                        b_s = dark_side if r_idx == 13 else None
+                        l_s = dark_side if c_idx == 2 else None
+                        r_s = dark_side if c_idx == 12 else None
+                        cell.border = Border(top=t_s, bottom=b_s, left=l_s, right=r_s)
+
+                mod_f = f"{s_item.get('module_name', proj_name_val)} / {s_item.get('function_name', unique_title)}" if s_item.get('function_name') else s_item.get('module_name', proj_name_val)
+                req_rng = s_item.get("req_range") or s_item.get("req_no_range") or "REQ0001-REQ0050"
+
+                # Metadata labels inside the card
+                meta_labels = [
+                    (6, 3, "Project Name :"),
+                    (8, 3, "Project ID:"),
+                    (10, 3, "Tester Name :"),
+                    (12, 3, "Project Release / Version :"),
+                    (6, 6, "Create Date :"),
+                    (8, 6, "Start Test Date :"),
+                    (10, 6, "Finish Test Date :"),
+                    (12, 6, "Module / Function: ")
+                ]
+                for r_num, c_num, lbl_text in meta_labels:
+                    lbl_cell = ws_tc.cell(r_num, c_num, lbl_text)
+                    lbl_cell.font = label_font
+                    lbl_cell.alignment = align_label
+
+                # Metadata value boxes (merged white field boxes)
+                meta_boxes = [
+                    ("D6:E6", proj_name_val),
+                    ("D8:E8", proj_code_val),
+                    ("D10:E10", tester_val),
+                    ("D12:E12", version_val),
+                    ("G6:H6", today_str),
+                    ("G8:H8", today_str),
+                    ("G10:H10", today_str),
+                    ("G12:K12", mod_f)
+                ]
+                for m_range, val_text in meta_boxes:
+                    ws_tc.merge_cells(m_range)
+                    ws_tc[m_range.split(':')[0]] = val_text
+                    style_range(ws_tc, m_range, font=value_font, fill=white_fill, alignment=align_value)
+
+                # Row 14: Spacer
+                ws_tc.row_dimensions[14].height = 14
+
+                # Row 15: Functional Requirements
+                ws_tc.row_dimensions[15].height = 24
+                ws_tc.merge_cells("B15:D15")
+                ws_tc["B15"] = " FUNCTIONAL REQUIREMENTS (Requirements No.) :"
+                style_range(ws_tc, "B15:D15", font=label_font, alignment=align_right_center)
+
+                ws_tc.merge_cells("E15:G15")
+                ws_tc["E15"] = req_rng
+                style_range(ws_tc, "E15:G15", font=label_font, alignment=align_value)
+
+                # Row 16: Spacer
+                ws_tc.row_dimensions[16].height = 12
+
+                # Row 17: Table Headers
+                tc_headers = [
+                    ("Test Case ID", 2),
+                    ("Test Case Objective", 3),
+                    ("Test Step", 4),
+                    ("Test Data", 5),
+                    ("Test Type", 6),
+                    ("Expected Result", 7),
+                    ("Remark", 8),
+                    ("Automate", 9),
+                    ("Req No.", 10),
+                    ("Platforms", 11),
+                    ("Updated By", 12)
+                ]
+                ws_tc.row_dimensions[17].height = 32
+                for h_name, col_i in tc_headers:
+                    cell = ws_tc.cell(17, col_i, h_name)
+                    cell.font = header_font
+                    cell.fill = header_fill
+                    cell.alignment = align_center_center
+                    cell.border = header_border
+
+                tc_row_idx = 18
+                sheet_tcs = s_item.get("test_cases", [])
+                for tc in sheet_tcs:
+                    t_id = extract_tc_field(tc, ["Test Case ID", "Test ID", "test_case_id", "id"], f"TC{tc_row_idx-17:03d}")
+                    t_obj = extract_tc_field(tc, ["Test Case Objective", "Test case Objective", "objective", "วัตถุประสงค์"], "")
+                    t_step = extract_tc_field(tc, ["Test Step", "Test Description / Procedure", "steps", "ขั้นตอน"], "")
+                    t_data = extract_tc_field(tc, ["Test Data", "data", "ข้อมูลทดสอบ"], "-")
+                    t_type = extract_tc_field(tc, ["Test Type", "type", "ประเภท"], "Positive")
+                    t_exp = extract_tc_field(tc, ["Expected Result", "expected", "ผลลัพธ์ที่คาดหวัง"], "")
+                    t_rem = extract_tc_field(tc, ["Remark", "remark", "หมายเหตุ"], "")
+                    t_auto = extract_tc_field(tc, ["Automate", "automate", "automation"], "TRUE")
+                    t_req = extract_tc_field(tc, ["Req No.", "Requirement ID", "req_no", "รหัสข้อกำหนด"], "-")
+                    t_plat = extract_tc_field(tc, ["Platforms", "Platform", "platform", "แพลตฟอร์ม"], "Web Application")
+                    t_upd = extract_tc_field(tc, ["Updated By", "Update by", "updated_by", "tester"], tester_val)
+
+                    # Dynamic row height for Thai multiline text
+                    ws_tc.row_dimensions[tc_row_idx].height = calc_tc_row_height(t_step, t_obj, t_exp, t_data)
+
+                    row_vals = [
+                        (2, t_id, align_center_top),
+                        (3, t_obj, align_left_top),
+                        (4, t_step, align_left_top),
+                        (5, t_data, align_left_top),
+                        (6, t_type, align_center_top),
+                        (7, t_exp, align_left_top),
+                        (8, t_rem, align_left_top),
+                        (9, str(t_auto).upper(), align_center_top),
+                        (10, t_req, align_center_top),
+                        (11, t_plat, align_center_top),
+                        (12, t_upd, align_center_top)
+                    ]
+                    for col_i, val, align_style in row_vals:
+                        c_node = ws_tc.cell(tc_row_idx, col_i, val)
+                        c_node.font = cell_font
+                        c_node.alignment = align_style
+                        c_node.border = cell_border
+                    tc_row_idx += 1
+
             wb.save(excel_file_path)
 
             # Construct Markdown Representation
             md_lines = [
                 f"# {doc_name}",
                 f"**ประเภทเอกสาร (Document Type):** {doc_type}  ",
-                f"**รหัสโครงการ (Project Code):** {project_code}  ",
-                f"**โมดูล / ฟังก์ชัน (Module / Function):** {module_val}  ",
-                f"**ผู้จัดทำ (Tester):** {tester_val}  ",
+                f"**รหัสโครงการ (Project Code):** {proj_code_val}  ",
+                f"**ชื่อโครงการ (Project Name):** {proj_name_val}  ",
+                f"**ผู้จัดทำ (Author / Tester):** {tester_val}  ",
+                f"**เวอร์ชัน (Version):** {version_val}  ",
                 f"**วันที่สร้างเอกสาร (Date):** {today_str}  ",
                 "",
-                "## ตารางสรุปรายการ Test Cases (Test Cases Summary)",
-                "| Test Case ID | วัตถุประสงค์ (Objective) | ผลลัพธ์ที่คาดหวัง (Expected Result) | ผลการทดสอบ (Result) | รหัสข้อกำหนด (Req No.) |",
-                "| :--- | :--- | :--- | :--- | :--- |"
+                f"> {desc_val}",
+                "",
+                "## 1. ข้อมูลสรุปการทดสอบระบบ (Execute Test Summary)",
+                "| REF # | Module | Function | Pass Criteria | Remark | จำนวน TC | เวลาประมาณ (ชม.) |",
+                "| :---: | :--- | :--- | :---: | :---: | :---: | :---: |"
             ]
-            
-            for tc in test_cases:
-                tc_id = extract_tc_field(tc, ["Test Case ID", "Test ID", "test_id", "id"], "TC")
-                obj = str(extract_tc_field(tc, ["Test case Objective", "Test Objective", "objective", "วัตถุประสงค์"], "")).replace("\n", " ").replace("|", "\\|")
-                exp = str(extract_tc_field(tc, ["Expected Result", "expected", "ผลลัพธ์ที่คาดหวัง"], "")).replace("\n", " ").replace("|", "\\|")
-                res = extract_tc_field(tc, ["Result (Pass/Fail)", "Result", "status", "ผลการทดสอบ"], "[-]")
-                req_no = extract_tc_field(tc, ["Req No.", "Requirement ID", "req_no", "รหัสข้อกำหนด"], "-")
-                md_lines.append(f"| {tc_id} | {obj} | {exp} | **{res}** | {req_no} |")
-                
+            for s_row in exec_summary_list:
+                md_lines.append(f"| {s_row.get('ref_no','')} | {s_row.get('module','-')} | {s_row.get('function','-')} | {s_row.get('pass_criteria','-')} | {s_row.get('remark','-')} | **{s_row.get('tc_count',0)}** | {s_row.get('est_hours',0)} |")
+            md_lines.append(f"| | | **รวม (Total)** | | | **{total_tc_sum}** | **{round(total_hours_sum, 2)}** |")
             md_lines.append("")
-            md_lines.append("## รายละเอียดข้อกำหนดการทดสอบ (Detailed Test Specifications)")
-            for tc in test_cases:
-                tc_id = extract_tc_field(tc, ["Test Case ID", "Test ID", "test_id", "id"], "TC")
-                tc_obj = extract_tc_field(tc, ["Test case Objective", "Test Objective", "objective", "วัตถุประสงค์"], "")
-                md_lines.append(f"### [{tc_id}] {tc_obj}")
-                md_lines.append(f"- **รหัสข้อกำหนด (Requirement No.):** {extract_tc_field(tc, ['Req No.', 'Requirement ID', 'req_no', 'รหัสข้อกำหนด'], '-')}")
-                md_lines.append(f"- **ข้อมูลทดสอบ (Test Data):** {extract_tc_field(tc, ['Test Data', 'test_data', 'data', 'ข้อมูลทดสอบ'], '-')}")
-                md_lines.append(f"- **ขั้นตอนการทดสอบ (Procedure):**\n{extract_tc_field(tc, ['Test Description / Procedure', 'Test Description', 'Procedure', 'steps', 'ขั้นตอนการทดสอบ'], '-')}")
-                md_lines.append(f"- **ผลลัพธ์ที่คาดหวัง (Expected Result):** {extract_tc_field(tc, ['Expected Result', 'expected', 'ผลลัพธ์ที่คาดหวัง'], '-')}")
-                md_lines.append(f"- **ผลการทดสอบจริง (Actual Result):** {extract_tc_field(tc, ['Actual Result', 'actual', 'ผลการทดสอบจริง'], '[-]')}")
-                md_lines.append(f"- **สถานะ (Result):** `{extract_tc_field(tc, ['Result (Pass/Fail)', 'Result', 'status', 'ผลการทดสอบ'], '[-]')}`")
-                md_lines.append(f"- **ผู้จัดทำ (Updated By):** {extract_tc_field(tc, ['Update by', 'Updated By', 'tester', 'ผู้ทดสอบ'], tester_val)}")
+
+            # For each Test Case Sheet
+            for s_item in raw_sheets:
+                s_name = s_item.get("sheet_name", "Test Case Sheet")
+                mod_f = f"{s_item.get('module_name', proj_name_val)} / {s_item.get('function_name', s_name)}" if s_item.get('function_name') else s_item.get('module_name', proj_name_val)
+                req_rng = s_item.get("req_range") or s_item.get("req_no_range") or "-"
+                sheet_tcs = s_item.get("test_cases", [])
+
+                md_lines.append(f"## Sheet: {s_name}")
+                md_lines.append(f"- **Module / Function:** {mod_f}")
+                md_lines.append(f"- **Functional Requirements:** {req_rng}")
+                md_lines.append(f"- **Total Test Cases:** {len(sheet_tcs)} เคส")
+                md_lines.append("")
+                md_lines.append("| Test Case ID | Test Case Objective | Test Step | Test Data | Test Type | Expected Result | Remark | Automate | Req No. | Platforms | Updated By |")
+                md_lines.append("| :--- | :--- | :--- | :--- | :---: | :--- | :--- | :---: | :---: | :---: | :--- |")
+
+                for tc in sheet_tcs:
+                    t_id = str(extract_tc_field(tc, ["Test Case ID", "Test ID", "test_case_id", "id"], "TC")).replace("|", "\\|")
+                    t_obj = str(extract_tc_field(tc, ["Test Case Objective", "Test case Objective", "objective", "วัตถุประสงค์"], "")).replace("\n", " ").replace("|", "\\|")
+                    t_step = str(extract_tc_field(tc, ["Test Step", "Test Description / Procedure", "steps", "ขั้นตอน"], "")).replace("\n", "<br>").replace("|", "\\|")
+                    t_data = str(extract_tc_field(tc, ["Test Data", "data", "ข้อมูลทดสอบ"], "-")).replace("\n", "<br>").replace("|", "\\|")
+                    t_type = str(extract_tc_field(tc, ["Test Type", "type", "ประเภท"], "Positive")).replace("|", "\\|")
+                    t_exp = str(extract_tc_field(tc, ["Expected Result", "expected", "ผลลัพธ์ที่คาดหวัง"], "")).replace("\n", "<br>").replace("|", "\\|")
+                    t_rem = str(extract_tc_field(tc, ["Remark", "remark", "หมายเหตุ"], "-")).replace("\n", " ").replace("|", "\\|")
+                    t_auto = str(extract_tc_field(tc, ["Automate", "automate"], "TRUE")).replace("|", "\\|")
+                    t_req = str(extract_tc_field(tc, ["Req No.", "Requirement ID", "req_no"], "-")).replace("|", "\\|")
+                    t_plat = str(extract_tc_field(tc, ["Platforms", "Platform"], "Web Application")).replace("|", "\\|")
+                    t_upd = str(extract_tc_field(tc, ["Updated By", "Update by"], tester_val)).replace("|", "\\|")
+
+                    md_lines.append(f"| {t_id} | {t_obj} | {t_step} | {t_data} | {t_type} | {t_exp} | {t_rem} | {t_auto} | {t_req} | {t_plat} | {t_upd} |")
                 md_lines.append("")
 
             doc_markdown = "\n".join(md_lines)
-            html_body = build_testcase_document_html(doc_name, doc_type, project_name, project_code, module_val, tester_val, today_str, test_cases)
+            rendered_markdown = simple_markdown_to_html(doc_markdown)
+            html_body = build_generic_document_html(
+                doc_name, doc_type, project_name, project_code, skill_name, today_str, rendered_markdown,
+                doc_version=version_val, doc_author=tester_val, doc_date=today_str
+            )
 
         else:
             # Generic Document Types (SRS, SDD, TOR, UAT, User Manual, Admin Manual, etc.)
