@@ -654,18 +654,24 @@ def build_testcase_document_html(doc_name: str, doc_type: str, project_name: str
     """Builds a high-density, professional landscape HTML document for Test Cases."""
     rows_html = ""
     for tc in test_cases:
-        res_val = str(tc.get("Result (Pass/Fail)", "PASS")).upper()
-        badge_class = "pass" if res_val == "PASS" else ("fail" if res_val == "FAIL" else "blocked")
-        proc_html = str(tc.get("Test Description / Procedure", "")).replace("\n", "<br>")
+        tc_id = tc.get("Test Case ID") or tc.get("Test ID") or tc.get("test_id") or tc.get("id") or "TC"
+        tc_obj = tc.get("Test case Objective") or tc.get("Test Objective") or tc.get("objective") or tc.get("วัตถุประสงค์") or ""
+        tc_proc = tc.get("Test Description / Procedure") or tc.get("Procedure") or tc.get("steps") or tc.get("ขั้นตอนการทดสอบ") or ""
+        tc_data = tc.get("Test Data") or tc.get("data") or tc.get("ข้อมูลทดสอบ") or "-"
+        tc_exp = tc.get("Expected Result") or tc.get("expected") or tc.get("ผลลัพธ์ที่คาดหวัง") or ""
+        res_val = str(tc.get("Result (Pass/Fail)") or tc.get("Result") or tc.get("status") or tc.get("ผลการทดสอบ") or "[-]").strip()
+        badge_class = "pass" if res_val.upper() == "PASS" else ("fail" if res_val.upper() == "FAIL" else "blocked")
+        proc_html = str(tc_proc).replace("\n", "<br>")
+        req_no = tc.get("Req No.") or tc.get("req_no") or tc.get("รหัสข้อกำหนด") or "-"
         rows_html += f"""
         <tr>
-            <td style="font-weight: 700; text-align: center; color: #1e3a8a;">{tc.get("Test Case ID", "")}</td>
-            <td style="font-weight: 600;">{tc.get("Test case Objective", "")}</td>
+            <td style="font-weight: 700; text-align: center; color: #1e3a8a;">{tc_id}</td>
+            <td style="font-weight: 600;">{tc_obj}</td>
             <td>{proc_html}</td>
-            <td>{tc.get("Test Data", "-")}</td>
-            <td>{tc.get("Expected Result", "")}</td>
+            <td>{tc_data}</td>
+            <td>{tc_exp}</td>
             <td style="text-align: center;"><span class="badge {badge_class}">{res_val}</span></td>
-            <td style="text-align: center; font-weight: 600;">{tc.get("Req No.", "-")}</td>
+            <td style="text-align: center; font-weight: 600;">{req_no}</td>
         </tr>
         """
 
@@ -840,19 +846,19 @@ def build_testcase_document_html(doc_name: str, doc_type: str, project_name: str
         </div>
         <div class="doc-meta-grid">
             <div class="doc-meta-item">
-                <span class="doc-meta-label">Project</span>
+                <span class="doc-meta-label">Project / โครงการ</span>
                 <span class="doc-meta-value">{project_name} ({project_code})</span>
             </div>
             <div class="doc-meta-item">
-                <span class="doc-meta-label">Module / Function</span>
+                <span class="doc-meta-label">Module / ฟังก์ชัน</span>
                 <span class="doc-meta-value">{module_val}</span>
             </div>
             <div class="doc-meta-item">
-                <span class="doc-meta-label">Tester / Author</span>
+                <span class="doc-meta-label">Tester / ผู้จัดทำ</span>
                 <span class="doc-meta-value">{tester_val}</span>
             </div>
             <div class="doc-meta-item">
-                <span class="doc-meta-label">Execution Date</span>
+                <span class="doc-meta-label">Date / วันที่จัดทำ</span>
                 <span class="doc-meta-value">{today_str}</span>
             </div>
         </div>
@@ -862,10 +868,10 @@ def build_testcase_document_html(doc_name: str, doc_type: str, project_name: str
         <thead>
             <tr>
                 <th style="width: 8%; text-align: center;">Test ID</th>
-                <th style="width: 20%;">Objective</th>
-                <th style="width: 28%;">Description / Procedure</th>
-                <th style="width: 14%;">Test Data</th>
-                <th style="width: 18%;">Expected Result</th>
+                <th style="width: 20%;">Objective (วัตถุประสงค์)</th>
+                <th style="width: 28%;">Description / Procedure (ขั้นตอนการทดสอบ)</th>
+                <th style="width: 14%;">Test Data (ข้อมูลทดสอบ)</th>
+                <th style="width: 18%;">Expected Result (ผลลัพธ์ที่คาดหวัง)</th>
                 <th style="width: 6%; text-align: center;">Result</th>
                 <th style="width: 6%; text-align: center;">Req No.</th>
             </tr>
@@ -1299,9 +1305,10 @@ Please follow these structure and formatting instructions strictly:
 
 # Final Output Directives:
 1. Synthesize all documents in the project knowledge base into a fully detailed, rigorous, production-grade {doc_type}.
-2. Ensure every single requirement is measurable, testable, and unambiguous.
-3. NEVER leave placeholder text or brief outlines.
-4. Output the complete document directly in clean, structured Markdown.
+2. MANDATORY LANGUAGE REQUIREMENT: The entire document MUST be written in professional, grammatically correct Thai (ภาษาไทย). Standard English technical terms, acronyms, and code identifiers may be kept or placed in parentheses (e.g., API, Database, JWT).
+3. Ensure every single requirement is measurable, testable, and unambiguous.
+4. NEVER leave placeholder text or brief outlines.
+5. Output the complete document directly in clean, structured Markdown.
 """
 
         # 3. Call Gemini with Gemini 3.1 Pro
@@ -1416,14 +1423,42 @@ Your primary directives:
         if doc_type in ["Test Case", "TestCase"]:
             prompt = f"""
 You are an expert QA Automation Engineer, Business Analyst, and Technical Writer.
-Your task is to generate a formal QA Test Case document based on ALL provided Project Knowledge Base documents, Skill Instructions, Reference Documents, and User Custom Prompts.
+Your task is to generate a formal, production-grade QA Test Case document for Project '{project_name}' ({project_code}) named '{doc_name}'.
+You MUST analyze, cross-reference, and synthesize ALL provided Project Knowledge Base documents (TOR, PO Briefing, SRS, SDD, previous tests, specs) to design comprehensive test cases.
 
 # Target Document Information
 - Document Name: {doc_name}
 - Document Type: {doc_type}
 - Project: {project_name} ({project_code})
+- Date: {today_str}
 
 {framework_header}
+
+# ==============================================================================
+# 🔴 MANDATORY LANGUAGE REQUIREMENT: เอกสาร Test Case ทั้งหมดต้องเป็น "ภาษาไทย" 100%
+# (ALL TEST CASE CONTENT MUST BE WRITTEN IN THAI - ZERO ENGLISH DESCRIPTIONS)
+# ==============================================================================
+1. ทุกข้อมูลใน Test Case ต้องเขียนและอธิบายเป็น "ภาษาไทย" ทั้งหมด:
+   - "Test case Objective" (วัตถุประสงค์การทดสอบ): ต้องเขียนเป็นภาษาไทยอย่างละเอียด ชัดเจน เช่น "ตรวจสอบว่าผู้ใช้สามารถสร้างเอกสาร LPI โดยเชื่อมโยงกับใบแจ้งหนี้ (Invoice) ที่มีอยู่ในระบบได้สำเร็จ" หรือ "ตรวจสอบระบบป้องกันการสร้าง LPI เมื่อไม่มีการเลือกหรือสร้าง Invoice"
+   - "Test Description / Procedure" (ขั้นตอนการทดสอบ): ต้องเขียนเป็นข้อๆ 1., 2., 3., ... เป็นภาษาไทยอย่างชัดเจน ปฏิบัติตามได้จริง เช่น:
+     1. เข้าสู่ระบบด้วยบัญชีผู้ใช้งาน
+     2. ไปที่เมนูจัดการใบอนุญาต (Permit Menu)
+     3. คลิกปุ่ม 'สร้างใบอนุญาต (Create LPI)'
+     4. เลือก Invoice จากรายการที่ต้องการเชื่อมโยง
+     5. กรอกข้อมูลรายละเอียดใบอนุญาตให้ครบถ้วน
+     6. คลิกปุ่ม 'บันทึก (Save)'
+   - "Test Data" (ข้อมูลทดสอบ): ระบุข้อมูลตัวอย่างที่ใช้ทดสอบเป็นภาษาไทยหรือข้อมูลจำลองที่สมจริง เช่น "ชื่อผู้ใช้: user@tiffa.com\\nรหัสผ่าน: password123\\nเลขที่ Invoice: INV-2025-001"
+   - "Expected Result" (ผลลัพธ์ที่คาดหวัง): ต้องเขียนผลลัพธ์เป็นภาษาไทยอย่างเป็นรูปธรรม วัดผลได้ เช่น "ระบบสร้างเอกสาร LPI สำเร็จ เชื่อมโยงกับ INV-2025-001 และแสดงสถานะเป็น 'ฉบับร่าง (Draft)' พร้อมข้อความแจ้งเตือนบันทึกสำเร็จ"
+   - "Actual Result" (ผลการทดสอบจริง): ระบุเป็น "[-]" หรือ "ระบบทำงานถูกต้องตามขั้นตอนและเงื่อนไขที่กำหนด"
+   - "Result (Pass/Fail)": ระบุเป็น "[-]" หรือ "PASS"
+   - "module_function" ใน metadata: ระบุชื่อโมดูลและฟังก์ชันเป็นภาษาไทย เช่น "ระบบจัดการใบอนุญาตและการส่งออก (Permit Management)"
+2. ห้ามเขียนเนื้อหา Objective, Procedure, Test Data, Expected Result เป็นภาษาอังกฤษล้วนโดยเด็ดขาด!
+3. คำศัพท์เทคนิค รหัสมาตรฐาน ชื่อระบบ ปุ่ม ฟิลด์ หรือคำเฉพาะทาง สามารถใส่วงเล็บภาษาอังกฤษประกอบได้ เช่น "สร้างใบอนุญาต (Create LPI)", "ฉบับร่าง (Draft)", "REQ-001", "TC_RGP_001", "HS Code"
+4. ครอบคลุมการทดสอบครบทุกด้าน:
+   - Positive Test Cases (Happy Path / การทำงานปกติที่ถูกต้อง)
+   - Negative Test Cases (Validation Errors, ข้อมูลไม่ถูกต้อง, ละเว้นข้อมูลจำเป็น)
+   - Boundary Value & Edge Cases (ค่าขอบเขต Min/Max/Limit)
+   - Authorization & Role-Based Access (สิทธิ์การเข้าใช้งานของผู้ใช้แต่ละประเภท)
 
 {refinement_section}
 
@@ -1439,24 +1474,24 @@ Your task is to generate a formal QA Test Case document based on ALL provided Pr
 
 # Output Format MUST BE JSON
 You MUST generate the entire document as a strict JSON object with two keys: "metadata" and "test_cases".
-Do NOT include any text outside the JSON.
+Do NOT include any text outside the JSON markdown block.
 Format:
 {{
   "metadata": {{
     "project_name": "{project_name} ({project_code})",
     "tester_name": "AI Agent",
-    "module_function": "Determined from requirements"
+    "module_function": "ระบุชื่อโมดูลหรือฟังก์ชันเป็นภาษาไทยตามที่วิเคราะห์ได้จากเอกสาร"
   }},
   "test_cases": [
     {{
-      "Test Case ID": "TC-001",
-      "Test case Objective": "...",
-      "Test Description / Procedure": "1. ...\\n2. ...",
-      "Test Data": "...",
-      "Expected Result": "...",
-      "Actual Result": "...",
-      "Result (Pass/Fail)": "PASS",
-      "Req No.": "...",
+      "Test Case ID": "TC_001",
+      "Test case Objective": "ระบุวัตถุประสงค์การทดสอบเป็นภาษาไทย...",
+      "Test Description / Procedure": "1. เข้าสู่ระบบ...\\n2. ไปที่เมนู...\\n3. คลิกปุ่ม...",
+      "Test Data": "ข้อมูลตัวอย่างที่ใช้ทดสอบ...",
+      "Expected Result": "ผลลัพธ์ที่คาดหวังเป็นภาษาไทย...",
+      "Actual Result": "[-]",
+      "Result (Pass/Fail)": "[-]",
+      "Req No.": "REQ-001",
       "Update by": "AI Agent"
     }}
   ]
@@ -1493,9 +1528,10 @@ You MUST analyze, cross-reference, and synthesize ALL provided Project Knowledge
 
 # Final Output Directives:
 1. Synthesize all documents in the project knowledge base into a fully detailed, rigorous, production-grade {doc_type}.
-2. Ensure every single requirement is measurable, testable, and unambiguous.
-3. NEVER leave placeholder text or brief outlines.
-4. Output the complete document directly in clean, structured Markdown.
+2. MANDATORY LANGUAGE REQUIREMENT: The entire document MUST be written in professional, grammatically correct Thai (ภาษาไทย). Standard English technical terms, acronyms, and code identifiers may be kept or placed in parentheses (e.g., API, Database, JWT).
+3. Ensure every single requirement is measurable, testable, and unambiguous.
+4. NEVER leave placeholder text or brief outlines.
+5. Output the complete document directly in clean, structured Markdown.
 """
 
         logger.info(f"Generating document async '{doc_name}' ({doc_type})...")
@@ -1550,16 +1586,16 @@ You MUST analyze, cross-reference, and synthesize ALL provided Project Knowledge
 
             if not data or not isinstance(data, dict):
                 data = {
-                    "metadata": {"project_name": project_name, "tester_name": "AI Agent", "module_function": doc_name},
+                    "metadata": {"project_name": project_name, "tester_name": "AI Agent", "module_function": f"โมดูล {doc_name}"},
                     "test_cases": [
                         {
-                            "Test Case ID": "TC-001",
-                            "Test case Objective": f"Verify {doc_name} functionality",
-                            "Test Description / Procedure": "1. Execute test steps as per requirements.",
-                            "Test Data": "Default test parameters",
-                            "Expected Result": "System behaves as expected.",
-                            "Actual Result": "Working properly",
-                            "Result (Pass/Fail)": "PASS",
+                            "Test Case ID": "TC_001",
+                            "Test case Objective": f"ตรวจสอบการทำงานของ {doc_name} ให้เป็นไปตามข้อกำหนด",
+                            "Test Description / Procedure": "1. เข้าสู่ระบบด้วยบัญชีผู้ใช้ที่ได้รับสิทธิ์\n2. ไปที่เมนูและเริ่มทดสอบฟังก์ชัน\n3. ดำเนินการตามขั้นตอนที่ระบุในข้อกำหนด\n4. ตรวจสอบผลการตอบสนองของระบบ",
+                            "Test Data": "ข้อมูลตัวอย่างตามข้อกำหนดระบบ",
+                            "Expected Result": "ระบบตอบสนองและทำงานถูกต้องตามข้อกำหนด 100%",
+                            "Actual Result": "[-]",
+                            "Result (Pass/Fail)": "[-]",
                             "Req No.": "REQ-01",
                             "Update by": "AI Agent"
                         }
@@ -1570,6 +1606,24 @@ You MUST analyze, cross-reference, and synthesize ALL provided Project Knowledge
             tester_val = meta.get("tester_name", "AI Agent")
             module_val = meta.get("module_function", doc_name)
             test_cases = data.get("test_cases", [])
+
+            def extract_tc_field(tc_item, candidate_keys, default_val=""):
+                for k in candidate_keys:
+                    if k in tc_item and tc_item[k] is not None and str(tc_item[k]).strip() != "":
+                        return tc_item[k]
+                return default_val
+
+            field_defs = [
+                ("Test ID", ["Test Case ID", "Test ID", "test_case_id", "test_id", "id", "รหัสการทดสอบ"], ""),
+                ("Test Objective", ["Test case Objective", "Test Objective", "objective", "วัตถุประสงค์", "วัตถุประสงค์การทดสอบ"], ""),
+                ("Test Description / Procedure", ["Test Description / Procedure", "Test Description", "Procedure", "procedure", "steps", "ขั้นตอนการทดสอบ", "ขั้นตอน"], ""),
+                ("Test Data", ["Test Data", "test_data", "data", "ข้อมูลทดสอบ", "ข้อมูลที่ใช้ทดสอบ"], "-"),
+                ("Expected Result", ["Expected Result", "expected_result", "expected", "ผลลัพธ์ที่คาดหวัง"], ""),
+                ("Actual Result", ["Actual Result", "actual_result", "actual", "ผลการทดสอบจริง"], "[-]"),
+                ("Result (Pass/Fail)", ["Result (Pass/Fail)", "Result", "result", "status", "ผลลัพธ์", "ผลการทดสอบ"], "[-]"),
+                ("Req No.", ["Req No.", "Requirement ID", "req_no", "req_id", "รหัสข้อกำหนด", "ข้อกำหนด"], "-"),
+                ("Updated By", ["Update by", "Updated By", "updated_by", "tester", "ผู้ทดสอบ", "ผู้จัดทำ"], tester_val)
+            ]
 
             # Generate formatted Excel file specifically for Test Case
             import openpyxl
@@ -1602,9 +1656,9 @@ You MUST analyze, cross-reference, and synthesize ALL provided Project Knowledge
             
             # Metadata
             metadata_map = [
-                ("Project Name :", f"{project_name} ({project_code})", "Create Date :", today_str),
-                ("Module / Function:", module_val, "Test Engine:", "Spectra AI (Gemini 3.1 Pro)"),
-                ("Tester Name :", tester_val, "Status :", "Baseline Specification")
+                ("Project Name / โครงการ :", f"{project_name} ({project_code})", "Create Date / วันที่ :", today_str),
+                ("Module / ฟังก์ชัน :", module_val, "Test Engine / เครื่องมือ :", "Spectra AI (Gemini 3.1 Pro)"),
+                ("Tester / ผู้จัดทำ :", tester_val, "Status / สถานะ :", "Baseline Specification")
             ]
             
             row_idx = 3
@@ -1629,9 +1683,18 @@ You MUST analyze, cross-reference, and synthesize ALL provided Project Knowledge
                     ws.cell(row=row_idx, column=col).border = thin_border
                 row_idx += 1
                 
-            # Headers
-            headers = ["Test ID", "Test Objective", "Test Description / Procedure", "Test Data", 
-                       "Expected Result", "Actual Result", "Result (Pass/Fail)", "Req No.", "Updated By"]
+            # Headers (Bilingual & High-density)
+            headers = [
+                "Test ID",
+                "Test Objective\n(วัตถุประสงค์การทดสอบ)",
+                "Test Description / Procedure\n(ขั้นตอนการทดสอบ)",
+                "Test Data\n(ข้อมูลทดสอบ)", 
+                "Expected Result\n(ผลลัพธ์ที่คาดหวัง)",
+                "Actual Result\n(ผลการทดสอบจริง)",
+                "Result (Pass/Fail)",
+                "Req No.\n(รหัสข้อกำหนด)",
+                "Updated By\n(ผู้ทดสอบ)"
+            ]
             row_idx += 2
             for col_idx, h in enumerate(headers, 1):
                 cell = ws.cell(row=row_idx, column=col_idx, value=h)
@@ -1639,29 +1702,17 @@ You MUST analyze, cross-reference, and synthesize ALL provided Project Knowledge
                 cell.fill = header_fill
                 cell.alignment = center_align
                 cell.border = thin_border
-            ws.row_dimensions[row_idx].height = 24
+            ws.row_dimensions[row_idx].height = 28
                 
-            widths = [14, 28, 40, 20, 30, 22, 16, 12, 18]
+            widths = [16, 32, 45, 22, 35, 22, 18, 16, 18]
             for i, w in enumerate(widths, 1):
                 ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = w
                 
             # Data Rows
-            header_keys = [
-                ("Test Case ID", "Test ID"),
-                ("Test case Objective", "Test Objective"),
-                ("Test Description / Procedure", "Test Description / Procedure"),
-                ("Test Data", "Test Data"),
-                ("Expected Result", "Expected Result"),
-                ("Actual Result", "Actual Result"),
-                ("Result (Pass/Fail)", "Result (Pass/Fail)"),
-                ("Req No.", "Req No."),
-                ("Update by", "Updated By")
-            ]
-            
             row_idx += 1
             for tc in test_cases:
-                for col_idx, (k1, k2) in enumerate(header_keys, 1):
-                    val = tc.get(k1, tc.get(k2, ""))
+                for col_idx, (_, candidate_keys, def_val) in enumerate(field_defs, 1):
+                    val = extract_tc_field(tc, candidate_keys, def_val)
                     cell = ws.cell(row=row_idx, column=col_idx, value=val)
                     cell.border = thin_border
                     cell.alignment = center_align if col_idx in [1, 7, 8, 9] else left_align
@@ -1679,36 +1730,38 @@ You MUST analyze, cross-reference, and synthesize ALL provided Project Knowledge
             # Construct Markdown Representation
             md_lines = [
                 f"# {doc_name}",
-                f"**Document Type:** {doc_type}  ",
-                f"**Project Code:** {project_code}  ",
-                f"**Module / Function:** {module_val}  ",
-                f"**Tester:** {tester_val}  ",
-                f"**Date:** {today_str}  ",
+                f"**ประเภทเอกสาร (Document Type):** {doc_type}  ",
+                f"**รหัสโครงการ (Project Code):** {project_code}  ",
+                f"**โมดูล / ฟังก์ชัน (Module / Function):** {module_val}  ",
+                f"**ผู้จัดทำ (Tester):** {tester_val}  ",
+                f"**วันที่สร้างเอกสาร (Date):** {today_str}  ",
                 "",
-                "## Test Cases Summary",
-                "| Test Case ID | Objective | Expected Result | Result | Req No. |",
+                "## ตารางสรุปรายการ Test Cases (Test Cases Summary)",
+                "| Test Case ID | วัตถุประสงค์ (Objective) | ผลลัพธ์ที่คาดหวัง (Expected Result) | ผลการทดสอบ (Result) | รหัสข้อกำหนด (Req No.) |",
                 "| :--- | :--- | :--- | :--- | :--- |"
             ]
             
             for tc in test_cases:
-                tc_id = tc.get("Test Case ID", "")
-                obj = str(tc.get("Test case Objective", "")).replace("\n", " ").replace("|", "\\|")
-                exp = str(tc.get("Expected Result", "")).replace("\n", " ").replace("|", "\\|")
-                res = tc.get("Result (Pass/Fail)", "")
-                req_no = tc.get("Req No.", "")
+                tc_id = extract_tc_field(tc, ["Test Case ID", "Test ID", "test_id", "id"], "TC")
+                obj = str(extract_tc_field(tc, ["Test case Objective", "Test Objective", "objective", "วัตถุประสงค์"], "")).replace("\n", " ").replace("|", "\\|")
+                exp = str(extract_tc_field(tc, ["Expected Result", "expected", "ผลลัพธ์ที่คาดหวัง"], "")).replace("\n", " ").replace("|", "\\|")
+                res = extract_tc_field(tc, ["Result (Pass/Fail)", "Result", "status", "ผลการทดสอบ"], "[-]")
+                req_no = extract_tc_field(tc, ["Req No.", "Requirement ID", "req_no", "รหัสข้อกำหนด"], "-")
                 md_lines.append(f"| {tc_id} | {obj} | {exp} | **{res}** | {req_no} |")
                 
             md_lines.append("")
-            md_lines.append("## Detailed Test Specifications")
+            md_lines.append("## รายละเอียดข้อกำหนดการทดสอบ (Detailed Test Specifications)")
             for tc in test_cases:
-                md_lines.append(f"### [{tc.get('Test Case ID', '')}] {tc.get('Test case Objective', '')}")
-                md_lines.append(f"- **Requirement No.:** {tc.get('Req No.', '-')}")
-                md_lines.append(f"- **Test Data:** {tc.get('Test Data', '-')}")
-                md_lines.append(f"- **Procedure:**\n{tc.get('Test Description / Procedure', '-')}")
-                md_lines.append(f"- **Expected Result:** {tc.get('Expected Result', '-')}")
-                md_lines.append(f"- **Actual Result:** {tc.get('Actual Result', '-')}")
-                md_lines.append(f"- **Status / Result:** `{tc.get('Result (Pass/Fail)', '-')}`")
-                md_lines.append(f"- **Updated By:** {tc.get('Update by', '-')}")
+                tc_id = extract_tc_field(tc, ["Test Case ID", "Test ID", "test_id", "id"], "TC")
+                tc_obj = extract_tc_field(tc, ["Test case Objective", "Test Objective", "objective", "วัตถุประสงค์"], "")
+                md_lines.append(f"### [{tc_id}] {tc_obj}")
+                md_lines.append(f"- **รหัสข้อกำหนด (Requirement No.):** {extract_tc_field(tc, ['Req No.', 'Requirement ID', 'req_no', 'รหัสข้อกำหนด'], '-')}")
+                md_lines.append(f"- **ข้อมูลทดสอบ (Test Data):** {extract_tc_field(tc, ['Test Data', 'test_data', 'data', 'ข้อมูลทดสอบ'], '-')}")
+                md_lines.append(f"- **ขั้นตอนการทดสอบ (Procedure):**\n{extract_tc_field(tc, ['Test Description / Procedure', 'Test Description', 'Procedure', 'steps', 'ขั้นตอนการทดสอบ'], '-')}")
+                md_lines.append(f"- **ผลลัพธ์ที่คาดหวัง (Expected Result):** {extract_tc_field(tc, ['Expected Result', 'expected', 'ผลลัพธ์ที่คาดหวัง'], '-')}")
+                md_lines.append(f"- **ผลการทดสอบจริง (Actual Result):** {extract_tc_field(tc, ['Actual Result', 'actual', 'ผลการทดสอบจริง'], '[-]')}")
+                md_lines.append(f"- **สถานะ (Result):** `{extract_tc_field(tc, ['Result (Pass/Fail)', 'Result', 'status', 'ผลการทดสอบ'], '[-]')}`")
+                md_lines.append(f"- **ผู้จัดทำ (Updated By):** {extract_tc_field(tc, ['Update by', 'Updated By', 'tester', 'ผู้ทดสอบ'], tester_val)}")
                 md_lines.append("")
 
             doc_markdown = "\n".join(md_lines)

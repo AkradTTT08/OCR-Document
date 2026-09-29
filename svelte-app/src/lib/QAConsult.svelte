@@ -2091,66 +2091,7 @@
         </div>
       </div>
 
-      <!-- GROUP SCAN TRANSACTIONS IN RESULT VIEW -->
-      {#if currentGroupHistory.length > 0}
-        <div class="project-history-section" style="margin-top: 24px;">
-          <div class="section-title-bar">
-            <div class="title-with-badge">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                <polyline points="14 2 14 8 20 8"></polyline>
-                <line x1="16" y1="13" x2="8" y2="13"></line>
-                <line x1="16" y1="17" x2="8" y2="17"></line>
-              </svg>
-              <h3>ประวัติเอกสารที่เคยตรวจในกลุ่มนี้ ({currentGroupHistory.length})</h3>
-            </div>
-            <button class="btn-outline" on:click={() => { scanResult = null; file = null; }} style="padding: 6px 14px; font-size: 13px; height: 34px;">
-              ➕ สแกนเอกสารเพิ่มในกลุ่มนี้
-            </button>
-          </div>
 
-          <div class="history-table-container">
-            <table class="project-history-table">
-              <thead>
-                <tr>
-                  <th>ชื่อไฟล์เอกสาร</th>
-                  <th>กลุ่มการตรวจสอบ</th>
-                  <th>ประเภท</th>
-                  <th>วันที่ตรวจ</th>
-                  <th style="text-align: right;">การจัดการ</th>
-                </tr>
-              </thead>
-              <tbody>
-                {#each currentGroupHistory.slice(0, 15) as item}
-                  <tr class="history-table-row" class:active-row={item.filename === scanResult.filename} on:click={() => selectedHistory.set(item)}>
-                    <td class="td-filename">
-                      <div class="file-name-cell">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="color: #60a5fa; flex-shrink: 0;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path></svg>
-                        <span>{item.filename || 'Unknown Document'}</span>
-                        {#if item.filename === scanResult.filename}
-                          <span style="font-size: 10px; background: rgba(99, 102, 241, 0.2); color: #a5b4fc; border: 1px solid rgba(99, 102, 241, 0.4); border-radius: 4px; padding: 1px 6px;">กำลังดู</span>
-                        {/if}
-                      </div>
-                    </td>
-                    <td>
-                      <span class="group-pill">{item.group_name || 'General'}</span>
-                    </td>
-                    <td>
-                      <span class="type-pill">{item.docType || item.group_type || 'General'}</span>
-                    </td>
-                    <td class="td-date">{formatHistoryTime(item.date)}</td>
-                    <td style="text-align: right;">
-                      <button class="btn-table-view" on:click|stopPropagation={() => selectedHistory.set(item)}>
-                        ดูรายงาน
-                      </button>
-                    </td>
-                  </tr>
-                {/each}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      {/if}
     </div>
   {/if}
 </div>
