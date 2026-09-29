@@ -331,13 +331,11 @@
   let showSaveModal = false;
   let selectedDocForSave = null;
   let isSavingToProject = false;
-  let saveForm = {
-    filename: '',
-    project_id: '',
-    doc_category: 'Reference',
-    doc_type: 'Test Case',
-    is_golden_data: false
-  };
+  let saveFilename = '';
+  let saveProjectId = '';
+  let saveDocCategory = 'TestCase';
+  let saveDocType = 'Test Case';
+  let saveIsGoldenData = false;
 
   const categorySelectOptions = [
     { value: 'Reference', label: 'เอกสารอ้างอิง (Reference)', icon: '📑' },
@@ -355,41 +353,62 @@
   ];
 
   $: projectSelectOptions = projects.map(p => ({
-    value: String(p.id || p.project_id || ''),
-    label: `${p.project_code ? p.project_code + ' - ' : ''}${p.name || p.project_name || ''}`,
+    value: String(p.project_id || p.id || ''),
+    label: `${p.project_code ? p.project_code + ' - ' : ''}${p.project_name || p.name || ''}`,
     icon: '📌'
   }));
 
-  function openSaveModal(doc) {
+  async function openSaveModal(doc) {
+    if (!doc) {
+      toast('ไม่พบข้อมูลเอกสาร', 'error');
+      return;
+    }
     selectedDocForSave = doc;
-    saveForm.filename = `${doc.doc_name}.md`;
+    saveFilename = `${doc.doc_name || 'Document'}.md`;
+
+    if (!projects || projects.length === 0) {
+      await fetchProjects();
+    }
     
-    // Set default project strictly to currently selected project
+    // Set default project strictly: current store -> doc.project_id -> first available project
     const activeProj = $selectedProjectStore;
-    if (activeProj) {
-      saveForm.project_id = String(activeProj.id || activeProj.project_id || '');
+    if (activeProj && (activeProj.id || activeProj.project_id)) {
+      saveProjectId = String(activeProj.id || activeProj.project_id);
+    } else if (doc.project_id) {
+      saveProjectId = String(doc.project_id);
+    } else if (projects.length > 0) {
+      saveProjectId = String(projects[0].project_id || projects[0].id || '');
     } else {
-      saveForm.project_id = projects.length > 0 ? String(projects[0].id || projects[0].project_id || '') : '';
+      saveProjectId = '';
     }
 
     if (doc.doc_type === 'Test Case') {
-      saveForm.doc_category = 'TestCase';
+      saveDocCategory = 'TestCase';
     } else if (doc.doc_type === 'SRS' || doc.doc_type === 'Requirement') {
-      saveForm.doc_category = 'Requirement';
+      saveDocCategory = 'Requirement';
     } else {
-      saveForm.doc_category = 'QA Generated';
+      saveDocCategory = 'QA Generated';
     }
-    saveForm.doc_type = doc.doc_type || 'Test Case';
-    saveForm.is_golden_data = false;
+    saveDocType = doc.doc_type || 'Test Case';
+    saveIsGoldenData = false;
     showSaveModal = true;
   }
 
   async function handleSaveToProject() {
-    if (!saveForm.project_id) {
+    console.log('[handleSaveToProject] Executing save with:', {
+      saveProjectId,
+      saveFilename,
+      saveDocCategory,
+      saveDocType,
+      saveIsGoldenData,
+      selectedDocForSave
+    });
+
+    if (!saveProjectId) {
       toast('กรุณาเลือกโครงการเป้าหมาย', 'warning');
       return;
     }
-    if (!saveForm.filename.trim()) {
+    if (!saveFilename || !saveFilename.trim()) {
       toast('กรุณาระบุชื่อไฟล์', 'warning');
       return;
     }
@@ -400,21 +419,25 @@
 
     isSavingToProject = true;
     try {
+      const payload = {
+        doc_id: selectedDocForSave.id,
+        project_id: saveProjectId,
+        filename: saveFilename.trim(),
+        doc_category: saveDocCategory,
+        doc_type: saveDocType,
+        markdown_content: selectedDocForSave.doc_markdown || selectedDocForSave.markdown_content || '',
+        is_golden_data: Boolean(saveIsGoldenData),
+        original_doc_name: selectedDocForSave.doc_name
+      };
+
       const res = await fetch('/api/agent/save_generated_doc_to_project', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          doc_id: selectedDocForSave.id,
-          project_id: saveForm.project_id,
-          filename: saveForm.filename.trim(),
-          doc_category: saveForm.doc_category,
-          doc_type: saveForm.doc_type,
-          markdown_content: selectedDocForSave.doc_markdown || selectedDocForSave.markdown_content || '',
-          is_golden_data: saveForm.is_golden_data,
-          original_doc_name: selectedDocForSave.doc_name
-        })
+        body: JSON.stringify(payload)
       });
       const data = await res.json();
+      console.log('[handleSaveToProject] Server response:', data);
+
       if (res.ok && data.success) {
         toast(`บันทึกเอกสารเข้า Knowledge Base เรียบร้อยแล้ว (Doc ID: ${data.doc_id})`, 'success', 4000);
         showSaveModal = false;
@@ -428,14 +451,14 @@
         }
         selectedDocForSave = null;
 
-        if ($selectedProjectStore && String($selectedProjectStore.id || $selectedProjectStore.project_id) === String(saveForm.project_id)) {
-          fetchKbDocuments(saveForm.project_id);
+        if ($selectedProjectStore && String($selectedProjectStore.id || $selectedProjectStore.project_id) === String(saveProjectId)) {
+          fetchKbDocuments(saveProjectId);
         }
       } else {
         toast(data.error || 'เกิดข้อผิดพลาดในการบันทึกเข้าโครงการ', 'error');
       }
     } catch(err) {
-      console.error(err);
+      console.error('[handleSaveToProject] Request error:', err);
       toast('เกิดข้อผิดพลาดในการเชื่อมต่อเซิร์ฟเวอร์', 'error');
     } finally {
       isSavingToProject = false;
@@ -1166,14 +1189,14 @@
       
       <div class="form-group" style="margin-top: 16px;">
         <label for="save-filename">ชื่อไฟล์</label>
-        <input id="save-filename" type="text" bind:value={saveForm.filename} class="form-input" />
+        <input id="save-filename" type="text" bind:value={saveFilename} class="form-input" />
       </div>
 
       <div class="form-group" style="z-index: 100;">
         <label for="save-project">โครงการ (Project)</label>
         <CustomSelect 
           id="save-project" 
-          bind:value={saveForm.project_id} 
+          bind:value={saveProjectId} 
           options={projectSelectOptions} 
           width="100%"
         />
@@ -1183,7 +1206,7 @@
         <label for="save-category">หมวดหมู่เอกสาร</label>
         <CustomSelect 
           id="save-category" 
-          bind:value={saveForm.doc_category} 
+          bind:value={saveDocCategory} 
           options={categorySelectOptions} 
           width="100%"
         />
@@ -1195,17 +1218,18 @@
           <span style="font-size: 11.5px; color: #94a3b8;">เอกสารหลักที่มีความน่าเชื่อถือสูงสำหรับ AI ใช้อ้างอิง</span>
         </div>
         <label class="toggle-wrap">
-          <input type="checkbox" bind:checked={saveForm.is_golden_data}/>
+          <input type="checkbox" bind:checked={saveIsGoldenData}/>
           <span class="toggle-track"><span class="toggle-thumb"></span></span>
         </label>
       </div>
 
       <div class="modal-actions">
-        <button class="btn-cancel" on:click={() => showSaveModal = false} disabled={isSavingToProject}>ยกเลิก</button>
+        <button type="button" class="btn-cancel" on:click={() => showSaveModal = false} disabled={isSavingToProject}>ยกเลิก</button>
         <button 
+          type="button"
           class="btn-save" 
           on:click={handleSaveToProject} 
-          disabled={isSavingToProject || !saveForm.project_id}
+          disabled={isSavingToProject}
         >
           {#if isSavingToProject}
             <span class="spinner-micro"></span> กำลังบันทึก...

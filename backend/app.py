@@ -4637,6 +4637,14 @@ def download_generated_document(doc_id):
             file_path = excel_path
             if not file_path or not os.path.exists(file_path):
                 return jsonify({'error': 'Excel file does not exist on disk'}), 404
+            
+            # Automatically apply corporate styling, borders, and layouts
+            try:
+                from testcase_excel_styler import beautify_workbook_file
+                beautify_workbook_file(file_path)
+            except Exception as b_err:
+                logger.warning(f"Auto-beautify on download: {b_err}")
+
             return send_file(
                 file_path, 
                 as_attachment=True, 

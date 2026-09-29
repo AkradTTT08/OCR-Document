@@ -1536,19 +1536,21 @@ You MUST analyze, cross-reference, and synthesize ALL provided Project Knowledge
 2. โครงสร้างสมุดงาน (Multi-Sheet Workbook Structure):
    - มี Sheet บทนำ (Introduction), ประวัติการแก้ไข (Change History), คำศัพท์เฉพาะทาง (Glossary), ขอบเขตเบื้องต้น (Basic Test)
    - หน้าสรุป (Execute Test): ต้องแจกแจงรายการแยกเป็นรายบรรทัดสำหรับ "ทุกเมนูข้างต้น" ในตาราง System Test Summary พร้อมระบุจำนวน TC ของแต่ละเมนู และเวลาประมาณการทดสอบ (0.25 ชม./เคส) พร้อมแถว รวม (Total)
-3. ตารางกรณีทดสอบ 11 คอลัมน์มาตรฐาน (STRICT 11 COLUMNS ในทุก Sheet ของเมนู):
-   ทุก Sheet ของ Test Case ต้องมี 11 คอลัมน์ดังต่อไปนี้เท่านั้น (ห้ามเพิ่ม Actual Result หรือ Result Pass/Fail ในตาราง):
+3. โครงสร้างตารางกรณีทดสอบ 13 คอลัมน์มาตรฐาน (Standard 13 Columns ในทุก Sheet ของเมนู):
+   ทุก Sheet ของ Test Case ต้องมี 13 คอลัมน์ดังต่อไปนี้อย่างครบถ้วน:
    1) "Test Case ID": รหัสเคส เช่น 69AA1001, 69AA2001
    2) "Test Case Objective": วัตถุประสงค์การทดสอบเป็นภาษาไทย ชัดเจน กระชับ
    3) "Test Step": ขั้นตอนการทดสอบเป็นข้อๆ 1. ..., 2. ..., 3. ... ละเอียด ชัดเจน ปฏิบัติตามได้จริง
    4) "Test Data": ข้อมูลตัวอย่างที่ใช้ทดสอบที่สมจริงและตรงตามโดเมนระบบ
    5) "Test Type": ประเภทการทดสอบ ระบุเป็น "Positive" หรือ "Negative"
    6) "Expected Result": ผลลัพธ์ที่คาดหวังที่วัดผลได้จริงเป็นภาษาไทย
-   7) "Remark": หมายเหตุเพิ่มเติม (เช่น Edge Case, Security Test, หรือว่างไว้)
-   8) "Automate": "TRUE" หรือ "FALSE"
-   9) "Req No.": รหัส Requirement ที่อ้างอิง เช่น REQ0001
-   10) "Platforms": แพลตฟอร์มที่ทดสอบ เช่น "Web Application", "API", "Mobile App"
-   11) "Updated By": ชื่อผู้จัดทำ/ผู้ทดสอบ
+   7) "Actual Result": ผลการทดสอบจริง (เว้นว่างไว้ "" หรือ "-" เพื่อให้ Tester นำไปกรอกผลการทดสอบจริง)
+   8) "Status": สถานะผลการทดสอบ (เว้นว่างไว้ "" หรือ "Pass" / "Fail" เพื่อให้ Tester บันทึกผล)
+   9) "Remark": หมายเหตุเพิ่มเติม (เช่น Priority, Risk Level, หรือว่างไว้)
+   10) "Automate": "TRUE" หรือ "FALSE"
+   11) "Req No.": รหัส Requirement ที่อ้างอิง เช่น REQ0001
+   12) "Platforms": แพลตฟอร์มที่ทดสอบ เช่น "Web Application", "API", "Mobile App"
+   13) "Updated By": ชื่อผู้จัดทำ/ผู้ทดสอบ
 4. ภาษาไทย 100%: คำอธิบาย Objective, Test Step, Test Data, Expected Result ต้องเขียนเป็นภาษาไทยทั้งหมด (คำศัพท์เทคนิคมาตรฐานสามารถใส่วงเล็บภาษาอังกฤษได้)
 5. ครอบคลุมการทดสอบครบถ้วน: Positive (Happy Path), Negative (Validation & Error Handling), Boundary & Edge Cases, และ Authorization/Security ในแต่ละเมนู
 6. การแบ่งแยกโดเมนอย่างเคร่งครัด: ห้ามนำฟังก์ชันหรือเนื้อหาของโครงการอื่นที่ไม่เกี่ยวข้องมาใส่ในเอกสารเด็ดขาด
@@ -1636,6 +1638,8 @@ You MUST generate the entire workbook as a strict JSON object following this exa
           "Test Data": "เลขที่คำขอ: PM-2026-001, พิกัดสินค้าควบคุม: 2903.11.00",
           "Test Type": "Positive",
           "Expected Result": "ระบบบันทึกคำขอใบอนุญาตสำเร็จและเปลี่ยนสถานะเป็น Submitted",
+          "Actual Result": "",
+          "Status": "",
           "Remark": "",
           "Automate": "TRUE",
           "Req No.": "REQ0001",
@@ -1657,6 +1661,8 @@ You MUST generate the entire workbook as a strict JSON object following this exa
           "Test Data": "ช่วงวันที่: 01/01/2026 - 31/01/2026, สถานะ: Approve",
           "Test Type": "Positive",
           "Expected Result": "ตารางแสดงรายการใบอนุญาตที่ตรงตามเงื่อนไขได้อย่างถูกต้องครบถ้วน",
+          "Actual Result": "",
+          "Status": "",
           "Remark": "",
           "Automate": "TRUE",
           "Req No.": "REQ0016",
@@ -2319,77 +2325,86 @@ You MUST analyze, cross-reference, and synthesize ALL provided Project Knowledge
 
                 ws_tc = wb.create_sheet(title=unique_title)
                 
-                # Column widths matching 69A template
+                # Column widths (13 columns: B to N)
                 col_widths = {
                     'A': 2.0,
-                    'B': 24.0, # Test Case ID
-                    'C': 28.0, # Test Case Objective
-                    'D': 48.0, # Test Step
-                    'E': 28.0, # Test Data
-                    'F': 15.0, # Test Type
-                    'G': 36.0, # Expected Result
-                    'H': 24.0, # Remark
-                    'I': 14.0, # Automate
-                    'J': 16.0, # Req No.
-                    'K': 18.0, # Platforms
-                    'L': 20.0  # Updated By
+                    'B': 22.0, # Test Case ID
+                    'C': 26.0, # Test Case Objective
+                    'D': 45.0, # Test Step
+                    'E': 26.0, # Test Data
+                    'F': 14.0, # Test Type
+                    'G': 32.0, # Expected Result
+                    'H': 32.0, # Actual Result
+                    'I': 16.0, # Status (Pass/Fail)
+                    'J': 22.0, # Remark
+                    'K': 12.0, # Automate
+                    'L': 16.0, # Req No.
+                    'M': 16.0, # Platforms
+                    'N': 18.0  # Updated By
                 }
                 for c_letter, c_w in col_widths.items():
                     ws_tc.column_dimensions[c_letter].width = c_w
 
-                # 1. Title Banner B1:L4
-                ws_tc.merge_cells("B1:L4")
+                # 1. Title Banner B1:N4
+                ws_tc.merge_cells("B1:N4")
                 ws_tc["B1"] = "Test Case"
-                style_range(ws_tc, "B1:L4", font=title_banner_font, fill=white_fill, alignment=align_center_center)
+                style_range(ws_tc, "B1:N4", font=title_banner_font, fill=white_fill, alignment=align_center_center)
                 for r_idx in range(1, 5):
                     ws_tc.row_dimensions[r_idx].height = 18
 
-                # 2. Unified Soft Blue Card B5:L13
+                # 2. Unified Soft Blue Card B5:N13
                 for r_idx in range(5, 14):
                     ws_tc.row_dimensions[r_idx].height = 20
-                    for c_idx in range(2, 13):
+                    for c_idx in range(2, 15):
                         cell = ws_tc.cell(r_idx, c_idx)
                         cell.fill = card_fill
                         t_s = dark_side if r_idx == 5 else None
                         b_s = dark_side if r_idx == 13 else None
                         l_s = dark_side if c_idx == 2 else None
-                        r_s = dark_side if c_idx == 12 else None
+                        r_s = dark_side if c_idx == 14 else None
                         cell.border = Border(top=t_s, bottom=b_s, left=l_s, right=r_s)
 
                 mod_f = f"{s_item.get('module_name', proj_name_val)} / {s_item.get('function_name', unique_title)}" if s_item.get('function_name') else s_item.get('module_name', proj_name_val)
                 req_rng = s_item.get("req_range") or s_item.get("req_no_range") or "REQ0001-REQ0050"
 
-                # Metadata labels inside the card
-                meta_labels = [
-                    (6, 3, "Project Name :"),
-                    (8, 3, "Project ID:"),
-                    (10, 3, "Tester Name :"),
-                    (12, 3, "Project Release / Version :"),
-                    (6, 6, "Create Date :"),
-                    (8, 6, "Start Test Date :"),
-                    (10, 6, "Finish Test Date :"),
-                    (12, 6, "Module / Function: ")
+                # Perfectly symmetrical 4-row layout across B to N:
+                # Left: label in C (align right), value box in D:F (merged white box)
+                # Right: label in G:H (merged, align right), value box in I:M (merged white box)
+                card_rows = [
+                    (6, "Project Name :", proj_name_val, "Create Date :", today_str),
+                    (8, "Project ID:", proj_code_val, "Start Test Date :", today_str),
+                    (10, "Tester Name :", tester_val, "Finish Test Date :", today_str),
+                    (12, "Project Release / Version :", version_val, "Module / Function: ", mod_f)
                 ]
-                for r_num, c_num, lbl_text in meta_labels:
-                    lbl_cell = ws_tc.cell(r_num, c_num, lbl_text)
-                    lbl_cell.font = label_font
-                    lbl_cell.alignment = align_label
+                for r_num, l_lbl, l_val, r_lbl, r_val in card_rows:
+                    # Left label in C
+                    ws_tc.cell(r_num, 3, l_lbl).font = label_font
+                    ws_tc.cell(r_num, 3).alignment = align_label
 
-                # Metadata value boxes (merged white field boxes)
-                meta_boxes = [
-                    ("D6:E6", proj_name_val),
-                    ("D8:E8", proj_code_val),
-                    ("D10:E10", tester_val),
-                    ("D12:E12", version_val),
-                    ("G6:H6", today_str),
-                    ("G8:H8", today_str),
-                    ("G10:H10", today_str),
-                    ("G12:K12", mod_f)
-                ]
-                for m_range, val_text in meta_boxes:
-                    ws_tc.merge_cells(m_range)
-                    ws_tc[m_range.split(':')[0]] = val_text
-                    style_range(ws_tc, m_range, font=value_font, fill=white_fill, alignment=align_value)
+                    # Left white box in D:F
+                    ws_tc.merge_cells(f"D{r_num}:F{r_num}")
+                    ws_tc[f"D{r_num}"] = l_val
+                    for c in ws_tc[f"D{r_num}:F{r_num}"][0]:
+                        c.font = value_font
+                        c.fill = white_fill
+                        c.border = cell_border
+                        c.alignment = align_value
+
+                    # Right label in G:H
+                    ws_tc.merge_cells(f"G{r_num}:H{r_num}")
+                    ws_tc[f"G{r_num}"] = r_lbl
+                    for c in ws_tc[f"G{r_num}:H{r_num}"][0]:
+                        c.font = label_font
+                        c.alignment = align_label
+
+                    # Right white box in I:M
+                    ws_tc.merge_cells(f"I{r_num}:M{r_num}")
+                    ws_tc[f"I{r_num}"] = r_val
+                    for c in ws_tc[f"I{r_num}:M{r_num}"][0]:
+                        c.font = value_font
+                        c.fill = white_fill
+                        c.border = cell_border
+                        c.alignment = align_value
 
                 # Row 14: Spacer
                 ws_tc.row_dimensions[14].height = 14
@@ -2400,9 +2415,9 @@ You MUST analyze, cross-reference, and synthesize ALL provided Project Knowledge
                 ws_tc["B15"] = " FUNCTIONAL REQUIREMENTS (Requirements No.) :"
                 style_range(ws_tc, "B15:D15", font=label_font, alignment=align_right_center)
 
-                ws_tc.merge_cells("E15:G15")
+                ws_tc.merge_cells("E15:H15")
                 ws_tc["E15"] = req_rng
-                style_range(ws_tc, "E15:G15", font=label_font, alignment=align_value)
+                style_range(ws_tc, "E15:H15", font=label_font, alignment=align_value)
 
                 # Row 16: Spacer
                 ws_tc.row_dimensions[16].height = 12
@@ -2415,11 +2430,13 @@ You MUST analyze, cross-reference, and synthesize ALL provided Project Knowledge
                     ("Test Data", 5),
                     ("Test Type", 6),
                     ("Expected Result", 7),
-                    ("Remark", 8),
-                    ("Automate", 9),
-                    ("Req No.", 10),
-                    ("Platforms", 11),
-                    ("Updated By", 12)
+                    ("Actual Result", 8),
+                    ("Status", 9),
+                    ("Remark", 10),
+                    ("Automate", 11),
+                    ("Req No.", 12),
+                    ("Platforms", 13),
+                    ("Updated By", 14)
                 ]
                 ws_tc.row_dimensions[17].height = 32
                 for h_name, col_i in tc_headers:
@@ -2438,6 +2455,8 @@ You MUST analyze, cross-reference, and synthesize ALL provided Project Knowledge
                     t_data = extract_tc_field(tc, ["Test Data", "data", "ข้อมูลทดสอบ"], "-")
                     t_type = extract_tc_field(tc, ["Test Type", "type", "ประเภท"], "Positive")
                     t_exp = extract_tc_field(tc, ["Expected Result", "expected", "ผลลัพธ์ที่คาดหวัง"], "")
+                    t_act = extract_tc_field(tc, ["Actual Result", "actual_result", "actual", "ผลการทดสอบจริง"], "")
+                    t_status = extract_tc_field(tc, ["Status", "status", "test_status", "ผลการทดสอบ", "สถานะ"], "")
                     t_rem = extract_tc_field(tc, ["Remark", "remark", "หมายเหตุ"], "")
                     t_auto = extract_tc_field(tc, ["Automate", "automate", "automation"], "TRUE")
                     t_req = extract_tc_field(tc, ["Req No.", "Requirement ID", "req_no", "รหัสข้อกำหนด"], "-")
@@ -2454,11 +2473,13 @@ You MUST analyze, cross-reference, and synthesize ALL provided Project Knowledge
                         (5, t_data, align_left_top),
                         (6, t_type, align_center_top),
                         (7, t_exp, align_left_top),
-                        (8, t_rem, align_left_top),
-                        (9, str(t_auto).upper(), align_center_top),
-                        (10, t_req, align_center_top),
-                        (11, t_plat, align_center_top),
-                        (12, t_upd, align_center_top)
+                        (8, t_act, align_left_top),
+                        (9, t_status, align_center_top),
+                        (10, t_rem, align_left_top),
+                        (11, str(t_auto).upper(), align_center_top),
+                        (12, t_req, align_center_top),
+                        (13, t_plat, align_center_top),
+                        (14, t_upd, align_center_top)
                     ]
                     for col_i, val, align_style in row_vals:
                         c_node = ws_tc.cell(tc_row_idx, col_i, val)
@@ -2467,7 +2488,7 @@ You MUST analyze, cross-reference, and synthesize ALL provided Project Knowledge
                         c_node.border = cell_border
                     tc_row_idx += 1
 
-            wb.save(excel_file_path)
+                wb.save(excel_file_path)
 
             # Construct Markdown Representation
             md_lines = [
