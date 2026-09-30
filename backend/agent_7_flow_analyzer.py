@@ -128,14 +128,6 @@ def analyze_project_flow_and_diagrams(project_id: str, custom_instructions: str 
         conn.close()
         conn = None
 
-        # 5. Configure Gemini AI
-        api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-        if not api_key:
-            raise ValueError("GEMINI_API_KEY or GOOGLE_API_KEY is not configured in .env")
-
-        genai.configure(api_key=api_key)
-        model_name = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
-        model = genai.GenerativeModel(model_name)
 
         user_instruction_section = ""
         if custom_instructions and custom_instructions.strip():
@@ -352,18 +344,46 @@ Make sure:
             except Exception as log_err:
                 logger.warning(f"Failed to log API usage in Agent 7: {log_err}")
 
-        raw_text = raw_text.strip()
+        # Robust JSON parsing (supports multi-line Mermaid strings and unescaped control chars)
+        def robust_json_loads(text: str) -> dict:
+            if not text:
+                return {}
+            clean = text.strip()
+            if "```json" in clean:
+                clean = clean.split("```json", 1)[1].split("```", 1)[0]
+            elif "```" in clean:
+                clean = clean.split("```", 1)[1].split("```", 1)[0]
+            clean = clean.strip()
 
-        # Clean JSON wrappers if any
-        if raw_text.startswith("```json"):
-            raw_text = raw_text[7:]
-        if raw_text.startswith("```"):
-            raw_text = raw_text[3:]
-        if raw_text.endswith("```"):
-            raw_text = raw_text[:-3]
-        raw_text = raw_text.strip()
+            # Try direct load with strict=False (allows raw newlines/tabs inside strings)
+            try:
+                return json.loads(clean, strict=False)
+            except Exception:
+                pass
 
-        data = json.loads(raw_text)
+            import re
+            # Try finding the outermost JSON object
+            match = re.search(r'(\{[\s\S]*\})', clean)
+            if match:
+                try:
+                    return json.loads(match.group(1), strict=False)
+                except Exception:
+                    pass
+
+            # Try removing trailing commas
+            cleaned_trailing = re.sub(r',\s*([\]}])', r'\1', clean)
+            try:
+                return json.loads(cleaned_trailing, strict=False)
+            except Exception:
+                pass
+
+            match = re.search(r'(\{[\s\S]*\})', cleaned_trailing)
+            if match:
+                return json.loads(match.group(1), strict=False)
+
+            return json.loads(clean, strict=False)
+
+        data = robust_json_loads(raw_text)
 
         sitemap_data = data.get("sitemap", [])
         system_flowchart = data.get("system_flowchart", "")

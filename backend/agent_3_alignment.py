@@ -75,8 +75,6 @@ def run_alignment_analysis(project_id: str, web_state_file: str):
         except Exception as diagram_err:
             logger.warning(f"Optional QA Analysis Diagram fetch skipped: {diagram_err}")
             
-        # 4. Call Gemini to analyze gaps
-        model = genai.GenerativeModel('gemini-1.5-pro')
         
         prompt = f"""
 You are an expert QA Automation Engineer and System Analyst.
@@ -119,7 +117,7 @@ Please provide a detailed Gap Analysis Report. Format your response strictly in 
         if text_response.startswith('```json'):
             text_response = text_response.strip('```json').strip('```').strip()
             
-        analysis_result = json.loads(text_response)
+        analysis_result = json.loads(text_response, strict=False)
         
         return True, analysis_result
         

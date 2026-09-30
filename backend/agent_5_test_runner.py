@@ -76,8 +76,6 @@ def run_self_healing(filename: str, test_output: str, original_code: str):
     Analyzes test failures and suggests code fixes.
     """
     try:
-        model = genai.GenerativeModel('gemini-1.5-pro')
-        
         prompt = f"""
 You are an expert QA Automation Engineer and Self-Healing Test Agent.
 A Playwright (TypeScript) test script has failed during execution.
@@ -119,7 +117,7 @@ Respond strictly in JSON format as follows:
         if text_response.startswith('```json'):
             text_response = text_response.strip('```json').strip('```').strip()
             
-        healing_result = json.loads(text_response)
+        healing_result = json.loads(text_response, strict=False)
         
         # Clean up fixed code if needed
         fixed_code = healing_result.get('fixed_code', '')

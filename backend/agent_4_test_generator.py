@@ -66,8 +66,6 @@ def generate_playwright_script(project_id: str, gap_analysis_data: dict, web_sta
         except Exception as diagram_err:
             logger.warning(f"Optional QA Analysis Diagram fetch in Test Generator skipped: {diagram_err}")
                 
-        # 4. Use LLM to generate the code
-        model = genai.GenerativeModel('gemini-1.5-pro')
         
         prompt = f"""
 You are an expert QA Automation Engineer.
@@ -118,7 +116,7 @@ You MUST respond strictly in JSON format matching this schema:
         if text_response.startswith('```json'):
             text_response = text_response.strip('```json').strip('```').strip()
             
-        result_data = json.loads(text_response)
+        result_data = json.loads(text_response, strict=False)
         
         # Save generated codes to a project-specific folder
         project_tests_dir = os.path.join(os.getcwd(), "tests", project_id)
