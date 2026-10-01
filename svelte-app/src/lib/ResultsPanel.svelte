@@ -369,7 +369,16 @@
     }
     isSaving = true;
     try {
-      const markdownText = result.pages.map((p) => p.text).join("\n\n");
+      const markdownText = (result?.pages && Array.isArray(result.pages) && result.pages.length > 0)
+        ? result.pages.map((p) => p.text || "").join("\n\n")
+        : (result?.full_markdown_content || result?.markdown_text || result?.text || result?.markdown || "");
+
+      if (!markdownText || !markdownText.trim()) {
+        toast("ไม่พบข้อความในเอกสารสำหรับการบันทึก", "warning");
+        isSaving = false;
+        return;
+      }
+
       const res = await fetch("/api/kb/ingest", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

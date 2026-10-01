@@ -605,17 +605,24 @@
 
   async function executeDeleteDoc() {
     if (!docToDelete) return;
+    const targetDocId = docToDelete;
     isDeletingDoc = true;
     try {
-      const res = await fetch(`${API}/kb/documents/${docToDelete}`, { method: 'DELETE' });
+      const res = await fetch(`${API}/kb/documents/${targetDocId}`, { method: 'DELETE' });
       const data = await res.json();
       if (res.ok) {
         toast('ลบเอกสารสำเร็จ', 'success');
-        if (selectedDoc === docToDelete) {
+        // Immediately remove document from local state so UI updates instantly
+        documents = documents.filter(d => d.id !== targetDocId);
+        if (selectedDoc === targetDocId) {
           selectedDoc = null;
           docDetail = null;
         }
-        await loadProjects(); // reload docs
+        await Promise.all([
+          loadDocuments(selectedProject),
+          loadStats(),
+          loadProjects()
+        ]);
       } else {
         toast(data.error || 'ลบเอกสารไม่สำเร็จ', 'error');
       }
@@ -623,9 +630,9 @@
       toast('เกิดข้อผิดพลาดในการเชื่อมต่อ', 'error');
     } finally {
       isDeletingDoc = false;
+      showDeleteDocConfirm = false;
+      docToDelete = null;
     }
-    showDeleteDocConfirm = false;
-    docToDelete = null;
   }
 </script>
 

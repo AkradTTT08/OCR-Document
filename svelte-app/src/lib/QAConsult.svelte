@@ -2165,7 +2165,15 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="32" height="32"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
       </div>
       <h3>ยืนยันการส่งอีเมล</h3>
-      <p>คุณต้องการส่งรายงานผลการตรวจสอบนี้ ไปยังอีเมล <b>{email}</b> ใช่หรือไม่?</p>
+      <p class="modal-desc">คุณต้องการส่งรายงานผลการตรวจสอบนี้ ไปยังอีเมลต่อไปนี้ใช่หรือไม่?</p>
+      <div class="modal-email-preview">
+        {#each ((scanResult?.email || email) ? (scanResult?.email || email).split(',') : []).map(e => e.trim()).filter(Boolean) as itemEmail}
+          <span class="modal-email-chip">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13" style="flex-shrink: 0;"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>
+            <span class="modal-email-text">{itemEmail}</span>
+          </span>
+        {/each}
+      </div>
       <div class="modal-actions">
         <button class="btn-outline" on:click={() => showConfirmModal = false} disabled={isSendingEmail}>ยกเลิก</button>
         <button class="btn-primary" on:click={executeSendEmail} disabled={isSendingEmail}>
@@ -2183,7 +2191,15 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="32" height="32"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
       </div>
       <h3>ส่งอีเมลสำเร็จ</h3>
-      <p>รายงานถูกส่งไปยัง <b>{email}</b> เรียบร้อยแล้ว</p>
+      <p class="modal-desc">รายงานถูกส่งเรียบร้อยแล้ว ไปยังอีเมล:</p>
+      <div class="modal-email-preview">
+        {#each ((scanResult?.email || email) ? (scanResult?.email || email).split(',') : []).map(e => e.trim()).filter(Boolean) as itemEmail}
+          <span class="modal-email-chip success">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13" style="flex-shrink: 0;"><path d="M20 6L9 17l-5-5"></path></svg>
+            <span class="modal-email-text">{itemEmail}</span>
+          </span>
+        {/each}
+      </div>
       <div class="modal-actions centered">
         <button class="btn-primary" on:click={() => showSuccessModal = false}>ตกลง</button>
       </div>
@@ -2821,22 +2837,25 @@
   }
   .modal-card {
     background: #1e1e2d;
-    border: 1px solid #333;
+    border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: 16px;
-    padding: 32px;
-    width: 90%;
-    max-width: 400px;
+    padding: 28px 24px;
+    width: 92%;
+    max-width: 480px;
     text-align: center;
-    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.6);
+    box-sizing: border-box;
+    word-break: break-word;
+    overflow-wrap: anywhere;
   }
   .modal-icon {
-    width: 64px;
-    height: 64px;
+    width: 56px;
+    height: 56px;
     border-radius: 50%;
     display: flex;
     align-items: center;
     justify-content: center;
-    margin: 0 auto 20px;
+    margin: 0 auto 16px;
   }
   .modal-icon.warning {
     background: rgba(245, 158, 11, 0.1);
@@ -2847,17 +2866,67 @@
     color: #22c55e;
   }
   .modal-card h3 {
-    margin: 0 0 12px;
+    margin: 0 0 10px;
     font-size: 20px;
+    font-weight: 700;
     color: white;
+  }
+  .modal-desc {
+    color: #9ca3af;
+    margin: 0 0 14px;
+    font-size: 13.5px;
+    line-height: 1.5;
+  }
+  .modal-email-preview {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    justify-content: center;
+    max-height: 140px;
+    overflow-y: auto;
+    padding: 10px 12px;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
+    margin-bottom: 22px;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(139, 92, 246, 0.5) transparent;
+  }
+  .modal-email-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(99, 102, 241, 0.15);
+    border: 1px solid rgba(99, 102, 241, 0.3);
+    color: #c7d2fe;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 4px 10px;
+    border-radius: 6px;
+    max-width: 100%;
+    word-break: break-all;
+    overflow-wrap: anywhere;
+  }
+  .modal-email-chip.success {
+    background: rgba(34, 197, 94, 0.15);
+    border-color: rgba(34, 197, 94, 0.3);
+    color: #86efac;
+  }
+  .modal-email-text {
+    word-break: break-all;
+    overflow-wrap: anywhere;
   }
   .modal-card p {
     color: #9ca3af;
-    margin: 0 0 24px;
+    margin: 0 0 20px;
     line-height: 1.5;
+    word-break: break-word;
+    overflow-wrap: anywhere;
   }
   .modal-card b {
     color: white;
+    word-break: break-all;
+    overflow-wrap: anywhere;
   }
   .modal-actions {
     display: flex;

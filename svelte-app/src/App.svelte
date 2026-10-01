@@ -239,6 +239,7 @@
 
   async function selectOCRHistory(item) {
     if (!item) return;
+    activeView = 'ocr';
     scanResult = item;
     if (!item.pages || item.pages.length === 0) {
       const full = await getOCRDetail(item.id);
@@ -1470,30 +1471,32 @@
   }
 
   .ocr-scrollable-list {
-    max-height: 230px;
+    max-height: min(560px, calc(100vh - 360px));
+    min-height: 260px;
     overflow-y: auto;
     overflow-x: hidden;
     padding-right: 4px;
     scrollbar-width: thin;
-    scrollbar-color: rgba(139, 92, 246, 0.4) rgba(0, 0, 0, 0.15);
+    scrollbar-color: rgba(139, 92, 246, 0.5) rgba(0, 0, 0, 0.2);
   }
 
   .ocr-scrollable-list::-webkit-scrollbar {
-    width: 4px;
+    width: 6px;
   }
 
   .ocr-scrollable-list::-webkit-scrollbar-track {
-    background: rgba(0, 0, 0, 0.15);
-    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 6px;
   }
 
   .ocr-scrollable-list::-webkit-scrollbar-thumb {
-    background: rgba(139, 92, 246, 0.4);
-    border-radius: 4px;
+    background: rgba(139, 92, 246, 0.55);
+    border-radius: 6px;
+    min-height: 48px;
   }
 
   .ocr-scrollable-list::-webkit-scrollbar-thumb:hover {
-    background: rgba(168, 85, 247, 0.7);
+    background: rgba(168, 85, 247, 0.85);
   }
 
   .btn-delete-history {

@@ -153,8 +153,27 @@ def ocr_document(source: str, lang: str = "tha+eng") -> str:
     except Exception as e:
         return f"Unexpected error during OCR processing: {str(e)}"
 
+def _resolve_project(project_id_or_code: str):
+    """Resolves project ID, name, and code from UUID, project_code, or project_name."""
+    if not project_id_or_code:
+        return "", "General Project", ""
+    try:
+        from db_ingestion import get_projects
+        projects = get_projects()
+        clean_target = str(project_id_or_code).strip().lower()
+        for p in projects:
+            p_id = str(p.get("id") or p.get("project_id", "")).strip().lower()
+            p_code = str(p.get("project_code", "")).strip().lower()
+            p_name = str(p.get("name") or p.get("project_name", "")).strip().lower()
+            if clean_target in [p_id, p_code, p_name]:
+                return str(p.get("id") or p.get("project_id")), (p.get("name") or p.get("project_name") or "Project"), (p.get("project_code") or "")
+        return str(project_id_or_code), "Project", ""
+    except Exception as e:
+        logger.warning(f"Error resolving project: {e}")
+        return str(project_id_or_code), "Project", ""
+
 # ==========================================
-# Tool 2: Project Management
+# Tool 2: Project & Group Management
 # ==========================================
 
 @mcp.tool()
@@ -171,6 +190,28 @@ def list_projects() -> str:
         logger.error(f"Error in list_projects: {e}", exc_info=True)
         return json.dumps({"status": "ERROR", "message": str(e)})
 
+@mcp.tool()
+def list_groups(project_id: str = None) -> str:
+    """
+    Retrieves the list of existing QA Groups in a given project.
+    
+    Args:
+        project_id: (Optional) The UUID or Code of the project. If not provided, lists all QA groups.
+        
+    Returns:
+        JSON list of existing groups (group_name, group_type, project_id, project_code, created_at).
+    """
+    try:
+        from db_ingestion import get_qa_groups
+        resolved_pid = None
+        if project_id:
+            resolved_pid, _, _ = _resolve_project(project_id)
+        groups = get_qa_groups(project_id=resolved_pid)
+        return json.dumps(groups, indent=2, ensure_ascii=False)
+    except Exception as e:
+        logger.error(f"Error in list_groups: {e}", exc_info=True)
+        return json.dumps({"status": "ERROR", "message": str(e)})
+
 # ==========================================
 # Tool 3: Project Context & Knowledge Base (RAG)
 # ==========================================
@@ -179,9 +220,10 @@ def list_projects() -> str:
 def get_project_context(project_id: str, query: str = "") -> str:
     """
     Fetches the Knowledge Base (RAG) context, active Markdown documents, and golden reference data for a given project.
+    Only retrieves resources that exist within that specific project.
     
     Args:
-        project_id: The UUID or ID of the project.
+        project_id: The UUID or Code of the project.
         query: (Optional) A specific search query to retrieve semantic matching document chunks.
         
     Returns:
@@ -189,17 +231,20 @@ def get_project_context(project_id: str, query: str = "") -> str:
     """
     try:
         from db_ingestion import get_project_markdown_documents_summary, search_knowledge_base
+        resolved_pid, proj_name, proj_code = _resolve_project(project_id)
         
-        # 1. Available MD Documents
-        docs_summary = get_project_markdown_documents_summary(project_id, limit=20)
+        # 1. Available MD Documents in this project only
+        docs_summary = get_project_markdown_documents_summary(resolved_pid, limit=20)
         
-        # 2. Semantic Search if query is provided
+        # 2. Semantic Search strictly scoped to this project
         search_chunks = []
         if query and query.strip():
-            search_chunks = search_knowledge_base(query_text=query, project_id=project_id, top_k=5)
+            search_chunks = search_knowledge_base(query_text=query, project_id=resolved_pid, top_k=6)
             
         result = {
-            "project_id": project_id,
+            "project_id": resolved_pid,
+            "project_code": proj_code,
+            "project_name": proj_name,
             "available_documents": docs_summary,
             "relevant_knowledge_chunks": search_chunks
         }
@@ -273,61 +318,114 @@ def get_qa_skills(skill_id: str = None) -> str:
 def qa_consult(
     project_id: str,
     document_content: str,
-    doc_type: str = "Requirement",
+    group_name: str = "General",
+    group_type: str = "Project Plan",
+    doc_type: str = None,
+    skill_id: str = None,
+    email: str = None,
+    filename: str = "MCP_Audited_Document.md",
     instruction: str = ""
 ) -> str:
     """
     Runs the Agent QA Consult multi-agent analysis to audit, cross-examine, and review a document against the project's knowledge base.
+    Evaluates Exit Criteria according to the selected Group/Project and saves the result to QA transactions.
     
     Args:
-        project_id: The UUID or ID of the project in the database.
-        document_content: The full markdown/text content of the document to audit.
-        doc_type: Type of document (e.g., 'Requirement', 'SRS', 'Design', 'Manual').
+        project_id: (Required) The UUID or Project Code of the project.
+        document_content: (Required) The full markdown/text content of the document to audit.
+        group_name: (Optional) The QA Group name in the project (e.g., 'Sprint 1', 'General'). Defaults to 'General'.
+        group_type: (Optional) The QA Group type (e.g., 'Project Plan', 'Sprint 1', 'Release'). Defaults to 'Project Plan'.
+        doc_type: (Optional) Type of document (e.g., 'Requirement', 'SRS', 'SDD', 'TestCase', 'Usermanual', 'UAT'). If not provided, automatically detected.
+        skill_id: (Optional) Specific AI Skill ID or skill name to guide the audit.
+        email: (Optional) User email to record with the transaction and receive report.
+        filename: (Optional) Name of the document (e.g., 'MOM_REQ_01.pdf').
         instruction: (Optional) Custom review instructions or specific focus points.
         
     Returns:
-        Structured QA Audit Report covering Conformity, Errors/Discrepancies, Missing Requirements, and Actionable Recommendations.
+        Structured QA Audit Report covering Conformity, Errors/Discrepancies, Missing Requirements, Exit Criteria Evaluation, and Actionable Recommendations.
     """
     try:
         from orchestrator.state import QAState
         from orchestrator.pipeline import run_qa_consult
-        from db_ingestion import get_projects, search_knowledge_base
+        from db_ingestion import search_knowledge_base, get_latest_qa_transaction, save_qa_transaction, get_project_markdown_documents_summary
         
-        # 1. Fetch project name
-        projects = get_projects()
-        project_name = "โครงการนี้"
-        for p in projects:
-            if str(p.get("id")) == str(project_id) or str(p.get("project_code")) == str(project_id):
-                project_name = p.get("name", "โครงการนี้")
-                break
-                
-        # 2. Retrieve knowledge base context for RAG
-        kb_chunks = search_knowledge_base(query_text=document_content[:1000], project_id=project_id, top_k=5)
+        # 1. Resolve Project
+        resolved_pid, project_name, project_code = _resolve_project(project_id)
+        
+        # 2. Retrieve project documents and knowledge base context (Scoped ONLY to this project)
+        available_md_docs = get_project_markdown_documents_summary(resolved_pid, limit=20)
+        
+        is_explicit = bool(doc_type and doc_type.strip())
+        kb_chunks = search_knowledge_base(
+            query_text=document_content[:2000],
+            doc_type=[doc_type] if is_explicit else None,
+            project_id=resolved_pid,
+            top_k=6
+        )
+        
         kb_context = ""
         if kb_chunks:
-            kb_context = "=== ข้อมูลอ้างอิงจากระบบ (Golden Data / Project Knowledge Base) ===\n"
+            kb_context = f"=== ข้อมูลอ้างอิงจากฐานข้อมูลโครงการ {project_name} ({project_code}) ===\n"
             for c in kb_chunks:
-                kb_context += f"- [{c.get('filename', 'Doc')}]: {c.get('content', '')}\n\n"
+                kb_context += f"- [Source: {c.get('filename', 'Doc')} | Category: {c.get('doc_category', '')}]: {c.get('chunk_text', '')}\n\n"
                 
-        # 3. Formulate consult instruction
+        # 3. Retrieve AI Skill instructions if skill_id provided
+        skill_instructions = ""
+        if skill_id:
+            try:
+                from db_ingestion import get_db_connection
+                _conn = get_db_connection()
+                _cur = _conn.cursor()
+                _cur.execute("SELECT markdown_instructions FROM agent_skills WHERE skill_id::text = %s OR skill_name ILIKE %s LIMIT 1", (skill_id, f"%{skill_id}%"))
+                _srow = _cur.fetchone()
+                if _srow and _srow[0]:
+                    skill_instructions = _srow[0]
+                _cur.close()
+                _conn.close()
+            except Exception as s_err:
+                logger.warning(f"Failed to fetch skill instructions: {s_err}")
+                
+        # 4. Fetch previous transaction in this group if exists
+        prev_report_context = ""
+        try:
+            prev_tx = get_latest_qa_transaction(resolved_pid, filename=filename, group_name=group_name)
+            if prev_tx:
+                prev_findings_text = ""
+                if prev_tx.get('qa_findings'):
+                    prev_findings_text = "\n### ประเด็นที่พบในรอบก่อนหน้า:\n" + "\n".join([
+                        f"- [{f.get('severity','Info')}] {f.get('issue','')} (ข้อเสนอแนะ: {f.get('recommendation','-')})"
+                        for f in (prev_tx.get('qa_findings') or [])[:10]
+                    ])
+                prev_report_context = f"=== ประวัติการตรวจสอบรอบก่อนหน้าในกลุ่ม '{group_name}' ===\n{prev_findings_text}\n\n{prev_tx.get('qa_report','')}\n"
+        except Exception as ptx_err:
+            logger.warning(f"Could not fetch prev transaction: {ptx_err}")
+            
+        # 5. Formulate consult instruction
         full_instruction = (
-            f"กรุณาวิเคราะห์และจัดทำรายงาน QA Consult Audit Report อย่างละเอียด:\n"
-            f"1. ความสอดคล้อง (Conformity): ตรวจสอบความสอดคล้องกับมาตรฐานและเอกสารอ้างอิงในโครงการ\n"
-            f"2. จุดที่พบข้อผิดพลาดหรือขัดแย้ง (Discrepancies / Errors)\n"
+            f"กรุณาวิเคราะห์และจัดทำรายงาน QA Consult Audit Report สำหรับโครงการ '{project_name}' ({project_code}) ในกลุ่ม '{group_name}':\n"
+            f"1. ความสอดคล้อง (Conformity): ตรวจสอบความสอดคล้องกับเอกสารอ้างอิงและมาตรฐานในโครงการเท่านั้น\n"
+            f"2. จุดที่พบข้อผิดพลาดหรือขัดแย้ง (Discrepancies / Errors): มีส่วนใดที่ไม่ตรงกับฐานข้อมูลโครงการ หรือผิดมาตรฐาน\n"
             f"3. สิ่งที่ขาดหายไป (Missing Information): ข้อมูลสำคัญหรือเงื่อนไขทางเทคนิคที่ควรมี\n"
             f"4. ข้อเสนอแนะแนวทางปรับปรุง (Recommendations)\n\n"
         )
+        if is_explicit:
+            full_instruction += f"ประเภทเอกสารเป้าหมาย: {doc_type}\n"
+        elif available_md_docs:
+            full_instruction += f"เอกสารอ้างอิงในโครงการที่มี ({len(available_md_docs)} รายการ):\n"
+            for idx, d in enumerate(available_md_docs, 1):
+                full_instruction += f"- {idx}. {d['filename']} (หมวดหมู่: {d['category']})\n"
+                
         if instruction:
-            full_instruction += f"คำสั่งหรือข้อกำหนดเพิ่มเติมจากผู้ใช้:\n{instruction}\n"
+            full_instruction += f"\nคำสั่งหรือข้อกำหนดเพิ่มเติมจากผู้ใช้:\n{instruction}\n"
             
         state = QAState(
-            project_id=project_id,
+            project_id=resolved_pid,
             project_name=project_name,
-            doc_type=doc_type,
-            skill_instructions="",
+            doc_type=doc_type if is_explicit else "ไม่ระบุ (Auto-detect)",
+            skill_instructions=skill_instructions,
             kb_context=kb_context,
-            prev_report_context="",
-            original_text=document_content[:120000],
+            prev_report_context=prev_report_context,
+            original_text=document_content[:250000],
             instruction=full_instruction
         )
         
@@ -340,11 +438,68 @@ def qa_consult(
             }, ensure_ascii=False)
             
         qa_report_content = getattr(result_state, 'report', None) or getattr(result_state, 'final_report', None) or ""
+        
+        # 6. Parse findings & Evaluate Exit Criteria
+        qa_findings = []
+        try:
+            from excel_report import parse_qa_report_with_ai
+            qa_findings = parse_qa_report_with_ai(qa_report_content, filename)
+        except Exception as pf_err:
+            logger.warning(f"Findings parsing note: {pf_err}")
+            
+        exit_criteria_eval = None
+        try:
+            from app import evaluate_document_exit_criteria
+            doc_type_eval = doc_type if doc_type else (group_type or 'ALL')
+            exit_criteria_eval = evaluate_document_exit_criteria(
+                document_content,
+                doc_type=doc_type_eval,
+                project_id=resolved_pid,
+                qa_findings=qa_findings
+            )
+        except Exception as eval_err:
+            logger.warning(f"Exit criteria evaluation note: {eval_err}")
+            
+        # 7. Save transaction to QA database
+        transaction_id = None
+        try:
+            transaction_id = save_qa_transaction(
+                project_id=resolved_pid,
+                group_name=group_name,
+                group_type=group_type,
+                filename=filename,
+                doc_type=doc_type or "Auto-detect",
+                extracted_text=document_content[:250000],
+                qa_report=qa_report_content,
+                total_pages=1,
+                email=email,
+                qa_findings=qa_findings,
+                exit_criteria_eval=exit_criteria_eval,
+                project_code=project_code,
+                project_name=project_name
+            )
+        except Exception as save_err:
+            logger.error(f"Error saving QA transaction in MCP: {save_err}")
+            
+        # 8. Send email report if requested
+        if email:
+            try:
+                from email_service import send_qa_report
+                send_qa_report(email, doc_type or "QA Consult", filename, qa_report_content, exit_criteria_eval=exit_criteria_eval)
+            except Exception as mail_err:
+                logger.warning(f"Email send error: {mail_err}")
+                
         return json.dumps({
             "status": "SUCCESS",
-            "project_id": project_id,
+            "transaction_id": transaction_id,
+            "project_id": resolved_pid,
+            "project_code": project_code,
             "project_name": project_name,
-            "doc_type": doc_type,
+            "group_name": group_name,
+            "group_type": group_type,
+            "doc_type": doc_type or "Auto-detect",
+            "exit_criteria": exit_criteria_eval,
+            "qa_findings": qa_findings,
             "qa_report": qa_report_content
         }, indent=2, ensure_ascii=False)
         
@@ -358,20 +513,28 @@ def qa_consult(
 
 @mcp.tool()
 def evaluate_spectra_qa(
-    document_content: str, 
-    document_type: str = "Requirement", 
-    target_email: str = "", 
-    ai_skill: str = None, 
+    document_content: str,
+    project_id: str = None,
+    group_name: str = "General",
+    group_type: str = "Project Plan",
+    document_type: str = "Requirement",
+    target_email: str = "",
+    ai_skill: str = None,
+    filename: str = "MCP_Document.md",
     session_id: str = None
 ) -> str:
     """
-    Evaluates a document's content against Spectra QA Exit Criteria and Rules.
+    Evaluates a document's content against Spectra QA Exit Criteria, Rules, and Project Knowledge Base.
     
     Args:
         document_content: The full text/markdown content of the drafted document.
-        document_type: Category of the document (e.g. 'Requirement', 'Design', 'Manual', 'ALL').
+        project_id: (Optional) The UUID or Code of the project.
+        group_name: (Optional) The QA Group name in the project (e.g., 'Sprint 1', 'General'). Defaults to 'General'.
+        group_type: (Optional) The QA Group type (e.g., 'Project Plan', 'Sprint 1'). Defaults to 'Project Plan'.
+        document_type: (Optional) Category of the document (e.g. 'Requirement', 'SRS', 'SDD', 'TestCase', 'Manual', 'ALL').
         target_email: (Optional) The email address to send the final report to (used for session tracking).
         ai_skill: (Optional) The specific AI Skill or Skill ID to use for evaluation.
+        filename: (Optional) The filename of the document being evaluated.
         session_id: (Optional) The session ID from a previous evaluation attempt to track circuit breaker loops.
         
     Returns:
@@ -383,9 +546,13 @@ def evaluate_spectra_qa(
     payload = {
         "document_content": document_content,
         "document_type": document_type,
+        "group_name": group_name or "General",
+        "group_type": group_type or "Project Plan",
+        "filename": filename or "MCP_Document.md",
         "target_email": target_email or "qa-consult@spectra.local"
     }
     
+    if project_id: payload["project_id"] = project_id
     if ai_skill: payload["ai_skill"] = ai_skill
     if session_id: payload["session_id"] = session_id
         
@@ -397,7 +564,10 @@ def evaluate_spectra_qa(
         # Fallback to direct python evaluation if local Flask server is not reachable
         try:
             from app import evaluate_document_exit_criteria
-            eval_result = evaluate_document_exit_criteria(document_content, doc_type=document_type, qa_findings=[])
+            resolved_pid = None
+            if project_id:
+                resolved_pid, _, _ = _resolve_project(project_id)
+            eval_result = evaluate_document_exit_criteria(document_content, doc_type=document_type, project_id=resolved_pid, qa_findings=[])
             final_status = eval_result.get('status')
             failed_criteria_list = [
                 f"ข้อ {item.get('item_code')}: {item.get('question_text')} - {item.get('remarks')}"

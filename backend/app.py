@@ -1143,12 +1143,14 @@ def process_stream():
             # Get total pages instantly using pdfinfo_from_bytes
             total_pages = 1
             try:
+                import importlib
+                import ocr_engine
+                importlib.reload(ocr_engine)
                 from pdf2image.pdf2image import pdfinfo_from_bytes
-                from ocr_engine import POPPLER_PATH
-                poppler_path = POPPLER_PATH if os.path.exists(POPPLER_PATH) else None
+                poppler_path = ocr_engine.POPPLER_PATH if (ocr_engine.POPPLER_PATH and os.path.exists(ocr_engine.POPPLER_PATH)) else None
                 info = pdfinfo_from_bytes(pdf_bytes, poppler_path=poppler_path)
                 total_pages = int(info.get("Pages", 1))
-                logger.info(f"Instantly detected PDF page count: {total_pages}")
+                logger.info(f"Instantly detected PDF page count: {total_pages} (poppler_path: {poppler_path})")
             except Exception as info_err:
                 logger.error(f"Failed to get PDF info: {info_err}")
 
@@ -1162,7 +1164,7 @@ def process_stream():
             pages = []
             page_count = 0
             # OCR และ Spell Check ทีละหน้า (Streaming)
-            for page, img in ocr_pdf_bytes_generator(pdf_bytes, dpi=dpi, lang=lang, filename=filename, start_page=effective_first, end_page=effective_last):
+            for page, img in ocr_engine.ocr_pdf_bytes_generator(pdf_bytes, dpi=dpi, lang=lang, filename=filename, start_page=effective_first, end_page=effective_last):
                 page_num = page['page_number']
                 page_count += 1
                 
@@ -1604,6 +1606,9 @@ def kb_ingest():
         return jsonify({'error': 'กรุณาระบุ filename, markdown_text, และ project_id'}), 400
 
     try:
+        import importlib
+        import db_ingestion
+        importlib.reload(db_ingestion)
         from db_ingestion import ingest_markdown_document
         import shutil
         
@@ -2151,15 +2156,43 @@ def mcp_submit_document():
             return jsonify({"status": "ERROR", "message": "Missing JSON body"}), 400
             
         doc_content = data.get('document_content')
-        doc_type = data.get('document_type', 'ALL')
-        skill_id_raw = data.get('ai_skill')
-        target_email = data.get('target_email')
+        doc_type = data.get('document_type') or data.get('doc_type') or 'ALL'
+        skill_id_raw = data.get('ai_skill') or data.get('skill_id')
+        target_email = data.get('target_email') or data.get('email')
         session_id = data.get('session_id')
+        raw_project_id = data.get('project_id')
+        group_name = data.get('group_name') or 'General'
+        group_type = data.get('group_type') or 'Project Plan'
+        filename = data.get('filename') or 'MCP_Automated_Evaluation.md'
         
         if not doc_content:
             return jsonify({"status": "ERROR", "message": "document_content is required"}), 400
             
-        from db_ingestion import get_db_connection
+        from db_ingestion import get_db_connection, get_projects, save_qa_transaction
+        
+        # Resolve Project
+        resolved_pid = None
+        project_name = "General Project"
+        project_code = ""
+        if raw_project_id:
+            try:
+                projects = get_projects()
+                clean_target = str(raw_project_id).strip().lower()
+                for p in projects:
+                    p_id = str(p.get("id") or p.get("project_id", "")).strip().lower()
+                    p_code = str(p.get("project_code", "")).strip().lower()
+                    p_name = str(p.get("name") or p.get("project_name", "")).strip().lower()
+                    if clean_target in [p_id, p_code, p_name]:
+                        resolved_pid = str(p.get("id") or p.get("project_id"))
+                        project_name = p.get("name") or p.get("project_name") or "Project"
+                        project_code = p.get("project_code") or ""
+                        break
+                if not resolved_pid:
+                    resolved_pid = str(raw_project_id)
+            except Exception as p_err:
+                logger.warning(f"Project resolution note in mcp submit: {p_err}")
+                resolved_pid = str(raw_project_id)
+        
         conn = get_db_connection()
         cur = conn.cursor()
         
@@ -2167,14 +2200,12 @@ def mcp_submit_document():
         cur.execute("SELECT template_id, max_loops FROM exit_criteria_templates WHERE is_active = TRUE AND (doc_type = %s OR doc_type = 'ALL') ORDER BY CASE WHEN doc_type = %s THEN 1 ELSE 2 END, created_at DESC LIMIT 1;", (doc_type, doc_type))
         template_row = cur.fetchone()
         
-        if not template_row:
-            cur.close()
-            conn.close()
-            return jsonify({"status": "ERROR", "message": f"No active Exit Criteria Template found for document_type: {doc_type}"}), 404
+        template_id = None
+        max_loops = 3
+        if template_row:
+            template_id, max_loops_db = template_row
+            max_loops = max_loops_db if max_loops_db else 3
             
-        template_id, max_loops = template_row
-        max_loops = max_loops if max_loops else 3
-        
         # 2. Track Session and Circuit Breaker
         attempt_count = 1
         is_new_session = True
@@ -2186,9 +2217,6 @@ def mcp_submit_document():
                 attempt_count = session_row[0] + 1
                 cur.execute("UPDATE agent_evaluation_sessions SET attempt_count = %s, updated_at = NOW() WHERE session_id = %s", (attempt_count, session_id))
                 is_new_session = False
-            else:
-                # Invalid session id provided, create new one
-                pass
                 
         if is_new_session:
             skill_uuid = None
@@ -2222,9 +2250,8 @@ def mcp_submit_document():
                 "recommendation": f"Circuit breaker hit. Max loops ({max_loops}) exceeded. Please review the document manually."
             }), 200
             
-        # 4. Evaluate document against Exit Criteria
-        # In a real integrated flow, we might first run a general QA. We pass qa_findings=[] to skip for now.
-        eval_result = evaluate_document_exit_criteria(doc_content, doc_type=doc_type, qa_findings=[])
+        # 4. Evaluate document against Exit Criteria (Scoped by project if available)
+        eval_result = evaluate_document_exit_criteria(doc_content, doc_type=doc_type, project_id=resolved_pid, qa_findings=[])
         
         if not eval_result:
             return jsonify({"status": "ERROR", "message": "Evaluation failed internally."}), 500
@@ -2240,19 +2267,54 @@ def mcp_submit_document():
         if final_status == 'REJECTED':
             recommendation += "\nกรุณาแก้ไขเอกสารในจุดที่ไม่ผ่านเกณฑ์ และส่งเข้ามาตรวจใหม่"
         
-        # Trigger email notification
+        # 5. Save QA transaction into QA Database
+        transaction_id = None
+        if resolved_pid:
+            try:
+                qa_report_md = f"# MCP Automated Evaluation Report\n\n**Status:** {final_status}\n**Project:** {project_name} ({project_code})\n**Group:** {group_name}\n**Document Type:** {doc_type}\n\n### Recommendation\n{recommendation}\n\n### Exit Criteria Checklist Items\n"
+                for item in eval_result.get('items', []):
+                    status_icon = "✅ PASS" if item.get('status') == 'PASS' else ("❌ FAIL" if item.get('status') == 'FAIL' else "⚪ N/A")
+                    qa_report_md += f"- **[{status_icon}]** ข้อ {item.get('item_code')}: {item.get('question_text')} (ผล: {item.get('remarks') or '-'})\n"
+                    
+                transaction_id = save_qa_transaction(
+                    project_id=resolved_pid,
+                    group_name=group_name,
+                    group_type=group_type,
+                    filename=filename,
+                    doc_type=doc_type,
+                    extracted_text=doc_content[:250000],
+                    qa_report=qa_report_md,
+                    total_pages=1,
+                    email=target_email,
+                    qa_findings=[],
+                    exit_criteria_eval=eval_result,
+                    project_code=project_code,
+                    project_name=project_name
+                )
+            except Exception as save_err:
+                logger.warning(f"Could not save QA transaction in mcp submit: {save_err}")
+        
+        # 6. Trigger email notification
         if target_email:
             try:
                 from email_service import send_qa_report
                 report_content = f"Final Status: {final_status}\n\nRemarks: {recommendation}\n\nFailed Items:\n"
                 for i, fail in enumerate(failed_criteria_list, 1):
                     report_content += f"{i}. {fail}\n"
-                send_qa_report(target_email, doc_type, "MCP_Automated_Evaluation", report_content, exit_criteria_eval=eval_result)
+                send_qa_report(target_email, doc_type, filename, report_content, exit_criteria_eval=eval_result)
             except Exception as email_err:
                 logger.error(f"Failed to send email inside mcp_submit_document: {email_err}")
+                
         return jsonify({
             "status": "PASS" if final_status in ['PASSED', 'CONDITIONAL_PASSED'] else "REJECTED",
             "session_id": session_id,
+            "project_id": resolved_pid,
+            "project_code": project_code,
+            "project_name": project_name,
+            "group_name": group_name,
+            "group_type": group_type,
+            "doc_type": doc_type,
+            "transaction_id": transaction_id,
             "circuit_breaker_hit": False,
             "failed_criteria": failed_criteria_list,
             "recommendation": recommendation,
@@ -3283,8 +3345,13 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
 - ข้อ [1.1] (ข้อสั่งการ/Comment ระดับ Critical / High ในรอบก่อน ได้รับการแก้ไขแล้ว 100%): หากเอกสารมีตาราง 1.2 Revision History / Audit Resolution Log หรือเอกสารฉบับนี้ได้ปรับปรุงเนื้อหาครอบคลุมตามข้อสั่งการแล้ว ให้ถือว่า **PASS**
 - ข้อ [1.2] หรือข้อตรวจเรื่องความครบถ้วนของ Requirement: หากเอกสารมีระบุ Requirement IDs (เช่น REQ-xxx) พร้อม Main Path, Unhappy Path/Error Handling และตาราง Acceptance Criteria ให้ถือว่า **PASS**
 - ข้อ [3.1] Format & Consistency: หากเอกสารจัดรูปแบบด้วย Markdown (Headings, Tables, Bullets) เป็นระเบียบ ชัดเจน อ่านง่าย ไม่แตกขอบ ให้ถือว่า **PASS**
-- ข้อ [4.1] Governance & Control (การระบุ Document Title, Version Number, วันที่อัปเดต และชื่อผู้แต่ง/ผู้แก้ไขในหน้าแรก): หากเอกสารมีระบุ Document Title, Version Number, วันที่บังคับใช้ และชื่อผู้แต่ง/ผู้จัดทำในส่วน Header/Hero หรือใน Section 1 Document Control ครบถ้วนชัดเจน ให้ถือว่า **PASS** โดยข้อมูลเวอร์ชันและผู้จัดทำใน Section 1 ถือเป็นข้อมูลอ้างอิงหลัก หากส่วนหัวมีข้อความตราประทับของระบบหรือ AI Platform ให้ถือเป็น System Metadata ของแพลตฟอร์ม ห้ามตัดสินเป็นข้อขัดแย้ง
-- ข้อ [Test Case-4.2] หรือข้อตรวจแบบฟอร์มและโครงสร้างตาราง (Governance & Control / แบบฟอร์มถูกต้อง):
+- ข้อ [Test Case-1.1] และ [Test Case-1.2] หรือข้อตรวจ Requirement Coverage & Traceability:
+  * วิเคราะห์ความครอบคลุม (Coverage) ตามขอบเขต Requirement และ Business Rules ใน SRS เป็นหลัก
+  * ห้ามตัดสินว่า FAIL เพียงเพราะจำนวนข้อของเอกสาร (เช่น 96 ข้อ) น้อยกว่าจำนวนข้อที่ AI แตกแบบ Granular (เช่น 150 ข้อ) ตราบใดที่เนื้อหาของ Test Case ครอบคลุม Requirement หลักครบทุกข้อ และมีทั้งกรณี Happy Path (Positive) และกรณี Validation/Error (Negative)
+  * หาก Test Case ข้อใดมีการทดสอบหลายจุดในข้อเดียว (Composite Steps / Multiple Assertions) ให้ถือว่าครอบคลุม Requirement เหล่านั้นได้เช่นกัน
+- ข้อ [Test Case-2.1] ถึง [Test Case-2.3] (Happy Path, Negative Path, Boundary & Business Rules):
+  * ตรวจสอบว่ามีขั้นตอนการทดสอบทั้งกรณีทำงานสำเร็จ (Normal Flow / Positive) และกรณีแจ้งเตือนข้อผิดพลาด (Validation / Negative / Error Handling) ครบถ้วนตามฟังก์ชันหลัก
+- ข้อ [Test Case-4.1] หรือ [Test Case-4.2] หรือข้อตรวจแบบฟอร์มและโครงสร้างตาราง (Governance & Control / แบบฟอร์มถูกต้อง):
   * หากเอกสารเป็นแบบฟอร์ม Test Case ของโครงการ (เช่น Template 69A, Template 11 คอลัมน์ หรือแบบฟอร์มที่โครงการตกลงใช้): ให้ถือว่า **PASS**
   * กรณีไฟล์ Excel ที่มีหลายแผ่นงาน (Sheets): ในแผ่นงาน Test Specification จะเน้นขั้นตอนและผลที่คาดหวัง (Test Steps, Expected Results) ส่วนคอลัมน์ผลการทดสอบ (เช่น Actual Result, Status, Result (Pass/Fail)) อาจมีเฉพาะในแผ่นงานสำหรับ Execute หรือบันทึกผลจริง หากพบในชีทใดชีทหนึ่ง หรือเอกสารใช้ Template โครงสร้างตามที่โครงการกำหนด ให้ถือว่า **PASS** ข้อแบบฟอร์มถูกต้อง (Test Case-4.2) 100% ห้ามตัดสิน FAIL เด็ดขาด
   * ห้ามนำข้อความใน Document Change History ที่บันทึกการตัดสินใจทางวิศวกรรม (เช่น การปฏิเสธคอลัมน์ที่ซ้ำซ้อนตามข้อตกลง Template ของโครงการ) มาตัดสินว่าเป็นข้อผิดพลาดหรือ Defect

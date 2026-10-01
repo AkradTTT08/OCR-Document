@@ -25,11 +25,32 @@ VERSION = "3.0.0-gemini"
 # Load .env locally to ensure variables are available
 load_dotenv()
 
-# Normalized path using os.path.normpath
-POPPLER_PATH = os.path.normpath(os.environ.get(
-    'POPPLER_PATH',
-    r'C:\poppler\Library\bin'
-).strip().strip('"'))
+def _resolve_poppler_path():
+    raw = os.environ.get('POPPLER_PATH', '').strip().strip('"')
+    if raw and os.path.exists(raw):
+        if os.path.isdir(raw):
+            return os.path.normpath(raw)
+        elif os.path.isfile(raw):
+            return os.path.normpath(os.path.dirname(raw))
+    
+    # Check recursively in C:\poppler if it exists
+    if os.path.exists(r'C:\poppler'):
+        for root, dirs, files in os.walk(r'C:\poppler'):
+            if 'pdftoppm.exe' in files or 'pdftoppm' in files:
+                return os.path.normpath(root)
+                
+    candidates = [
+        r'C:\poppler\poppler-25.12.0\Library\bin',
+        r'C:\poppler\Library\bin',
+        r'C:\poppler\bin',
+    ]
+    for c in candidates:
+        if os.path.exists(c):
+            return os.path.normpath(c)
+            
+    return os.path.normpath(r'C:\poppler\Library\bin')
+
+POPPLER_PATH = _resolve_poppler_path()
 
 logger.info(f"Using POPPLER_PATH: {POPPLER_PATH}")
 

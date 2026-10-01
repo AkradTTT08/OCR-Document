@@ -479,11 +479,14 @@ def ingest_markdown_document(filename: str, markdown_text: str, project_id: int 
         file_hash = hashlib.sha256(markdown_text.encode('utf-8')).hexdigest()
 
         # 5. DB Insertion
-        # Check for duplicate by file_hash
-        cursor.execute("SELECT doc_id FROM documents WHERE file_hash = %s AND status = 'Active';", (file_hash,))
+        # Check for duplicate by file_hash within the same project
+        cursor.execute(
+            "SELECT doc_id FROM documents WHERE file_hash = %s AND project_id = %s::uuid AND status = 'Active';",
+            (file_hash, effective_project_id)
+        )
         existing = cursor.fetchone()
         if existing:
-            logger.info(f"Document with same hash already exists (doc_id={existing[0]}). Skipping ingestion.")
+            logger.info(f"Document with same hash already exists in project {effective_project_id} (doc_id={existing[0]}). Skipping ingestion.")
             return True, str(existing[0])
 
         cursor.execute(
