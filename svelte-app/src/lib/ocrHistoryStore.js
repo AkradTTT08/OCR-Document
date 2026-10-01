@@ -2,6 +2,17 @@ import { writable } from 'svelte/store';
 
 const STORAGE_KEY = 'spectra_ocr_history';
 
+function sanitizeForStorage(item) {
+    if (!item) return null;
+    return {
+        id: item.id,
+        filename: item.filename || 'Unknown Document',
+        date: item.date || item.created_at || new Date().toISOString(),
+        total_pages: item.total_pages || item.summary?.total_pages || (item.pages ? item.pages.length : 0),
+        summary: item.summary || null
+    };
+}
+
 // Initialize from localStorage for instant display
 function getInitialHistory() {
     try {
@@ -32,7 +43,8 @@ export async function loadOCRHistory() {
             })).sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime());
             ocrHistory.set(formattedResults);
             try {
-                localStorage.setItem(STORAGE_KEY, JSON.stringify(formattedResults.slice(0, 30)));
+                const lightweight = formattedResults.slice(0, 30).map(sanitizeForStorage);
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(lightweight));
             } catch (e) {}
             return formattedResults;
         }
@@ -40,6 +52,25 @@ export async function loadOCRHistory() {
         console.error("Failed to load OCR history from DB, using cached history:", e);
     }
     return getInitialHistory();
+}
+
+export async function getOCRDetail(id) {
+    if (!id) return null;
+    try {
+        const response = await fetch(`${API_BASE}/ocr_history/${id}`);
+        if (response.ok) {
+            const row = await response.json();
+            return {
+                id: row.id,
+                date: row.created_at,
+                filename: row.filename,
+                ...(row.result_json || {})
+            };
+        }
+    } catch (e) {
+        console.error("Failed to load OCR detail:", e);
+    }
+    return null;
 }
 
 export async function saveOCRResult(result) {
@@ -86,7 +117,8 @@ export async function saveOCRResult(result) {
         const filtered = list.filter(item => item.id !== savedItem.id);
         const updated = [savedItem, ...filtered];
         try {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(updated.slice(0, 30)));
+            const lightweight = updated.slice(0, 30).map(sanitizeForStorage);
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(lightweight));
         } catch (e) {}
         return updated;
     });
@@ -107,9 +139,11 @@ export async function deleteOCRHistory(id) {
     ocrHistory.update(list => {
         const updated = list.filter(item => item.id !== id);
         try {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(updated.slice(0, 30)));
+            const lightweight = updated.slice(0, 30).map(sanitizeForStorage);
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(lightweight));
         } catch (e) {}
         return updated;
     });
     return true;
 }
+

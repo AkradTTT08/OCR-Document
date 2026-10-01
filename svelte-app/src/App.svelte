@@ -6,8 +6,9 @@
   import SkillManager from "./lib/SkillManager.svelte";
   import { qaHistory, selectedHistory, loadQAHistoryFromDB, selectedProjectStore, qaSessionGroups, activeQAContext, allGroups, loadQAGroupsFromDB, activeSidebarGroup } from "./lib/qaHistoryStore.js";
   import { perfHistory, selectedPerfHistory, loadPerfHistory } from "./lib/perfHistoryStore.js";
-  import { ocrHistory, loadOCRHistory, saveOCRResult, deleteOCRHistory } from "./lib/ocrHistoryStore.js";
+  import { ocrHistory, loadOCRHistory, saveOCRResult, deleteOCRHistory, getOCRDetail } from "./lib/ocrHistoryStore.js";
   import ProjectManagement from './lib/ProjectManagement.svelte';
+
   import Toast from "./lib/Toast.svelte";
   import Login from "./lib/Login.svelte";
   import ComingSoon from "./lib/ComingSoon.svelte";
@@ -37,6 +38,7 @@
 
   let showNotifications = false;
   let showNotificationConfigModal = false;
+  let isOcrHistoryExpanded = true;
 
   let sidebarProjects = [];
 
@@ -49,10 +51,21 @@
 
   function isProjectAllowed(proj) {
     if (!$authAllowedProjects || $authAllowedProjects.includes('all')) return true;
-    if (!proj) return true;
-    const pId = String(proj.id || proj.project_id || proj.project_code);
-    const pCode = String(proj.project_code || '');
-    return $authAllowedProjects.includes(pId) || (pCode && $authAllowedProjects.includes(pCode));
+    if (!proj) return false;
+    const pId = String(proj.id || proj.project_id || '').trim().toLowerCase();
+    const pCode = String(proj.project_code || '').trim().toLowerCase();
+    return $authAllowedProjects.some(allowed => {
+      const a = String(allowed).trim().toLowerCase();
+      return (pId && a === pId) || (pCode && a === pCode);
+    });
+  }
+
+  // Reactive enforcement: if selected project is not in allowed projects, reset selection immediately
+  $: {
+    if ($authRole === 'user' && $selectedProjectStore && !isProjectAllowed($selectedProjectStore)) {
+      selectedProjectStore.set(null);
+      activeSidebarGroup.set(null);
+    }
   }
 
   onMount(async () => {
@@ -66,11 +79,12 @@
       const res = await fetch('/api/projects');
       if (res.ok) {
         const data = await res.json();
-        sidebarProjects = data.projects || [];
+        sidebarProjects = (data.projects || []).filter(isProjectAllowed);
       }
     } catch(e) {
       console.error('Failed to load projects for sidebar:', e);
     }
+
 
     // Health check polling
     setInterval(async () => {
@@ -222,10 +236,23 @@
         }
     }
   }
+
+  async function selectOCRHistory(item) {
+    if (!item) return;
+    scanResult = item;
+    if (!item.pages || item.pages.length === 0) {
+      const full = await getOCRDetail(item.id);
+      if (full && full.pages) {
+        scanResult = full;
+      }
+    }
+  }
+
   function handleProcessing(event) {
     isProcessing = event.detail.active;
     if (event.detail.progress) progress = event.detail.progress;
   }
+
 
   function onGlobalSearchKey(e) {
     if (e.key === 'Enter' && $globalSearchQuery.trim()) {
@@ -531,27 +558,56 @@
             </button>
             
             {#if activeView === 'ocr'}
-              <div class="history-section" style="margin-top: 4px; padding-top: 8px;">
-                <div class="history-title">ประวัติการสแกนล่าสุด</div>
-                {#if $ocrHistory.length > 0}
-                  <div class="history-list">
-                    {#each $ocrHistory.slice(0, 15) as item}
-                      <button class="history-item" class:active={scanResult && scanResult.id === item.id} on:click={() => { scanResult = item; }}>
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="flex-shrink: 0;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path></svg>
-                        <div class="history-details" style="flex: 1;">
-                          <span class="h-filename" style="color: #60a5fa;">{item.filename || 'Unknown Document'}</span>
-                          <span class="h-project">{formatHistoryDate(item.date)}</span>
-                        </div>
-                        <div style="padding: 4px; border-radius: 4px; color: #ef4444; background: rgba(239, 68, 68, 0.1); cursor: pointer;" on:click|stopPropagation={() => deleteOCRHistory(item.id)} title="ลบประวัติ">
-                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M18 6L6 18M6 6l12 12"></path></svg>
-                        </div>
-                      </button>
-                    {/each}
+              <div class="history-section ocr-history-section" style="margin-top: 4px; padding-top: 6px;">
+                <!-- Collapsible Header with Toggle Button & Count Badge -->
+                <div 
+                  class="history-title-toggle"
+                  on:click={() => (isOcrHistoryExpanded = !isOcrHistoryExpanded)}
+                  on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && (isOcrHistoryExpanded = !isOcrHistoryExpanded)}
+                  role="button"
+                  tabindex="0"
+                  title={isOcrHistoryExpanded ? 'คลิกเพื่อซ่อนประวัติ' : 'คลิกเพื่อแสดงประวัติ'}
+                >
+                  <div class="history-title-left">
+                    <span class="history-title-text">ประวัติการสแกนล่าสุด</span>
+                    {#if $ocrHistory.length > 0}
+                      <span class="history-count-badge">{$ocrHistory.length}</span>
+                    {/if}
                   </div>
-                {:else}
-                  <div style="padding: 15px; text-align: center; color: #9ca3af; font-size: 13px; background: rgba(0,0,0,0.2); border-radius: 8px;">
-                      ยังไม่มีประวัติการสแกน
-                  </div>
+                  <button 
+                    class="btn-toggle-expand" 
+                    type="button" 
+                    aria-label={isOcrHistoryExpanded ? 'ซ่อนประวัติ' : 'แสดงประวัติ'}
+                    on:click|stopPropagation={() => (isOcrHistoryExpanded = !isOcrHistoryExpanded)}
+                  >
+                    <svg class="chevron-icon" class:collapsed={!isOcrHistoryExpanded} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="13" height="13">
+                      <polyline points="6 9 12 15 18 9"></polyline>
+                    </svg>
+                  </button>
+                </div>
+
+                {#if isOcrHistoryExpanded}
+                  {#if $ocrHistory.length > 0}
+                    <div class="history-list ocr-scrollable-list">
+                      {#each $ocrHistory.slice(0, 30) as item}
+                        <button class="history-item" class:active={scanResult && scanResult.id === item.id} on:click={() => selectOCRHistory(item)}>
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="flex-shrink: 0;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path></svg>
+
+                          <div class="history-details" style="flex: 1; min-width: 0;">
+                            <span class="h-filename" style="color: #60a5fa;" title={item.filename}>{item.filename || 'Unknown Document'}</span>
+                            <span class="h-project">{formatHistoryDate(item.date)}</span>
+                          </div>
+                          <div class="btn-delete-history" on:click|stopPropagation={() => deleteOCRHistory(item.id)} title="ลบประวัติ">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M18 6L6 18M6 6l12 12"></path></svg>
+                          </div>
+                        </button>
+                      {/each}
+                    </div>
+                  {:else}
+                    <div style="padding: 12px; text-align: center; color: #9ca3af; font-size: 12px; background: rgba(0,0,0,0.2); border-radius: 8px; margin-top: 4px;">
+                        ยังไม่มีประวัติการสแกน
+                    </div>
+                  {/if}
                 {/if}
               </div>
             {/if}
@@ -1316,20 +1372,147 @@
     flex-direction: column;
     gap: 8px;
     overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(139, 92, 246, 0.4) transparent;
   }
   
   .sidebar-nav::-webkit-scrollbar {
-    width: 4px;
+    width: 5px;
   }
   .sidebar-nav::-webkit-scrollbar-track {
     background: transparent;
   }
   .sidebar-nav::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.1);
+    background: rgba(139, 92, 246, 0.3);
     border-radius: 4px;
   }
   .sidebar-nav::-webkit-scrollbar-thumb:hover {
-    background: rgba(255, 255, 255, 0.2);
+    background: rgba(168, 85, 247, 0.6);
+  }
+
+  .history-section.ocr-history-section {
+    margin-top: 4px;
+    padding-top: 6px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .history-title-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    user-select: none;
+    transition: all 0.2s ease;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    margin-bottom: 6px;
+  }
+
+  .history-title-toggle:hover {
+    background: rgba(99, 102, 241, 0.12);
+    border-color: rgba(99, 102, 241, 0.25);
+  }
+
+  .history-title-left {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .history-title-text {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    letter-spacing: 0.04em;
+  }
+
+  .history-title-toggle:hover .history-title-text {
+    color: var(--text-main);
+  }
+
+  .history-count-badge {
+    background: rgba(99, 102, 241, 0.25);
+    color: #a5b4fc;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 12px;
+    line-height: 1.2;
+    border: 1px solid rgba(99, 102, 241, 0.3);
+  }
+
+  .btn-toggle-expand {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2px;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: color 0.2s;
+  }
+
+  .history-title-toggle:hover .btn-toggle-expand {
+    color: #fff;
+  }
+
+  .chevron-icon {
+    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .chevron-icon.collapsed {
+    transform: rotate(-90deg);
+  }
+
+  .ocr-scrollable-list {
+    max-height: 230px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding-right: 4px;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(139, 92, 246, 0.4) rgba(0, 0, 0, 0.15);
+  }
+
+  .ocr-scrollable-list::-webkit-scrollbar {
+    width: 4px;
+  }
+
+  .ocr-scrollable-list::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.15);
+    border-radius: 4px;
+  }
+
+  .ocr-scrollable-list::-webkit-scrollbar-thumb {
+    background: rgba(139, 92, 246, 0.4);
+    border-radius: 4px;
+  }
+
+  .ocr-scrollable-list::-webkit-scrollbar-thumb:hover {
+    background: rgba(168, 85, 247, 0.7);
+  }
+
+  .btn-delete-history {
+    padding: 4px;
+    border-radius: 4px;
+    color: #ef4444;
+    background: rgba(239, 68, 68, 0.1);
+    cursor: pointer;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+  }
+
+  .btn-delete-history:hover {
+    background: rgba(239, 68, 68, 0.25);
+    color: #fca5a5;
+    transform: scale(1.1);
   }
 
   .nav-item {

@@ -227,6 +227,18 @@ def get_request_user():
         pass
     return None
 
+def get_request_user_payload():
+    """Extract full decoded JWT payload from Authorization header."""
+    try:
+        auth_header = request.headers.get('Authorization')
+        if auth_header and auth_header.startswith('Bearer '):
+            token = auth_header.split(' ')[1]
+            return decode_jwt(token)
+    except Exception:
+        pass
+    return None
+
+
 DEFAULT_USER_MENUS = [
     "qa_consult", "qa_doc_creation", "qa_analysis_diagram", "qa_board",
     "qa_automate", "qa_performance", "qa_security", "qa_research",
@@ -786,18 +798,28 @@ def health():
 
 @app.route('/api/projects', methods=['GET'])
 def list_projects():
-    """List all projects for document ingestion
-    Flask App Main Entrypoint
-    OCR & Document Processing Backend System with AI Agent Nodes
-    Updated Profile & User Settings Routes
-    """
+    """List all projects for document ingestion, respecting user project permissions if token provided"""
     try:
         from db_ingestion import get_projects
         projects = get_projects()
+        
+        # If user token is passed, filter projects based on allowed_projects (except admin or 'all')
+        req_payload = get_request_user_payload()
+        if req_payload and req_payload.get('role') != 'admin':
+            allowed = req_payload.get('allowed_projects') or ['all']
+            if isinstance(allowed, list) and 'all' not in allowed:
+                allowed_normalized = [str(a).strip().lower() for a in allowed]
+                projects = [
+                    p for p in projects
+                    if str(p.get('id') or p.get('project_id') or '').strip().lower() in allowed_normalized
+                    or str(p.get('project_code') or '').strip().lower() in allowed_normalized
+                ]
+                
         return jsonify({'success': True, 'projects': projects})
     except Exception as e:
         logger.error(f"Error fetching projects: {e}")
         return jsonify({'error': str(e)}), 500
+
 
 @app.route('/api/projects', methods=['POST'])
 def create_project():
@@ -1095,6 +1117,9 @@ def process_stream():
     dpi = int(request.args.get('dpi', 300))
     auto_spellcheck = request.args.get('auto_spellcheck', 'false').lower() == 'true'
     include_suggestions = request.args.get('include_suggestions', 'true').lower() == 'true'
+    start_page = int(request.args.get('start_page', 1) or 1)
+    end_page_val = request.args.get('end_page')
+    end_page = int(end_page_val) if (end_page_val and end_page_val.isdigit() and int(end_page_val) > 0) else None
     
     pdf_bytes = file.read()
     filename = secure_filename(file.filename)
@@ -1113,24 +1138,8 @@ def process_stream():
             start_time = time.time()
             
             # Start event
-            yield f"data: {json.dumps({'type': 'start', 'session_id': session_id})}\n\n"
+            yield f"data: {json.dumps({'type': 'start', 'session_id': session_id, 'filename': filename})}\n\n"
 
-            # Callback สำหรับส่งความคืบหน้า
-            def progress_cb(page, total, status, elapsed):
-                data = json.dumps({
-                    'type': 'progress',
-                    'page': page,
-                    'total': total,
-                    'status': status,
-                    'elapsed': round(elapsed, 2)
-                })
-                #yield f"data: {data}\n\n"
-                # Flask generator requires actual yield from here or passing it up
-                # So we'll collect events in a queue or just return the generator
-                pass
-            
-            # เนื่องจาก Flask generator ต้อง yield ค่าออกไป
-            # เราจะแก้โครงสร้างให้ ocr_pdf_bytes รับ yield หรือใช้ wrapper
             # Get total pages instantly using pdfinfo_from_bytes
             total_pages = 1
             try:
@@ -1143,39 +1152,42 @@ def process_stream():
             except Exception as info_err:
                 logger.error(f"Failed to get PDF info: {info_err}")
 
-            # ส่ง event เริ่มต้น
-            yield f"data: {json.dumps({'type': 'start', 'filename': filename})}\n\n"
-            
+            effective_first = max(1, start_page)
+            effective_last = min(total_pages, end_page) if end_page else total_pages
+            pages_to_process = max(1, effective_last - effective_first + 1)
+
             # แจ้งความคืบหน้าเรื่องการโหลด Engine
-            yield f"data: {json.dumps({'type': 'progress', 'page': 0, 'total': total_pages, 'status': 'loading_engine', 'elapsed': 0})}\n\n"
+            yield f"data: {json.dumps({'type': 'progress', 'page': 0, 'total': pages_to_process, 'total_doc_pages': total_pages, 'status': 'loading_engine', 'elapsed': 0})}\n\n"
 
             pages = []
             page_count = 0
             # OCR และ Spell Check ทีละหน้า (Streaming)
-            for page, img in ocr_pdf_bytes_generator(pdf_bytes, dpi=dpi, lang=lang, filename=filename):
+            for page, img in ocr_pdf_bytes_generator(pdf_bytes, dpi=dpi, lang=lang, filename=filename, start_page=effective_first, end_page=effective_last):
                 page_num = page['page_number']
-                total_pages = page.get('total_pages', total_pages)
                 page_count += 1
                 
                 # Emit progress right after a page is OCR-ed and we start processing/spellchecking
                 elapsed = time.time() - start_time
-                yield f"data: {json.dumps({'type': 'progress', 'page': page_count, 'total': total_pages, 'status': f'processing_page_{page_num}', 'elapsed': elapsed})}\n\n"
+                yield f"data: {json.dumps({'type': 'progress', 'page': page_count, 'total': pages_to_process, 'total_doc_pages': total_pages, 'status': f'processing_page_{page_num}', 'elapsed': elapsed})}\n\n"
 
                 # 1. บันทึกรูปใน Session Dir (เพื่อทำ Preview)
-                img_name = f"page_{page_num}.jpg"
-                img_path = session_dir / img_name
-                
-                try:
-                    # แปลงและบันทึกเป็น JPEG
-                    img.convert('RGB').save(str(img_path), "JPEG", quality=85)
+                if img is not None:
+                    img_name = f"page_{page_num}.jpg"
+                    img_path = session_dir / img_name
+                    
+                    try:
+                        # แปลงและบันทึกเป็น JPEG
+                        img.convert('RGB').save(str(img_path), "JPEG", quality=85)
+                        page['session_id'] = session_id
+                        page['image_url'] = img_name
+                        logger.info(f"Saved preview image for page {page_num}: {img_path}")
+                    except Exception as save_err:
+                        logger.error(f"Failed to save preview image: {save_err}")
+                else:
                     page['session_id'] = session_id
-                    page['image_url'] = img_name
-                    logger.info(f"Saved preview image for page {page_num}: {img_path}")
-                except Exception as save_err:
-                    logger.error(f"Failed to save preview image: {save_err}")
 
                 # 2. ตรวจคำผิดและจัดรูปแบบ (ถ้าเปิดโหมด Auto)
-                if auto_spellcheck:
+                if auto_spellcheck and page.get('text'):
                     try:
                         spell_result = spellcheck_text(
                             page.get('text', ''),
@@ -1219,7 +1231,7 @@ def process_stream():
                 pages.append(page)
                 yield f"data: {json.dumps({'type': 'page_result', 'page': page})}\n\n"
 
-            # เรียงหน้าให้ถูกต้องเนื่องจาก ThreadPool อาจส่งผลลัพธ์กลับมาสลับลำดับ
+            # เรียงหน้าให้ถูกต้อง
             pages.sort(key=lambda p: p['page_number'])
 
             # สรุปผลตอนท้าย
@@ -1228,9 +1240,14 @@ def process_stream():
             
             final_data = {
                 'type': 'complete',
+                'filename': filename,
                 'total_pages': len(pages),
+                'total_doc_pages': total_pages,
+                'start_page': effective_first,
+                'end_page': effective_last,
                 'summary': {
                     'total_pages': len(pages),
+                    'total_doc_pages': total_pages,
                     'total_thai_tokens': total_tokens,
                     'total_errors': total_errors,
                     'error_rate': round(total_errors / total_tokens * 100, 2) if total_tokens > 0 else 0,
@@ -1248,7 +1265,12 @@ def process_stream():
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
 
     from flask import Response
-    return Response(generate(), mimetype='text/event-stream')
+    return Response(generate(), mimetype='text/event-stream', headers={
+        'Cache-Control': 'no-cache',
+        'X-Accel-Buffering': 'no',
+        'Connection': 'keep-alive'
+    })
+
 
 
 @app.route('/api/dictionary/stats', methods=['GET'])
@@ -3838,13 +3860,21 @@ def research_chat():
         logger.error(f"Research chat error: {e}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
 
-@app.route('/api/ocr_history/<history_id>', methods=['DELETE'])
-def handle_ocr_history_delete(history_id):
-    from db_ingestion import delete_ocr_history
-    success = delete_ocr_history(history_id)
-    if success:
-        return jsonify({'success': True})
-    return jsonify({'error': 'Failed to delete'}), 500
+@app.route('/api/ocr_history/<history_id>', methods=['GET', 'DELETE'])
+def handle_ocr_history_item(history_id):
+    if request.method == 'GET':
+        from db_ingestion import get_ocr_history_by_id
+        item = get_ocr_history_by_id(history_id)
+        if item:
+            return jsonify(item)
+        return jsonify({'error': 'Not found'}), 404
+    elif request.method == 'DELETE':
+        from db_ingestion import delete_ocr_history
+        success = delete_ocr_history(history_id)
+        if success:
+            return jsonify({'success': True})
+        return jsonify({'error': 'Failed to delete'}), 500
+
 
 @app.route('/api/requirements/extract', methods=['POST'])
 def extract_requirements():

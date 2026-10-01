@@ -27,6 +27,9 @@
   let lang = 'tha+eng';
   let dpi = '300';
   let autoSpellCheck = false;
+  let pageRangeMode = 'all'; // 'all' | 'custom'
+  let startPage = 1;
+  let endPage = 30;
 
   // ── File ──
   /** @param {any} e */
@@ -78,17 +81,24 @@
     const formData = new FormData();
     formData.append('file', file);
 
+    let url = `${API}/process_stream?lang=${lang}&dpi=${dpi}&auto_spellcheck=${autoSpellCheck}`;
+    if (pageRangeMode === 'custom') {
+      const s = Math.max(1, parseInt(String(startPage), 10) || 1);
+      const e = Math.max(s, parseInt(String(endPage), 10) || s);
+      url += `&start_page=${s}&end_page=${e}`;
+    }
+
     try {
-      emitProgress(5, 'เริ่มต้น...', 1);
+      emitProgress(5, 'เริ่มต้นเชื่อมต่อระบบ OCR...', 1);
       
-      const res = await fetch(`${API}/process_stream?lang=${lang}&dpi=${dpi}&auto_spellcheck=${autoSpellCheck}`, {
+      const res = await fetch(url, {
         method: 'POST',
         body: formData,
       });
 
       if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || 'เกิดข้อผิดพลาด');
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `HTTP Error: ${res.status}`);
       }
 
       if (!res.body) {
@@ -100,75 +110,98 @@
       let pages = [];
       let finalData = null;
 
+      const handleEventLine = (line) => {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith(':')) return; // ignore comments/keep-alive
+
+        if (trimmed.startsWith('data: ')) {
+          const jsonStr = trimmed.substring(6).trim();
+          if (!jsonStr) return;
+
+          let data;
+          try {
+            data = JSON.parse(jsonStr);
+          } catch (pe) {
+            console.warn('SSE Chunk JSON Parse Error:', pe, jsonStr);
+            return;
+          }
+
+          if (data.type === 'start') {
+            emitProgress(10, 'แปลง PDF เป็นรูปภาพ...', 1);
+          }
+          else if (data.type === 'progress') {
+            const completed = data.page || 0;
+            const total = data.total || 0;
+            const elapsed = data.elapsed || 0;
+            const totalDocPages = data.total_doc_pages || total;
+            
+            let pct = 10;
+            let label = 'กำลังสกัดหน้า...';
+            
+            if (total > 0) {
+              pct = 10 + Math.floor((completed / total) * 75);
+              
+              if (completed > 0) {
+                const timePerPage = elapsed / completed;
+                const remaining = total - completed;
+                const etaSeconds = Math.round(timePerPage * remaining);
+                
+                let etaText = '';
+                if (etaSeconds < 60) {
+                  etaText = `${etaSeconds} วินาที`;
+                } else if (etaSeconds < 3600) {
+                  const mins = Math.floor(etaSeconds / 60);
+                  const secs = etaSeconds % 60;
+                  etaText = `${mins} นาที ${secs} วินาที`;
+                } else {
+                  const hrs = Math.floor(etaSeconds / 3600);
+                  const mins = Math.floor((etaSeconds % 3600) / 60);
+                  etaText = `${hrs} ชั่วโมง ${mins} นาที`;
+                }
+                
+                label = `กำลังสกัดหน้า ${completed}/${total} ${totalDocPages > total ? `(จากทั้งหมด ${totalDocPages} หน้า)` : ''} (ใช้เวลาไปแล้ว ${Math.round(elapsed)}s, คาดว่าจะเสร็จในอีกประมาณ ${etaText})...`;
+              } else {
+                label = `กำลังสกัดหน้า ${completed}/${total} (กำลังโหลดหน้าแรก)...`;
+              }
+            } else {
+              label = `กำลังโหลดโมเดลสแกนหน้า... (${Math.round(elapsed)}s)`;
+            }
+            
+            emitProgress(pct, label, 2);
+          }
+          else if (data.type === 'page_result' && data.page) {
+            pages.push(data.page);
+          }
+          else if (data.type === 'complete') {
+            finalData = data;
+            finalData.pages = pages;
+            finalData.filename = file.name;
+            finalData.success = true;
+            finalData.total_pages = data.total_pages || data.summary?.total_pages || pages.length;
+          }
+          else if (data.type === 'error') {
+            console.error('Server OCR error:', data.message);
+            toast(`แจ้งเตือน OCR: ${data.message}`, 'error', 6000);
+          }
+        }
+      };
+
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n\n');
-        buffer = lines.pop() ?? ''; // keep last chunk
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? ''; // keep last incomplete line
 
         for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = JSON.parse(line.substring(6));
-            
-            if (data.type === 'start') {
-              emitProgress(10, 'แปลง PDF เป็นรูปภาพ...', 1);
-            }
-            else if (data.type === 'progress') {
-              const completed = data.page || 0;
-              const total = data.total || 0;
-              const elapsed = data.elapsed || 0;
-              
-              let pct = 10;
-              let label = 'กำลังสกัดหน้า...';
-              
-              if (total > 0) {
-                pct = 10 + Math.floor((completed / total) * 70);
-                
-                if (completed > 0) {
-                  const timePerPage = elapsed / completed;
-                  const remaining = total - completed;
-                  const etaSeconds = Math.round(timePerPage * remaining);
-                  
-                  let etaText = '';
-                  if (etaSeconds < 60) {
-                    etaText = `${etaSeconds} วินาที`;
-                  } else if (etaSeconds < 3600) {
-                    const mins = Math.floor(etaSeconds / 60);
-                    const secs = etaSeconds % 60;
-                    etaText = `${mins} นาที ${secs} วินาที`;
-                  } else {
-                    const hrs = Math.floor(etaSeconds / 3600);
-                    const mins = Math.floor((etaSeconds % 3600) / 60);
-                    etaText = `${hrs} ชั่วโมง ${mins} นาที`;
-                  }
-                  
-                  label = `กำลังสกัดหน้า ${completed}/${total} (ใช้เวลาไปแล้ว ${Math.round(elapsed)}s, คาดว่าจะเสร็จในอีกประมาณ ${etaText})...`;
-                } else {
-                  label = `กำลังสกัดหน้า ${completed}/${total} (กำลังโหลดหน้าแรก)...`;
-                }
-              } else {
-                label = `กำลังโหลดโมเดลสแกนหน้า... (${Math.round(elapsed)}s)`;
-              }
-              
-              emitProgress(pct, label, 2);
-            }
-            else if (data.type === 'page_result') {
-              pages.push(data.page);
-            }
-            else if (data.type === 'complete') {
-              finalData = data;
-              finalData.pages = pages;
-              finalData.filename = file.name;
-              finalData.success = true;
-              finalData.total_pages = data.total_pages || data.summary?.total_pages || pages.length;
-            }
-            else if (data.type === 'error') {
-              throw new Error(data.message);
-            }
-          }
+          handleEventLine(line);
         }
+      }
+
+      // Process any leftover chunk in buffer
+      if (buffer.trim()) {
+        handleEventLine(buffer);
       }
 
       if (finalData) {
@@ -177,8 +210,8 @@
         dispatch('result', finalData);
         dispatch('processing', { active: false, progress: { pct: 100, label: '', step: 3 } });
       } else if (pages.length > 0) {
-        // แสดงผลบางส่วนที่ได้มาแม้ว่า stream จะจบโดยไม่มี complete event
-        emitProgress(100, 'เสร็จสิ้น (บางส่วน)', 3);
+        // แสดงผลหน้าที่สกัดได้ แม้สตรีมจะสิ้นสุดก่อน complete event
+        emitProgress(100, `เสร็จสิ้น (${pages.length} หน้า)`, 3);
         await sleep(300);
         dispatch('result', {
           pages,
@@ -188,7 +221,9 @@
           total_pages: pages.length
         });
         dispatch('processing', { active: false, progress: { pct: 100, label: '', step: 3 } });
-        toast('ประมวลผลเสร็จ (บางหน้าอาจไม่สมบูรณ์)', 'warning', 4000);
+        toast(`ประมวลผลเสร็จแล้ว ${pages.length} หน้า`, 'success', 5000);
+      } else {
+        throw new Error('ไม่พบข้อมูลผลลัพธ์จากการสแกน');
       }
 
     } catch (err) {
@@ -201,6 +236,7 @@
 
   /** @param {number} ms */
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
 </script>
 
 <!-- Layout Container -->
@@ -332,6 +368,34 @@
               <span class="toggle-track"><span class="toggle-thumb"></span></span>
             </label>
           </div>
+
+          <!-- Page Range Selection -->
+          <div class="setting-row range-row" style="flex-direction: column; align-items: flex-start; gap: 8px;">
+            <div style="display: flex; justify-content: space-between; width: 100%; align-items: center;">
+              <span class="setting-label">ช่วงหน้าที่ต้องการสแกน</span>
+              <div class="range-mode-toggle">
+                <button type="button" class="mode-pill-btn" class:active={pageRangeMode === 'all'} on:click={() => pageRangeMode = 'all'}>ทั้งหมด</button>
+                <button type="button" class="mode-pill-btn" class:active={pageRangeMode === 'custom'} on:click={() => pageRangeMode = 'custom'}>กำหนดช่วง</button>
+              </div>
+            </div>
+            {#if pageRangeMode === 'custom'}
+              <div class="range-inputs-wrap">
+                <div class="range-input-group">
+                  <span>เริ่มหน้า</span>
+                  <input type="number" min="1" bind:value={startPage} class="range-number-input" />
+                </div>
+                <span class="range-sep">ถึง</span>
+                <div class="range-input-group">
+                  <span>ถึงหน้า</span>
+                  <input type="number" min="1" bind:value={endPage} class="range-number-input" />
+                </div>
+              </div>
+              <div class="range-tip">
+                💡 แนะนำสำหรับเอกสารหนา (เช่น 211 หน้า): แบ่งสแกนรอบละ 30-50 หน้า เพื่อความเสถียรสูงสุด
+              </div>
+            {/if}
+          </div>
+
 
           <!-- AI Model Spec Card -->
           <div class="ai-engine-info">
@@ -875,5 +939,82 @@
   .mini-stats-row :global(> div) {
     flex: 1;
     margin: 0 !important;
+  }
+
+  /* ── Page Range Controls ── */
+  .range-mode-toggle {
+    display: flex;
+    gap: 4px;
+    background: rgba(0, 0, 0, 0.3);
+    padding: 3px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  .mode-pill-btn {
+    border: none;
+    background: transparent;
+    color: #94a3b8;
+    font-size: 11.5px;
+    padding: 3px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-family: var(--font-th);
+  }
+  .mode-pill-btn.active {
+    background: rgba(99, 102, 241, 0.35);
+    color: #ffffff;
+    font-weight: 600;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+  }
+  .range-inputs-wrap {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    margin-top: 4px;
+  }
+  .range-input-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: #94a3b8;
+    font-family: var(--font-th);
+    flex: 1;
+  }
+  .range-number-input {
+    width: 100%;
+    max-width: 80px;
+    padding: 6px 10px;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 8px;
+    color: #ffffff;
+    font-size: 13px;
+    text-align: center;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  .range-number-input:focus {
+    border-color: #6366f1;
+    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+  }
+  .range-sep {
+    font-size: 12px;
+    color: #64748b;
+    font-family: var(--font-th);
+  }
+  .range-tip {
+    font-size: 11px;
+    color: #38bdf8;
+    background: rgba(56, 189, 248, 0.08);
+    border: 1px solid rgba(56, 189, 248, 0.2);
+    border-radius: 6px;
+    padding: 6px 10px;
+    line-height: 1.4;
+    font-family: var(--font-th);
+    width: 100%;
+    margin-top: 2px;
   }
 </style>

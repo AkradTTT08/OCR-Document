@@ -14,10 +14,14 @@
 
   $: filteredProjects = projects.filter(p => {
     if (!$authAllowedProjects || $authAllowedProjects.includes('all')) return true;
-    const pId = String(p.id || p.project_id || p.project_code);
-    const pCode = String(p.project_code || '');
-    return $authAllowedProjects.includes(pId) || (pCode && $authAllowedProjects.includes(pCode));
+    const pId = String(p.id || p.project_id || '').trim().toLowerCase();
+    const pCode = String(p.project_code || '').trim().toLowerCase();
+    return $authAllowedProjects.some(allowed => {
+      const a = String(allowed).trim().toLowerCase();
+      return (pId && a === pId) || (pCode && a === pCode);
+    });
   });
+
 </script>
 
 <div class="project-selection-wrapper">

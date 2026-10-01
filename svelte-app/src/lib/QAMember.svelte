@@ -246,6 +246,10 @@
         isDragOverAvatar = false;
         modalProjectSearch = '';
         const defaultMenus = (user.role === 'admin' ? ADMIN_MENUS : USER_MENUS).map(m => m.id);
+        let initialProjects = ['all'];
+        if (Array.isArray(user.allowed_projects)) {
+            initialProjects = user.allowed_projects;
+        }
         formData = { 
             user_id: user.user_id, 
             username: user.username || '', 
@@ -260,7 +264,7 @@
             linkedin_url: user.linkedin_url || '',
             line_id: user.line_id || '',
             allowed_menus: Array.isArray(user.allowed_menus) && user.allowed_menus.length > 0 ? user.allowed_menus : defaultMenus,
-            allowed_projects: Array.isArray(user.allowed_projects) && user.allowed_projects.length > 0 ? user.allowed_projects : ['all']
+            allowed_projects: initialProjects
         };
         avatarFile = null;
         avatarPreview = user.avatar_path ? `${user.avatar_path}` : null;
@@ -309,29 +313,42 @@
             formData.allowed_projects = ['all'];
         } else {
             if (formData.allowed_projects.includes('all')) {
-                formData.allowed_projects = allProjects.length > 0 ? [String(allProjects[0].id || allProjects[0].project_code)] : [];
+                formData.allowed_projects = allProjects.length > 0 ? [String(allProjects[0].id || allProjects[0].project_id || allProjects[0].project_code)] : [];
             }
         }
     }
 
     function toggleProjectPermission(proj) {
-        const pId = String(proj.id || proj.project_id || proj.project_code);
+        const pId = String(proj.id || proj.project_id || '').trim();
+        const pCode = String(proj.project_code || '').trim();
+        const targetKey = pId || pCode;
+        if (!targetKey) return;
+
         if (formData.allowed_projects.includes('all')) {
-            formData.allowed_projects = [pId];
+            formData.allowed_projects = [targetKey];
             return;
         }
-        if (formData.allowed_projects.includes(pId)) {
-            formData.allowed_projects = formData.allowed_projects.filter(id => id !== pId);
+
+        const isCurrentlySelected = isProjectSelected(proj);
+        if (isCurrentlySelected) {
+            formData.allowed_projects = formData.allowed_projects.filter(id => {
+                const s = String(id).trim().toLowerCase();
+                return (pId && s !== pId.toLowerCase()) && (!pCode || s !== pCode.toLowerCase());
+            });
         } else {
-            formData.allowed_projects = [...formData.allowed_projects, pId];
+            formData.allowed_projects = [...formData.allowed_projects, targetKey];
         }
     }
 
     function isProjectSelected(proj) {
+        if (!proj) return false;
         if (formData.allowed_projects.includes('all')) return true;
-        const pId = String(proj.id || proj.project_id || proj.project_code);
-        const pCode = String(proj.project_code || '');
-        return formData.allowed_projects.includes(pId) || (pCode && formData.allowed_projects.includes(pCode));
+        const pId = String(proj.id || proj.project_id || '').trim().toLowerCase();
+        const pCode = String(proj.project_code || '').trim().toLowerCase();
+        return formData.allowed_projects.some(id => {
+            const s = String(id).trim().toLowerCase();
+            return (pId && s === pId) || (pCode && s === pCode);
+        });
     }
 
     function selectAllProjects() {
@@ -341,6 +358,7 @@
     function deselectAllProjects() {
         formData.allowed_projects = [];
     }
+
 
     // Role change auto-switch menus
     function handleRoleChange(newRole) {

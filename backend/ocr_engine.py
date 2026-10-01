@@ -412,11 +412,12 @@ def ocr_pdf_bytes(pdf_bytes: bytes, dpi: int = 150, lang: str = 'tha+eng', progr
     return results
 
 
-def ocr_pdf_bytes_generator(pdf_bytes: bytes, dpi: int = 150, lang: str = 'tha+eng', filename: str = None):
+def ocr_pdf_bytes_generator(pdf_bytes: bytes, dpi: int = 150, lang: str = 'tha+eng', filename: str = None, start_page: int = 1, end_page: int = None):
     """
     สกัดข้อความจาก PDF bytes แบบ Generator ทำงานแบบ Sequential
     (Gemini API มี Rate Limit จึงใช้ Sequential แทน Multi-thread)
     คืนค่าเป็น Generator yielding (page_data_dict, pil_image)
+    รองรับ start_page และ end_page เพื่อให้แบ่งประมวลผลเอกสารขนาดใหญ่ได้
     """
     start_time = time.time()
     poppler_path = POPPLER_PATH if os.path.exists(POPPLER_PATH) else None
@@ -428,8 +429,14 @@ def ocr_pdf_bytes_generator(pdf_bytes: bytes, dpi: int = 150, lang: str = 'tha+e
     except Exception as e:
         total_pages = 1
 
+    first = max(1, start_page if start_page is not None else 1)
+    last = min(total_pages, end_page) if (end_page is not None and end_page > 0) else total_pages
+    if first > last:
+        first = 1
+        last = total_pages
+
     # ใช้ Sequential เพื่อป้องกัน Rate Limit ของ Gemini Free Tier (15 RPM)
-    for page_num in range(1, total_pages + 1):
+    for page_num in range(first, last + 1):
         page_start = time.time()
         
         try:
@@ -444,13 +451,24 @@ def ocr_pdf_bytes_generator(pdf_bytes: bytes, dpi: int = 150, lang: str = 'tha+e
                 continue
             image = images[0]
         except Exception as e:
-            raise RuntimeError(f"ไม่สามารถแปลง PDF หน้าที่ {page_num} ได้: {str(e)}")
+            res = {
+                'page_number': page_num,
+                'text': '',
+                'words': [],
+                'error': f"ไม่สามารถแปลง PDF หน้าที่ {page_num} ได้: {str(e)}",
+                'total_pages': total_pages,
+                'target_total': (last - first + 1),
+                'time_taken': round(time.time() - page_start, 2)
+            }
+            yield res, None
+            continue
             
         try:
             text_result = ocr_image(image, lang=lang, filename=filename)
             page_data = {
                 'page_number': page_num,
                 'total_pages': total_pages,
+                'target_total': (last - first + 1),
                 'time_taken': round(time.time() - page_start, 2)
             }
             res = {**text_result, **page_data}
@@ -461,10 +479,12 @@ def ocr_pdf_bytes_generator(pdf_bytes: bytes, dpi: int = 150, lang: str = 'tha+e
                 'words': [],
                 'error': str(e),
                 'total_pages': total_pages,
+                'target_total': (last - first + 1),
                 'time_taken': round(time.time() - page_start, 2)
             }
         yield res, image
         
         # หน่วงเวลา 4 วินาทีระหว่างหน้า เพื่อป้องกัน Rate Limit (15 RPM)
-        if page_num < total_pages:
+        if page_num < last:
             time.sleep(4)
+

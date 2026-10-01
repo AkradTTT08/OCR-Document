@@ -59,6 +59,8 @@ if (isInitialExpired && initialToken) {
   localStorage.removeItem('auth_avatar_path');
   localStorage.removeItem('auth_allowed_menus');
   localStorage.removeItem('auth_allowed_projects');
+  localStorage.removeItem('spectra_qa_selected_project');
+  localStorage.removeItem('spectra_qa_active_group');
 }
 
 // ── Internal stores ──
@@ -198,6 +200,8 @@ export function logout(reason = '') {
   localStorage.removeItem('auth_avatar_path');
   localStorage.removeItem('auth_allowed_menus');
   localStorage.removeItem('auth_allowed_projects');
+  localStorage.removeItem('spectra_qa_selected_project');
+  localStorage.removeItem('spectra_qa_active_group');
 
   if (reason) {
     toast(reason, 'warning');

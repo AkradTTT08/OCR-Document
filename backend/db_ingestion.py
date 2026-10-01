@@ -2038,3 +2038,31 @@ def delete_ocr_history(history_id):
     finally:
         if cursor: cursor.close()
         if conn: conn.close()
+
+def get_ocr_history_by_id(history_id):
+    """Retrieves full OCR scan result by ID."""
+    conn = None
+    cursor = None
+    try:
+        from psycopg2.extras import RealDictCursor
+        conn = get_ocr_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("""
+            SELECT id, filename, result_json, created_at
+            FROM ocr_history
+            WHERE id = %s::uuid
+        """, (history_id,))
+        row = cursor.fetchone()
+        if row:
+            if 'id' in row: row['id'] = str(row['id'])
+            if 'created_at' in row and row['created_at']:
+                row['created_at'] = row['created_at'].isoformat()
+            return row
+        return None
+    except Exception as e:
+        logger.error(f"Error fetching ocr history by id: {e}", exc_info=True)
+        return None
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+

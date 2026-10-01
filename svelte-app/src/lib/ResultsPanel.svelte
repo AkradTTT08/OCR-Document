@@ -577,7 +577,23 @@
       <button class="nav-tab-btn" on:click={() => { activePageIdx = pages.length - 1; scrollTabsToSelected(); }} disabled={activePageIdx === pages.length - 1} title="ข้ามไปหน้าสุดท้าย">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 17l5-5-5-5M6 17l5-5-5-5"/></svg>
       </button>
+
+      {#if pages.length > 5}
+        <div style="display: flex; align-items: center; gap: 6px; padding-left: 8px; border-left: 1px solid rgba(255,255,255,0.1); margin-left: 4px;">
+          <select 
+            class="page-jump-select"
+            value={activePageIdx}
+            on:change={(e) => { activePageIdx = parseInt(e.target.value, 10); scrollTabsToSelected(); }}
+            style="background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.15); color: #e2e8f0; border-radius: 6px; padding: 4px 8px; font-size: 12px; font-family: var(--font-th); cursor: pointer; outline: none;"
+          >
+            {#each pages as p, i}
+              <option value={i} style="background: #1e1e2e; color: #fff;">หน้า {p.page_number} ({i + 1}/{pages.length})</option>
+            {/each}
+          </select>
+        </div>
+      {/if}
     </div>
+
 
     <!-- ── View mode tabs + filter ── -->
     <div class="toolbar">
