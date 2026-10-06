@@ -382,11 +382,32 @@
       return text;
     }
 
+    // Ensure header starts with flowchart
+    if (!/^\s*(flowchart|graph)\b/i.test(text)) {
+      text = `flowchart TD\n${text}`;
+    }
+
     const lines = text.split(/\r?\n/);
     const resultLines = [];
 
+    // Helper: clean and wrap text safely
+    const cleanLabel = (s) => {
+      if (!s) return "";
+      let t = String(s).trim();
+      if ((t.startsWith('"') && t.endsWith('"')) || (t.startsWith("'") && t.endsWith("'"))) {
+        t = t.slice(1, -1).trim();
+      }
+      return t.replace(/"/g, "'");
+    };
+
     for (let line of lines) {
-      let l = line;
+      let l = line.trimEnd();
+
+      // Skip empty lines
+      if (!l.trim()) {
+        resultLines.push("");
+        continue;
+      }
 
       // Skip directives and comments
       if (/^\s*(%%|classDef|class|click|style|linkStyle|accTitle|accDescr)\b/i.test(l)) {
@@ -394,152 +415,146 @@
         continue;
       }
 
-      // A. Fix actor declaration: `actor Customer as "ผู้ใช้งาน"` or `actor Customer`
-      const actorMatch = l.match(/^\s*actor\s+([A-Za-z0-9_]+)(?:\s+as\s+["']?([^"'\r\n]+)["']?)?\s*$/i);
-      if (actorMatch) {
-        const id = actorMatch[1];
-        const label = actorMatch[2] || id;
-        const indent = l.match(/^\s*/)[0];
-        resultLines.push(`${indent}${id}["👤 ${label.replace(/"/g, "'")}"]`);
-        continue;
+      const indent = l.match(/^\s*/)[0];
+
+      // A. Fix actor declaration in flowchart: `actor Customer as "ผู้ใช้งาน"` or `actor Customer`
+      if (/^\s*actor\b/i.test(l)) {
+        const actorMatch = l.match(/^\s*actor\s+([A-Za-z0-9_]+)(?:\s+(?:as\s+)?(.*))?$/i);
+        if (actorMatch) {
+          const id = actorMatch[1];
+          const label = cleanLabel(actorMatch[2]) || id;
+          resultLines.push(`${indent}${id}["👤 ${label}"]`);
+          continue;
+        }
       }
 
-      // B. Fix Subgraph: `subgraph ID [Title]` or `subgraph ID ["Title"]`
+      // B. Fix Subgraph: `subgraph ID [Title]` or `subgraph ID ["Title"]` or `subgraph [Title]`
       const subgraphMatch = l.match(/^(\s*subgraph\s+[A-Za-z0-9_]+)\s*\[\s*([^\]]+?)\s*\]\s*$/i);
       if (subgraphMatch) {
-        let title = subgraphMatch[2].trim();
-        if ((title.startsWith('"') && title.endsWith('"')) || (title.startsWith("'") && title.endsWith("'"))) {
-          title = title.slice(1, -1);
-        }
-        resultLines.push(`${subgraphMatch[1]} ["${title.replace(/"/g, "'")}"]`);
+        const title = cleanLabel(subgraphMatch[2]);
+        resultLines.push(`${subgraphMatch[1]} ["${title}"]`);
         continue;
       }
 
-      // C. Fix PlantUML dotted arrows with colons:
-      // e.g. `UC_LOGIN <.. UC_PDPA_CONSENT : <<include>>`
+      // C. Fix PlantUML / dotted arrows with colons:
       l = l.replace(/([A-Za-z0-9_]+)\s*<\.\.\s*([A-Za-z0-9_]+)\s*:\s*<?<?([^>\r\n]+)>?>?/g, (m, left, right, label) => {
-        const cleanLabel = label.replace(/[<>]/g, '').trim();
-        return `${right} -.->|${cleanLabel}| ${left}`;
+        return `${right} -.->|"${cleanLabel(label)}"| ${left}`;
       });
-      // e.g. `UC_LOGIN ..> UC_PDPA_CONSENT : <<include>>`
       l = l.replace(/([A-Za-z0-9_]+)\s*\.\.>\s*([A-Za-z0-9_]+)\s*:\s*<?<?([^>\r\n]+)>?>?/g, (m, left, right, label) => {
-        const cleanLabel = label.replace(/[<>]/g, '').trim();
-        return `${left} -.->|${cleanLabel}| ${right}`;
+        return `${left} -.->|"${cleanLabel(label)}"| ${right}`;
       });
-      // e.g. `A <.. B` -> `B -.-> A`
       l = l.replace(/([A-Za-z0-9_]+)\s*<\.\.\s*([A-Za-z0-9_]+)/g, '$2 -.-> $1');
-      // e.g. `A ..> B` -> `A -.-> B`
       l = l.replace(/([A-Za-z0-9_]+)\s*\.\.>\s*([A-Za-z0-9_]+)/g, '$1 -.-> $2');
 
-      // D. Fix arrow with colon label: `A --> B : text` or `A -.-> B : text`
+      // D. Fix arrow with colon label: `A --> B : text`
       l = l.replace(/([A-Za-z0-9_]+)\s*(-->|-\.->|==>)\s*([A-Za-z0-9_]+)\s*:\s*([^\r\n]+)/g, (m, left, arrow, right, label) => {
-        const cleanLabel = label.replace(/[<>]/g, '').trim();
-        return `${left} ${arrow}|${cleanLabel}| ${right}`;
+        return `${left} ${arrow}|"${cleanLabel(label)}"| ${right}`;
       });
 
-      // E. Fix `-- (label) -->` or `-- label -->`
-      l = l.replace(/--\s*(?:\(([^()\r\n]+)\)|([^->\r\n]+?))\s*-->/g, (m, p1, p2) => {
-        const label = (p1 || p2 || '').trim();
-        return `-->|${label}|`;
+      // E. Fix inline arrow labels:
+      // `-- (label) -->` or `-- label -->`
+      l = l.replace(/--\s*(?:\(([^()\r\n]+)\)|([^->\r\n|]+?))\s*-->/g, (m, p1, p2) => {
+        return `-->|"${cleanLabel(p1 || p2)}"|`;
       });
-      l = l.replace(/--\s*(?:\(([^()\r\n]+)\)|([^->\r\n]+?))\s*--\s*>/g, (m, p1, p2) => {
-        const label = (p1 || p2 || '').trim();
-        return `-->|${label}|`;
+      l = l.replace(/--\s*(?:\(([^()\r\n]+)\)|([^->\r\n|]+?))\s*--\s*>/g, (m, p1, p2) => {
+        return `-->|"${cleanLabel(p1 || p2)}"|`;
       });
-
-      // Step 1: Temporarily extract pipe labels |...| so inner parentheses or quotes don't get modified by node regex
-      const pipeLabels = [];
-      l = l.replace(/\|([^|]+)\|/g, (m, labelContent) => {
-        const idx = pipeLabels.length;
-        let s = labelContent.trim();
-        if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
-          s = s.slice(1, -1);
-        }
-        pipeLabels.push(s.replace(/"/g, "'"));
-        return `|__PL_HOLD_${idx}__|`;
+      // `== (label) ==>` or `== label ==>`
+      l = l.replace(/==\s*(?:\(([^()\r\n]+)\)|([^=>\r\n|]+?))\s*==>/g, (m, p1, p2) => {
+        return `==>|"${cleanLabel(p1 || p2)}"|`;
+      });
+      // `-. (label) .->` or `-. label .->`
+      l = l.replace(/-\.\s*(?:\(([^()\r\n]+)\)|([^->\r\n|]+?))\s*\.->/g, (m, p1, p2) => {
+        return `-.->|"${cleanLabel(p1 || p2)}"|`;
       });
 
-      // F. Fix Stadium / Pill node syntax: `ID([ ... ])`
-      l = l.replace(/([A-Za-z0-9_]+)\s*\(\[\s*(.*?)\s*\]\)/g, (m, id, inner) => {
-        let s = inner.trim();
-        if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
-          s = s.slice(1, -1);
-        }
-        return `${id}(["${s.replace(/"/g, "'")}"])`;
+      // F. Rename reserved node ID `End` or `end` to `EndNode` if not a standalone `end` line
+      if (!/^\s*end\s*$/i.test(l)) {
+        l = l.replace(/\bEnd\s*\(\[\s*(.*?)\s*\]\)/g, 'EndNode(["$1"])');
+        l = l.replace(/\bEnd\s*\[\s*(.*?)\s*\]/g, 'EndNode["$1"]');
+        l = l.replace(/\bEnd\s*\(\s*(.*?)\s*\)/g, 'EndNode("$1")');
+        l = l.replace(/(-->|-\.->|==>)\s*End\b/g, '$1 EndNode');
+        l = l.replace(/\bEnd\s*(-->|-\.->|==>)/g, 'EndNode $1');
+      }
+
+      // Step G: TOKENIZE & SAFELY QUOTE ALL NODES ON THIS LINE
+      const nodeTokens = [];
+      const addToken = (id, formattedNode) => {
+        const idx = nodeTokens.length;
+        nodeTokens.push({ id, formattedNode });
+        return `__NODE_TOKEN_${idx}__`;
+      };
+
+      // 1. Stadium / Pill: `ID([ ... ])`
+      l = l.replace(/([A-Za-z0-9_]+)\s*\(\[\s*([\s\S]*?)\s*\]\)/g, (m, id, inner) => {
+        return addToken(id, `${id}(["${cleanLabel(inner)}"])`);
       });
 
-      // F2. Fix Circle node syntax: `ID(( ... ))`
-      l = l.replace(/([A-Za-z0-9_]+)\s*\(\(\s*(.*?)\s*\)\)/g, (m, id, inner) => {
-        let s = inner.trim();
-        if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
-          s = s.slice(1, -1);
-        }
-        return `${id}(("${s.replace(/"/g, "'")}"))`;
+      // 2. Circle: `ID(( ... ))`
+      l = l.replace(/([A-Za-z0-9_]+)\s*\(\(\s*([\s\S]*?)\s*\)\)/g, (m, id, inner) => {
+        return addToken(id, `${id}(("${cleanLabel(inner)}"))`);
       });
 
-      // F3. Fix Database Cylinder node syntax: `ID[( ... )]`
-      l = l.replace(/([A-Za-z0-9_]+)\s*\[\(\s*(.*?)\s*\)\]/g, (m, id, inner) => {
-        let s = inner.trim();
-        if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
-          s = s.slice(1, -1);
-        }
-        return `${id}[("${s.replace(/"/g, "'")}")]`;
+      // 3. Database Cylinder: `ID[( ... )]` or `ID[(" ... ")]`
+      l = l.replace(/([A-Za-z0-9_]+)\s*\[\(\s*([\s\S]*?)\s*\)\]/g, (m, id, inner) => {
+        return addToken(id, `${id}[("${cleanLabel(inner)}")]`);
       });
 
-      // F4. Fix Hexagon node syntax: `ID{{ ... }}`
-      l = l.replace(/([A-Za-z0-9_]+)\s*\{\{\s*(.*?)\s*\}\}/g, (m, id, inner) => {
-        let s = inner.trim();
-        if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
-          s = s.slice(1, -1);
-        }
-        return `${id}{{"${s.replace(/"/g, "'")}"}}`;
+      // 4. Hexagon: `ID{{ ... }}`
+      l = l.replace(/([A-Za-z0-9_]+)\s*\{\{\s*([\s\S]*?)\s*\}\}/g, (m, id, inner) => {
+        return addToken(id, `${id}{{"${cleanLabel(inner)}"}}`);
       });
 
-      // F5. Fix Decision / Rhombus node syntax: `ID{ ... }`
-      l = l.replace(/([A-Za-z0-9_]+)\s*\{\s*(.*?)\s*\}/g, (m, id, inner) => {
-        let s = inner.trim();
-        if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
-          s = s.slice(1, -1);
-        }
-        return `${id}{"${s.replace(/"/g, "'")}"}`;
+      // 5. Rhombus / Decision: `ID{ ... }`
+      l = l.replace(/([A-Za-z0-9_]+)\s*\{\s*([\s\S]*?)\s*\}/g, (m, id, inner) => {
+        return addToken(id, `${id}{"${cleanLabel(inner)}"}`);
       });
 
-      // F6. Fix Rounded Box node syntax: `ID( ... )`
-      l = l.replace(/([A-Za-z0-9_]+)\s*\(\s*(.*?)\s*\)/g, (m, id, inner) => {
-        let s = inner.trim();
-        if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
-          s = s.slice(1, -1);
-        }
-        return `${id}("${s.replace(/"/g, "'")}")`;
-      });
-
-      // J. Fix Standard Box: `ID[ ... ]` (ignore if line is subgraph)
-      if (!/^\s*subgraph\s+/i.test(l)) {
-        l = l.replace(/([A-Za-z0-9_]+)\s*\[\s*(.*?)\s*\]/g, (m, id, inner) => {
-          let s = inner.trim();
-          if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
-            s = s.slice(1, -1);
-          }
-          return `${id}["${s.replace(/"/g, "'")}"]`;
+      // 6. Standard Box: `ID[ ... ]` (ignore subgraph lines)
+      if (!/^\s*subgraph\b/i.test(l)) {
+        l = l.replace(/([A-Za-z0-9_]+)\s*\[\s*([\s\S]*?)\s*\]/g, (m, id, inner) => {
+          return addToken(id, `${id}["${cleanLabel(inner)}"]`);
         });
       }
 
-      // Step 2: Restore pipe labels with clean double quotes: `|"Cleaned Label"|`
-      l = l.replace(/\|__PL_HOLD_(\d+)__\|/g, (m, idx) => {
-        const raw = pipeLabels[parseInt(idx, 10)] || '';
-        return `|"${raw}"|`;
+      // 7. Rounded Box: `ID( ... )`
+      l = l.replace(/([A-Za-z0-9_]+)\s*\(\s*([\s\S]*?)\s*\)/g, (m, id, inner) => {
+        return addToken(id, `${id}("${cleanLabel(inner)}")`);
       });
 
-      // K. Split chained definitions like `E -->|"label"| F["Label"] --> B` into two statements
-      const chainMatch = l.match(/^(\s*)([A-Za-z0-9_]+.*?(?:-->|-\.->|==>).*?\s+)([A-Za-z0-9_]+)(?:\[.*?\]|\(.*?\)|([\[{(].*?[\]})]))\s*(-->|-\.->|==>)\s*(.+)$/);
+      // H. Clean pipe labels |...|
+      l = l.replace(/\|([^|]+)\|/g, (m, rawPipe) => {
+        return `|"${cleanLabel(rawPipe)}"|`;
+      });
+
+      // I. Handle chained edges like `A -->|label| __NODE_TOKEN_0__ --> B`
+      // Split into two lines: `A -->|label| __NODE_TOKEN_0__` and `TARGET_ID --> B`
+      const chainMatch = l.match(/^(\s*)(.*?(?:-->|-\.->|==>).*?\s+)(__NODE_TOKEN_(\d+)__)\s*(-->|-\.->|==>)\s*(.+)$/);
       if (chainMatch) {
-        const indent = chainMatch[1];
-        const firstPart = l.substring(0, l.lastIndexOf(chainMatch[5])).trim();
-        const secondPart = `${indent}${chainMatch[3]} ${chainMatch[5]} ${chainMatch[6].trim()}`;
-        resultLines.push(firstPart);
-        resultLines.push(secondPart);
+        const lineIndent = chainMatch[1];
+        const tokenIdx = parseInt(chainMatch[4], 10);
+        const middleNodeId = nodeTokens[tokenIdx] ? nodeTokens[tokenIdx].id : chainMatch[3];
+        const firstPart = `${lineIndent}${chainMatch[2]}${chainMatch[3]}`;
+        const secondPart = `${lineIndent}${middleNodeId} ${chainMatch[5]} ${chainMatch[6].trim()}`;
+
+        // Restore tokens for firstPart
+        let resFirst = firstPart.replace(/__NODE_TOKEN_(\d+)__/g, (tm, tIdx) => {
+          return nodeTokens[parseInt(tIdx, 10)]?.formattedNode || tm;
+        });
+        // Restore tokens for secondPart
+        let resSecond = secondPart.replace(/__NODE_TOKEN_(\d+)__/g, (tm, tIdx) => {
+          return nodeTokens[parseInt(tIdx, 10)]?.formattedNode || tm;
+        });
+
+        resultLines.push(resFirst);
+        resultLines.push(resSecond);
         continue;
       }
+
+      // J. Restore all node tokens
+      l = l.replace(/__NODE_TOKEN_(\d+)__/g, (tm, tIdx) => {
+        return nodeTokens[parseInt(tIdx, 10)]?.formattedNode || tm;
+      });
 
       resultLines.push(l);
     }
@@ -549,7 +564,7 @@
     let endCount = 0;
     for (const line of resultLines) {
       if (/^\s*subgraph\b/i.test(line)) subgraphCount++;
-      if (/^\s*end\b/i.test(line)) endCount++;
+      if (/^\s*end\s*$/i.test(line.trim())) endCount++;
     }
     while (subgraphCount > endCount) {
       resultLines.push('  end');
@@ -743,6 +758,129 @@
   $: currentScreenMockup = (flowData && flowData.screen_mockups) 
     ? flowData.screen_mockups.find(s => s.screen_id === selectedScreenId) || flowData.screen_mockups[0]
     : null;
+
+  // ── Prototype Interactive State ──
+  let prototypeDevice = 'desktop'; // 'desktop' | 'tablet' | 'mobile'
+  let activePrototypeTab = '';
+  let isFavorite = false;
+  let formValues = {};
+  let isSimulatingSubmit = false;
+  let activePrototypeModal = null; // null | { title: '...', content: '...', type: '...' }
+
+  // Reactive default form values sync when screen changes
+  $: if (currentScreenMockup) {
+    if (currentScreenMockup.tabs && currentScreenMockup.tabs.length > 0 && !activePrototypeTab) {
+      activePrototypeTab = currentScreenMockup.tabs[0];
+    }
+    const mockId = currentScreenMockup.screen_id || 'DEFAULT';
+    if (!formValues[mockId]) {
+      formValues[mockId] = {};
+      if (currentScreenMockup.sections) {
+        currentScreenMockup.sections.forEach(sec => {
+          if (sec.fields) {
+            sec.fields.forEach(f => {
+              formValues[mockId][f.label] = f.default_value !== undefined ? f.default_value : (f.default !== undefined ? f.default : (f.placeholder || ''));
+            });
+          }
+        });
+      }
+    }
+  }
+
+  function fillSampleData() {
+    if (!currentScreenMockup) return;
+    const mockId = currentScreenMockup.screen_id || 'DEFAULT';
+    if (!formValues[mockId]) formValues[mockId] = {};
+    if (currentScreenMockup.sections) {
+      currentScreenMockup.sections.forEach(sec => {
+        if (sec.fields) {
+          sec.fields.forEach(f => {
+            if (f.type === 'toggle' || f.type === 'checkbox') {
+              formValues[mockId][f.label] = true;
+            } else if (f.default_value) {
+              formValues[mockId][f.label] = f.default_value;
+            } else if (f.placeholder && f.placeholder !== f.label) {
+              formValues[mockId][f.label] = f.placeholder;
+            } else if (f.options && f.options.length > 0) {
+              formValues[mockId][f.label] = f.options[0];
+            } else {
+              formValues[mockId][f.label] = `Sample ${f.label}`;
+            }
+          });
+        }
+      });
+    }
+    toast('⚡ เติมข้อมูลจำลองสำหรับทดสอบ Prototype เรียบร้อย', 'success');
+  }
+
+  function resetPrototype() {
+    if (!currentScreenMockup) return;
+    const mockId = currentScreenMockup.screen_id || 'DEFAULT';
+    formValues[mockId] = {};
+    isFavorite = false;
+    toast('🔄 รีเซ็ตค่าฟอร์ม Prototype สำเร็จ', 'info');
+  }
+
+  function handlePrototypeButtonAction(btn) {
+    const label = (btn.label || btn || '').toLowerCase();
+    if (label.includes('สั่ง') || label.includes('บันทึก') || label.includes('save') || label.includes('submit') || label.includes('sign in') || label.includes('เข้าสู่ระบบ') || label.includes('claim')) {
+      isSimulatingSubmit = true;
+      setTimeout(() => {
+        isSimulatingSubmit = false;
+        activePrototypeModal = {
+          title: '🎉 ดำเนินการสำเร็จ (Simulation Success)',
+          content: `ระบบทำการประมวลผลคำขอ "${btn.label || 'Submit'}" และบันทึกข้อมูลเข้าสู่ฐานข้อมูลเรียบร้อยแล้ว`,
+          type: 'success'
+        };
+      }, 500);
+    } else if (label.includes('นำทาง') || label.includes('map') || label.includes('แผนที่')) {
+      const addr = formValues[currentScreenMockup.screen_id]?.['ที่อยู่ / สถานที่ตั้ง'] || formValues[currentScreenMockup.screen_id]?.['ที่อยู่'] || 'จุดหมายปลายทาง';
+      activePrototypeModal = {
+        title: '🧭 จำลองระบบ GPS นำทาง (Route Simulator)',
+        content: `กำลังเชื่อมต่อไปยัง: ${addr} (ระยะทาง 1.8 กม. ใช้เวลาเดินทางโดยรถยนต์ประมาณ 7 นาที)`,
+        type: 'map'
+      };
+    } else if (label.includes('โทร') || label.includes('call') || label.includes('phone')) {
+      const phone = formValues[currentScreenMockup.screen_id]?.['เบอร์โทรศัพท์ติดต่อ'] || formValues[currentScreenMockup.screen_id]?.['เบอร์โทร'] || '02-123-4567';
+      toast(`📞 กำลังจำลองการโทรออกไปยังเบอร์: ${phone}`, 'info');
+    } else if (label.includes('รีวิว') || label.includes('review')) {
+      activePrototypeModal = {
+        title: '⭐ ฟอร์มส่งรีวิวและความประทับใจ',
+        content: 'คุณกำลังเขียนรีวิวและให้คะแนน 5 ดาวสำหรับ ' + (currentScreenMockup.header?.title || currentScreenMockup.screen_name),
+        type: 'review'
+      };
+    } else {
+      toast(`✨ คลิกปุ่ม Prototype: "${btn.label || btn}" สำเร็จ`, 'info');
+    }
+  }
+
+  function handlePrototypeHeaderAction(act) {
+    const s = String(act).toLowerCase();
+    if (s.includes('แชร์') || s.includes('share')) {
+      if (typeof navigator !== 'undefined' && navigator.clipboard) {
+        navigator.clipboard.writeText(window.location.href);
+      }
+      toast('🔗 คัดลอกลิงก์หน้าจอ Prototype แล้ว!', 'success');
+    } else if (s.includes('โปรด') || s.includes('favorite') || s.includes('like') || s.includes('บันทึกร้าน')) {
+      isFavorite = !isFavorite;
+      toast(isFavorite ? '❤️ เพิ่มในรายการโปรดแล้ว' : '🤍 นำออกจากรายการโปรดแล้ว', 'info');
+    } else if (s.includes('ย้อนกลับ') || s.includes('back')) {
+      if (flowData?.screen_mockups && flowData.screen_mockups.length > 1) {
+        const currIdx = flowData.screen_mockups.findIndex(s => s.screen_id === selectedScreenId);
+        const prevIdx = currIdx > 0 ? currIdx - 1 : flowData.screen_mockups.length - 1;
+        selectedScreenId = flowData.screen_mockups[prevIdx].screen_id;
+        toast(`◀ ย้อนกลับไปยังหน้า: ${flowData.screen_mockups[prevIdx].screen_name}`, 'info');
+      } else {
+        toast('◀ ย้อนกลับ', 'info');
+      }
+    } else {
+      toast(`✨ คลิก: ${act}`, 'info');
+    }
+  }
+
+  function handleTableActionClick(cellText, row) {
+    toast(`⚡ ดำเนินการ Action: "${cellText}" สำหรับรายการ "${row[1] || row[0]}" สำเร็จ`, 'success');
+  }
 
   function getUatStatusClass(val) {
     if (!val) return 'pending';
@@ -1067,276 +1205,627 @@
 
             {#if !currentScreenMockup}
               <div class="empty-mockup">
-                <div style="font-size: 32px; margin-bottom: 8px;">🖥️</div>
-                <div>เลือกเมนูทางซ้ายเพื่อแสดง UI Wireframe จำลอง</div>
+                <div style="font-size: 36px; margin-bottom: 12px;">🖥️</div>
+                <div style="font-weight: 600; color: #f8fafc; font-size: 15px;">เลือกเมนูทางซ้ายเพื่อแสดง UI Prototype</div>
+                <div style="font-size: 12px; color: #94a3b8; margin-top: 4px;">ระบบจะจำลองหน้าจอและส่วนประกอบ UI เสมือนจริงที่พร้อมโต้ตอบได้ทันที</div>
               </div>
             {:else}
-              <div class="mockup-viewport" transition:scale={{ duration: 150 }}>
-                <!-- Mockup Browser Bar -->
-                <div class="mockup-browser-bar">
-                  <div class="browser-dots">
-                    <span class="dot red"></span>
-                    <span class="dot yellow"></span>
-                    <span class="dot green"></span>
-                  </div>
-                  <div class="browser-url-input">
-                    <span class="lock-icon">🔒</span>
-                    {#if activeWireframeTab === 'figma' && currentScreenMockup.figma_url}
-                      {currentScreenMockup.figma_url}
-                    {:else}
-                      https://{($selectedProjectStore.project_code || 'system').toLowerCase()}.app{currentScreenMockup.route || '/'}
-                    {/if}
-                  </div>
-                  <div class="browser-right-actions">
-                    <button class="btn-run-agent-screen" on:click={() => handleTestScreenWithAgent(currentScreenMockup)} title="เปิดระบบ AI Test Agent เพื่อทดสอบหน้าจอนี้">
-                      🚀 ทดสอบหน้าจอนี้ด้วย AI
-                    </button>
-                    {#if activeWireframeTab === 'figma' && currentScreenMockup.figma_url}
-                      <a href={currentScreenMockup.figma_url} target="_blank" rel="noreferrer" class="browser-ext-link" title="เปิดใน Figma">
-                        ↗️ Open Figma
-                      </a>
-                    {:else if activeWireframeTab === 'image' && currentScreenMockup.image_url}
-                      <button class="browser-ext-link" on:click={() => lightboxImage = currentScreenMockup.image_url}>
-                        🔍 Fullscreen
-                      </button>
-                    {/if}
-                  </div>
+              <!-- Prototype Toolbar: Viewport Frame Switcher & Utilities -->
+              <div class="prototype-control-bar">
+                <div class="device-switch-group">
+                  <button 
+                    class="btn-device-switch" 
+                    class:active={prototypeDevice === 'desktop'} 
+                    on:click={() => prototypeDevice = 'desktop'}
+                    title="มุมมองหน้าจอ Desktop (100% Wide)">
+                    🖥️ Desktop
+                  </button>
+                  <button 
+                    class="btn-device-switch" 
+                    class:active={prototypeDevice === 'tablet'} 
+                    on:click={() => prototypeDevice = 'tablet'}
+                    title="มุมมองหน้าจอ Tablet (768px)">
+                    📱 Tablet
+                  </button>
+                  <button 
+                    class="btn-device-switch" 
+                    class:active={prototypeDevice === 'mobile'} 
+                    on:click={() => prototypeDevice = 'mobile'}
+                    title="มุมมองหน้าจอ Mobile Smartphone (375px)">
+                    📲 Mobile
+                  </button>
                 </div>
 
-                <!-- MODE 1: FIGMA EMBED / MCP SYNC -->
-                {#if activeWireframeTab === 'figma'}
-                  <div class="figma-container">
-                    <div class="figma-config-panel">
-                      <div class="figma-input-row">
-                        <span class="figma-icon-tag">🎨 Figma Link:</span>
-                        <input 
-                          type="text" 
-                          bind:value={figmaUrlInput} 
-                          placeholder="https://www.figma.com/design/.../...?node-id=..." 
-                          class="figma-text-input" 
-                        />
-                        <button class="btn-figma-action connect" on:click={handleSaveFigmaUrl}>
-                          🔗 Connect & Save
-                        </button>
-                        <button class="btn-figma-action sync" on:click={handleSyncFigmaImage} disabled={isSyncingFigma}>
-                          {#if isSyncingFigma}
-                            <span class="spinner-small"></span> Syncing...
-                          {:else}
-                            🔄 Sync MCP / API
-                          {/if}
-                        </button>
-                        <button class="btn-figma-action token" on:click={() => showFigmaTokenInput = !showFigmaTokenInput} title="Figma Personal Access Token">
-                          ⚙️ Token
-                        </button>
-                      </div>
+                <div class="prototype-quick-actions">
+                  <button class="btn-proto-action fill" on:click={fillSampleData} title="เติมข้อมูลจำลองอัตโนมัติลงในทุกช่องเพื่อทดสอบ">
+                    ⚡ เติมข้อมูลตัวอย่าง (Sample Data)
+                  </button>
+                  <button class="btn-proto-action reset" on:click={resetPrototype} title="ล้างค่าฟอร์มกลับเป็นค่าเริ่มต้น">
+                    🔄 รีเซ็ต
+                  </button>
+                  <div class="prototype-badge-live">
+                    <span class="live-dot pulse"></span>
+                    <span>Interactive Prototype</span>
+                  </div>
+                </div>
+              </div>
 
-                      {#if showFigmaTokenInput}
-                        <div class="figma-token-box" transition:slide>
-                          <div class="token-title">🔑 Figma Access Token (สำหรับดึงภาพอัตโนมัติผ่าน Figma MCP/REST API):</div>
-                          <div class="token-form-row">
-                            <input 
-                              type="password" 
-                              bind:value={figmaTokenInput} 
-                              placeholder="figd_xxxxxxxxx" 
-                              class="figma-token-field"
-                            />
-                            <button class="btn-save-token" on:click={() => { localStorage.setItem('figma_token', figmaTokenInput.trim()); toast('บันทึก Figma Token แล้ว', 'success'); showFigmaTokenInput = false; }}>
-                              บันทึก
-                            </button>
-                          </div>
-                        </div>
+              <!-- Device Outer Wrap for Responsive Simulation -->
+              <div class="prototype-outer-canvas {prototypeDevice}">
+                <div class="mockup-viewport" transition:scale={{ duration: 150 }}>
+                  
+                  {#if prototypeDevice === 'mobile'}
+                    <!-- Smartphone Notch & Status Bar -->
+                    <div class="mobile-phone-notch-bar">
+                      <span class="phone-time">9:41</span>
+                      <div class="phone-dynamic-island"></div>
+                      <div class="phone-icons">5G 📶 🔋</div>
+                    </div>
+                  {/if}
+
+                  <!-- Mockup Browser Bar -->
+                  <div class="mockup-browser-bar">
+                    <div class="browser-dots">
+                      <span class="dot red" on:click={resetPrototype} title="รีเซ็ต"></span>
+                      <span class="dot yellow"></span>
+                      <span class="dot green"></span>
+                    </div>
+                    <div class="browser-nav-arrows">
+                      <button class="btn-nav-arrow" on:click={() => handlePrototypeHeaderAction('ย้อนกลับ')} title="ย้อนกลับ">◀</button>
+                      <button class="btn-nav-arrow" on:click={fillSampleData} title="รีเฟรช">🔄</button>
+                    </div>
+                    <div class="browser-url-input">
+                      <span class="lock-icon">🔒</span>
+                      {#if activeWireframeTab === 'figma' && currentScreenMockup.figma_url}
+                        {currentScreenMockup.figma_url}
+                      {:else}
+                        https://{($selectedProjectStore.project_code || 'foodsmile').toLowerCase()}.app{currentScreenMockup.route || '/'}
                       {/if}
                     </div>
-
-                    {#if currentScreenMockup.figma_url}
-                      <div class="figma-iframe-box">
-                        <iframe 
-                          src={getFigmaEmbedUrl(currentScreenMockup.figma_url)} 
-                          title="Figma Live Frame" 
-                          class="figma-embed-frame"
-                          allowfullscreen
-                        ></iframe>
-                      </div>
-                    {:else}
-                      <div class="figma-empty-guide">
-                        <div class="figma-watermark-icon">🎨</div>
-                        <h4>เชื่อมต่อกับ Figma MCP & Live Frame Embed</h4>
-                        <p>คัดลอก URL ของ Frame ใน Figma (คลิกขวาที่ Frame ใน Figma &gt; Copy Link) แล้ววางในช่องด้านบน</p>
-                      </div>
-                    {/if}
+                    <div class="browser-right-actions">
+                      <button class="btn-run-agent-screen" on:click={() => handleTestScreenWithAgent(currentScreenMockup)} title="เปิดระบบ AI Test Agent เพื่อทดสอบหน้าจอนี้">
+                        🚀 ทดสอบด้วย AI
+                      </button>
+                      {#if activeWireframeTab === 'figma' && currentScreenMockup.figma_url}
+                        <a href={currentScreenMockup.figma_url} target="_blank" rel="noreferrer" class="browser-ext-link" title="เปิดใน Figma">
+                          ↗️ Figma
+                        </a>
+                      {:else if activeWireframeTab === 'image' && currentScreenMockup.image_url}
+                        <button class="browser-ext-link" on:click={() => lightboxImage = currentScreenMockup.image_url}>
+                          🔍 Fullscreen
+                        </button>
+                      {/if}
+                    </div>
                   </div>
 
-                <!-- MODE 2: UPLOAD IMAGE MOCKUP -->
-                {:else if activeWireframeTab === 'image'}
-                  <div class="image-mockup-container">
-                    <input 
-                      type="file" 
-                      accept="image/png, image/jpeg, image/webp, image/svg+xml" 
-                      style="display: none;" 
-                      bind:this={fileInputRef} 
-                      on:change={handleFileUpload} 
-                    />
+                  <!-- MODE 1: FIGMA EMBED / MCP SYNC -->
+                  {#if activeWireframeTab === 'figma'}
+                    <div class="figma-container">
+                      <div class="figma-config-panel">
+                        <div class="figma-input-row">
+                          <span class="figma-icon-tag">🎨 Figma Link:</span>
+                          <input 
+                            type="text" 
+                            bind:value={figmaUrlInput} 
+                            placeholder="https://www.figma.com/design/.../...?node-id=..." 
+                            class="figma-text-input" 
+                          />
+                          <button class="btn-figma-action connect" on:click={handleSaveFigmaUrl}>
+                            🔗 Connect & Save
+                          </button>
+                          <button class="btn-figma-action sync" on:click={handleSyncFigmaImage} disabled={isSyncingFigma}>
+                            {#if isSyncingFigma}
+                              <span class="spinner-small"></span> Syncing...
+                            {:else}
+                              🔄 Sync MCP / API
+                            {/if}
+                          </button>
+                          <button class="btn-figma-action token" on:click={() => showFigmaTokenInput = !showFigmaTokenInput} title="Figma Personal Access Token">
+                            ⚙️ Token
+                          </button>
+                        </div>
 
-                    {#if currentScreenMockup.image_url}
-                      <div class="image-viewport-box">
-                        <div class="image-action-toolbar">
-                          <span class="img-name-tag">📷 {currentScreenMockup.image_filename || 'Mockup Screenshot'}</span>
-                          <div class="img-btn-group">
-                            <button class="btn-img-ctrl zoom" on:click={() => lightboxImage = currentScreenMockup.image_url}>
-                              🔍 ขยายเต็มจอ
-                            </button>
-                            <button class="btn-img-ctrl replace" on:click={() => fileInputRef?.click()} disabled={isUploadingImage}>
-                              🔄 เปลี่ยนภาพ
-                            </button>
-                            <button class="btn-img-ctrl delete" on:click={handleRemoveImage}>
-                              🗑️ ลบภาพ
-                            </button>
+                        {#if showFigmaTokenInput}
+                          <div class="figma-token-box" transition:slide>
+                            <div class="token-title">🔑 Figma Access Token (สำหรับดึงภาพอัตโนมัติผ่าน Figma MCP/REST API):</div>
+                            <div class="token-form-row">
+                              <input 
+                                type="password" 
+                                bind:value={figmaTokenInput} 
+                                placeholder="figd_xxxxxxxxx" 
+                                class="figma-token-field"
+                              />
+                              <button class="btn-save-token" on:click={() => { localStorage.setItem('figma_token', figmaTokenInput.trim()); toast('บันทึก Figma Token แล้ว', 'success'); showFigmaTokenInput = false; }}>
+                                บันทึก
+                              </button>
+                            </div>
                           </div>
-                        </div>
-                        <div class="image-display-area" on:click={() => lightboxImage = currentScreenMockup.image_url}>
-                          <img src={`${currentScreenMockup.image_url}`} alt="Screen Wireframe Mockup" class="wireframe-img-render" />
-                        </div>
-                      </div>
-                    {:else}
-                      <div 
-                        class="image-upload-dropzone" 
-                        class:uploading={isUploadingImage}
-                        on:click={() => fileInputRef?.click()}
-                        on:dragover|preventDefault
-                        on:drop|preventDefault={(e) => {
-                          const file = e.dataTransfer?.files?.[0];
-                          if (file) handleFileUpload({ target: { files: [file] } });
-                        }}
-                      >
-                        <div class="drop-icon">🖼️</div>
-                        <h4>อัปโหลดรูปภาพ Screen Mockup / Wireframe</h4>
-                        <p>ลากรูปภาพมาวางที่นี่ หรือคลิกเพื่อเลือกไฟล์ (รองรับ PNG, JPG, WebP, SVG)</p>
-                        {#if isUploadingImage}
-                          <div class="uploading-spinner">
-                            <span class="spinner-small"></span> กำลังอัปโหลดภาพ...
-                          </div>
-                        {:else}
-                          <button class="btn-upload-browse">📁 เลือกไฟล์ภาพจากเครื่อง</button>
                         {/if}
                       </div>
-                    {/if}
-                  </div>
 
-                <!-- MODE 3: AI INTERACTIVE COMPONENT WIREFRAME -->
-                {:else}
-
-                <!-- Mockup Screen Body -->
-                <div class="mockup-screen-content">
-                  <!-- Header -->
-                  <div class="mockup-header-section">
-                    <div class="mockup-header-title">
-                      <h4>{currentScreenMockup.header?.title || currentScreenMockup.screen_name}</h4>
-                      {#if currentScreenMockup.header?.badge}
-                        <span class="mock-badge">{currentScreenMockup.header.badge}</span>
+                      {#if currentScreenMockup.figma_url}
+                        <div class="figma-iframe-box">
+                          <iframe 
+                            src={getFigmaEmbedUrl(currentScreenMockup.figma_url)} 
+                            title="Figma Live Frame" 
+                            class="figma-embed-frame"
+                            allowfullscreen
+                          ></iframe>
+                        </div>
+                      {:else}
+                        <div class="figma-empty-guide">
+                          <div class="figma-watermark-icon">🎨</div>
+                          <h4>เชื่อมต่อกับ Figma MCP & Live Frame Embed</h4>
+                          <p>คัดลอก URL ของ Frame ใน Figma (คลิกขวาที่ Frame ใน Figma &gt; Copy Link) แล้ววางในช่องด้านบน</p>
+                        </div>
                       {/if}
                     </div>
-                    <div class="mockup-header-actions">
-                      {#if currentScreenMockup.header?.actions}
-                        {#each currentScreenMockup.header.actions as act}
-                          <span class="mock-btn-sm">{act}</span>
-                        {/each}
-                      {/if}
-                    </div>
-                  </div>
 
-                  <!-- Description -->
-                  <p class="mockup-desc">{currentScreenMockup.description}</p>
+                  <!-- MODE 2: UPLOAD IMAGE MOCKUP -->
+                  {:else if activeWireframeTab === 'image'}
+                    <div class="image-mockup-container">
+                      <input 
+                        type="file" 
+                        accept="image/png, image/jpeg, image/webp, image/svg+xml" 
+                        style="display: none;" 
+                        bind:this={fileInputRef} 
+                        on:change={handleFileUpload} 
+                      />
 
-                  <!-- Dynamic Sections -->
-                  <div class="mockup-sections-stack">
-                    {#if currentScreenMockup.sections}
-                      {#each currentScreenMockup.sections as sec}
-                        <div class="mock-section-card">
-                          {#if sec.section_name}
-                            <div class="mock-sec-title">{sec.section_name}</div>
-                          {/if}
-
-                          {#if sec.type === 'form' || sec.fields}
-                            <div class="mock-form-grid">
-                              {#each (sec.fields || []) as f}
-                                <div class="mock-form-item">
-                                  <label class="mock-label">
-                                    {f.label} {#if f.required}<span style="color: #ef4444;">*</span>{/if}
-                                  </label>
-                                  {#if f.type === 'checkbox'}
-                                    <div class="mock-checkbox"><input type="checkbox" checked={f.default} disabled /> {f.label}</div>
-                                  {:else}
-                                    <div class="mock-input">{f.placeholder || f.label}</div>
-                                  {/if}
-                                </div>
-                              {/each}
+                      {#if currentScreenMockup.image_url}
+                        <div class="image-viewport-box">
+                          <div class="image-action-toolbar">
+                            <span class="img-name-tag">📷 {currentScreenMockup.image_filename || 'Mockup Screenshot'}</span>
+                            <div class="img-btn-group">
+                              <button class="btn-img-ctrl zoom" on:click={() => lightboxImage = currentScreenMockup.image_url}>
+                                🔍 ขยายเต็มจอ
+                              </button>
+                              <button class="btn-img-ctrl replace" on:click={() => fileInputRef?.click()} disabled={isUploadingImage}>
+                                🔄 เปลี่ยนภาพ
+                              </button>
+                              <button class="btn-img-ctrl delete" on:click={handleRemoveImage}>
+                                🗑️ ลบภาพ
+                              </button>
                             </div>
-                          {/if}
-
-                          {#if sec.buttons}
-                            <div class="mock-btn-row">
-                              {#each sec.buttons as btn}
-                                <div class="mock-button {btn.variant || 'primary'}">{btn.label}</div>
-                              {/each}
+                          </div>
+                          <div class="image-display-area" on:click={() => lightboxImage = currentScreenMockup.image_url}>
+                            <img src={`${currentScreenMockup.image_url}`} alt="Screen Wireframe Mockup" class="wireframe-img-render" />
+                          </div>
+                        </div>
+                      {:else}
+                        <div 
+                          class="image-upload-dropzone" 
+                          class:uploading={isUploadingImage}
+                          on:click={() => fileInputRef?.click()}
+                          on:dragover|preventDefault
+                          on:drop|preventDefault={(e) => {
+                            const file = e.dataTransfer?.files?.[0];
+                            if (file) handleFileUpload({ target: { files: [file] } });
+                          }}
+                        >
+                          <div class="drop-icon">🖼️</div>
+                          <h4>อัปโหลดรูปภาพ Screen Mockup / Wireframe</h4>
+                          <p>ลากรูปภาพมาวางที่นี่ หรือคลิกเพื่อเลือกไฟล์ (รองรับ PNG, JPG, WebP, SVG)</p>
+                          {#if isUploadingImage}
+                            <div class="uploading-spinner">
+                              <span class="spinner-small"></span> กำลังอัปโหลดภาพ...
                             </div>
-                          {/if}
-
-                          {#if sec.type === 'table' || sec.table_headers}
-                            <div class="mock-table-wrap">
-                              <table class="mock-table">
-                                <thead>
-                                  <tr>
-                                    {#each (sec.table_headers || ['ID', 'Title', 'Status', 'Actions']) as th}
-                                      <th>{th}</th>
-                                    {/each}
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {#each (sec.table_rows || [['#01', 'Sample Record Item', 'Active', 'Edit | View'], ['#02', 'Secondary Process Item', 'Completed', 'Edit | View']]) as row}
-                                    <tr>
-                                      {#each row as cell}
-                                        <td>{cell}</td>
-                                      {/each}
-                                    </tr>
-                                  {/each}
-                                </tbody>
-                              </table>
-                            </div>
+                          {:else}
+                            <button class="btn-upload-browse">📁 เลือกไฟล์ภาพจากเครื่อง</button>
                           {/if}
                         </div>
-                      {/each}
-                    {/if}
-                  </div>
+                      {/if}
+                    </div>
 
-                  <!-- Connected Entities Footbar -->
-                  <div class="mockup-footbar">
-                    <div class="conn-item">
-                      <b>🔗 Connected Use Cases:</b> 
-                      {#if currentScreenMockup.connected_use_cases}
-                        {#each currentScreenMockup.connected_use_cases as uc}
-                          <span class="tag-pill">{uc}</span>
+                  <!-- MODE 3: AI HIGH-FIDELITY INTERACTIVE PROTOTYPE -->
+                  {:else}
+
+                  <!-- Mockup Screen Body -->
+                  <div class="mockup-screen-content interactive-proto">
+                    
+                    <!-- Screen Hero / Header Bar -->
+                    <div class="proto-hero-card">
+                      <div class="proto-hero-main">
+                        <div class="proto-title-badge-row">
+                          <h3 class="proto-screen-title">
+                            {currentScreenMockup.header?.title || currentScreenMockup.screen_name}
+                          </h3>
+                          {#if currentScreenMockup.header?.badge}
+                            <span class="proto-verified-badge {currentScreenMockup.header.badge_color || 'emerald'}">
+                              ✨ {currentScreenMockup.header.badge}
+                            </span>
+                          {:else}
+                            <span class="proto-verified-badge emerald">
+                              ✨ Production Ready
+                            </span>
+                          {/if}
+                        </div>
+                        <p class="proto-desc-text">
+                          {currentScreenMockup.description || 'Interactive prototype screen wired with live form inputs, dynamic state management, and functional UI components.'}
+                        </p>
+                      </div>
+
+                      <div class="proto-header-action-toolbar">
+                        {#if currentScreenMockup.header?.actions}
+                          {#each currentScreenMockup.header.actions as act}
+                            <button 
+                              class="btn-proto-header-action" 
+                              class:favorited={isFavorite && (act.includes('โปรด') || act.includes('favorite') || act.includes('like'))}
+                              on:click={() => handlePrototypeHeaderAction(act)}>
+                              {#if act.includes('แชร์') || act.includes('share')}
+                                🔗 {act}
+                              {:else if act.includes('โปรด') || act.includes('favorite') || act.includes('like')}
+                                {isFavorite ? '❤️ เป็นร้านโปรดแล้ว' : '🤍 ' + act}
+                              {:else if act.includes('ย้อน') || act.includes('back')}
+                                ◀ {act}
+                              {:else}
+                                ⚙️ {act}
+                              {/if}
+                            </button>
+                          {/each}
+                        {:else}
+                          <button class="btn-proto-header-action" on:click={() => handlePrototypeHeaderAction('แชร์หน้าร้าน')}>
+                            🔗 แชร์
+                          </button>
+                          <button 
+                            class="btn-proto-header-action" 
+                            class:favorited={isFavorite}
+                            on:click={() => handlePrototypeHeaderAction('บันทึกรายการโปรด')}>
+                            {isFavorite ? '❤️ รายการโปรด' : '🤍 บันทึก'}
+                          </button>
+                        {/if}
+                      </div>
+                    </div>
+
+                    <!-- KPI / Summary Metric Cards Grid -->
+                    {#if currentScreenMockup.stats && currentScreenMockup.stats.length > 0}
+                      <div class="proto-stats-grid">
+                        {#each currentScreenMockup.stats as st}
+                          <div class="proto-stat-card {st.color || 'blue'}">
+                            <div class="stat-card-label">{st.label}</div>
+                            <div class="stat-card-value">{st.value}</div>
+                            {#if st.sub}
+                              <div class="stat-card-sub">{st.sub}</div>
+                            {/if}
+                          </div>
                         {/each}
-                      {:else}
-                        <span style="color: #94a3b8;">-</span>
+                      </div>
+                    {:else}
+                      <!-- Fallback Smart Metric Grid for standard screens -->
+                      <div class="proto-stats-grid">
+                        <div class="proto-stat-card amber">
+                          <div class="stat-card-label">คะแนนความพึงพอใจ</div>
+                          <div class="stat-card-value">4.85 ★</div>
+                          <div class="stat-card-sub">จาก 342 รีวิว</div>
+                        </div>
+                        <div class="proto-stat-card emerald">
+                          <div class="stat-card-label">สถานะการทำงาน</div>
+                          <div class="stat-card-value">เปิดบริการอยู่</div>
+                          <div class="stat-card-sub">ปิด 22:00 น.</div>
+                        </div>
+                        <div class="proto-stat-card blue">
+                          <div class="stat-card-label">เวลาจัดส่งเฉลี่ย</div>
+                          <div class="stat-card-value">25-35 นาที</div>
+                          <div class="stat-card-sub">ระยะทาง 1.8 กม.</div>
+                        </div>
+                        <div class="proto-stat-card purple">
+                          <div class="stat-card-label">ระดับราคา</div>
+                          <div class="stat-card-value">฿฿ (100-250)</div>
+                          <div class="stat-card-sub">รับ PromptPay/บัตร</div>
+                        </div>
+                      </div>
+                    {/if}
+
+                    <!-- Interactive Tabs Bar -->
+                    {#if currentScreenMockup.tabs && currentScreenMockup.tabs.length > 0}
+                      <div class="proto-tabs-navbar">
+                        {#each currentScreenMockup.tabs as tb}
+                          <button 
+                            class="proto-nav-tab-btn" 
+                            class:active={activePrototypeTab === tb} 
+                            on:click={() => { activePrototypeTab = tb; toast(`สลับไปยังแท็บ: ${tb}`, 'info'); }}>
+                            {tb}
+                          </button>
+                        {/each}
+                      </div>
+                    {/if}
+
+                    <!-- Dynamic Sections Stack -->
+                    <div class="mockup-sections-stack">
+                      {#if currentScreenMockup.sections}
+                        {#each currentScreenMockup.sections as sec, secIdx}
+                          
+                          <!-- SECTION: GALLERY / BANNER -->
+                          {#if sec.type === 'gallery' || sec.images}
+                            <div class="proto-section-card gallery">
+                              <div class="proto-sec-header">
+                                <div class="mock-sec-title">🖼️ {sec.section_name || 'Image Gallery & Highlights'}</div>
+                                {#if sec.banner_tag}
+                                  <span class="proto-tag-highlight">{sec.banner_tag}</span>
+                                {/if}
+                              </div>
+                              <div class="proto-gallery-grid">
+                                {#each (sec.images || [{ title: 'ภาพบรรยากาศหลัก', desc: 'โซนที่นั่งสบาย มีที่จอดรถ' }, { title: 'โซน Dining Room', desc: 'ห้องปรับอากาศรองรับ 30 ที่นั่ง' }, { title: 'Open Kitchen', desc: 'มาตรฐานความสะอาด SHA Plus+' }]) as img, idx}
+                                  <div class="gallery-photo-card" on:click={() => toast(`🔍 ดูภาพขยาย: ${img.title}`, 'info')}>
+                                    <div class="photo-visual-placeholder grad-{idx % 4}">
+                                      <span class="photo-cam-icon">📷</span>
+                                      <span class="photo-badge">HD View</span>
+                                    </div>
+                                    <div class="photo-card-info">
+                                      <div class="photo-title">{img.title}</div>
+                                      <div class="photo-desc">{img.desc}</div>
+                                    </div>
+                                  </div>
+                                {/each}
+                              </div>
+                            </div>
+
+                          <!-- SECTION: INTERACTIVE FORM -->
+                          {:else if sec.type === 'form' || sec.fields}
+                            <div class="proto-section-card form">
+                              <div class="proto-sec-header">
+                                <div class="mock-sec-title">📝 {sec.section_name || 'Interactive Form Details'}</div>
+                                <span class="proto-interactive-tag">⚡ Live Editable</span>
+                              </div>
+
+                              <div class="mock-form-grid">
+                                {#each (sec.fields || []) as f}
+                                  <div class="mock-form-item" class:full-width={f.type === 'textarea' || (f.label && f.label.includes('ที่อยู่'))}>
+                                    <label class="mock-label" for="fld-{secIdx}-{f.label}">
+                                      {f.label} {#if f.required}<span class="req-star">*</span>{/if}
+                                    </label>
+
+                                    {#if f.type === 'toggle' || (f.label && f.label.includes('เปิดรับ'))}
+                                      <div class="proto-toggle-wrap">
+                                        <label class="proto-switch">
+                                          <input 
+                                            type="checkbox" 
+                                            bind:checked={formValues[currentScreenMockup.screen_id || 'DEFAULT'][f.label]}
+                                          />
+                                          <span class="switch-slider"></span>
+                                        </label>
+                                        <span class="toggle-status-text">
+                                          {formValues[currentScreenMockup.screen_id || 'DEFAULT'][f.label] ? '🟢 เปิดใช้งาน (Active)' : '⚪ ปิดใช้งาน (Disabled)'}
+                                        </span>
+                                      </div>
+
+                                    {:else if f.type === 'select' || f.options}
+                                      <div class="proto-input-wrapper">
+                                        <select 
+                                          id="fld-{secIdx}-{f.label}"
+                                          class="proto-real-select"
+                                          bind:value={formValues[currentScreenMockup.screen_id || 'DEFAULT'][f.label]}
+                                        >
+                                          {#each (f.options || ['ตัวเลือก 1', 'ตัวเลือก 2', 'ตัวเลือก 3']) as opt}
+                                            <option value={opt}>{opt}</option>
+                                          {/each}
+                                        </select>
+                                        <span class="select-chevron">▼</span>
+                                      </div>
+
+                                    {:else if f.type === 'textarea' || (f.label && f.label.includes('ที่อยู่'))}
+                                      <textarea 
+                                        id="fld-{secIdx}-{f.label}"
+                                        class="proto-real-textarea"
+                                        rows="3"
+                                        placeholder={f.placeholder || f.label}
+                                        bind:value={formValues[currentScreenMockup.screen_id || 'DEFAULT'][f.label]}
+                                      ></textarea>
+
+                                    {:else if f.type === 'checkbox'}
+                                      <label class="proto-real-checkbox">
+                                        <input 
+                                          type="checkbox" 
+                                          bind:checked={formValues[currentScreenMockup.screen_id || 'DEFAULT'][f.label]} 
+                                        />
+                                        <span>{f.label}</span>
+                                      </label>
+
+                                    {:else}
+                                      <div class="proto-input-wrapper">
+                                        <input 
+                                          type={f.type === 'password' ? 'password' : 'text'}
+                                          id="fld-{secIdx}-{f.label}"
+                                          class="proto-real-input"
+                                          placeholder={f.placeholder || f.label}
+                                          bind:value={formValues[currentScreenMockup.screen_id || 'DEFAULT'][f.label]}
+                                        />
+                                        {#if formValues[currentScreenMockup.screen_id || 'DEFAULT'][f.label]}
+                                          <button 
+                                            class="btn-input-clear" 
+                                            on:click={() => formValues[currentScreenMockup.screen_id || 'DEFAULT'][f.label] = ''} 
+                                            title="ล้างข้อมูล">✕</button>
+                                        {/if}
+                                      </div>
+                                    {/if}
+                                  </div>
+                                {/each}
+                              </div>
+
+                              <!-- Action Buttons Row -->
+                              {#if sec.buttons && sec.buttons.length > 0}
+                                <div class="mock-btn-row">
+                                  {#each sec.buttons as btn}
+                                    <button 
+                                      class="proto-action-btn {btn.variant || 'primary'}"
+                                      disabled={isSimulatingSubmit}
+                                      on:click={() => handlePrototypeButtonAction(btn)}>
+                                      {#if isSimulatingSubmit && (btn.variant === 'primary' || (btn.label && btn.label.includes('สั่ง')))}
+                                        <span class="spinner-small"></span> กำลังประมวลผล...
+                                      {:else}
+                                        {#if btn.icon}<span>{btn.icon}</span>{/if}
+                                        <span>{btn.label}</span>
+                                      {/if}
+                                    </button>
+                                  {/each}
+                                </div>
+                              {/if}
+                            </div>
+
+                          <!-- SECTION: DATA TABLE -->
+                          {:else if sec.type === 'table' || sec.table_headers}
+                            <div class="proto-section-card table">
+                              <div class="proto-sec-header">
+                                <div class="mock-sec-title">📊 {sec.section_name || 'Data Table Overview'}</div>
+                                <span class="proto-count-badge">{(sec.table_rows || []).length} รายการ</span>
+                              </div>
+
+                              <div class="mock-table-wrap">
+                                <table class="mock-table proto-table">
+                                  <thead>
+                                    <tr>
+                                      {#each (sec.table_headers || ['รหัส', 'ชื่อรายการ', 'หมวดหมู่', 'ราคา', 'สถานะ', 'จัดการ']) as th}
+                                        <th>{th}</th>
+                                      {/each}
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {#each (sec.table_rows || [['#01', 'สเต๊กแซลมอนนอร์เวย์', 'จานหลัก', '320.-', 'พร้อมเสิร์ฟ', 'สั่งซื้อเลย'], ['#02', 'สปาเก็ตตี้คาโบนาร่าทรัฟเฟิล', 'พาสต้า', '260.-', 'พร้อมเสิร์ฟ', 'สั่งซื้อเลย']]) as row}
+                                      <tr class="proto-table-row">
+                                        {#each row as cell, cellIdx}
+                                          <td>
+                                            {#if String(cell).includes('พร้อม') || String(cell).includes('Active') || String(cell).includes('สำเร็จ')}
+                                              <span class="table-pill success">🟢 {cell}</span>
+                                            {:else if String(cell).includes('รอ') || String(cell).includes('Pending')}
+                                              <span class="table-pill warning">⏳ {cell}</span>
+                                            {:else if String(cell).startsWith('#')}
+                                              <span class="table-code-badge">{cell}</span>
+                                            {:else if cellIdx === row.length - 1}
+                                              <button class="btn-table-action" on:click={() => handleTableActionClick(cell, row)}>
+                                                ⚡ {cell}
+                                              </button>
+                                            {:else}
+                                              <span class="table-cell-text">{cell}</span>
+                                            {/if}
+                                          </td>
+                                        {/each}
+                                      </tr>
+                                    {/each}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+
+                          <!-- SECTION: REVIEWS & FEEDBACK -->
+                          {:else if sec.type === 'reviews' || sec.reviews}
+                            <div class="proto-section-card reviews">
+                              <div class="proto-sec-header">
+                                <div class="mock-sec-title">💬 {sec.section_name || 'Customer Reviews & Feedback'}</div>
+                                <button class="btn-write-review-sm" on:click={() => handlePrototypeButtonAction({ label: 'เขียนรีวิว' })}>
+                                  ✍️ เขียนรีวิว
+                                </button>
+                              </div>
+
+                              <div class="proto-reviews-list">
+                                {#each (sec.reviews || [{ user: 'นันทนา กุลสวัสดิ์', rating: 5, comment: 'อาหารอร่อยมาก บรรยากาศดี พนักงานบริการสุภาพ แนะนำเลยค่ะ!', time: '1 ชม. ที่แล้ว' }, { user: 'เอกรัฐ พัฒนา', rating: 5, comment: 'ที่จอดรถสะดวก อาหารเสิร์ฟรวดเร็ว คุ้มราคามากครับ', time: 'เมื่อวานนี้' }]) as rev}
+                                  <div class="review-comment-card">
+                                    <div class="rev-user-header">
+                                      <div class="rev-avatar">👤</div>
+                                      <div class="rev-user-meta">
+                                        <div class="rev-name">{rev.user}</div>
+                                        <div class="rev-time">{rev.time || 'เมื่อสักครู่'}</div>
+                                      </div>
+                                      <div class="rev-stars">
+                                        {'⭐'.repeat(rev.rating || 5)}
+                                      </div>
+                                    </div>
+                                    <p class="rev-comment-text">{rev.comment}</p>
+                                  </div>
+                                {/each}
+                              </div>
+                            </div>
+
+                          <!-- FALLBACK SECTION CARD -->
+                          {:else}
+                            <div class="proto-section-card generic">
+                              {#if sec.section_name}
+                                <div class="mock-sec-title">📦 {sec.section_name}</div>
+                              {/if}
+                              <div class="proto-generic-content">
+                                <p style="color: #cbd5e1; font-size: 12px; margin: 0 0 10px 0;">{sec.description || 'Interactive section component with dynamic controls.'}</p>
+                              </div>
+                            </div>
+                          {/if}
+
+                        {/each}
                       {/if}
                     </div>
-                    <div class="conn-item">
-                      <b>📋 Requirements:</b> 
-                      {#if currentScreenMockup.connected_req_codes}
-                        {#each currentScreenMockup.connected_req_codes as req}
-                          <span class="tag-pill req">{req}</span>
-                        {/each}
-                      {:else}
-                        <span style="color: #94a3b8;">-</span>
-                      {/if}
+
+                    <!-- Connected Entities Footbar -->
+                    <div class="mockup-footbar">
+                      <div class="conn-item">
+                        <b>🔗 Connected Use Cases:</b> 
+                        {#if currentScreenMockup.connected_use_cases}
+                          {#each currentScreenMockup.connected_use_cases as uc}
+                            <span class="tag-pill">{uc}</span>
+                          {/each}
+                        {:else}
+                          <span style="color: #94a3b8;">-</span>
+                        {/if}
+                      </div>
+                      <div class="conn-item">
+                        <b>📋 Requirements:</b> 
+                        {#if currentScreenMockup.connected_req_codes}
+                          {#each currentScreenMockup.connected_req_codes as req}
+                            <span class="tag-pill req">{req}</span>
+                          {/each}
+                        {:else}
+                          <span style="color: #94a3b8;">-</span>
+                        {/if}
+                      </div>
                     </div>
                   </div>
+                {/if}
                 </div>
-              {/if}
-            </div>
-          {/if}
+              </div>
+            {/if}
+          </div>
         </div>
-      </div>
+
+        <!-- Prototype Simulation Dialog Modal -->
+        {#if activePrototypeModal}
+          <div class="lightbox-backdrop" transition:fade on:click={() => activePrototypeModal = null}>
+            <div class="prototype-dialog-modal" on:click|stopPropagation>
+              <div class="proto-dialog-header {activePrototypeModal.type}">
+                <div class="proto-dialog-title">{activePrototypeModal.title}</div>
+                <button class="lightbox-close" on:click={() => activePrototypeModal = null}>✕</button>
+              </div>
+              <div class="proto-dialog-body">
+                {#if activePrototypeModal.type === 'success'}
+                  <div class="dialog-icon-huge">🎉</div>
+                  <p class="dialog-body-text">{activePrototypeModal.content}</p>
+                  <div class="dialog-success-badge">HTTP 200 OK • State Updated</div>
+                {:else if activePrototypeModal.type === 'map'}
+                  <div class="dialog-map-preview">
+                    <div class="simulated-map-box">
+                      <div class="map-route-line"></div>
+                      <div class="map-pin start">📍 จุดเริ่มต้นของคุณ</div>
+                      <div class="map-pin end">🏁 ร้านอาหารเป้าหมาย</div>
+                    </div>
+                  </div>
+                  <p class="dialog-body-text">{activePrototypeModal.content}</p>
+                {:else if activePrototypeModal.type === 'review'}
+                  <div class="dialog-review-form">
+                    <div class="star-rating-selector">
+                      <span class="star-sel active">⭐</span>
+                      <span class="star-sel active">⭐</span>
+                      <span class="star-sel active">⭐</span>
+                      <span class="star-sel active">⭐</span>
+                      <span class="star-sel active">⭐</span>
+                      <span class="star-score-tag">5.0 (ยอดเยี่ยม)</span>
+                    </div>
+                    <textarea class="proto-real-textarea" rows="3" placeholder="พิมพ์ความคิดเห็นของคุณที่นี่..."></textarea>
+                  </div>
+                {/if}
+              </div>
+              <div class="proto-dialog-footer">
+                <button class="proto-btn-dialog-close" on:click={() => { toast('บันทึกการดำเนินการเรียบร้อย', 'success'); activePrototypeModal = null; }}>
+                  ตกลง / ดำเนินการต่อ
+                </button>
+              </div>
+            </div>
+          </div>
+        {/if}
 
       <!-- TAB 2, 3, 4, 5: SYSTEM FLOWCHART & UML DIAGRAMS -->
       {:else if activeTab === 'flowchart' || activeTab === 'usecase' || activeTab === 'activity' || activeTab === 'sequence'}
@@ -2002,100 +2491,707 @@
     gap: 6px;
   }
 
-  .mockup-screen-content {
-    padding: 20px;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-    background: radial-gradient(circle at top right, rgba(30, 58, 138, 0.15), transparent 70%), #0f172a;
-  }
-
-  .mockup-header-section {
+  /* ── INTERACTIVE PROTOTYPE & WIREFRAME WORKSPACE ── */
+  .prototype-control-bar {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    background: linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(30, 41, 59, 0.9));
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-    padding-bottom: 10px;
+    padding: 8px 16px;
+    flex-wrap: wrap;
+    gap: 10px;
   }
 
-  .mockup-header-title { display: flex; align-items: center; gap: 8px; }
-  .mockup-header-title h4 { margin: 0; font-size: 1.15rem; color: #f8fafc; }
-  .mock-badge { background: #3b82f6; color: white; font-size: 10px; padding: 2px 6px; border-radius: 4px; font-weight: 600; }
+  .device-switch-group {
+    display: flex;
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    padding: 2px;
+    gap: 2px;
+  }
 
-  .mock-btn-sm {
-    background: rgba(255, 255, 255, 0.08);
-    color: #cbd5e1;
+  .btn-device-switch {
+    background: transparent;
+    border: none;
+    color: #94a3b8;
+    padding: 5px 12px;
+    border-radius: 6px;
+    font-size: 11.5px;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.2s;
+  }
+  .btn-device-switch:hover { color: #f8fafc; }
+  .btn-device-switch.active {
+    background: linear-gradient(135deg, #3b82f6, #6366f1);
+    color: white;
+    box-shadow: 0 2px 8px rgba(59, 130, 246, 0.4);
+  }
+
+  .proto-actions-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .btn-proto-action {
+    padding: 5px 12px;
+    border-radius: 6px;
+    font-size: 11.5px;
+    font-weight: 600;
+    cursor: pointer;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    transition: all 0.2s;
+  }
+  .btn-proto-action.fill-data {
+    background: rgba(234, 179, 8, 0.15);
+    border-color: rgba(234, 179, 8, 0.4);
+    color: #fde047;
+  }
+  .btn-proto-action.fill-data:hover {
+    background: rgba(234, 179, 8, 0.3);
+    box-shadow: 0 0 10px rgba(234, 179, 8, 0.3);
+  }
+  .btn-proto-action.reset {
+    background: rgba(255, 255, 255, 0.06);
+    color: #94a3b8;
+  }
+  .btn-proto-action.reset:hover { background: rgba(255, 255, 255, 0.12); color: #f8fafc; }
+
+  .prototype-badge-live {
+    background: rgba(34, 197, 94, 0.15);
+    border: 1px solid rgba(34, 197, 94, 0.4);
+    color: #86efac;
     padding: 4px 10px;
-    border-radius: 5px;
+    border-radius: 20px;
     font-size: 11px;
-    font-weight: 500;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .prototype-badge-live .pulse-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #22c55e;
+    box-shadow: 0 0 8px #22c55e;
+    animation: pulse 1.5s infinite;
   }
 
-  .mockup-desc { margin: 0; font-size: 12.5px; color: #94a3b8; line-height: 1.5; }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.4; transform: scale(0.8); }
+  }
 
-  .mockup-sections-stack { display: flex; flex-direction: column; gap: 14px; }
+  /* ── OUTER PROTOTYPE CANVAS WRAPPER ── */
+  .prototype-outer-canvas {
+    padding: 24px;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    min-height: 520px;
+    background: radial-gradient(circle at 50% 0%, #172554 0%, #0b0f19 75%);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    overflow-x: auto;
+  }
 
-  .mock-section-card {
-    background: rgba(30, 41, 59, 0.6);
+  .prototype-outer-canvas.desktop {
+    padding: 16px;
+  }
+  .prototype-outer-canvas.desktop .mockup-screen-content {
+    width: 100%;
+    max-width: 100%;
+    border-radius: 8px;
+  }
+
+  .prototype-outer-canvas.tablet {
+    padding: 24px 16px;
+  }
+  .prototype-outer-canvas.tablet .mockup-screen-content {
+    width: 768px;
+    max-width: 100%;
+    border-radius: 16px;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+  }
+
+  .prototype-outer-canvas.mobile {
+    padding: 24px 12px;
+  }
+  .prototype-outer-canvas.mobile .mockup-screen-content {
+    width: 390px;
+    max-width: 100%;
+    border-radius: 36px;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.8), 0 0 0 8px #1e293b;
+    border: 2px solid rgba(255, 255, 255, 0.18);
+    overflow: hidden;
+  }
+
+  .mobile-phone-notch-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 18px 4px 18px;
+    font-size: 11px;
+    color: #94a3b8;
+    background: rgba(15, 23, 42, 0.95);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  }
+  .phone-dynamic-island {
+    width: 80px;
+    height: 18px;
+    background: #000;
+    border-radius: 12px;
+    margin: 0 auto;
+  }
+  .phone-status-icons { font-size: 10px; font-weight: 600; color: #cbd5e1; }
+
+  .mockup-screen-content {
+    background: #0f172a;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding: 20px;
+    transition: width 0.3s ease;
+    box-sizing: border-box;
+  }
+
+  /* ── HERO BANNER CARD ── */
+  .proto-hero-card {
+    background: linear-gradient(135deg, rgba(30, 58, 138, 0.35), rgba(15, 23, 42, 0.8));
+    border: 1px solid rgba(96, 165, 250, 0.25);
+    border-radius: 12px;
+    padding: 16px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .proto-hero-main {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .proto-title-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .proto-screen-title {
+    margin: 0;
+    font-size: 1.35rem;
+    font-weight: 700;
+    color: #f8fafc;
+  }
+
+  .proto-verified-badge {
+    background: linear-gradient(135deg, #059669, #10b981);
+    color: white;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 7px;
+    border-radius: 20px;
+    box-shadow: 0 2px 6px rgba(16, 185, 129, 0.3);
+  }
+
+  .proto-header-action-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .btn-proto-header-action {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: #cbd5e1;
+    padding: 5px 10px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .btn-proto-header-action:hover {
+    background: rgba(255, 255, 255, 0.18);
+    color: #ffffff;
+  }
+  .btn-proto-header-action.fav.active {
+    background: rgba(239, 68, 68, 0.2);
+    border-color: rgba(239, 68, 68, 0.5);
+    color: #fca5a5;
+  }
+
+  .mockup-desc {
+    margin: 0;
+    font-size: 12.5px;
+    color: #94a3b8;
+    line-height: 1.5;
+  }
+
+  /* ── STATS KPI CARDS ── */
+  .proto-stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 10px;
+  }
+
+  .proto-stat-card {
+    background: rgba(15, 23, 42, 0.7);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 8px;
-    padding: 14px;
+    padding: 10px 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    transition: transform 0.15s;
+  }
+  .proto-stat-card:hover {
+    transform: translateY(-2px);
+    border-color: rgba(96, 165, 250, 0.3);
+  }
+
+  .proto-stat-icon-wrap { font-size: 20px; }
+  .proto-stat-body { display: flex; flex-direction: column; }
+  .proto-stat-num { font-size: 1.15rem; font-weight: 700; color: #f8fafc; }
+  .proto-stat-lbl { font-size: 10.5px; color: #94a3b8; font-weight: 500; }
+
+  /* ── NAVIGATION TABS ── */
+  .proto-tabs-navbar {
+    display: flex;
+    gap: 6px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    padding-bottom: 2px;
+    overflow-x: auto;
+  }
+
+  .proto-nav-tab-btn {
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: #94a3b8;
+    padding: 6px 14px;
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+  }
+  .proto-nav-tab-btn:hover { color: #f8fafc; }
+  .proto-nav-tab-btn.active {
+    color: #60a5fa;
+    border-bottom-color: #3b82f6;
+  }
+
+  /* ── SECTION STACK ── */
+  .mockup-sections-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .proto-section-card {
+    background: rgba(30, 41, 59, 0.65);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .proto-sec-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
   }
 
   .mock-sec-title {
-    font-size: 12px;
+    font-size: 12.5px;
     font-weight: 700;
     color: #93c5fd;
-    margin-bottom: 10px;
     text-transform: uppercase;
     letter-spacing: 0.5px;
   }
 
+  .proto-interactive-tag {
+    background: rgba(59, 130, 246, 0.18);
+    border: 1px solid rgba(59, 130, 246, 0.4);
+    color: #93c5fd;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 7px;
+    border-radius: 12px;
+  }
+
+  .proto-tag-highlight {
+    background: rgba(234, 179, 8, 0.15);
+    border: 1px solid rgba(234, 179, 8, 0.4);
+    color: #fde047;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 7px;
+    border-radius: 12px;
+  }
+
+  .proto-count-badge {
+    background: rgba(255, 255, 255, 0.08);
+    color: #cbd5e1;
+    font-size: 10.5px;
+    padding: 2px 8px;
+    border-radius: 10px;
+  }
+
+  /* ── GALLERY SECTION ── */
+  .proto-gallery-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+  }
+
+  .gallery-photo-card {
+    background: #090d16;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    overflow: hidden;
+    cursor: pointer;
+    transition: transform 0.2s, border-color 0.2s;
+  }
+  .gallery-photo-card:hover {
+    transform: translateY(-2px);
+    border-color: rgba(96, 165, 250, 0.5);
+  }
+
+  .photo-visual-placeholder {
+    height: 90px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+  }
+  .photo-visual-placeholder.grad-0 { background: linear-gradient(135deg, #1e3a8a, #0284c7); }
+  .photo-visual-placeholder.grad-1 { background: linear-gradient(135deg, #4c1d95, #9333ea); }
+  .photo-visual-placeholder.grad-2 { background: linear-gradient(135deg, #065f46, #059669); }
+  .photo-visual-placeholder.grad-3 { background: linear-gradient(135deg, #9a3412, #ea580c); }
+
+  .photo-cam-icon { font-size: 26px; }
+  .photo-badge {
+    position: absolute;
+    bottom: 6px;
+    right: 8px;
+    background: rgba(0, 0, 0, 0.6);
+    color: #ffffff;
+    font-size: 9px;
+    font-weight: 700;
+    padding: 1px 5px;
+    border-radius: 4px;
+  }
+
+  .photo-card-info { padding: 8px 10px; }
+  .photo-title { font-size: 11.5px; font-weight: 600; color: #f8fafc; margin-bottom: 2px; }
+  .photo-desc { font-size: 10.5px; color: #94a3b8; line-height: 1.3; }
+
+  /* ── FORM INPUTS & INTERACTION ── */
   .mock-form-grid {
     display: grid;
     grid-template-columns: repeat(2, 1fr);
     gap: 12px;
   }
 
-  .mock-form-item { display: flex; flex-direction: column; gap: 4px; }
-  .mock-label { font-size: 11px; color: #94a3b8; font-weight: 500; }
+  .mock-form-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .mock-form-item.full-width { grid-column: 1 / -1; }
 
-  .mock-input {
-    background: #0f172a;
-    border: 1px solid #334155;
-    padding: 6px 10px;
-    border-radius: 5px;
-    font-size: 12px;
-    color: #64748b;
+  .mock-label {
+    font-size: 11.5px;
+    color: #cbd5e1;
+    font-weight: 600;
+  }
+  .req-star { color: #f87171; }
+
+  .proto-input-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
   }
 
-  .mock-checkbox { font-size: 12px; color: #cbd5e1; display: flex; align-items: center; gap: 6px; }
+  .proto-real-input, .proto-real-select, .proto-real-textarea {
+    width: 100%;
+    background: #030712;
+    border: 1px solid #374151;
+    color: #f8fafc;
+    padding: 7px 10px;
+    border-radius: 6px;
+    font-size: 12.5px;
+    box-sizing: border-box;
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  .proto-real-input:focus, .proto-real-select:focus, .proto-real-textarea:focus {
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25);
+  }
 
-  .mock-btn-row { display: flex; gap: 10px; margin-top: 12px; }
-  .mock-button {
-    padding: 6px 14px;
+  .proto-real-select {
+    appearance: none;
+    cursor: pointer;
+    padding-right: 28px;
+  }
+  .select-chevron {
+    position: absolute;
+    right: 10px;
+    font-size: 9px;
+    color: #94a3b8;
+    pointer-events: none;
+  }
+
+  .btn-input-clear {
+    position: absolute;
+    right: 8px;
+    background: none;
+    border: none;
+    color: #94a3b8;
+    font-size: 11px;
+    cursor: pointer;
+    padding: 2px 4px;
+  }
+  .btn-input-clear:hover { color: #f8fafc; }
+
+  /* iOS Switch Toggle */
+  .proto-toggle-wrap {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 4px 0;
+  }
+
+  .proto-switch {
+    position: relative;
+    display: inline-block;
+    width: 38px;
+    height: 20px;
+  }
+  .proto-switch input { opacity: 0; width: 0; height: 0; }
+
+  .switch-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background-color: #334155;
+    transition: 0.3s;
+    border-radius: 20px;
+  }
+  .switch-slider:before {
+    position: absolute;
+    content: "";
+    height: 14px;
+    width: 14px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: 0.3s;
+    border-radius: 50%;
+  }
+  .proto-switch input:checked + .switch-slider { background-color: #10b981; }
+  .proto-switch input:checked + .switch-slider:before { transform: translateX(18px); }
+
+  .toggle-status-text { font-size: 11.5px; color: #cbd5e1; font-weight: 500; }
+
+  .proto-real-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: #e2e8f0;
+    cursor: pointer;
+    margin-top: 4px;
+  }
+
+  /* ── ACTION BUTTONS ── */
+  .mock-btn-row {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+    flex-wrap: wrap;
+  }
+
+  .proto-action-btn {
+    padding: 8px 16px;
     border-radius: 6px;
     font-size: 12px;
-    font-weight: 600;
-    text-align: center;
+    font-weight: 700;
+    cursor: pointer;
+    border: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.2s;
   }
-  .mock-button.primary { background: #3b82f6; color: white; }
-  .mock-button.link { background: transparent; color: #60a5fa; text-decoration: underline; }
+  .proto-action-btn.primary {
+    background: linear-gradient(135deg, #3b82f6, #6366f1);
+    color: white;
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.35);
+  }
+  .proto-action-btn.primary:hover:not(:disabled) {
+    box-shadow: 0 6px 18px rgba(59, 130, 246, 0.55);
+    transform: translateY(-1px);
+  }
+  .proto-action-btn.secondary {
+    background: rgba(255, 255, 255, 0.08);
+    color: #cbd5e1;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+  }
+  .proto-action-btn.secondary:hover { background: rgba(255, 255, 255, 0.15); color: white; }
+  .proto-action-btn.map {
+    background: linear-gradient(135deg, #059669, #10b981);
+    color: white;
+  }
+  .proto-action-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 
-  .mock-table-wrap { overflow-x: auto; margin-top: 8px; }
-  .mock-table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
-  .mock-table th, .mock-table td { border: 1px solid rgba(255, 255, 255, 0.08); padding: 6px 10px; text-align: left; }
-  .mock-table th { background: rgba(15, 23, 42, 0.8); color: #94a3b8; font-weight: 600; }
+  .spinner-small {
+    width: 12px;
+    height: 12px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-radius: 50%;
+    border-top-color: white;
+    animation: spin 0.8s linear infinite;
+  }
 
+  /* ── TABLE IN PROTOTYPE ── */
+  .mock-table-wrap { overflow-x: auto; }
+  .proto-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+  }
+  .proto-table th {
+    background: #030712;
+    color: #94a3b8;
+    padding: 8px 10px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    font-weight: 600;
+  }
+  .proto-table td {
+    padding: 8px 10px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    color: #f1f5f9;
+  }
+  .proto-table-row:hover { background: rgba(255, 255, 255, 0.03); }
+
+  .table-pill {
+    font-size: 10.5px;
+    font-weight: 700;
+    padding: 2px 7px;
+    border-radius: 4px;
+    display: inline-block;
+  }
+  .table-pill.success { background: rgba(16, 185, 129, 0.2); color: #6ee7b7; }
+  .table-pill.warning { background: rgba(245, 158, 11, 0.2); color: #fcd34d; }
+
+  .table-code-badge {
+    background: rgba(59, 130, 246, 0.15);
+    color: #93c5fd;
+    font-family: monospace;
+    font-weight: 700;
+    font-size: 10.5px;
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+
+  .btn-table-action {
+    background: rgba(139, 92, 246, 0.2);
+    border: 1px solid rgba(139, 92, 246, 0.4);
+    color: #d8b4fe;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .btn-table-action:hover {
+    background: rgba(139, 92, 246, 0.4);
+    color: white;
+  }
+
+  /* ── REVIEWS COMPONENT ── */
+  .btn-write-review-sm {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: #cbd5e1;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .btn-write-review-sm:hover { background: rgba(255, 255, 255, 0.18); color: white; }
+
+  .proto-reviews-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .review-comment-card {
+    background: rgba(15, 23, 42, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 6px;
+    padding: 10px 12px;
+  }
+
+  .rev-user-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+  .rev-avatar {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: #334155;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+  }
+  .rev-user-meta { flex: 1; display: flex; flex-direction: column; }
+  .rev-name { font-size: 11.5px; font-weight: 600; color: #f8fafc; }
+  .rev-time { font-size: 9.5px; color: #64748b; }
+  .rev-stars { font-size: 11px; letter-spacing: 1px; }
+  .rev-comment-text { margin: 0; font-size: 11.5px; color: #cbd5e1; line-height: 1.4; }
+
+  /* ── FOOTBAR ── */
   .mockup-footbar {
     border-top: 1px solid rgba(255, 255, 255, 0.08);
-    padding-top: 10px;
+    padding-top: 12px;
     display: flex;
     flex-direction: column;
     gap: 6px;
     font-size: 11.5px;
   }
-
   .conn-item { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .tag-pill {
     background: rgba(139, 92, 246, 0.2);
@@ -2111,6 +3207,121 @@
     border-color: rgba(16, 185, 129, 0.4);
     color: #6ee7b7;
   }
+
+  /* ── SIMULATION DIALOG MODAL ── */
+  .prototype-dialog-modal {
+    background: #0f172a;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 12px;
+    width: 440px;
+    max-width: 90vw;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.8);
+  }
+
+  .proto-dialog-header {
+    padding: 12px 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  .proto-dialog-header.success { background: linear-gradient(135deg, rgba(16, 185, 129, 0.2), #0f172a); }
+  .proto-dialog-header.map { background: linear-gradient(135deg, rgba(59, 130, 246, 0.2), #0f172a); }
+  .proto-dialog-header.review { background: linear-gradient(135deg, rgba(234, 179, 8, 0.2), #0f172a); }
+
+  .proto-dialog-title { font-size: 13.5px; font-weight: 700; color: #f8fafc; }
+
+  .proto-dialog-body {
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 12px;
+  }
+
+  .dialog-icon-huge { font-size: 42px; }
+  .dialog-body-text { font-size: 13px; color: #cbd5e1; margin: 0; line-height: 1.5; }
+
+  .dialog-success-badge {
+    background: rgba(16, 185, 129, 0.15);
+    border: 1px solid rgba(16, 185, 129, 0.4);
+    color: #6ee7b7;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 12px;
+  }
+
+  .simulated-map-box {
+    width: 100%;
+    height: 140px;
+    background: #020617;
+    border: 1px solid #1e293b;
+    border-radius: 8px;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-around;
+    padding: 12px;
+    box-sizing: border-box;
+  }
+  .map-pin { font-size: 12px; font-weight: 600; text-align: left; }
+  .map-pin.start { color: #60a5fa; }
+  .map-pin.end { color: #34d399; }
+  .map-route-line {
+    position: absolute;
+    left: 20px;
+    top: 30px;
+    bottom: 30px;
+    width: 2px;
+    border-left: 2px dashed #3b82f6;
+  }
+
+  .dialog-review-form {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .star-rating-selector {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    font-size: 22px;
+    cursor: pointer;
+  }
+  .star-score-tag {
+    font-size: 12px;
+    font-weight: 700;
+    color: #fcd34d;
+    margin-left: 8px;
+  }
+
+  .proto-dialog-footer {
+    padding: 12px 16px;
+    background: #111827;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    display: flex;
+    justify-content: flex-end;
+  }
+
+  .proto-btn-dialog-close {
+    background: #3b82f6;
+    border: none;
+    color: white;
+    padding: 6px 16px;
+    border-radius: 6px;
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(59, 130, 246, 0.4);
+  }
+  .proto-btn-dialog-close:hover { background: #2563eb; }
 
   /* ── DIAGRAMS (MERMAID & DRAW.IO STYLE) ── */
   .diagram-workspace {

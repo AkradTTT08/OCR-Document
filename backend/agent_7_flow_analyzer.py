@@ -271,33 +271,75 @@ sequenceDiagram
 
   "screen_mockups": [
     {{
-      "screen_id": "SCR-LOGIN",
-      "screen_name": "Login & Authentication Page",
-      "route": "/login",
-      "layout_type": "form",
-      "description": "User authentication gateway with username, password, and remember me options",
+      "screen_id": "SCR-REST-DETAIL",
+      "screen_name": "Restaurant Details & Review",
+      "route": "/restaurant/:id",
+      "layout_type": "detail",
+      "description": "Comprehensive detail page showing restaurant information, live operating status, interactive menu, reviews, and location.",
       "header": {{
-        "title": "Sign In to System",
-        "badge": "Public",
-        "actions": ["Language Toggle", "Dark Mode"]
+        "title": "ร้านอาหารอร่อยเลิศ (FoodSmile Gourmet)",
+        "badge": "Verified Merchant",
+        "badge_color": "emerald",
+        "actions": ["แชร์หน้าร้าน", "บันทึกร้านโปรด", "ย้อนกลับ"]
       }},
+      "stats": [
+        {{ "label": "คะแนนเฉลี่ย", "value": "4.85 ★", "sub": "จาก 342 รีวิว", "color": "amber" }},
+        {{ "label": "สถานะปัจจุบัน", "value": "เปิดบริการอยู่", "sub": "ปิด 22:00 น.", "color": "emerald" }},
+        {{ "label": "เวลาจัดส่งเฉลี่ย", "value": "25-35 นาที", "sub": "ระยะทาง 1.8 กม.", "color": "blue" }},
+        {{ "label": "ระดับราคา", "value": "฿฿ (100-250 บาท)", "sub": "รับชำระ PromptPay/บัตร", "color": "purple" }}
+      ],
+      "tabs": ["ข้อมูลทั่วไป", "รายการเมนูยอดนิยม", "รีวิว & คะแนน", "แผนที่และการเดินทาง"],
       "sections": [
         {{
-          "section_name": "Login Form Card",
+          "section_name": "Image Gallery & Highlights",
+          "type": "gallery",
+          "banner_tag": "🔥 เมนูแนะนำประจำสัปดาห์: สเต๊กแซลมอนย่างเกลือหิมาลายัน",
+          "images": [
+            {{ "title": "บรรยากาศหน้าร้าน", "desc": "ตกแต่งสไตล์ Modern Cozy มีที่จอดรถสะดวกสบาย" }},
+            {{ "title": "โซน Dining Room", "desc": "รองรับจัดเลี้ยงกลุ่ม 10-30 ท่าน มีห้อง VIP" }},
+            {{ "title": "ครัวเปิด Open Kitchen", "desc": "ได้มาตรฐานความสะอาด SHA Plus+ และ HACCP" }}
+          ]
+        }},
+        {{
+          "section_name": "ข้อมูลและรายละเอียดร้าน (Basic Info)",
           "type": "form",
           "fields": [
-            {{ "label": "Username / Email", "type": "text", "placeholder": "admin@domain.com", "required": true }},
-            {{ "label": "Password", "type": "password", "placeholder": "••••••••", "required": true }},
-            {{ "label": "Remember Session", "type": "checkbox", "default": true }}
+            {{ "label": "ชื่อร้านอาหาร", "type": "text", "default_value": "FoodSmile Gourmet Cafe", "required": true }},
+            {{ "label": "ประเภทอาหาร", "type": "select", "options": ["อาหารไทยฟิวชั่น", "อาหารญี่ปุ่น", "คาเฟ่ & เบเกอรี่", "เครื่องดื่ม"], "default_value": "อาหารไทยฟิวชั่น" }},
+            {{ "label": "เวลาทำการ", "type": "text", "default_value": "จันทร์ - อาทิตย์: 10:00 - 22:00 น.", "required": true }},
+            {{ "label": "เบอร์โทรศัพท์ติดต่อ", "type": "text", "default_value": "02-123-4567, 089-987-6543" }},
+            {{ "label": "ที่อยู่ / สถานที่ตั้ง", "type": "textarea", "default_value": "123/45 ถนนสุขุมวิท 71 แขวงพระโขนงเหนือ เขตวัฒนา กรุงเทพฯ 10110", "required": true }},
+            {{ "label": "เปิดรับออเดอร์ Delivery", "type": "toggle", "default_value": true }}
           ],
           "buttons": [
-            {{ "label": "Sign In", "variant": "primary" }},
-            {{ "label": "Forgot Password?", "variant": "link" }}
+            {{ "label": "โทรออกหาร้าน", "variant": "outline", "icon": "📞" }},
+            {{ "label": "นำทาง (Google Maps)", "variant": "secondary", "icon": "🧭" }},
+            {{ "label": "สั่งอาหาร Delivery", "variant": "primary", "icon": "🛵" }},
+            {{ "label": "เขียนรีวิวให้คะแนน", "variant": "accent", "icon": "⭐" }}
+          ]
+        }},
+        {{
+          "section_name": "รายการเมนูอาหารยอดนิยม (Popular Menu Items)",
+          "type": "table",
+          "table_headers": ["รหัสเมนู", "ชื่อเมนูอาหาร", "หมวดหมู่", "ราคา (บาท)", "สถานะพร้อมเสิร์ฟ", "การสั่งซื้อ"],
+          "table_rows": [
+            ["#MN-001", "สเต๊กแซลมอนนอร์เวย์ซอสเลมอนเนยสด", "จานหลัก (Main Course)", "320.-", "พร้อมเสิร์ฟ", "สั่งซื้อเลย"],
+            ["#MN-002", "สปาเก็ตตี้คาโบนาร่าทรัฟเฟิล", "พาสต้า (Pasta)", "260.-", "พร้อมเสิร์ฟ", "สั่งซื้อเลย"],
+            ["#MN-003", "ยำแซลมอนแซ่บพริกสด", "อาหารทานเล่น (Appetizer)", "195.-", "พร้อมเสิร์ฟ", "สั่งซื้อเลย"],
+            ["#MN-004", "มัทฉะลาเต้เย็นเกรดพิธีการ", "เครื่องดื่ม (Beverage)", "110.-", "พร้อมเสิร์ฟ", "สั่งซื้อเลย"]
+          ]
+        }},
+        {{
+          "section_name": "รีวิวจากลูกค้าล่าสุด (Customer Reviews)",
+          "type": "reviews",
+          "reviews": [
+            {{ "user": "นันทนา กุลสวัสดิ์", "rating": 5, "comment": "อาหารอร่อยมาก โดยเฉพาะสเต๊กแซลมอน บริการดี บรรยากาศน่านั่ง แนะนำเลยค่ะ!", "time": "1 ชั่วโมงที่แล้ว" }},
+            {{ "user": "เอกรัฐ พัฒนา", "rating": 5, "comment": "ที่จอดรถสะดวก อาหารเสิร์ฟไว พนักงานสุภาพมากครับ จะกลับมาอุดหนุนอีกแน่นอน", "time": "เมื่อวานนี้" }}
           ]
         }}
       ],
-      "connected_use_cases": ["UC-001"],
-      "connected_req_codes": ["REQ-001"]
+      "connected_use_cases": ["UC-001: ค้นหาร้านค้า", "UC-002: สั่งอาหารและชำระเงิน"],
+      "connected_req_codes": ["REQ-001", "REQ-002"]
     }}
   ],
 
@@ -388,12 +430,81 @@ Make sure:
 
             return json.loads(clean, strict=False)
 
-        data = robust_json_loads(raw_text)
+        # Mermaid Sanitizer on backend
+        def clean_mermaid_code(raw_code: str) -> str:
+            if not raw_code:
+                return ""
+            txt = raw_code.strip()
+            if txt.startswith("```mermaid"):
+                txt = txt[10:].strip()
+            if txt.startswith("```"):
+                txt = txt[3:].strip()
+            if txt.endswith("```"):
+                txt = txt[:-3].strip()
+
+            if txt.startswith("sequenceDiagram"):
+                return txt
+
+            import re
+            lines = txt.splitlines()
+            cleaned_lines = []
+            
+            for line in lines:
+                l = line.rstrip()
+                if not l.strip():
+                    cleaned_lines.append("")
+                    continue
+
+                indent = re.match(r'^\s*', l).group(0)
+
+                # Fix actor declaration in flowchart
+                actor_m = re.match(r'^\s*actor\s+([A-Za-z0-9_]+)(?:\s+(?:as\s+)?(.*))?$', l, re.IGNORECASE)
+                if actor_m:
+                    act_id = actor_m.group(1)
+                    act_lbl = actor_m.group(2) or act_id
+                    act_lbl = act_lbl.strip().strip('"').strip("'").replace('"', "'")
+                    cleaned_lines.append(f'{indent}{act_id}["👤 {act_lbl}"]')
+                    continue
+
+                # Fix Subgraph quotes
+                sub_m = re.match(r'^(\s*subgraph\s+[A-Za-z0-9_]+)\s*\[\s*([^\]]+?)\s*\]\s*$', l, re.IGNORECASE)
+                if sub_m:
+                    title = sub_m.group(2).strip().strip('"').strip("'").replace('"', "'")
+                    cleaned_lines.append(f'{sub_m.group(1)} ["{title}"]')
+                    continue
+
+                # Fix dotted & plantuml arrows
+                l = re.sub(r'([A-Za-z0-9_]+)\s*<\.\.\s*([A-Za-z0-9_]+)\s*:\s*<?<?([^>\r\n]+)>?>?', r'\2 -.->|"\3"| \1', l)
+                l = re.sub(r'([A-Za-z0-9_]+)\s*\.\.>\s*([A-Za-z0-9_]+)\s*:\s*<?<?([^>\r\n]+)>?>?', r'\1 -.->|"\3"| \2', l)
+                l = re.sub(r'([A-Za-z0-9_]+)\s*<\.\.\s*([A-Za-z0-9_]+)', r'\2 -.-> \1', l)
+                l = re.sub(r'([A-Za-z0-9_]+)\s*\.\.>\s*([A-Za-z0-9_]+)', r'\1 -.-> \2', l)
+
+                # Fix inline edge labels
+                l = re.sub(r'--\s*(?:\(([^()\r\n]+)\)|([^->\r\n|]+?))\s*-->', r'-->|"\1\2"|', l)
+                l = re.sub(r'--\s*(?:\(([^()\r\n]+)\)|([^->\r\n|]+?))\s*--\s*>', r'-->|"\1\2"|', l)
+
+                # Protect End keyword
+                if not re.match(r'^\s*end\s*$', l, re.IGNORECASE):
+                    l = re.sub(r'\bEnd\s*\(\[\s*(.*?)\s*\]\)', r'EndNode(["\1"])', l)
+                    l = re.sub(r'\bEnd\s*\[\s*(.*?)\s*\]', r'EndNode["\1"]', l)
+                    l = re.sub(r'(-->|-\.->|==>)\s*End\b', r'\1 EndNode', l)
+                    l = re.sub(r'\bEnd\s*(-->|-\.->|==>)', r'EndNode \1', l)
+
+                cleaned_lines.append(l)
+
+            # Auto-close subgraphs
+            sub_count = sum(1 for line in cleaned_lines if re.match(r'^\s*subgraph\b', line, re.IGNORECASE))
+            end_count = sum(1 for line in cleaned_lines if re.match(r'^\s*end\s*$', line.strip(), re.IGNORECASE))
+            while sub_count > end_count:
+                cleaned_lines.append("  end")
+                end_count += 1
+
+            return "\n".join(cleaned_lines)
 
         sitemap_data = data.get("sitemap", [])
-        system_flowchart = data.get("system_flowchart", "")
-        usecase_diagram = data.get("usecase_diagram", "")
-        activity_diagram = data.get("activity_diagram", "")
+        system_flowchart = clean_mermaid_code(data.get("system_flowchart", ""))
+        usecase_diagram = clean_mermaid_code(data.get("usecase_diagram", ""))
+        activity_diagram = clean_mermaid_code(data.get("activity_diagram", ""))
         sequence_diagram = data.get("sequence_diagram", "")
         screen_mockups = data.get("screen_mockups", [])
         traceability_matrix = data.get("traceability_matrix", [])
