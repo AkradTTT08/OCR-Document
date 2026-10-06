@@ -267,9 +267,35 @@ USER QUERY (คำถามของผู้ใช้):
                             temperature=0.2, # Lower temperature for higher accuracy and factual consistency
                         )
                     )
+                    last_usage = None
+                    total_output_chars = 0
                     for chunk in response_stream:
+                        if hasattr(chunk, 'usage_metadata') and chunk.usage_metadata:
+                            last_usage = chunk.usage_metadata
                         if chunk and chunk.text:
+                            total_output_chars += len(chunk.text)
                             yield chunk.text
+                            
+                    if last_usage:
+                        try:
+                            from db_ingestion import log_api_usage
+                            log_api_usage("QAResearch_Agent", current_model, last_usage)
+                        except Exception as log_err:
+                            logger.warning(f"Failed to log API usage in QAResearch Stream: {log_err}")
+                    else:
+                        try:
+                            from db_ingestion import log_api_usage
+                            prompt_toks = max(1, len(prompt + system_instruction) // 4)
+                            comp_toks = max(1, total_output_chars // 4)
+                            usage_meta = {
+                                "prompt_token_count": prompt_toks,
+                                "candidates_token_count": comp_toks,
+                                "total_token_count": prompt_toks + comp_toks
+                            }
+                            log_api_usage("QAResearch_Agent", current_model, usage_meta)
+                        except Exception as log_err:
+                            logger.warning(f"Failed to log estimated stream API usage: {log_err}")
+                            
                     success = True
                     break
                 except Exception as model_err:

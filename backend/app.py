@@ -3885,14 +3885,16 @@ def research_chat():
     try:
         # 1. Retrieve comprehensive multi-source grounded context from DB
         logger.info(f"Querying comprehensive knowledge base for project {project_id}...")
-        from db_ingestion import retrieve_comprehensive_qa_context
-        ctx_data = retrieve_comprehensive_qa_context(project_id, message, history=history)
+        import importlib
+        import db_ingestion
+        importlib.reload(db_ingestion)
+        ctx_data = db_ingestion.retrieve_comprehensive_qa_context(project_id, message, history=history)
         
         context_str = ctx_data.get('context_str', '')
         project_name = ctx_data.get('project_name', '')
         project_code = ctx_data.get('project_code', '')
         
-        logger.info(f"Assembled comprehensive QA context ({len(context_str)} chars) for project '{project_name}' ({project_code}).")
+        logger.info(f"Assembled comprehensive QA context ({len(context_str)} chars, {ctx_data.get('docs_count', 0)} docs, {ctx_data.get('reqs_count', 0)} reqs) for project '{project_name}' ({project_code}).")
         
         # 2. Serialize history into text format
         history_text = ""

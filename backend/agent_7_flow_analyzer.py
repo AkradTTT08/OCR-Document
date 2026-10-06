@@ -223,31 +223,31 @@ flowchart TD
   end
 ",
 
-  "usecase_diagram": "Mermaid syntax string for Use Case Diagram. Must be standard Mermaid format e.g.
+  "usecase_diagram": "Mermaid syntax string for Use Case Diagram (flowchart LR). NOTE: Always wrap labels in double quotes. Do NOT use `actor X as ...`, instead declare actors as nodes like ActorID[\"👤 Actor Name\"]. Example:
 flowchart LR
-  subgraph SystemBoundary [System: {project_name}]
-    UC1([UC-001: Login])
-    UC2([UC-002: Upload Document])
-    UC3([UC-003: Review Results])
+  subgraph SystemBoundary [\"System: {project_name}\"]
+    UC1([\"UC-001: เข้าสู่ระบบ\"])
+    UC2([\"UC-002: อัปโหลดเอกสาร\"])
+    UC3([\"UC-003: ตรวจสอบผลลัพธ์\"])
   end
-  User((Standard User)) --> UC1
+  User[\"👤 ผู้ใช้งานทั่วไป\"] --> UC1
   User --> UC2
-  Admin((Admin)) --> UC1
+  Admin[\"🛡️ ผู้ดูแลระบบ\"] --> UC1
   Admin --> UC3
   UC2 -.->|<<include>>| UC3
 ",
 
-  "activity_diagram": "Mermaid syntax string for Activity / Process flow e.g.
+  "activity_diagram": "Mermaid syntax string for Activity / Decision Flow Diagram (flowchart TD). NOTE: Always wrap node text and decision conditions in double quotes and use `-->|condition|` for branches. Example:
 flowchart TD
-  Start([Start]) --> Login[User Login]
-  Login --> CheckAuth{{Auth Valid?}}
-  CheckAuth -- Yes --> SelectProject[Select Project]
-  CheckAuth -- No --> ShowError[Show Error Message] --> Login
-  SelectProject --> UploadDoc[Upload Document / Markdown]
-  UploadDoc --> ProcessOCR[OCR & Extraction Engine]
-  ProcessOCR --> Verify[QA Verification]
-  Verify --> SaveKB[Save to Knowledge Base]
-  SaveKB --> End([Complete])
+  Start([\"🏁 เริ่มต้น\"]) --> Login[\"เข้าสู่ระบบ\"]
+  Login --> CheckAuth{{\"รหัสผ่านถูกต้อง?\"}}
+  CheckAuth -->|ใช่| SelectProject[\"เลือกโครงการ\"]
+  CheckAuth -->|ไม่ใช่| ShowError[\"แสดงข้อความแจ้งเตือนข้อผิดพลาด\"] --> Login
+  SelectProject --> UploadDoc[\"อัปโหลดเอกสาร / Markdown\"]
+  UploadDoc --> ProcessOCR[\"ประมวลผล OCR & QA Engine\"]
+  ProcessOCR --> Verify[\"ตรวจสอบความถูกต้องของข้อมูล\"]
+  Verify --> SaveKB[\"บันทึกลงฐานข้อมูล Knowledge Base\"]
+  SaveKB --> EndFlow([\"🏁 เสร็จสิ้น\"])
 ",
 
   "sequence_diagram": "Mermaid syntax string for System Request-Response flow e.g.
@@ -312,6 +312,10 @@ sequenceDiagram
       "screen_id": "SCR-LOGIN",
       "screen_name": "Login & Authentication Page",
       "test_cases": ["TC-001: Valid Login", "TC-002: Invalid Password"],
+      "defect_log": ["DEF-001: Token expiry on refresh (Resolved)"],
+      "uat_item": "UAT-001: ตรวจสอบการเข้าสู่ระบบและบันทึก Session",
+      "uat_ref": "ข้อ UAT 1.1 / Acceptance Criteria 1",
+      "uat_status": "Ready for UAT / Sign-off",
       "status": "Covered"
     }}
   ],
@@ -328,10 +332,11 @@ sequenceDiagram
 
 Make sure:
 1. All Sitemap nodes, Diagrams, Screen Mockups, and Traceability Matrix are deeply interconnected with matching IDs.
-2. The Mermaid syntax MUST be valid and strictly compatible with Mermaid 10+. Avoid HTML tags inside Mermaid node text; use plain text with parenthesis/brackets.
-3. The system_flowchart MUST be a rich Draw.io styled workflow diagram displaying tier subgraphs, decision branches, processes, and data stores.
-4. Every screen mockup has realistic, detailed UI sections (cards, form fields, mock table headers/rows, badges, buttons) that reflect the true requirements.
-5. Do NOT output markdown code blocks around the JSON (no ```json ... ```), output raw JSON only.
+2. In 'traceability_matrix', specify the exact linked UAT document item / clause reference in 'uat_item' (e.g., 'UAT-001: ตรวจสอบการทำงาน...', 'ข้อ UAT 1.1: ...') matching the requirement and test cases.
+3. The Mermaid syntax MUST be valid and strictly compatible with Mermaid 10+. Avoid HTML tags inside Mermaid node text; use plain text with parenthesis/brackets.
+4. The system_flowchart MUST be a rich Draw.io styled workflow diagram displaying tier subgraphs, decision branches, processes, and data stores.
+5. Every screen mockup has realistic, detailed UI sections (cards, form fields, mock table headers/rows, badges, buttons) that reflect the true requirements.
+6. Do NOT output markdown code blocks around the JSON (no ```json ... ```), output raw JSON only.
 """
 
         logger.info(f"Agent 7: Generating flow analysis & diagrams for project {project_name} ({project_id})...")

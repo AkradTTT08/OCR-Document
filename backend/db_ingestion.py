@@ -1020,19 +1020,22 @@ def retrieve_comprehensive_qa_context(project_id: str, query: str, history: list
         if docs_catalog:
             catalog_lines = ["### [PROJECT DOCUMENTS CATALOGUE]"]
             for dc in docs_catalog:
-                catalog_lines.append(f"- Document: {dc['filename']} | Category: {dc['category']} | Type: {dc['type']} | Size: {dc['length']} chars")
+                catalog_lines.append(f"- Document: {dc.get('filename', 'Doc')} | Category: {dc.get('category', 'General')} | Type: {dc.get('type', 'Document')} | Size: {dc.get('length', 0)} chars")
             context_parts.append("\n".join(catalog_lines))
             
         # Section 3: Structured Requirements
         if structured_reqs:
             req_lines = [f"### [STRUCTURED REQUIREMENTS ({len(structured_reqs)} items)]"]
             for req in structured_reqs:
-                req_lines.append(f"• **[{req['code']}] {req['title']}** (Category: {req['category']})")
-                if req['description']:
+                code_str = req.get('code') or 'REQ'
+                title_str = req.get('title') or 'Requirement'
+                cat_str = f" (Category: {req.get('category')})" if req.get('category') else ""
+                req_lines.append(f"• **[{code_str}] {title_str}**{cat_str}")
+                if req.get('description'):
                     req_lines.append(f"  Description: {req['description']}")
-                if req['steps']:
+                if req.get('steps'):
                     req_lines.append(f"  Steps: {req['steps']}")
-                if req['expected']:
+                if req.get('expected'):
                     req_lines.append(f"  Expected Results: {req['expected']}")
             context_parts.append("\n".join(req_lines))
             
@@ -1040,13 +1043,16 @@ def retrieve_comprehensive_qa_context(project_id: str, query: str, history: list
         if 0 < total_markdown_len <= 80000:
             doc_text_lines = ["### [AUTHORITATIVE FULL DOCUMENT CONTENTS]"]
             for fname, dinfo in docs_content_map.items():
-                doc_text_lines.append(f"\n--- BEGIN DOCUMENT: {fname} (Category: {dinfo['category']}) ---\n{dinfo['content']}\n--- END DOCUMENT: {fname} ---\n")
+                cat = dinfo.get('category', 'General') if isinstance(dinfo, dict) else 'General'
+                cnt = dinfo.get('content', '') if isinstance(dinfo, dict) else str(dinfo)
+                doc_text_lines.append(f"\n--- BEGIN DOCUMENT: {fname} (Category: {cat}) ---\n{cnt}\n--- END DOCUMENT: {fname} ---\n")
             context_parts.append("\n".join(doc_text_lines))
         elif total_markdown_len > 80000:
             # Include comprehensive chunks & summaries
             doc_text_lines = ["### [KEY DOCUMENT EXCERPTS & SUMMARIES]"]
             for fname, dinfo in docs_content_map.items():
-                snippet = dinfo['content'][:3000]
+                cnt = dinfo.get('content', '') if isinstance(dinfo, dict) else str(dinfo)
+                snippet = cnt[:3000]
                 doc_text_lines.append(f"\n--- DOCUMENT OVERVIEW: {fname} ---\n{snippet}\n...")
             context_parts.append("\n".join(doc_text_lines))
             

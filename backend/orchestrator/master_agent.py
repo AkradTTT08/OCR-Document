@@ -68,6 +68,12 @@ class MasterAgent:
             )
 
             if response and response.text:
+                if hasattr(response, 'usage_metadata') and response.usage_metadata:
+                    try:
+                        from db_ingestion import log_api_usage
+                        log_api_usage("Master_Agent", model_name, response.usage_metadata)
+                    except Exception as log_err:
+                        logger.warning(f"Failed to log API usage in MasterAgent: {log_err}")
                 return response.text.strip()
             else:
                 return MasterAgent._fallback_response(last_user_msg, "ไม่ได้รับข้อมูลตอบกลับจาก AI Model")

@@ -35,9 +35,25 @@
   let selectedDocFilter = "All";
   let selectedStatusFilter = "All";
 
-  // Diagram zoom/pan
+  // Diagram zoom/pan state
   let diagramContainer;
+  let canvasPanelRef;
   let zoomLevel = 1;
+  let panX = 0;
+  let panY = 0;
+  let isDragging = false;
+  let dragStartX = 0;
+  let dragStartY = 0;
+  let startPanX = 0;
+  let startPanY = 0;
+
+  onDestroy(() => {
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener('pointercancel', onPointerUp);
+    }
+  });
 
   // Reactive update when current selected screen changes
   $: if (currentScreenMockup) {
@@ -354,6 +370,195 @@
     renderCurrentDiagram();
   }
 
+  function sanitizeMermaidCode(raw) {
+    if (!raw) return "";
+    let text = raw.trim();
+
+    // 1. Remove markdown code fences if present (```mermaid ... ```)
+    text = text.replace(/^```(?:mermaid)?\s*/i, '').replace(/\s*```$/, '').trim();
+
+    // 2. If it's a sequence diagram, preserve sequence syntax
+    if (/^\s*sequenceDiagram/i.test(text)) {
+      return text;
+    }
+
+    const lines = text.split(/\r?\n/);
+    const resultLines = [];
+
+    for (let line of lines) {
+      let l = line;
+
+      // Skip directives and comments
+      if (/^\s*(%%|classDef|class|click|style|linkStyle|accTitle|accDescr)\b/i.test(l)) {
+        resultLines.push(l);
+        continue;
+      }
+
+      // A. Fix actor declaration: `actor Customer as "ผู้ใช้งาน"` or `actor Customer`
+      const actorMatch = l.match(/^\s*actor\s+([A-Za-z0-9_]+)(?:\s+as\s+["']?([^"'\r\n]+)["']?)?\s*$/i);
+      if (actorMatch) {
+        const id = actorMatch[1];
+        const label = actorMatch[2] || id;
+        const indent = l.match(/^\s*/)[0];
+        resultLines.push(`${indent}${id}["👤 ${label.replace(/"/g, "'")}"]`);
+        continue;
+      }
+
+      // B. Fix Subgraph: `subgraph ID [Title]` or `subgraph ID ["Title"]`
+      const subgraphMatch = l.match(/^(\s*subgraph\s+[A-Za-z0-9_]+)\s*\[\s*([^\]]+?)\s*\]\s*$/i);
+      if (subgraphMatch) {
+        let title = subgraphMatch[2].trim();
+        if ((title.startsWith('"') && title.endsWith('"')) || (title.startsWith("'") && title.endsWith("'"))) {
+          title = title.slice(1, -1);
+        }
+        resultLines.push(`${subgraphMatch[1]} ["${title.replace(/"/g, "'")}"]`);
+        continue;
+      }
+
+      // C. Fix PlantUML dotted arrows with colons:
+      // e.g. `UC_LOGIN <.. UC_PDPA_CONSENT : <<include>>`
+      l = l.replace(/([A-Za-z0-9_]+)\s*<\.\.\s*([A-Za-z0-9_]+)\s*:\s*<?<?([^>\r\n]+)>?>?/g, (m, left, right, label) => {
+        const cleanLabel = label.replace(/[<>]/g, '').trim();
+        return `${right} -.->|${cleanLabel}| ${left}`;
+      });
+      // e.g. `UC_LOGIN ..> UC_PDPA_CONSENT : <<include>>`
+      l = l.replace(/([A-Za-z0-9_]+)\s*\.\.>\s*([A-Za-z0-9_]+)\s*:\s*<?<?([^>\r\n]+)>?>?/g, (m, left, right, label) => {
+        const cleanLabel = label.replace(/[<>]/g, '').trim();
+        return `${left} -.->|${cleanLabel}| ${right}`;
+      });
+      // e.g. `A <.. B` -> `B -.-> A`
+      l = l.replace(/([A-Za-z0-9_]+)\s*<\.\.\s*([A-Za-z0-9_]+)/g, '$2 -.-> $1');
+      // e.g. `A ..> B` -> `A -.-> B`
+      l = l.replace(/([A-Za-z0-9_]+)\s*\.\.>\s*([A-Za-z0-9_]+)/g, '$1 -.-> $2');
+
+      // D. Fix arrow with colon label: `A --> B : text` or `A -.-> B : text`
+      l = l.replace(/([A-Za-z0-9_]+)\s*(-->|-\.->|==>)\s*([A-Za-z0-9_]+)\s*:\s*([^\r\n]+)/g, (m, left, arrow, right, label) => {
+        const cleanLabel = label.replace(/[<>]/g, '').trim();
+        return `${left} ${arrow}|${cleanLabel}| ${right}`;
+      });
+
+      // E. Fix `-- (label) -->` or `-- label -->`
+      l = l.replace(/--\s*(?:\(([^()\r\n]+)\)|([^->\r\n]+?))\s*-->/g, (m, p1, p2) => {
+        const label = (p1 || p2 || '').trim();
+        return `-->|${label}|`;
+      });
+      l = l.replace(/--\s*(?:\(([^()\r\n]+)\)|([^->\r\n]+?))\s*--\s*>/g, (m, p1, p2) => {
+        const label = (p1 || p2 || '').trim();
+        return `-->|${label}|`;
+      });
+
+      // Step 1: Temporarily extract pipe labels |...| so inner parentheses or quotes don't get modified by node regex
+      const pipeLabels = [];
+      l = l.replace(/\|([^|]+)\|/g, (m, labelContent) => {
+        const idx = pipeLabels.length;
+        let s = labelContent.trim();
+        if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+          s = s.slice(1, -1);
+        }
+        pipeLabels.push(s.replace(/"/g, "'"));
+        return `|__PL_HOLD_${idx}__|`;
+      });
+
+      // F. Fix Stadium / Pill node syntax: `ID([ ... ])`
+      l = l.replace(/([A-Za-z0-9_]+)\s*\(\[\s*(.*?)\s*\]\)/g, (m, id, inner) => {
+        let s = inner.trim();
+        if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+          s = s.slice(1, -1);
+        }
+        return `${id}(["${s.replace(/"/g, "'")}"])`;
+      });
+
+      // F2. Fix Circle node syntax: `ID(( ... ))`
+      l = l.replace(/([A-Za-z0-9_]+)\s*\(\(\s*(.*?)\s*\)\)/g, (m, id, inner) => {
+        let s = inner.trim();
+        if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+          s = s.slice(1, -1);
+        }
+        return `${id}(("${s.replace(/"/g, "'")}"))`;
+      });
+
+      // F3. Fix Database Cylinder node syntax: `ID[( ... )]`
+      l = l.replace(/([A-Za-z0-9_]+)\s*\[\(\s*(.*?)\s*\)\]/g, (m, id, inner) => {
+        let s = inner.trim();
+        if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+          s = s.slice(1, -1);
+        }
+        return `${id}[("${s.replace(/"/g, "'")}")]`;
+      });
+
+      // F4. Fix Hexagon node syntax: `ID{{ ... }}`
+      l = l.replace(/([A-Za-z0-9_]+)\s*\{\{\s*(.*?)\s*\}\}/g, (m, id, inner) => {
+        let s = inner.trim();
+        if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+          s = s.slice(1, -1);
+        }
+        return `${id}{{"${s.replace(/"/g, "'")}"}}`;
+      });
+
+      // F5. Fix Decision / Rhombus node syntax: `ID{ ... }`
+      l = l.replace(/([A-Za-z0-9_]+)\s*\{\s*(.*?)\s*\}/g, (m, id, inner) => {
+        let s = inner.trim();
+        if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+          s = s.slice(1, -1);
+        }
+        return `${id}{"${s.replace(/"/g, "'")}"}`;
+      });
+
+      // F6. Fix Rounded Box node syntax: `ID( ... )`
+      l = l.replace(/([A-Za-z0-9_]+)\s*\(\s*(.*?)\s*\)/g, (m, id, inner) => {
+        let s = inner.trim();
+        if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+          s = s.slice(1, -1);
+        }
+        return `${id}("${s.replace(/"/g, "'")}")`;
+      });
+
+      // J. Fix Standard Box: `ID[ ... ]` (ignore if line is subgraph)
+      if (!/^\s*subgraph\s+/i.test(l)) {
+        l = l.replace(/([A-Za-z0-9_]+)\s*\[\s*(.*?)\s*\]/g, (m, id, inner) => {
+          let s = inner.trim();
+          if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+            s = s.slice(1, -1);
+          }
+          return `${id}["${s.replace(/"/g, "'")}"]`;
+        });
+      }
+
+      // Step 2: Restore pipe labels with clean double quotes: `|"Cleaned Label"|`
+      l = l.replace(/\|__PL_HOLD_(\d+)__\|/g, (m, idx) => {
+        const raw = pipeLabels[parseInt(idx, 10)] || '';
+        return `|"${raw}"|`;
+      });
+
+      // K. Split chained definitions like `E -->|"label"| F["Label"] --> B` into two statements
+      const chainMatch = l.match(/^(\s*)([A-Za-z0-9_]+.*?(?:-->|-\.->|==>).*?\s+)([A-Za-z0-9_]+)(?:\[.*?\]|\(.*?\)|([\[{(].*?[\]})]))\s*(-->|-\.->|==>)\s*(.+)$/);
+      if (chainMatch) {
+        const indent = chainMatch[1];
+        const firstPart = l.substring(0, l.lastIndexOf(chainMatch[5])).trim();
+        const secondPart = `${indent}${chainMatch[3]} ${chainMatch[5]} ${chainMatch[6].trim()}`;
+        resultLines.push(firstPart);
+        resultLines.push(secondPart);
+        continue;
+      }
+
+      resultLines.push(l);
+    }
+
+    // Auto-close any unclosed subgraphs
+    let subgraphCount = 0;
+    let endCount = 0;
+    for (const line of resultLines) {
+      if (/^\s*subgraph\b/i.test(line)) subgraphCount++;
+      if (/^\s*end\b/i.test(line)) endCount++;
+    }
+    while (subgraphCount > endCount) {
+      resultLines.push('  end');
+      endCount++;
+    }
+
+    return resultLines.join('\n');
+  }
+
   async function renderCurrentDiagram() {
     await tick();
     if (!diagramContainer || !flowData) return;
@@ -369,15 +574,160 @@
       return;
     }
 
+    const cleanCode = sanitizeMermaidCode(diagramCode);
+
     try {
       const id = `mermaid-svg-${Date.now()}`;
       diagramContainer.innerHTML = '<div class="diagram-loading"><span class="spinner-small"></span> กำลัง Render Flowchart...</div>';
-      const { svg } = await mermaid.render(id, diagramCode.trim());
+      const { svg } = await mermaid.render(id, cleanCode);
       diagramContainer.innerHTML = svg;
+      await tick();
+      fitView();
     } catch (err) {
       console.error('Mermaid render error:', err);
-      diagramContainer.innerHTML = `<div class="diagram-error"><div style="font-weight: bold; margin-bottom: 6px;">❌ เกิดข้อผิดพลาดในการ Render Diagram:</div><pre style="font-size: 11px; white-space: pre-wrap; background: rgba(0,0,0,0.3); padding: 10px; border-radius: 6px;">${diagramCode}</pre></div>`;
+      diagramContainer.innerHTML = `<div class="diagram-error"><div style="font-weight: bold; margin-bottom: 6px;">❌ เกิดข้อผิดพลาดในการ Render Diagram:</div><pre style="font-size: 11px; white-space: pre-wrap; background: rgba(0,0,0,0.3); padding: 10px; border-radius: 6px;">${cleanCode || diagramCode}</pre></div>`;
     }
+  }
+
+  function onPointerDown(e) {
+    if (e.button !== undefined && e.button !== 0) return;
+    if (e.target && e.target.closest && e.target.closest('button, a, input, select, textarea')) return;
+
+    isDragging = true;
+    dragStartX = e.clientX;
+    dragStartY = e.clientY;
+    startPanX = panX;
+    startPanY = panY;
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('pointermove', onPointerMove);
+      window.addEventListener('pointerup', onPointerUp);
+      window.addEventListener('pointercancel', onPointerUp);
+    }
+  }
+
+  function onPointerMove(e) {
+    if (!isDragging) return;
+    panX = startPanX + (e.clientX - dragStartX);
+    panY = startPanY + (e.clientY - dragStartY);
+  }
+
+  function onPointerUp() {
+    if (!isDragging) return;
+    isDragging = false;
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener('pointercancel', onPointerUp);
+    }
+  }
+
+  function handleWheel(e) {
+    if (!canvasPanelRef) return;
+    e.preventDefault();
+
+    const rect = canvasPanelRef.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    const zoomFactor = e.deltaY < 0 ? 1.15 : 0.87;
+    const newZoom = Math.min(Math.max(zoomLevel * zoomFactor, 0.08), 5.0);
+
+    panX = mouseX - ((mouseX - panX) / zoomLevel) * newZoom;
+    panY = mouseY - ((mouseY - panY) / zoomLevel) * newZoom;
+    zoomLevel = Number(newZoom.toFixed(3));
+  }
+
+  function zoomIn() {
+    const newZoom = Math.min(zoomLevel * 1.25, 5.0);
+    if (canvasPanelRef) {
+      const rect = canvasPanelRef.getBoundingClientRect();
+      const cx = rect.width / 2;
+      const cy = rect.height / 2;
+      panX = cx - ((cx - panX) / zoomLevel) * newZoom;
+      panY = cy - ((cy - panY) / zoomLevel) * newZoom;
+    }
+    zoomLevel = Number(newZoom.toFixed(3));
+  }
+
+  function zoomOut() {
+    const newZoom = Math.max(zoomLevel / 1.25, 0.08);
+    if (canvasPanelRef) {
+      const rect = canvasPanelRef.getBoundingClientRect();
+      const cx = rect.width / 2;
+      const cy = rect.height / 2;
+      panX = cx - ((cx - panX) / zoomLevel) * newZoom;
+      panY = cy - ((cy - panY) / zoomLevel) * newZoom;
+    }
+    zoomLevel = Number(newZoom.toFixed(3));
+  }
+
+  function zoomReset() {
+    zoomLevel = 1;
+    centerDiagram();
+  }
+
+  function centerDiagram() {
+    if (!canvasPanelRef || !diagramContainer) return;
+    const svg = diagramContainer.querySelector('svg');
+    if (!svg) {
+      panX = 0;
+      panY = 0;
+      return;
+    }
+    const svgWidth = parseFloat(svg.style.width) || svg.clientWidth || 1000;
+    const svgHeight = parseFloat(svg.style.height) || svg.clientHeight || 600;
+    panX = (canvasPanelRef.clientWidth - (svgWidth * zoomLevel)) / 2;
+    panY = Math.max(20, (canvasPanelRef.clientHeight - (svgHeight * zoomLevel)) / 2);
+  }
+
+  function fitView() {
+    if (!canvasPanelRef || !diagramContainer) return;
+    const svg = diagramContainer.querySelector('svg');
+    if (!svg) {
+      zoomReset();
+      return;
+    }
+
+    let svgWidth = 0;
+    let svgHeight = 0;
+
+    const vb = svg.getAttribute('viewBox');
+    if (vb) {
+      const parts = vb.trim().split(/[\s,]+/).map(Number);
+      if (parts.length === 4 && parts[2] > 0 && parts[3] > 0) {
+        svgWidth = parts[2];
+        svgHeight = parts[3];
+      }
+    }
+
+    if (!svgWidth || !svgHeight) {
+      try {
+        const bbox = svg.getBBox ? svg.getBBox() : svg.getBoundingClientRect();
+        svgWidth = bbox.width || 1000;
+        svgHeight = bbox.height || 600;
+      } catch (e) {
+        svgWidth = 1000;
+        svgHeight = 600;
+      }
+    }
+
+    svg.style.width = `${svgWidth}px`;
+    svg.style.height = `${svgHeight}px`;
+    svg.style.maxWidth = 'none';
+
+    const pad = 40;
+    const panelWidth = Math.max(canvasPanelRef.clientWidth - pad, 200);
+    const panelHeight = Math.max(canvasPanelRef.clientHeight - pad, 200);
+
+    const scaleX = panelWidth / svgWidth;
+    const scaleY = panelHeight / svgHeight;
+    const idealScale = Math.min(scaleX, scaleY, 1.0);
+    const clampedScale = Math.max(Math.min(idealScale, 2.0), 0.1);
+
+    zoomLevel = Number(clampedScale.toFixed(2));
+    panX = (canvasPanelRef.clientWidth - (svgWidth * zoomLevel)) / 2;
+    panY = Math.max(20, (canvasPanelRef.clientHeight - (svgHeight * zoomLevel)) / 2);
   }
 
   function handleSelectSitemapNode(node) {
@@ -394,17 +744,47 @@
     ? flowData.screen_mockups.find(s => s.screen_id === selectedScreenId) || flowData.screen_mockups[0]
     : null;
 
+  function getUatStatusClass(val) {
+    if (!val) return 'pending';
+    const s = String(val).toLowerCase();
+    if (s.includes('pass') || s.includes('approved') || s.includes('sign-off') || s.includes('success')) return 'passed';
+    if (s.includes('ready') || s.includes('tested') || s.includes('active')) return 'ready';
+    if (s.includes('fail') || s.includes('reject') || s.includes('block')) return 'failed';
+    return 'pending';
+  }
+
+  function getUatItems(row) {
+    if (!row) return [];
+    if (Array.isArray(row.uat_item) && row.uat_item.length > 0) return row.uat_item;
+    if (Array.isArray(row.uat_items) && row.uat_items.length > 0) return row.uat_items;
+    if (Array.isArray(row.uat_clause) && row.uat_clause.length > 0) return row.uat_clause;
+    if (row.uat_item && typeof row.uat_item === 'string' && row.uat_item.trim() && row.uat_item !== '-') return [row.uat_item];
+    if (row.uat_clause && typeof row.uat_clause === 'string' && row.uat_clause.trim() && row.uat_clause !== '-') return [row.uat_clause];
+    if (row.uat_ref && typeof row.uat_ref === 'string' && row.uat_ref.trim() && row.uat_ref !== '-') return [row.uat_ref];
+    
+    // Fallback: derive linked UAT item code from req_code and req_title
+    const cleanCode = (row.req_code || 'REQ').replace(/^REQ-?/i, '');
+    const titleSummary = row.req_title || row.sitemap_node_title || 'Acceptance Criteria';
+    return [`UAT-${cleanCode}: ${titleSummary}`];
+  }
+
   // Filtered Matrix
   $: uniqueDocs = flowData && flowData.traceability_matrix 
     ? ['All', ...new Set(flowData.traceability_matrix.map(m => m.doc_name).filter(Boolean))]
     : ['All'];
 
   $: filteredMatrix = (flowData && flowData.traceability_matrix) ? flowData.traceability_matrix.filter(item => {
+    const uatMatches = getUatItems(item).join(' ').toLowerCase();
     const matchQuery = !matrixSearchQuery || 
       (item.req_code && item.req_code.toLowerCase().includes(matrixSearchQuery.toLowerCase())) ||
       (item.req_title && item.req_title.toLowerCase().includes(matrixSearchQuery.toLowerCase())) ||
       (item.use_case_id && item.use_case_id.toLowerCase().includes(matrixSearchQuery.toLowerCase())) ||
-      (item.screen_name && item.screen_name.toLowerCase().includes(matrixSearchQuery.toLowerCase()));
+      (item.screen_name && item.screen_name.toLowerCase().includes(matrixSearchQuery.toLowerCase())) ||
+      (item.defect_log && String(item.defect_log).toLowerCase().includes(matrixSearchQuery.toLowerCase())) ||
+      (item.defects && String(item.defects).toLowerCase().includes(matrixSearchQuery.toLowerCase())) ||
+      uatMatches.includes(matrixSearchQuery.toLowerCase()) ||
+      (item.uat_status && String(item.uat_status).toLowerCase().includes(matrixSearchQuery.toLowerCase())) ||
+      (item.uat && String(item.uat).toLowerCase().includes(matrixSearchQuery.toLowerCase()));
     
     const matchDoc = selectedDocFilter === 'All' || item.doc_name === selectedDocFilter;
     const matchStatus = selectedStatusFilter === 'All' || item.status === selectedStatusFilter;
@@ -412,24 +792,26 @@
     return matchQuery && matchDoc && matchStatus;
   }) : [];
 
-  function zoomIn() { zoomLevel = Math.min(zoomLevel + 0.2, 2.5); }
-  function zoomOut() { zoomLevel = Math.max(zoomLevel - 0.2, 0.4); }
-  function zoomReset() { zoomLevel = 1; }
-
   function exportMatrixCSV() {
     if (!filteredMatrix.length) return;
-    const headers = ["Req Code", "Requirement Title", "Document", "Doc Type", "Sitemap Node", "Use Case", "Screen", "Test Cases", "Status"];
-    const rows = filteredMatrix.map(m => [
-      `"${m.req_code || ''}"`,
-      `"${(m.req_title || '').replace(/"/g, '""')}"`,
-      `"${m.doc_name || ''}"`,
-      `"${m.doc_type || ''}"`,
-      `"${m.sitemap_node_title || ''}"`,
-      `"${(m.use_case_id || '').replace(/"/g, '""')}"`,
-      `"${m.screen_name || m.screen_id || ''}"`,
-      `"${(Array.isArray(m.test_cases) ? m.test_cases.join('; ') : m.test_cases || '').replace(/"/g, '""')}"`,
-      `"${m.status || ''}"`
-    ]);
+    const headers = ["Req Code", "Requirement Title", "Document", "Doc Type", "Sitemap Node", "Use Case", "Screen", "Test Cases", "Defect Log", "UAT Reference (ข้อเอกสาร UAT)", "UAT Status", "Status"];
+    const rows = filteredMatrix.map(m => {
+      const uatList = getUatItems(m).join('; ');
+      return [
+        `"${m.req_code || ''}"`,
+        `"${(m.req_title || '').replace(/"/g, '""')}"`,
+        `"${m.doc_name || ''}"`,
+        `"${m.doc_type || ''}"`,
+        `"${m.sitemap_node_title || ''}"`,
+        `"${(m.use_case_id || '').replace(/"/g, '""')}"`,
+        `"${m.screen_name || m.screen_id || ''}"`,
+        `"${(Array.isArray(m.test_cases) ? m.test_cases.join('; ') : m.test_cases || '').replace(/"/g, '""')}"`,
+        `"${(Array.isArray(m.defect_log) ? m.defect_log.join('; ') : (m.defect_log || m.defects || 'No Defects')).replace(/"/g, '""')}"`,
+        `"${uatList.replace(/"/g, '""')}"`,
+        `"${(m.uat_status || m.uat || (m.status === 'Covered' ? 'Ready for UAT' : 'Pending')).replace(/"/g, '""')}"`,
+        `"${m.status || ''}"`
+      ];
+    });
 
     const csvContent = "\uFEFF" + [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -994,23 +1376,37 @@
               </button>
 
               <div class="zoom-controls">
-                <button class="btn-ctrl" on:click={zoomIn} title="ขยาย">🔍+</button>
-                <button class="btn-ctrl" on:click={zoomOut} title="ย่อ">🔍-</button>
-                <button class="btn-ctrl" on:click={zoomReset} title="ขนาดดั้งเดิม">100%</button>
+                <button class="btn-ctrl" on:click={zoomIn} title="ขยาย (Zoom In)">🔍+</button>
+                <button class="btn-ctrl" on:click={zoomOut} title="ย่อ (Zoom Out)">🔍-</button>
+                <button class="btn-ctrl" on:click={fitView} title="ปรับขนาดให้พอดีหน้าจอ (Fit to Screen)">🎯 Fit</button>
+                <button class="btn-ctrl" on:click={zoomReset} title="ขนาด 100%">{Math.round(zoomLevel * 100)}%</button>
               </div>
 
-              <button class="btn-ctrl-action fs" on:click={() => isFullscreenDiagram = !isFullscreenDiagram} title="ขยายเต็มหน้าจอ">
+              <button class="btn-ctrl-action fs" on:click={() => { isFullscreenDiagram = !isFullscreenDiagram; setTimeout(fitView, 200); }} title="ขยายเต็มหน้าจอ">
                 {isFullscreenDiagram ? '✕ ย่อจอ' : '⛶ เต็มจอ'}
               </button>
             </div>
           </div>
 
           <!-- Mermaid Canvas Box with Draw.io style Grid -->
-          <div class="glass-panel diagram-canvas-panel" class:drawio-grid={showDrawioGrid && activeTab === 'flowchart'}>
+          <div 
+            class="glass-panel diagram-canvas-panel" 
+            class:drawio-grid={showDrawioGrid && activeTab === 'flowchart'}
+            class:is-dragging={isDragging}
+            bind:this={canvasPanelRef}
+            on:pointerdown={onPointerDown}
+            on:wheel={handleWheel}
+          >
+            <div class="canvas-help-badge">
+              <span>🖱️ คลิกลากเมาส์เพื่อเลื่อนผัง (Pan)</span>
+              <span class="sep">•</span>
+              <span>🔄 สกอลล์เมาส์เพื่อซูม (Zoom)</span>
+            </div>
+
             <div 
               class="diagram-render-area" 
               bind:this={diagramContainer}
-              style="transform: scale({zoomLevel}); transform-origin: top center; transition: transform 0.2s ease;"
+              style="transform: translate({panX}px, {panY}px) scale({zoomLevel}); transform-origin: 0 0; transition: {isDragging ? 'none' : 'transform 0.12s ease-out'};"
             >
               <!-- Mermaid SVG is injected here -->
             </div>
@@ -1078,20 +1474,22 @@
               <table class="matrix-table">
                 <thead>
                   <tr>
-                    <th style="width: 10%;">Req Code</th>
-                    <th style="width: 20%;">Requirement Title</th>
-                    <th style="width: 15%;">Source Document</th>
-                    <th style="width: 14%;">Sitemap / Menu</th>
-                    <th style="width: 14%;">Use Case</th>
-                    <th style="width: 13%;">Screen Mockup</th>
-                    <th style="width: 14%;">Test Scenarios</th>
-                    <th style="width: 8%; text-align: center;">Status</th>
+                    <th style="width: 7%;">Req Code</th>
+                    <th style="width: 15%;">Requirement Title</th>
+                    <th style="width: 11%;">Source Document</th>
+                    <th style="width: 10%;">Sitemap / Menu</th>
+                    <th style="width: 10%;">Use Case</th>
+                    <th style="width: 10%;">Screen Mockup</th>
+                    <th style="width: 10%;">Test Scenarios</th>
+                    <th style="width: 10%;">Defect Log</th>
+                    <th style="width: 13%;">ข้อเอกสาร UAT (UAT Reference)</th>
+                    <th style="width: 8%; text-align: center;">Coverage</th>
                   </tr>
                 </thead>
                 <tbody>
                   {#if filteredMatrix.length === 0}
                     <tr>
-                      <td colspan="8" style="text-align: center; color: #94a3b8; padding: 30px;">
+                      <td colspan="10" style="text-align: center; color: #94a3b8; padding: 30px;">
                         ไม่พบข้อมูล Traceability Matrix ที่ตรงกับเงื่อนไข
                       </td>
                     </tr>
@@ -1123,6 +1521,42 @@
                           {:else}
                             <span>{row.test_cases || '-'}</span>
                           {/if}
+                        </td>
+                        <td>
+                          {#if Array.isArray(row.defect_log) && row.defect_log.length > 0}
+                            <div class="defect-list">
+                              {#each row.defect_log as d}
+                                <span class="defect-pill open" title={d}>🐛 {d}</span>
+                              {/each}
+                            </div>
+                          {:else if row.defect_log && String(row.defect_log).trim() && row.defect_log !== '-'}
+                            <span class="defect-pill open" title={row.defect_log}>🐛 {row.defect_log}</span>
+                          {:else if Array.isArray(row.defects) && row.defects.length > 0}
+                            <div class="defect-list">
+                              {#each row.defects as d}
+                                <span class="defect-pill open" title={d}>🐛 {d}</span>
+                              {/each}
+                            </div>
+                          {:else if row.defects && String(row.defects).trim() && row.defects !== '-'}
+                            <span class="defect-pill open" title={row.defects}>🐛 {row.defects}</span>
+                          {:else}
+                            <span class="defect-pill clean" title="ไม่มี Defect ค้าง">✨ No Defects</span>
+                          {/if}
+                        </td>
+                        <td>
+                          <div class="uat-list">
+                            {#each getUatItems(row) as uatItem}
+                              <div class="uat-item-row" title={uatItem}>
+                                <span class="uat-code-tag">📋 {uatItem.includes(':') ? uatItem.split(':')[0] : 'UAT'}</span>
+                                <span class="uat-title-text">{uatItem.includes(':') ? uatItem.split(':').slice(1).join(':').trim() : uatItem}</span>
+                              </div>
+                            {/each}
+                            <div class="uat-status-sub">
+                              <span class="uat-pill {getUatStatusClass(row.uat_status || row.uat || (row.status === 'Covered' ? 'Ready for UAT' : 'Pending'))}">
+                                {row.uat_status || row.uat || (row.status === 'Covered' ? 'Ready for UAT' : '⏳ UAT Pending')}
+                              </span>
+                            </div>
+                          </div>
                         </td>
                         <td style="text-align: center;">
                           <span class="status-badge {String(row.status || '').toLowerCase().replace(' ', '-')}">
@@ -1697,6 +2131,12 @@
     background: #090d16;
     padding: 18px 24px;
     gap: 12px;
+    height: 100vh;
+  }
+
+  .diagram-workspace.fullscreen-diagram .diagram-canvas-panel {
+    height: calc(100vh - 120px);
+    min-height: 0;
   }
 
   .diagram-toolbar {
@@ -1807,17 +2247,44 @@
   .btn-ctrl:hover { background: #334155; color: white; }
 
   .diagram-canvas-panel {
-    min-height: 560px;
+    min-height: 580px;
+    height: 680px;
     flex: 1;
-    overflow: auto;
-    display: flex;
-    justify-content: center;
-    align-items: flex-start;
-    padding: 30px;
+    overflow: hidden;
+    position: relative;
+    padding: 0;
     background: #090d16;
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 8px;
-    position: relative;
+    cursor: grab;
+    user-select: none;
+    touch-action: none;
+  }
+
+  .diagram-canvas-panel.is-dragging {
+    cursor: grabbing;
+  }
+
+  .canvas-help-badge {
+    position: absolute;
+    bottom: 12px;
+    right: 14px;
+    background: rgba(15, 23, 42, 0.85);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: #94a3b8;
+    font-size: 11px;
+    padding: 5px 12px;
+    border-radius: 20px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    pointer-events: none;
+    z-index: 10;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  }
+  .canvas-help-badge .sep {
+    color: #475569;
   }
 
   /* Draw.io Dot Grid Simulation */
@@ -1831,18 +2298,30 @@
   }
 
   .diagram-render-area {
-    width: 100%;
-    display: flex;
-    justify-content: center;
+    position: absolute;
+    top: 0;
+    left: 0;
+    display: inline-block;
+    will-change: transform;
+    pointer-events: auto;
   }
 
   .diagram-render-area svg {
-    max-width: 100%;
+    max-width: none !important;
     height: auto;
     filter: drop-shadow(0 8px 24px rgba(0, 0, 0, 0.5));
+    display: block;
   }
 
-  .diagram-loading, .diagram-empty { color: #94a3b8; font-size: 13px; padding: 40px; }
+  .diagram-loading, .diagram-empty, .diagram-error {
+    color: #94a3b8; 
+    font-size: 13px; 
+    padding: 40px; 
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
 
   /* ── DRAW.IO NOTATION LEGEND BAR ── */
   .drawio-legend-bar {
@@ -2047,6 +2526,101 @@
     border-radius: 4px;
     font-size: 10.5px;
     font-weight: 700;
+  }
+
+  /* Defect & UAT Badges in Matrix */
+  .defect-list { display: flex; flex-direction: column; gap: 3px; }
+  .defect-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 7px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    max-width: 170px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .defect-pill.open {
+    background: rgba(239, 68, 68, 0.15);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    color: #fca5a5;
+  }
+  .defect-pill.clean {
+    background: rgba(16, 185, 129, 0.1);
+    border: 1px solid rgba(16, 185, 129, 0.25);
+    color: #86efac;
+    font-weight: 500;
+    font-size: 10.5px;
+  }
+
+  .uat-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .uat-item-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: rgba(30, 41, 59, 0.7);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    border-radius: 4px;
+    padding: 2px 6px;
+    max-width: 220px;
+  }
+  .uat-code-tag {
+    font-size: 10.5px;
+    font-weight: 700;
+    color: #60a5fa;
+    white-space: nowrap;
+    background: rgba(59, 130, 246, 0.18);
+    padding: 1px 4px;
+    border-radius: 3px;
+    flex-shrink: 0;
+  }
+  .uat-title-text {
+    font-size: 11px;
+    color: #e2e8f0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .uat-status-sub {
+    margin-top: 2px;
+  }
+
+  .uat-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 10.5px;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+  .uat-pill.passed {
+    background: rgba(16, 185, 129, 0.2);
+    border: 1px solid rgba(16, 185, 129, 0.5);
+    color: #6ee7b7;
+  }
+  .uat-pill.ready {
+    background: rgba(59, 130, 246, 0.2);
+    border: 1px solid rgba(59, 130, 246, 0.5);
+    color: #93c5fd;
+  }
+  .uat-pill.pending {
+    background: rgba(245, 158, 11, 0.15);
+    border: 1px solid rgba(245, 158, 11, 0.4);
+    color: #fcd34d;
+  }
+  .uat-pill.failed {
+    background: rgba(239, 68, 68, 0.2);
+    border: 1px solid rgba(239, 68, 68, 0.5);
+    color: #fca5a5;
   }
 
   /* ── Figma & Image Wireframe Extension Styles ── */
