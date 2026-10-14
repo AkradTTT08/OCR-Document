@@ -182,6 +182,8 @@
     return escaped;
   }
 
+  let hasReceivedFirstChunk = false;
+
   async function sendMessage() {
     if (!currentInput.trim() || isLoading) return;
     
@@ -190,9 +192,17 @@
     
     messages = [...messages, { role: 'user', content: userMsg }];
     isLoading = true;
+    hasReceivedFirstChunk = false;
     userScrolledUp = false;
     setTimeout(() => scrollToBottom(true), 50);
     abortController = new AbortController();
+
+    const timeoutId = setTimeout(() => {
+      if (abortController && isLoading && !hasReceivedFirstChunk) {
+        abortController.abort();
+        toast("การเชื่อมต่อใช้เวลานานเกินไป กรุณากดลองใหม่อีกครั้ง", "warning");
+      }
+    }, 90000);
 
     try {
       const projectId = selectedProjectObj.id || selectedProjectObj.project_id;
@@ -216,30 +226,41 @@
       const reader = response.body.getReader();
       const decoder = new TextDecoder("utf-8");
       
-      messages = [...messages, { role: 'assistant', content: '' }];
-      
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         
         const textChunk = decoder.decode(value, { stream: true });
-        messages[messages.length - 1].content += textChunk;
-        messages = [...messages];
+        if (!textChunk) continue;
+
+        if (!hasReceivedFirstChunk) {
+          hasReceivedFirstChunk = true;
+          messages = [...messages, { role: 'assistant', content: textChunk }];
+        } else {
+          messages[messages.length - 1].content += textChunk;
+          messages = [...messages];
+        }
+
         if (!userScrolledUp) {
           scrollToBottom();
         }
       }
     } catch (err) {
       if (err.name === 'AbortError') {
-        toast("ยกเลิกการค้นหาข้อมูล", "info");
-        messages = messages.slice(0, -1);
-        currentInput = userMsg;
+        toast("ยกเลิกการค้นหาข้อมูลแล้ว", "info");
+        if (!hasReceivedFirstChunk) {
+          currentInput = userMsg;
+        }
       } else {
         toast(`เกิดข้อผิดพลาด: ${err.message}`, "error");
-        messages = [...messages, { role: 'assistant', content: 'ขออภัยครับ เกิดข้อผิดพลาดในการเชื่อมต่อกับระบบ AI' }];
+        if (!hasReceivedFirstChunk) {
+          messages = [...messages, { role: 'assistant', content: 'ขออภัยครับ เกิดข้อผิดพลาดในการเชื่อมต่อกับระบบ AI กรุณาลองส่งคำถามใหม่อีกครั้ง' }];
+        }
       }
     } finally {
+      clearTimeout(timeoutId);
       isLoading = false;
+      hasReceivedFirstChunk = false;
       abortController = null;
     }
   }
@@ -318,15 +339,21 @@
           </div>
         {/each}
 
-        {#if isLoading}
-          <div class="message-row assistant">
+        {#if isLoading && !hasReceivedFirstChunk}
+          <div class="message-row assistant" transition:fade={{ duration: 150 }}>
             <div class="message-bubble assistant">
               <div class="msg-icon">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h6z"></path><path d="M22 10v6a2 2 0 0 1-2 2h-6l-4 4v-4H6a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
               </div>
-              <div class="msg-content">
-                <div class="typing-indicator">
-                  <span></span><span></span><span></span>
+              <div class="msg-content loading-content">
+                <div class="loading-status-wrap">
+                  <div class="typing-indicator">
+                    <span></span><span></span><span></span>
+                  </div>
+                  <span class="loading-status-text">Rainbow 🌈 กำลังค้นหาข้อมูลจากคลังเอกสารและวิเคราะห์คำตอบ...</span>
+                  <button type="button" class="btn-cancel-inline" on:click={cancelMessage} title="ยกเลิกการรอคำตอบ">
+                    ✕ ยกเลิก
+                  </button>
                 </div>
               </div>
             </div>
@@ -839,5 +866,41 @@
   @keyframes bounce {
     0%, 80%, 100% { transform: scale(0); }
     40% { transform: scale(1); }
+  }
+
+  .loading-content {
+    background: rgba(15, 23, 42, 0.85);
+    border-color: rgba(168, 85, 247, 0.3);
+  }
+
+  .loading-status-wrap {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .loading-status-text {
+    font-size: 13px;
+    color: #cbd5e1;
+    font-style: italic;
+  }
+
+  .btn-cancel-inline {
+    background: rgba(239, 68, 68, 0.15);
+    border: 1px solid rgba(239, 68, 68, 0.35);
+    color: #fca5a5;
+    padding: 3px 8px;
+    border-radius: 6px;
+    font-size: 11.5px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    margin-left: auto;
+  }
+
+  .btn-cancel-inline:hover {
+    background: rgba(239, 68, 68, 0.3);
+    color: #ffffff;
+    border-color: rgba(239, 68, 68, 0.6);
   }
 </style>

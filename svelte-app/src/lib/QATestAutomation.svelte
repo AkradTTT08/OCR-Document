@@ -110,15 +110,102 @@
     }
   }
 
+  let selectedDocFilter = 'ALL';
+  let viewMode = 'grouped'; // 'grouped' (แยกตามเอกสาร) or 'list' (รายการทั้งหมด)
+
+  // Helper to extract document information for each requirement
+  function getReqDocInfo(req) {
+    if (req.doc_name && req.doc_name !== 'ไม่ระบุเอกสาร') {
+      return {
+        name: req.doc_name,
+        category: req.doc_category || req.doc_type || 'Requirements',
+        docId: req.doc_id
+      };
+    }
+    const matched = (projectDocuments || []).find(d => 
+      String(d.id || d.doc_id) === String(req.doc_id)
+    );
+    if (matched) {
+      return {
+        name: matched.original_filename || matched.name || matched.filename || 'เอกสารโครงการ',
+        category: matched.doc_category || matched.doc_type || 'Requirements',
+        docId: matched.id || matched.doc_id
+      };
+    }
+    return {
+      name: 'ไม่ระบุเอกสาร',
+      category: 'General',
+      docId: null
+    };
+  }
+
+  // Count requirements per document
+  function getDocReqCount(doc) {
+    const docId = String(doc.id || doc.doc_id || '');
+    const docName = (doc.original_filename || doc.name || doc.filename || '').trim();
+    return requirements.filter(r => {
+      if (docId && String(r.doc_id || '') === docId) return true;
+      if (docName && r.doc_name && r.doc_name === docName) return true;
+      return false;
+    }).length;
+  }
+
+  function toggleDocFilter(doc) {
+    const docKey = String(doc.id || doc.doc_id || doc.original_filename || doc.name);
+    if (selectedDocFilter === docKey) {
+      selectedDocFilter = 'ALL';
+    } else {
+      selectedDocFilter = docKey;
+    }
+  }
+
+  function getDocFilterDisplayName() {
+    if (selectedDocFilter === 'ALL') return 'ทั้งหมด';
+    const found = (projectDocuments || []).find(d => 
+      String(d.id || d.doc_id || d.original_filename || d.name) === String(selectedDocFilter)
+    );
+    return found ? (found.original_filename || found.name || 'เอกสารที่เลือก') : selectedDocFilter;
+  }
+
   $: filteredRequirements = requirements.filter(req => {
+    // Document filter
+    if (selectedDocFilter !== 'ALL') {
+      const docInfo = getReqDocInfo(req);
+      const matchId = req.doc_id && String(req.doc_id) === String(selectedDocFilter);
+      const matchName = docInfo.name === selectedDocFilter;
+      if (!matchId && !matchName) return false;
+    }
+    // Search query filter
     if (!reqSearchText.trim()) return true;
     const q = reqSearchText.toLowerCase();
+    const docInfo = getReqDocInfo(req);
     return (
       (req.req_code && req.req_code.toLowerCase().includes(q)) ||
       (req.title && req.title.toLowerCase().includes(q)) ||
-      (req.description && req.description.toLowerCase().includes(q))
+      (req.description && req.description.toLowerCase().includes(q)) ||
+      (docInfo.name && docInfo.name.toLowerCase().includes(q)) ||
+      (docInfo.category && docInfo.category.toLowerCase().includes(q))
     );
   });
+
+  // Grouped requirements by Document
+  $: groupedRequirements = (() => {
+    const groupMap = new Map();
+    for (const req of filteredRequirements) {
+      const docInfo = getReqDocInfo(req);
+      const groupKey = docInfo.docId || docInfo.name || 'OTHER';
+      if (!groupMap.has(groupKey)) {
+        groupMap.set(groupKey, {
+          docId: docInfo.docId,
+          docName: docInfo.name,
+          docCategory: docInfo.category,
+          items: []
+        });
+      }
+      groupMap.get(groupKey).items.push(req);
+    }
+    return Array.from(groupMap.values()).sort((a, b) => b.items.length - a.items.length);
+  })();
 
   function toggleExpand(reqId) {
     expandedReqId = expandedReqId === reqId ? null : reqId;
@@ -404,12 +491,29 @@
       
       {#if projectDocuments.length > 0}
         <div class="doc-chips-list">
+          <button 
+            type="button" 
+            class="doc-chip-btn" 
+            class:active={selectedDocFilter === 'ALL'} 
+            on:click={() => selectedDocFilter = 'ALL'}
+          >
+            <span class="doc-type-tag all">ALL</span>
+            <span class="doc-name">เอกสารทั้งหมด</span>
+            <span class="doc-req-count">{requirements.length} ข้อ</span>
+          </button>
           {#each projectDocuments as doc}
-            <div class="doc-chip" title={doc.original_filename || doc.filename}>
-              <span class="doc-type-tag">{doc.doc_category || doc.doc_type || 'DOC'}</span>
-              <span class="doc-name">{doc.original_filename || doc.filename || doc.doc_id}</span>
-              <span class="doc-status-dot" title="สถานะพร้อมใช้งาน"></span>
-            </div>
+            {@const count = getDocReqCount(doc)}
+            <button 
+              type="button" 
+              class="doc-chip-btn" 
+              class:active={selectedDocFilter === String(doc.id || doc.doc_id) || selectedDocFilter === (doc.original_filename || doc.name)}
+              on:click={() => toggleDocFilter(doc)}
+              title="{doc.original_filename || doc.name || 'เอกสาร'} ({count} ข้อกำหนด)"
+            >
+              <span class="doc-type-tag {String(doc.doc_category || doc.doc_type || 'DOC').toLowerCase()}">{doc.doc_category || doc.doc_type || 'DOC'}</span>
+              <span class="doc-name">{doc.original_filename || doc.name || doc.filename || doc.id || doc.doc_id}</span>
+              <span class="doc-req-count" class:has-reqs={count > 0}>{count} ข้อ</span>
+            </button>
           {/each}
         </div>
       {:else}
@@ -444,81 +548,233 @@
       <div class="req-toolbar">
         <div class="search-box">
           <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" style="color: #94a3b8;"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-          <input type="text" bind:value={reqSearchText} placeholder="ค้นหา Requirement (รหัส, ชื่อหัวข้อ, รายละเอียด)..." class="search-input" />
+          <input type="text" bind:value={reqSearchText} placeholder="ค้นหา Requirement (รหัส, ชื่อหัวข้อ, รายละเอียด, เอกสาร)..." class="search-input" />
           {#if reqSearchText}
             <button class="clear-search-btn" on:click={() => reqSearchText = ''}>✕</button>
           {/if}
         </div>
-        <div class="req-stats-text">
-          แสดง {filteredRequirements.length} จาก {requirements.length} รายการ
+
+        <div class="toolbar-controls">
+          <select bind:value={selectedDocFilter} class="doc-filter-select" title="กรองตามเอกสาร">
+            <option value="ALL">📁 เอกสารทั้งหมด ({requirements.length} ข้อกำหนด)</option>
+            {#each projectDocuments as doc}
+              {@const c = getDocReqCount(doc)}
+              <option value={String(doc.id || doc.doc_id || doc.original_filename || doc.name)}>
+                📄 {doc.original_filename || doc.name || 'เอกสาร'} ({c} ข้อ)
+              </option>
+            {/each}
+          </select>
+
+          <div class="view-mode-toggle">
+            <button 
+              type="button" 
+              class="btn-view-toggle" 
+              class:active={viewMode === 'grouped'} 
+              on:click={() => viewMode = 'grouped'}
+              title="จัดกลุ่มแยกตามเอกสารต้นทาง"
+            >
+              <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+              <span>แยกตามเอกสาร</span>
+            </button>
+            <button 
+              type="button" 
+              class="btn-view-toggle" 
+              class:active={viewMode === 'list'} 
+              on:click={() => viewMode = 'list'}
+              title="แสดงรายการรวมทั้งหมด"
+            >
+              <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
+              <span>รายการทั้งหมด</span>
+            </button>
+          </div>
+
+          <div class="req-stats-text">
+            แสดง {filteredRequirements.length} จาก {requirements.length} รายการ
+            {#if selectedDocFilter !== 'ALL'}
+              <span class="active-filter-indicator">
+                (กรองเฉพาะ: {getDocFilterDisplayName()})
+                <button class="btn-clear-filter" on:click={() => selectedDocFilter = 'ALL'} title="ล้างตัวกรอง">✕</button>
+              </span>
+            {/if}
+          </div>
         </div>
       </div>
 
-      <div class="requirements-list">
-        {#each filteredRequirements as req (req.req_id)}
-          <div class="req-card" class:expanded={expandedReqId === req.req_id} transition:fade>
-            <div class="req-header" on:click={() => toggleExpand(req.req_id)}>
-              <div class="req-title">
-                <span class="req-code">{req.req_code}</span>
-                <h4>{req.title}</h4>
+      {#if viewMode === 'grouped'}
+        <!-- Grouped by Document View -->
+        <div class="doc-groups-container">
+          {#each groupedRequirements as group (group.docId || group.docName)}
+            <div class="doc-group-card">
+              <div class="doc-group-banner">
+                <div class="doc-group-main">
+                  <span class="doc-badge-cat {String(group.docCategory || 'DOC').toLowerCase()}">{group.docCategory}</span>
+                  <div class="doc-group-name-wrap">
+                    <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" style="color: #60a5fa;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+                    <h4 class="doc-group-heading">{group.docName}</h4>
+                  </div>
+                </div>
+                <span class="doc-group-count-tag">{group.items.length} ข้อกำหนด</span>
               </div>
-              <div class="req-actions">
-                <span class="status-badge {(req.status || 'Active').toLowerCase()}">{req.status || 'Active'}</span>
-                <button class="expand-btn">
-                  <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" style="transform: rotate({expandedReqId === req.req_id ? 180 : 0}deg); transition: transform 0.3s;"><polyline points="6 9 12 15 18 9"></polyline></svg>
-                </button>
+
+              <div class="doc-group-items-list">
+                {#each group.items as req (req.req_id)}
+                  <div class="req-card" class:expanded={expandedReqId === req.req_id} transition:fade>
+                    <div class="req-header" on:click={() => toggleExpand(req.req_id)}>
+                      <div class="req-title">
+                        <span class="req-code">{req.req_code}</span>
+                        <h4>{req.title}</h4>
+                      </div>
+                      <div class="req-actions">
+                        <span class="status-badge {(req.status || 'Active').toLowerCase()}">{req.status || 'Active'}</span>
+                        <button class="expand-btn">
+                          <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" style="transform: rotate({expandedReqId === req.req_id ? 180 : 0}deg); transition: transform 0.3s;"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                        </button>
+                      </div>
+                    </div>
+                    
+                    {#if expandedReqId === req.req_id}
+                      <div class="req-body" transition:slide>
+                        <div class="req-source-doc-banner">
+                          <div class="banner-left">
+                            <svg viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2" fill="none" style="color: #60a5fa;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
+                            <span class="banner-label">เอกสารอ้างอิง:</span>
+                            <strong class="banner-doc-name">{group.docName}</strong>
+                          </div>
+                          <span class="banner-cat-tag {String(group.docCategory || 'DOC').toLowerCase()}">{group.docCategory}</span>
+                        </div>
+
+                        <div class="req-desc">
+                          <strong>Description:</strong>
+                          <p>{req.description}</p>
+                        </div>
+                        <div class="req-grid">
+                          <div class="grid-col">
+                            <strong>Actors:</strong> <p>{req.actors || '-'}</p>
+                          </div>
+                          <div class="grid-col">
+                            <strong>Preconditions:</strong> <p>{req.preconditions || '-'}</p>
+                          </div>
+                        </div>
+                        
+                        <div class="req-lists">
+                          <div class="list-box">
+                            <strong>Steps:</strong>
+                            <ul>
+                              {#each (req.steps || []) as step}
+                                <li>{step}</li>
+                              {/each}
+                            </ul>
+                          </div>
+                          <div class="list-box">
+                            <strong>Expected Results:</strong>
+                            <ul>
+                              {#each (req.expected_results || []) as res}
+                                <li>{res}</li>
+                              {/each}
+                            </ul>
+                          </div>
+                        </div>
+                        
+                        <div class="req-meta">
+                          <span class="meta-item">
+                            <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect></svg>
+                            UI Elements: {(req.ui_elements || []).length}
+                          </span>
+                          <span class="meta-item">
+                            <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
+                            API Endpoints: {(req.api_endpoints || []).length}
+                          </span>
+                        </div>
+                      </div>
+                    {/if}
+                  </div>
+                {/each}
               </div>
             </div>
-            
-            {#if expandedReqId === req.req_id}
-              <div class="req-body" transition:slide>
-                <div class="req-desc">
-                  <strong>Description:</strong>
-                  <p>{req.description}</p>
-                </div>
-                <div class="req-grid">
-                  <div class="grid-col">
-                    <strong>Actors:</strong> <p>{req.actors || '-'}</p>
-                  </div>
-                  <div class="grid-col">
-                    <strong>Preconditions:</strong> <p>{req.preconditions || '-'}</p>
-                  </div>
-                </div>
-                
-                <div class="req-lists">
-                  <div class="list-box">
-                    <strong>Steps:</strong>
-                    <ul>
-                      {#each (req.steps || []) as step}
-                        <li>{step}</li>
-                      {/each}
-                    </ul>
-                  </div>
-                  <div class="list-box">
-                    <strong>Expected Results:</strong>
-                    <ul>
-                      {#each (req.expected_results || []) as res}
-                        <li>{res}</li>
-                      {/each}
-                    </ul>
-                  </div>
-                </div>
-                
-                <div class="req-meta">
-                  <span class="meta-item">
-                    <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect></svg>
-                    UI Elements: {(req.ui_elements || []).length}
+          {/each}
+        </div>
+      {:else}
+        <!-- Flat List View with Doc Badge on Every Card -->
+        <div class="requirements-list">
+          {#each filteredRequirements as req (req.req_id)}
+            {@const docInfo = getReqDocInfo(req)}
+            <div class="req-card" class:expanded={expandedReqId === req.req_id} transition:fade>
+              <div class="req-header" on:click={() => toggleExpand(req.req_id)}>
+                <div class="req-title">
+                  <span class="req-code">{req.req_code}</span>
+                  <h4>{req.title}</h4>
+                  <span class="req-doc-chip" title="เอกสารต้นฉบับ: {docInfo.name}">
+                    <svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="2" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
+                    <span class="chip-name">{docInfo.name}</span>
                   </span>
-                  <span class="meta-item">
-                    <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
-                    API Endpoints: {(req.api_endpoints || []).length}
-                  </span>
+                </div>
+                <div class="req-actions">
+                  <span class="status-badge {(req.status || 'Active').toLowerCase()}">{req.status || 'Active'}</span>
+                  <button class="expand-btn">
+                    <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" style="transform: rotate({expandedReqId === req.req_id ? 180 : 0}deg); transition: transform 0.3s;"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                  </button>
                 </div>
               </div>
-            {/if}
-          </div>
-        {/each}
-      </div>
+              
+              {#if expandedReqId === req.req_id}
+                <div class="req-body" transition:slide>
+                  <div class="req-source-doc-banner">
+                    <div class="banner-left">
+                      <svg viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2" fill="none" style="color: #60a5fa;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
+                      <span class="banner-label">เอกสารอ้างอิง:</span>
+                      <strong class="banner-doc-name">{docInfo.name}</strong>
+                    </div>
+                    <span class="banner-cat-tag {String(docInfo.category || 'DOC').toLowerCase()}">{docInfo.category}</span>
+                  </div>
+
+                  <div class="req-desc">
+                    <strong>Description:</strong>
+                    <p>{req.description}</p>
+                  </div>
+                  <div class="req-grid">
+                    <div class="grid-col">
+                      <strong>Actors:</strong> <p>{req.actors || '-'}</p>
+                    </div>
+                    <div class="grid-col">
+                      <strong>Preconditions:</strong> <p>{req.preconditions || '-'}</p>
+                    </div>
+                  </div>
+                  
+                  <div class="req-lists">
+                    <div class="list-box">
+                      <strong>Steps:</strong>
+                      <ul>
+                        {#each (req.steps || []) as step}
+                          <li>{step}</li>
+                        {/each}
+                      </ul>
+                    </div>
+                    <div class="list-box">
+                      <strong>Expected Results:</strong>
+                      <ul>
+                        {#each (req.expected_results || []) as res}
+                          <li>{res}</li>
+                        {/each}
+                      </ul>
+                    </div>
+                  </div>
+                  
+                  <div class="req-meta">
+                    <span class="meta-item">
+                      <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect></svg>
+                      UI Elements: {(req.ui_elements || []).length}
+                    </span>
+                    <span class="meta-item">
+                      <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
+                      API Endpoints: {(req.api_endpoints || []).length}
+                    </span>
+                  </div>
+                </div>
+              {/if}
+            </div>
+          {/each}
+        </div>
+      {/if}
     {/if}
   </div>
   
@@ -1682,4 +1938,277 @@
     font-size: 13px;
     color: #94a3b8;
   }
+
+  /* Document Filter Chips */
+  .doc-chip-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(30, 41, 59, 0.8);
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    border-radius: 8px;
+    padding: 5px 11px;
+    font-size: 13px;
+    color: #e2e8f0;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-align: left;
+    max-width: 340px;
+  }
+  .doc-chip-btn:hover {
+    background: rgba(51, 65, 85, 0.9);
+    border-color: rgba(147, 197, 253, 0.4);
+    transform: translateY(-1px);
+  }
+  .doc-chip-btn.active {
+    background: rgba(99, 102, 241, 0.25);
+    border-color: #818cf8;
+    color: #ffffff;
+    box-shadow: 0 0 12px rgba(99, 102, 241, 0.35);
+  }
+  .doc-req-count {
+    font-size: 11px;
+    padding: 2px 7px;
+    border-radius: 10px;
+    background: rgba(148, 163, 184, 0.15);
+    color: #94a3b8;
+    font-weight: 600;
+    flex-shrink: 0;
+  }
+  .doc-req-count.has-reqs {
+    background: rgba(16, 185, 129, 0.2);
+    color: #34d399;
+  }
+  .doc-type-tag.all {
+    background: #6366f1;
+  }
+  .doc-type-tag.requirements {
+    background: #10b981;
+  }
+  .doc-type-tag.testcase {
+    background: #8b5cf6;
+  }
+  .doc-type-tag.srs {
+    background: #ec4899;
+  }
+  .doc-type-tag.reference {
+    background: #f59e0b;
+  }
+  .doc-type-tag.ocr {
+    background: #06b6d4;
+  }
+
+  /* Toolbar controls */
+  .toolbar-controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .doc-filter-select {
+    background: rgba(15, 23, 42, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: #e2e8f0;
+    padding: 7px 12px;
+    border-radius: 8px;
+    font-size: 13px;
+    outline: none;
+    cursor: pointer;
+    max-width: 280px;
+  }
+  .doc-filter-select:focus {
+    border-color: #8b5cf6;
+  }
+  .view-mode-toggle {
+    display: inline-flex;
+    background: rgba(15, 23, 42, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    padding: 3px;
+    gap: 2px;
+  }
+  .btn-view-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: transparent;
+    border: none;
+    color: #94a3b8;
+    padding: 5px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .btn-view-toggle:hover:not(.active) {
+    color: #f1f5f9;
+  }
+  .btn-view-toggle.active {
+    background: rgba(139, 92, 246, 0.35);
+    color: #ffffff;
+    font-weight: 600;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+  }
+  .active-filter-indicator {
+    color: #a78bfa;
+    margin-left: 6px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .btn-clear-filter {
+    background: rgba(239, 68, 68, 0.2);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    color: #fca5a5;
+    border-radius: 50%;
+    width: 16px;
+    height: 16px;
+    font-size: 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    padding: 0;
+  }
+
+  /* Document Groups List */
+  .doc-groups-container {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  .doc-group-card {
+    background: rgba(15, 23, 42, 0.5);
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    border-radius: 12px;
+    padding: 16px;
+    transition: border-color 0.2s ease;
+  }
+  .doc-group-card:hover {
+    border-color: rgba(139, 92, 246, 0.35);
+  }
+  .doc-group-banner {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-bottom: 12px;
+    margin-bottom: 14px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .doc-group-main {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .doc-group-name-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .doc-group-heading {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    color: #f1f5f9;
+  }
+  .doc-badge-cat {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    padding: 2px 7px;
+    border-radius: 4px;
+    letter-spacing: 0.5px;
+    color: #ffffff;
+    background: #6366f1;
+  }
+  .doc-badge-cat.requirements { background: #10b981; }
+  .doc-badge-cat.testcase { background: #8b5cf6; }
+  .doc-badge-cat.srs { background: #ec4899; }
+  .doc-badge-cat.reference { background: #f59e0b; }
+  .doc-badge-cat.ocr { background: #06b6d4; }
+
+  .doc-group-count-tag {
+    background: rgba(139, 92, 246, 0.2);
+    border: 1px solid rgba(139, 92, 246, 0.4);
+    color: #c4b5fd;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 12px;
+  }
+  .doc-group-items-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  /* Card level doc chip */
+  .req-doc-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: rgba(30, 41, 59, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #93c5fd;
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 11.5px;
+    margin-left: 8px;
+    max-width: 260px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .chip-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Expanded Card Source Banner */
+  .req-source-doc-banner {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: rgba(30, 41, 59, 0.5);
+    border: 1px solid rgba(96, 165, 250, 0.25);
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin-bottom: 14px;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .banner-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #e2e8f0;
+    font-size: 13px;
+  }
+  .banner-label {
+    color: #94a3b8;
+    font-size: 12px;
+  }
+  .banner-doc-name {
+    color: #93c5fd;
+    font-size: 13px;
+  }
+  .banner-cat-tag {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 4px;
+    text-transform: uppercase;
+    background: #3b82f6;
+    color: #ffffff;
+  }
+  .banner-cat-tag.requirements { background: #10b981; }
+  .banner-cat-tag.testcase { background: #8b5cf6; }
+  .banner-cat-tag.srs { background: #ec4899; }
+  .banner-cat-tag.reference { background: #f59e0b; }
+  .banner-cat-tag.ocr { background: #06b6d4; }
 </style>

@@ -388,6 +388,55 @@
     return tB - tA;
   });
 
+  // Recent Project History Pagination
+  let historyCurrentPage = 1;
+  const historyItemsPerPage = 10;
+  let lastHistoryProjectId = null;
+
+  $: historyTotalPages = Math.max(1, Math.ceil(currentProjectHistory.length / historyItemsPerPage));
+  $: paginatedProjectHistory = currentProjectHistory.slice(
+    (historyCurrentPage - 1) * historyItemsPerPage,
+    historyCurrentPage * historyItemsPerPage
+  );
+
+  // Keep page within valid bounds
+  $: {
+    if (historyCurrentPage > historyTotalPages) {
+      historyCurrentPage = historyTotalPages;
+    }
+    if (historyCurrentPage < 1) {
+      historyCurrentPage = 1;
+    }
+  }
+
+  // Reset page when switching projects
+  $: {
+    const curPId = selectedProjectObj ? String(selectedProjectObj.id || selectedProjectObj.project_id || selectedProjectObj.project_code || '') : null;
+    if (curPId !== lastHistoryProjectId) {
+      lastHistoryProjectId = curPId;
+      historyCurrentPage = 1;
+    }
+  }
+
+  function goToHistoryPage(page) {
+    if (typeof page === 'number' && page >= 1 && page <= historyTotalPages) {
+      historyCurrentPage = page;
+    }
+  }
+
+  function getVisibleHistoryPages(current, total) {
+    if (total <= 5) {
+      return Array.from({ length: total }, (_, i) => i + 1);
+    }
+    if (current <= 3) {
+      return [1, 2, 3, 4, '...', total];
+    }
+    if (current >= total - 2) {
+      return [1, '...', total - 3, total - 2, total - 1, total];
+    }
+    return [1, '...', current - 1, current, current + 1, '...', total];
+  }
+
   $: cleanTargetGroupName = (() => {
     let raw = scanGroupName || (scanResult && scanResult.group_name) || ($activeSidebarGroup && $activeSidebarGroup.group_name) || '';
     while (/^\[.*?\]\s*/.test(raw)) {
@@ -1514,7 +1563,7 @@
               </tr>
             </thead>
             <tbody>
-              {#each currentProjectHistory.slice(0, 15) as item}
+              {#each paginatedProjectHistory as item}
                 <tr class="history-table-row" on:click={() => selectedHistory.set(item)}>
                   <td class="td-filename">
                     <div class="file-name-cell">
@@ -1539,6 +1588,51 @@
             </tbody>
           </table>
         </div>
+
+        {#if historyTotalPages > 1}
+          <div class="project-history-pagination">
+            <span class="pagination-info">
+              หน้า {historyCurrentPage} จาก {historyTotalPages} (ทั้งหมด {currentProjectHistory.length} รายการ)
+            </span>
+            <div class="pagination-nav">
+              <button 
+                class="btn-page-nav" 
+                disabled={historyCurrentPage === 1} 
+                on:click={() => goToHistoryPage(historyCurrentPage - 1)}
+                title="หน้าก่อนหน้า"
+              >
+                <svg viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2" fill="none"><polyline points="15 18 9 12 15 6"></polyline></svg>
+                <span>ก่อนหน้า</span>
+              </button>
+              
+              <div class="page-numbers">
+                {#each getVisibleHistoryPages(historyCurrentPage, historyTotalPages) as p}
+                  {#if p === '...'}
+                    <span class="page-ellipsis">...</span>
+                  {:else}
+                    <button 
+                      class="btn-page-num" 
+                      class:active={historyCurrentPage === p} 
+                      on:click={() => goToHistoryPage(p)}
+                    >
+                      {p}
+                    </button>
+                  {/if}
+                {/each}
+              </div>
+
+              <button 
+                class="btn-page-nav" 
+                disabled={historyCurrentPage === historyTotalPages} 
+                on:click={() => goToHistoryPage(historyCurrentPage + 1)}
+                title="หน้าถัดไป"
+              >
+                <span>ถัดไป</span>
+                <svg viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2" fill="none"><polyline points="9 18 15 12 9 6"></polyline></svg>
+              </button>
+            </div>
+          </div>
+        {/if}
       </div>
     {/if}
 
@@ -3959,6 +4053,88 @@
   .btn-table-view:hover {
     background: #2563eb;
     color: white;
+  }
+
+  /* Recent Project History Pagination */
+  .project-history-pagination {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 14px;
+    padding: 6px 4px;
+  }
+  .pagination-info {
+    font-size: 13px;
+    color: #94a3b8;
+  }
+  .pagination-nav {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .btn-page-nav {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: rgba(30, 41, 59, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #cbd5e1;
+    padding: 6px 12px;
+    border-radius: 7px;
+    font-size: 12.5px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+  .btn-page-nav:hover:not(:disabled) {
+    background: rgba(147, 51, 234, 0.25);
+    border-color: rgba(168, 85, 247, 0.5);
+    color: #e9d5ff;
+    transform: translateY(-1px);
+  }
+  .btn-page-nav:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    transform: none;
+  }
+  .page-numbers {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .btn-page-num {
+    min-width: 32px;
+    height: 32px;
+    padding: 0 6px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(30, 41, 59, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: #cbd5e1;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+  .btn-page-num:hover:not(.active) {
+    background: rgba(147, 51, 234, 0.2);
+    border-color: rgba(168, 85, 247, 0.4);
+    color: #ffffff;
+  }
+  .btn-page-num.active {
+    background: linear-gradient(135deg, #7c3aed, #9333ea);
+    border-color: #a855f7;
+    color: #ffffff;
+    font-weight: 600;
+    box-shadow: 0 2px 8px rgba(147, 51, 234, 0.35);
+  }
+  .page-ellipsis {
+    color: #64748b;
+    font-size: 13px;
+    padding: 0 4px;
   }
 
   .btn-auto-fix-glow {

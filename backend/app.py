@@ -1405,8 +1405,11 @@ def kb_documents():
             chunk_count = cursor.fetchone()[0]
 
             documents.append({
-                'id': doc_id_val,
+                'id': str(doc_id_val),
+                'doc_id': str(doc_id_val),
                 'name': row[1] or 'ไม่ระบุชื่อ',
+                'original_filename': row[1] or 'ไม่ระบุชื่อ',
+                'filename': row[1] or 'ไม่ระบุชื่อ',
                 'project_id': row[2],
                 'doc_category': row[3],
                 'doc_type': row[4],
@@ -3885,9 +3888,7 @@ def research_chat():
     try:
         # 1. Retrieve comprehensive multi-source grounded context from DB
         logger.info(f"Querying comprehensive knowledge base for project {project_id}...")
-        import importlib
         import db_ingestion
-        importlib.reload(db_ingestion)
         ctx_data = db_ingestion.retrieve_comprehensive_qa_context(project_id, message, history=history)
         
         context_str = ctx_data.get('context_str', '')
@@ -3920,6 +3921,7 @@ def research_chat():
         
         from flask import Response, stream_with_context
         def generate():
+            yield ""
             for chunk in QAResearchAgent.generate_stream(qa_state):
                 yield chunk
                 
@@ -4060,19 +4062,19 @@ def get_requirements():
         conn = get_db_connection()
         cursor = conn.cursor()
         
+        base_query = """
+            SELECT 
+                r.req_id, r.req_code, r.title, r.description, r.actors, 
+                r.preconditions, r.steps, r.expected_results, r.ui_elements, 
+                r.api_endpoints, r.status, r.created_at, r.doc_id,
+                d.original_filename, d.doc_category, d.doc_type
+            FROM structured_requirements r
+            LEFT JOIN documents d ON r.doc_id = d.doc_id
+        """
         if project_id:
-            cursor.execute("""
-                SELECT req_id, req_code, title, description, actors, preconditions, steps, expected_results, ui_elements, api_endpoints, status, created_at, doc_id
-                FROM structured_requirements
-                WHERE project_id = %s::uuid
-                ORDER BY created_at DESC;
-            """, (project_id,))
+            cursor.execute(base_query + " WHERE r.project_id = %s::uuid ORDER BY r.created_at DESC;", (project_id,))
         else:
-            cursor.execute("""
-                SELECT req_id, req_code, title, description, actors, preconditions, steps, expected_results, ui_elements, api_endpoints, status, created_at, doc_id
-                FROM structured_requirements
-                ORDER BY created_at DESC;
-            """)
+            cursor.execute(base_query + " ORDER BY r.created_at DESC;")
             
         rows = cursor.fetchall()
         reqs = []
@@ -4090,7 +4092,10 @@ def get_requirements():
                 'api_endpoints': row[9],
                 'status': row[10],
                 'created_at': row[11].isoformat() if row[11] else None,
-                'doc_id': row[12]
+                'doc_id': str(row[12]) if row[12] else None,
+                'doc_name': row[13] or 'ไม่ระบุเอกสาร',
+                'doc_category': row[14] or 'General',
+                'doc_type': row[15] or 'General'
             })
             
         cursor.close()
@@ -4162,14 +4167,19 @@ def sync_requirements_from_project():
             else:
                 doc_messages.append(f"{fname}: {msg}")
                 
-        # Query updated requirements
+        # Query updated requirements with source doc details
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT req_id, req_code, title, description, actors, preconditions, steps, expected_results, ui_elements, api_endpoints, status, created_at, doc_id
-            FROM structured_requirements
-            WHERE project_id = %s::uuid
-            ORDER BY created_at DESC;
+            SELECT 
+                r.req_id, r.req_code, r.title, r.description, r.actors, 
+                r.preconditions, r.steps, r.expected_results, r.ui_elements, 
+                r.api_endpoints, r.status, r.created_at, r.doc_id,
+                d.original_filename, d.doc_category, d.doc_type
+            FROM structured_requirements r
+            LEFT JOIN documents d ON r.doc_id = d.doc_id
+            WHERE r.project_id = %s::uuid
+            ORDER BY r.created_at DESC;
         """, (project_id,))
         rows = cursor.fetchall()
         reqs = []
@@ -4187,7 +4197,10 @@ def sync_requirements_from_project():
                 'api_endpoints': row[9],
                 'status': row[10],
                 'created_at': row[11].isoformat() if row[11] else None,
-                'doc_id': row[12]
+                'doc_id': str(row[12]) if row[12] else None,
+                'doc_name': row[13] or 'ไม่ระบุเอกสาร',
+                'doc_category': row[14] or 'General',
+                'doc_type': row[15] or 'General'
             })
         cursor.close()
         conn.close()
