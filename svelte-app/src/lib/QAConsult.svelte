@@ -379,7 +379,9 @@
     const pCode = String(selectedProjectObj.project_code || '').trim().toLowerCase();
     const hPid = String(h.project_id || '');
     const hCode = String(h.project_code || '').trim().toLowerCase();
-    return !hPid || !pId || hPid === pId || (pCode && hCode && hCode === pCode);
+    // Strict match: records without a project (e.g. orphaned MCP transactions) must NOT leak into every project
+    if (!pId && !pCode) return false;
+    return (pId && hPid && hPid === pId) || (pCode && hCode && hCode === pCode);
   }).sort((a, b) => {
     if (a.is_processing && !b.is_processing) return -1;
     if (!a.is_processing && b.is_processing) return 1;

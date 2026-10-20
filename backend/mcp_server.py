@@ -154,9 +154,10 @@ def ocr_document(source: str, lang: str = "tha+eng") -> str:
         return f"Unexpected error during OCR processing: {str(e)}"
 
 def _resolve_project(project_id_or_code: str):
-    """Resolves project ID, name, and code from UUID, project_code, or project_name."""
+    """Resolves project ID, name, and code from UUID, project_code, or project_name.
+    Returns ("", "", "") when the project cannot be matched to an existing project."""
     if not project_id_or_code:
-        return "", "General Project", ""
+        return "", "", ""
     try:
         from db_ingestion import get_projects
         projects = get_projects()
@@ -167,10 +168,11 @@ def _resolve_project(project_id_or_code: str):
             p_name = str(p.get("name") or p.get("project_name", "")).strip().lower()
             if clean_target in [p_id, p_code, p_name]:
                 return str(p.get("id") or p.get("project_id")), (p.get("name") or p.get("project_name") or "Project"), (p.get("project_code") or "")
-        return str(project_id_or_code), "Project", ""
+        logger.warning(f"MCP: project '{project_id_or_code}' not found")
+        return "", "", ""
     except Exception as e:
         logger.warning(f"Error resolving project: {e}")
-        return str(project_id_or_code), "Project", ""
+        return "", "", ""
 
 # ==========================================
 # Tool 2: Project & Group Management
@@ -206,6 +208,8 @@ def list_groups(project_id: str = None) -> str:
         resolved_pid = None
         if project_id:
             resolved_pid, _, _ = _resolve_project(project_id)
+            if not resolved_pid:
+                return json.dumps({"status": "ERROR", "message": f"Project '{project_id}' not found."}, ensure_ascii=False)
         groups = get_qa_groups(project_id=resolved_pid)
         return json.dumps(groups, indent=2, ensure_ascii=False)
     except Exception as e:
@@ -232,6 +236,8 @@ def get_project_context(project_id: str, query: str = "") -> str:
     try:
         from db_ingestion import get_project_markdown_documents_summary, search_knowledge_base
         resolved_pid, proj_name, proj_code = _resolve_project(project_id)
+        if not resolved_pid:
+            return json.dumps({"status": "ERROR", "message": f"Project '{project_id}' not found."}, ensure_ascii=False)
         
         # 1. Available MD Documents in this project only
         docs_summary = get_project_markdown_documents_summary(resolved_pid, limit=20)
@@ -314,8 +320,7 @@ def get_qa_skills(skill_id: str = None) -> str:
 # Tool 5: QA Consult (Deep Audit & Cross-check)
 # ==========================================
 
-@mcp.tool()
-def qa_consult(
+def _qa_consult_impl(
     project_id: str,
     document_content: str,
     group_name: str = "General",
@@ -351,6 +356,11 @@ def qa_consult(
         
         # 1. Resolve Project
         resolved_pid, project_name, project_code = _resolve_project(project_id)
+        if not resolved_pid:
+            return json.dumps({
+                "status": "ERROR",
+                "message": f"Project '{project_id}' not found. Use list_projects to get a valid project UUID or project_code."
+            }, ensure_ascii=False)
         
         # 2. Retrieve project documents and knowledge base context (Scoped ONLY to this project)
         available_md_docs = get_project_markdown_documents_summary(resolved_pid, limit=20)
@@ -505,6 +515,316 @@ def qa_consult(
         
     except Exception as e:
         logger.error(f"Error in qa_consult tool: {e}", exc_info=True)
+        return json.dumps({"status": "ERROR", "message": str(e)}, ensure_ascii=False)
+
+# ------------------------------------------
+# Background job runner for qa_consult
+# The full pipeline (audit + findings parsing + Exit Criteria + save + email) can take
+# several minutes, which exceeds typical MCP client timeouts. Jobs run in a worker
+# thread so the tool can return quickly with a job_id that the client polls.
+# ------------------------------------------
+import asyncio
+import hashlib
+import threading
+import time
+import uuid
+from concurrent.futures import ThreadPoolExecutor
+
+_QA_EXECUTOR = ThreadPoolExecutor(
+    max_workers=int(os.environ.get("MCP_QA_WORKERS", "3")),
+    thread_name_prefix="mcp-qa"
+)
+_QA_JOBS = {}
+_QA_JOBS_LOCK = threading.Lock()
+_QA_JOB_TTL_SECONDS = 6 * 3600          # forget finished jobs after 6h
+_QA_DEDUP_WINDOW_SECONDS = 30 * 60      # identical submissions within 30 min reuse the same job
+_QA_DEFAULT_WAIT = int(os.environ.get("MCP_QA_WAIT_SECONDS", "25"))
+_QA_MAX_WAIT = 50                       # keep below common client timeouts (~60s)
+
+
+def _qa_job_key(project_id, filename, group_name, doc_type, document_content):
+    h = hashlib.sha256()
+    for part in (project_id, filename, group_name, doc_type, document_content):
+        h.update(str(part or "").encode("utf-8", "ignore"))
+        h.update(b"\x1f")
+    return h.hexdigest()
+
+
+def _cleanup_qa_jobs():
+    now = time.time()
+    with _QA_JOBS_LOCK:
+        for jid in [j for j, job in _QA_JOBS.items()
+                    if job["finished_at"] and now - job["finished_at"] > _QA_JOB_TTL_SECONDS]:
+            _QA_JOBS.pop(jid, None)
+
+
+def _run_qa_job(job_id, kwargs):
+    with _QA_JOBS_LOCK:
+        job = _QA_JOBS[job_id]
+        job["status"] = "RUNNING"
+        job["started_at"] = time.time()
+    try:
+        raw = _qa_consult_impl(**kwargs)
+        try:
+            result = json.loads(raw)
+        except Exception:
+            result = {"status": "ERROR", "message": str(raw)}
+        ok = result.get("status") == "SUCCESS"
+        with _QA_JOBS_LOCK:
+            job["result"] = result
+            job["status"] = "COMPLETED" if ok else "FAILED"
+            job["error"] = None if ok else result.get("message")
+    except Exception as e:
+        logger.error(f"qa_consult job {job_id} crashed: {e}", exc_info=True)
+        with _QA_JOBS_LOCK:
+            job["status"] = "FAILED"
+            job["error"] = str(e)
+    finally:
+        with _QA_JOBS_LOCK:
+            job["finished_at"] = time.time()
+        logger.info(f"qa_consult job {job_id} finished: {job['status']} "
+                    f"({job['finished_at'] - (job['started_at'] or job['created_at']):.1f}s)")
+
+
+def _qa_job_view(job, include_result=True):
+    now = time.time()
+    view = {
+        "job_id": job["id"],
+        "status": job["status"],
+        "filename": job["filename"],
+        "project": job["project"],
+        "group_name": job["group_name"],
+        "elapsed_seconds": round((job["finished_at"] or now) - job["created_at"], 1),
+    }
+    if job["status"] in ("QUEUED", "RUNNING"):
+        view["message"] = (
+            "QA Consult is still processing. Do NOT resubmit the document; "
+            f"call get_qa_consult_result(job_id='{job['id']}') again to get the result."
+        )
+    elif job["status"] == "FAILED":
+        view["error"] = job["error"]
+    elif include_result and job["result"]:
+        view.update({k: v for k, v in job["result"].items() if k != "status"})
+    return view
+
+
+async def _wait_for_job(job, wait_seconds):
+    wait_seconds = max(0, min(int(wait_seconds or 0), _QA_MAX_WAIT))
+    fut = job["future"]
+    if wait_seconds and not fut.done():
+        try:
+            await asyncio.wait_for(asyncio.shield(asyncio.wrap_future(fut)), timeout=wait_seconds)
+        except asyncio.TimeoutError:
+            pass
+        except Exception:
+            pass  # job errors are recorded on the job itself
+
+
+@mcp.tool()
+async def qa_consult(
+    project_id: str,
+    document_content: str,
+    group_name: str = "General",
+    group_type: str = "Project Plan",
+    doc_type: str = None,
+    skill_id: str = None,
+    email: str = None,
+    filename: str = "MCP_Audited_Document.md",
+    instruction: str = "",
+    wait_seconds: int = _QA_DEFAULT_WAIT
+) -> str:
+    """
+    Runs the Agent QA Consult multi-agent analysis to audit, cross-examine, and review a document against the project's knowledge base.
+    Evaluates Exit Criteria according to the selected Group/Project and saves the result to QA transactions.
+
+    IMPORTANT (long-running): Large documents such as Test Cases can take several minutes.
+    This tool waits up to `wait_seconds` (max 50). If the audit is not finished yet it returns
+    status "PROCESSING" with a `job_id` - then call `get_qa_consult_result(job_id)` repeatedly
+    until status is "SUCCESS" or "ERROR". Never resubmit the same document while it is processing;
+    identical submissions within 30 minutes are automatically attached to the existing job.
+
+    Args:
+        project_id: (Required) The UUID or Project Code of the project.
+        document_content: (Required) The full markdown/text content of the document to audit.
+        group_name: (Optional) The QA Group name in the project (e.g., 'Sprint 1', 'General'). Defaults to 'General'.
+        group_type: (Optional) The QA Group type (e.g., 'Project Plan', 'Sprint 1', 'Release'). Defaults to 'Project Plan'.
+        doc_type: (Optional) Type of document (e.g., 'Requirement', 'SRS', 'SDD', 'TestCase', 'Usermanual', 'UAT'). If not provided, automatically detected.
+        skill_id: (Optional) Specific AI Skill ID or skill name to guide the audit.
+        email: (Optional) User email to record with the transaction and receive report.
+        filename: (Optional) Name of the document (e.g., 'MOM_REQ_01.pdf').
+        instruction: (Optional) Custom review instructions or specific focus points.
+        wait_seconds: (Optional) How long to wait for the result before returning a job_id. Default 25, max 50.
+
+    Returns:
+        COMPLETED: Structured QA Audit Report (Conformity, Errors, Missing Requirements, Exit Criteria, Recommendations) plus transaction_id.
+        PROCESSING: job_id to poll with get_qa_consult_result.
+    """
+    if not document_content or not str(document_content).strip():
+        return json.dumps({"status": "ERROR", "message": "document_content is empty."}, ensure_ascii=False)
+
+    # Resolve project up-front so bad input fails immediately instead of after a queued job
+    resolved_pid, project_name, project_code = await asyncio.to_thread(_resolve_project, project_id)
+    if not resolved_pid:
+        return json.dumps({
+            "status": "ERROR",
+            "message": f"Project '{project_id}' not found. Use list_projects to get a valid project UUID or project_code."
+        }, ensure_ascii=False)
+
+    _cleanup_qa_jobs()
+    key = _qa_job_key(resolved_pid, filename, group_name, doc_type, document_content)
+    now = time.time()
+    reused = False
+    with _QA_JOBS_LOCK:
+        job = next((j for j in _QA_JOBS.values()
+                    if j["key"] == key and j["status"] != "FAILED"
+                    and now - j["created_at"] < _QA_DEDUP_WINDOW_SECONDS), None)
+        if job:
+            reused = True
+        else:
+            job_id = uuid.uuid4().hex[:12]
+            job = {
+                "id": job_id, "key": key, "status": "QUEUED",
+                "filename": filename, "group_name": group_name,
+                "project": f"{project_name} ({project_code})" if project_code else project_name,
+                "created_at": now, "started_at": None, "finished_at": None,
+                "result": None, "error": None, "future": None,
+            }
+            _QA_JOBS[job_id] = job
+            kwargs = dict(project_id=resolved_pid, document_content=document_content,
+                          group_name=group_name, group_type=group_type, doc_type=doc_type,
+                          skill_id=skill_id, email=email, filename=filename, instruction=instruction)
+            job["future"] = _QA_EXECUTOR.submit(_run_qa_job, job_id, kwargs)
+    logger.info(f"qa_consult job {job['id']} {'reused' if reused else 'queued'} for '{filename}' ({job['project']})")
+
+    await _wait_for_job(job, wait_seconds)
+    with _QA_JOBS_LOCK:
+        view = _qa_job_view(job)
+    if reused:
+        view["deduplicated"] = True
+        view["note"] = "An identical document was already submitted recently; returning that job instead of creating a duplicate transaction."
+    if view["status"] in ("QUEUED", "RUNNING"):
+        view["status"] = "PROCESSING"
+    elif view["status"] == "COMPLETED":
+        view["status"] = "SUCCESS"
+    else:
+        view["status"] = "ERROR"
+    return json.dumps(view, indent=2, ensure_ascii=False, default=str)
+
+
+@mcp.tool()
+async def get_qa_consult_result(job_id: str, wait_seconds: int = 20) -> str:
+    """
+    Gets the status/result of a qa_consult job that returned status "PROCESSING".
+    Waits up to `wait_seconds` (max 50) for completion before returning.
+    Keep calling until status is "SUCCESS" or "ERROR". Do NOT resubmit the document.
+
+    Args:
+        job_id: The job_id returned by qa_consult.
+        wait_seconds: (Optional) Seconds to wait for completion. Default 20, max 50.
+    """
+    with _QA_JOBS_LOCK:
+        job = _QA_JOBS.get(str(job_id).strip())
+    if not job:
+        return json.dumps({
+            "status": "NOT_FOUND",
+            "message": "Unknown job_id (it may have expired or the server restarted). "
+                       "Use list_qa_transactions(project_id, filename) to check whether the result was saved."
+        }, ensure_ascii=False)
+    await _wait_for_job(job, wait_seconds)
+    with _QA_JOBS_LOCK:
+        view = _qa_job_view(job)
+    view["status"] = {"QUEUED": "PROCESSING", "RUNNING": "PROCESSING",
+                      "COMPLETED": "SUCCESS"}.get(view["status"], "ERROR")
+    return json.dumps(view, indent=2, ensure_ascii=False, default=str)
+
+
+def _fetch_qa_transactions(project_id=None, filename=None, transaction_id=None, limit=10, full=False):
+    from db_ingestion import get_db_connection
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        cols = ("t.id, t.project_id, p.project_code, t.group_name, t.group_type, t.filename, "
+                "t.doc_type, t.email, t.created_at, t.exit_criteria_eval")
+        if full:
+            cols += ", t.qa_findings, t.qa_report"
+        sql = f"SELECT {cols} FROM qa_transactions t LEFT JOIN projects p ON t.project_id = p.project_id WHERE 1=1"
+        params = []
+        if transaction_id:
+            sql += " AND CAST(t.id AS TEXT) = %s"
+            params.append(str(transaction_id))
+        if project_id:
+            sql += " AND t.project_id = %s::uuid"
+            params.append(project_id)
+        if filename:
+            sql += " AND t.filename ILIKE %s"
+            params.append(f"%{filename}%")
+        sql += " ORDER BY t.created_at DESC LIMIT %s"
+        params.append(max(1, min(int(limit or 10), 50)))
+        cur.execute(sql, params)
+        out = []
+        for r in cur.fetchall():
+            ece = r[9] if isinstance(r[9], dict) else None
+            item = {
+                "transaction_id": str(r[0]),
+                "project_id": str(r[1]) if r[1] else None,
+                "project_code": r[2],
+                "group_name": r[3],
+                "group_type": r[4],
+                "filename": r[5],
+                "doc_type": r[6],
+                "email": r[7],
+                "created_at": r[8].isoformat() if r[8] else None,
+                "exit_criteria_status": (ece or {}).get("status"),
+            }
+            if full:
+                item["exit_criteria"] = r[9]
+                item["qa_findings"] = r[10]
+                item["qa_report"] = r[11]
+            out.append(item)
+        return out
+    finally:
+        cur.close()
+        conn.close()
+
+
+@mcp.tool()
+async def list_qa_transactions(project_id: str, filename: str = None, limit: int = 10) -> str:
+    """
+    Lists recent saved QA Consult transactions for a project (newest first).
+    Use this to recover results of earlier qa_consult calls (e.g. after a client timeout).
+
+    Args:
+        project_id: (Required) The UUID or Project Code of the project.
+        filename: (Optional) Filter by (partial) filename.
+        limit: (Optional) Max rows, default 10, max 50.
+    """
+    try:
+        resolved_pid, _, _ = await asyncio.to_thread(_resolve_project, project_id)
+        if not resolved_pid:
+            return json.dumps({"status": "ERROR", "message": f"Project '{project_id}' not found."}, ensure_ascii=False)
+        rows = await asyncio.to_thread(_fetch_qa_transactions, resolved_pid, filename, None, limit, False)
+        return json.dumps({"status": "SUCCESS", "count": len(rows), "transactions": rows},
+                          indent=2, ensure_ascii=False, default=str)
+    except Exception as e:
+        logger.error(f"Error in list_qa_transactions: {e}", exc_info=True)
+        return json.dumps({"status": "ERROR", "message": str(e)}, ensure_ascii=False)
+
+
+@mcp.tool()
+async def get_qa_transaction(transaction_id: str) -> str:
+    """
+    Retrieves the full saved result (QA report, findings, Exit Criteria) of a QA Consult transaction.
+
+    Args:
+        transaction_id: The transaction_id returned by qa_consult / list_qa_transactions.
+    """
+    try:
+        rows = await asyncio.to_thread(_fetch_qa_transactions, None, None, transaction_id, 1, True)
+        if not rows:
+            return json.dumps({"status": "NOT_FOUND", "message": f"Transaction '{transaction_id}' not found."}, ensure_ascii=False)
+        return json.dumps({"status": "SUCCESS", **rows[0]}, indent=2, ensure_ascii=False, default=str)
+    except Exception as e:
+        logger.error(f"Error in get_qa_transaction: {e}", exc_info=True)
         return json.dumps({"status": "ERROR", "message": str(e)}, ensure_ascii=False)
 
 # ==========================================
