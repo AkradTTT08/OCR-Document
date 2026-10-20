@@ -32,11 +32,12 @@ def call_gemini(
     if not api_key:
         raise ValueError("ไม่พบ GEMINI_API_KEY หรือ GOOGLE_API_KEY ใน environment variables")
 
-    preferred_model = model_name or os.environ.get("GEMINI_MODEL", "gemini-3.1-pro-preview")
-    candidate_models = [preferred_model]
-    for fallback in ["gemini-3.1-pro-preview", "gemini-3.1-pro", "gemini-flash-latest", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"]:
-        if fallback not in candidate_models:
-            candidate_models.append(fallback)
+    preferred_model = model_name or os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+    raw_models = [preferred_model, "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro", "gemini-2.0-flash", "gemini-1.5-pro"]
+    candidate_models = []
+    for m in raw_models:
+        if m and m not in ("gemini-3.1-pro-preview", "gemini-3.1-pro", "gemini-3.1-flash") and m not in candidate_models:
+            candidate_models.append(m)
 
     last_error = None
 

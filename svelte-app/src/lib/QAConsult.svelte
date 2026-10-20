@@ -2304,9 +2304,9 @@
 <style>
   .qa-container {
     width: 100%;
-    max-width: 1400px;
+    max-width: 100%;
     height: 100%;
-    margin: 0 auto;
+    margin: 0;
     padding: 20px 40px 60px;
     display: flex;
     flex-direction: column;
@@ -2318,6 +2318,20 @@
   .qa-container.full-width {
     max-width: 100%;
     padding: 20px 24px 80px 24px;
+  }
+  .top-nav,
+  .header-text-local,
+  .header-text,
+  .group-management-section,
+  .project-history-section,
+  .main-card,
+  .loading-card,
+  .analysis-controls {
+    max-width: 1400px;
+    width: 100%;
+    margin-left: auto;
+    margin-right: auto;
+    box-sizing: border-box;
   }
   .header-text-local {
     text-align: center;

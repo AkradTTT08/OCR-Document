@@ -81,7 +81,8 @@
   function selectOption(opt) {
     value = opt.value;
     isOpen = false;
-    dispatch('change', { value: opt.value, option: opt });
+    dispatch('change', opt.value);
+    dispatch('select', opt);
   }
 
   function handleOutsideClick(e) {

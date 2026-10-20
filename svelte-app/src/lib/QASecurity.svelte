@@ -243,11 +243,23 @@
     height: auto;
     padding: 20px 24px;
     box-sizing: border-box;
-    max-width: 1600px;
-    margin: 0 auto;
+    max-width: 100%;
+    margin: 0;
     width: 100%;
     overflow-y: auto;
     animation: fadeIn 0.4s ease-out;
+  }
+
+  .top-nav,
+  .header-section,
+  .dashboard-stats,
+  .security-grid,
+  .threat-matrix-card {
+    max-width: 1600px;
+    width: 100%;
+    margin-left: auto;
+    margin-right: auto;
+    box-sizing: border-box;
   }
 
   .top-nav {

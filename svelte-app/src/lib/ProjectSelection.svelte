@@ -69,8 +69,8 @@
 <style>
   .project-selection-wrapper {
     width: 100%;
-    max-width: 1200px;
-    margin: 0 auto;
+    max-width: 100%;
+    margin: 0;
     padding: 30px 20px 60px 20px;
     display: flex;
     flex-direction: column;

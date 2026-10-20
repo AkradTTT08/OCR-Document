@@ -5083,6 +5083,18 @@ def get_project_api_collections_route(project_id):
         logger.error(f"Error getting api collections: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/projects/<project_id>/endpoints', methods=['GET'])
+def get_project_endpoints_route(project_id):
+    try:
+        from api_collections_manager import get_project_all_endpoints
+        success, res = get_project_all_endpoints(project_id)
+        if success:
+            return jsonify({'success': True, 'endpoints': res, 'count': len(res)})
+        return jsonify({'error': res}), 500
+    except Exception as e:
+        logger.error(f"Error getting project endpoints: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/api-collections/upload', methods=['POST'])
 def upload_api_collection_route():
     try:
@@ -5748,33 +5760,231 @@ def api_workflows_detail(wf_id):
             conn.close()
         except: pass
 
+# In-memory buffer for Extension Live Sync
+LATEST_EXTENSION_SYNC = {}
+PROJECT_EXTENSION_SYNCS = {}
+
 # --- Chrome Extension Network API Sync Endpoint ---
-@app.route('/api/extension/sync-apis', methods=['POST', 'OPTIONS'])
+@app.route('/api/extension/sync-apis', methods=['GET', 'POST', 'OPTIONS'], strict_slashes=False)
+@app.route('/api/extension/latest', methods=['GET', 'OPTIONS'], strict_slashes=False)
 @cross_origin()
 def sync_extension_apis():
+    global LATEST_EXTENSION_SYNC, PROJECT_EXTENSION_SYNCS
+    from datetime import datetime
     if request.method == 'OPTIONS':
         res = jsonify({'status': 'ok'})
         res.headers.add('Access-Control-Allow-Origin', '*')
         res.headers.add('Access-Control-Allow-Headers', '*')
         res.headers.add('Access-Control-Allow-Methods', '*')
         return res, 200
+
+    if request.method == 'GET':
+        try:
+            req_pid = request.args.get('project_id')
+            record = None
+            if req_pid and req_pid in PROJECT_EXTENSION_SYNCS:
+                record = PROJECT_EXTENSION_SYNCS[req_pid]
+            elif LATEST_EXTENSION_SYNC and LATEST_EXTENSION_SYNC.get('apis'):
+                record = LATEST_EXTENSION_SYNC
+
+            # If not in memory or memory has 0 apis, query project_api_collections
+            if not record or not record.get('apis'):
+                try:
+                    import uuid as uuid_pkg
+                    from urllib.parse import urlparse
+                    from db_ingestion import get_db_connection
+                    conn_db = get_db_connection()
+                    cur_db = conn_db.cursor()
+                    query = """
+                        SELECT id, project_id, name, raw_content, content_json, endpoints_count, created_at 
+                        FROM project_api_collections 
+                        WHERE format ILIKE '%Chrome Extension%'
+                    """
+                    params = []
+                    if req_pid:
+                        try:
+                            valid_uuid = str(uuid_pkg.UUID(str(req_pid)))
+                            query += " AND project_id = %s"
+                            params.append(valid_uuid)
+                        except Exception:
+                            pass
+                    query += " ORDER BY created_at DESC LIMIT 1;"
+                    cur_db.execute(query, tuple(params))
+                    row = cur_db.fetchone()
+                    cur_db.close()
+                    conn_db.close()
+                    if row:
+                        raw_content = row[3]
+                        content_json = row[4]
+                        created_time = row[6].strftime('%H:%M:%S') if row[6] else ''
+                        db_apis = []
+                        if raw_content:
+                            try:
+                                parsed = json.loads(raw_content) if isinstance(raw_content, str) else raw_content
+                                if isinstance(parsed, list):
+                                    for item in parsed:
+                                        m = (item.get('method') or 'GET').upper()
+                                        u = item.get('url') or ''
+                                        pp = urlparse(u).path if '://' in u else u
+                                        p = pp if pp.startswith('/') else f'/{pp}'
+                                        db_apis.append({
+                                            "id": item.get('id') or str(uuid_pkg.uuid4())[:8],
+                                            "method": m,
+                                            "path": p,
+                                            "url": u,
+                                            "status": item.get('statusCode', 200),
+                                            "time": item.get('timeStamp') or created_time,
+                                            "curl": item.get('curl', ''),
+                                            "responseBody": item.get('responseBody', '')
+                                        })
+                            except Exception as e:
+                                logger.warn(f"Failed parsing raw_content from db: {e}")
+                        if not db_apis and content_json:
+                            try:
+                                cj = json.loads(content_json) if isinstance(content_json, str) else content_json
+                                for ep in (cj.get('endpoints') or []):
+                                    db_apis.append({
+                                        "id": ep.get('id') or str(uuid_pkg.uuid4())[:8],
+                                        "method": ep.get('method', 'GET').upper(),
+                                        "path": ep.get('path', ''),
+                                        "url": ep.get('url', ''),
+                                        "status": ep.get('status', 200),
+                                        "time": created_time,
+                                        "curl": ep.get('curl', ''),
+                                        "responseBody": ep.get('responseBody', '')
+                                    })
+                            except Exception as e:
+                                logger.warn(f"Failed parsing content_json: {e}")
+                        if db_apis:
+                            record = {
+                                "project_id": str(row[1]),
+                                "timestamp": created_time,
+                                "total_count": len(db_apis),
+                                "apis": db_apis,
+                                "source": "database"
+                            }
+                except Exception as e:
+                    logger.error(f"Error querying project_api_collections: {e}")
+
+            if record and record.get('apis'):
+                res = jsonify({
+                    'success': True,
+                    'connected': True,
+                    'project_id': record.get('project_id'),
+                    'timestamp': record.get('timestamp'),
+                    'total_count': len(record.get('apis', [])),
+                    'apis': record.get('apis', [])
+                })
+            else:
+                res = jsonify({
+                    'success': True,
+                    'connected': True,
+                    'project_id': req_pid,
+                    'total_count': 0,
+                    'apis': [],
+                    'message': 'ยังไม่มีรายการ API ที่ Sync จาก Chrome Extension'
+                })
+            res.headers.add('Access-Control-Allow-Origin', '*')
+            return res
+        except Exception as e:
+            logger.error(f"Error fetching extension APIs: {e}", exc_info=True)
+            res = jsonify({'error': str(e), 'apis': []})
+            res.headers.add('Access-Control-Allow-Origin', '*')
+            return res, 500
+
     try:
         data = request.get_json(silent=True, force=True) or {}
         captured_apis = data.get('apis', [])
-        project_id = data.get('project_id', 1)
+        project_id = data.get('project_id')
         
-        logger.info(f"Received {len(captured_apis)} APIs from Chrome Extension for project {project_id}")
+        # Resolve project_id to valid UUID if needed
+        import uuid as uuid_pkg
+        from db_ingestion import get_db_connection
+        target_pid = None
+        if project_id:
+            try:
+                target_pid = str(uuid_pkg.UUID(str(project_id)))
+            except Exception:
+                pass
+        if not target_pid:
+            try:
+                conn_p = get_db_connection()
+                cur_p = conn_p.cursor()
+                cur_p.execute("SELECT project_id FROM projects ORDER BY created_at ASC LIMIT 1;")
+                row_p = cur_p.fetchone()
+                cur_p.close()
+                conn_p.close()
+                if row_p:
+                    target_pid = str(row_p[0])
+            except Exception as e:
+                logger.warn(f"Could not resolve fallback project_id: {e}")
+
+        logger.info(f"Received {len(captured_apis)} APIs from Chrome Extension for project {target_pid}")
         
+        # Format endpoints list
+        from urllib.parse import urlparse
+        endpoints_list = []
+        structured_apis = []
+        now_time_str = datetime.now().strftime('%H:%M:%S')
+        for item in captured_apis:
+            method = (item.get('method') or 'GET').upper()
+            raw_url = item.get('url') or ''
+            p_path = urlparse(raw_url).path if '://' in raw_url else raw_url
+            path = p_path if p_path.startswith('/') else f'/{p_path}'
+            api_obj = {
+                "id": item.get('id') or str(uuid_pkg.uuid4())[:8],
+                "method": method,
+                "path": path,
+                "url": raw_url,
+                "summary": f"{method} {path}",
+                "name": f"{method} {path}",
+                "status": item.get('statusCode', 200),
+                "time": item.get('timeStamp') or now_time_str,
+                "curl": item.get('curl', ''),
+                "responseBody": item.get('responseBody', '')
+            }
+            endpoints_list.append(api_obj)
+            structured_apis.append(api_obj)
+
+        # Update in-memory cache
+        sync_record = {
+            "project_id": target_pid,
+            "timestamp": now_time_str,
+            "created_at": datetime.now().isoformat(),
+            "total_count": len(structured_apis),
+            "apis": structured_apis
+        }
+        LATEST_EXTENSION_SYNC = sync_record
+        if target_pid:
+            PROJECT_EXTENSION_SYNCS[target_pid] = sync_record
+
+        # Persist to project_api_collections
+        if target_pid and captured_apis:
+            from api_collections_manager import save_api_collection
+            now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            save_api_collection(
+                project_id=target_pid,
+                name=f"[Chrome Sync] {now_str}",
+                format_type="Chrome Extension Live Sync",
+                version="1.0",
+                file_size=f"{len(captured_apis)} endpoints",
+                raw_content=json.dumps(captured_apis, ensure_ascii=False),
+                content_json={"endpoints": endpoints_list},
+                endpoints_count=len(endpoints_list)
+            )
+
         res = jsonify({
             'success': True,
             'message': f'Synced {len(captured_apis)} APIs successfully into Spectra QA Repository',
             'synced_count': len(captured_apis),
-            'timestamp': data.get('captured_at')
+            'project_id': target_pid,
+            'timestamp': data.get('captured_at') or now_time_str,
+            'apis': structured_apis
         })
         res.headers.add('Access-Control-Allow-Origin', '*')
         return res
     except Exception as e:
-        logger.error(f"Error syncing extension APIs: {e}")
+        logger.error(f"Error syncing extension APIs: {e}", exc_info=True)
         res = jsonify({'error': str(e)})
         res.headers.add('Access-Control-Allow-Origin', '*')
         return res, 500

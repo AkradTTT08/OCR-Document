@@ -30,7 +30,10 @@
   }
 
   function handleProjectChange(e) {
-    selectedProjectId = e.detail;
+    const val = (e && typeof e.detail === 'object' && e.detail !== null && 'value' in e.detail) 
+      ? e.detail.value 
+      : (e && e.detail !== undefined ? e.detail : e);
+    selectedProjectId = val;
     const found = projects.find(p => (p.id || p.project_id) === selectedProjectId);
     if (found) {
       selectedProjectStore.set(found);
@@ -182,8 +185,11 @@
       });
       const data = await res.json();
       
-      if (res.ok && data.reachable) {
-        toast(`✅ API "${col.name}" ตอบสนองปกติ (${data.status_code} ${data.status_text || 'OK'} - ${data.latency_ms}ms)`, "success");
+      if (res.ok && data.is_success) {
+        toast(`✅ API "${col.name}" ทำงานสำเร็จ (${data.status_code} ${data.status_text || 'OK'} - ${data.latency_ms}ms)`, "success");
+      } else if (res.ok && data.status_code) {
+        const previewMsg = data.preview ? `: ${data.preview.slice(0, 80)}` : '';
+        toast(`⚠️ API ตอบกลับ ${data.status_code} ${data.status_text || ''}${previewMsg}`, "warning");
       } else {
         toast(`❌ การเชื่อมต่อล้มเหลว: ${data.error || 'HTTP ' + (data.status_code || 'Unreachable')}`, "error");
       }
@@ -197,6 +203,7 @@
 
   // Manual API Logic
   let showManualModal = false;
+  let curlPasteInput = "";
   let manualApiData = {
     name: "",
     url: "",
@@ -205,52 +212,139 @@
     body: ""
   };
   
+  function parseCurlCommand(raw) {
+    if (!raw || typeof raw !== 'string') return null;
+    let text = raw.trim();
+    // Normalize newlines and bash line continuations
+    text = text.replace(/\\\r?\n/g, ' ').replace(/\r?\n/g, ' ');
+    if (!text.toLowerCase().includes('curl')) return null;
+
+    let method = 'GET';
+    let url = '';
+    let headers = {};
+    let body = '';
+
+    // Method
+    const methodMatch = text.match(/(?:-X|--request)\s+([A-Za-z]+)/i);
+    if (methodMatch) {
+      method = methodMatch[1].toUpperCase();
+    } else if (text.match(/(?:--data|--data-raw|--data-binary|-d)\s+/i)) {
+      method = 'POST';
+    }
+
+    // Headers (single & double quoted)
+    const headerRegexSingle = /(?:-H|--header)\s+'((?:\\.|[^'])*)'/gi;
+    let hMatch;
+    while ((hMatch = headerRegexSingle.exec(text)) !== null) {
+      const headerStr = hMatch[1].replace(/\\'/g, "'");
+      const colonIdx = headerStr.indexOf(':');
+      if (colonIdx > -1) {
+        headers[headerStr.slice(0, colonIdx).trim()] = headerStr.slice(colonIdx + 1).trim();
+      }
+    }
+    const headerRegexDouble = /(?:-H|--header)\s+"((?:\\.|[^"])*)"/gi;
+    while ((hMatch = headerRegexDouble.exec(text)) !== null) {
+      const headerStr = hMatch[1].replace(/\\"/g, '"');
+      const colonIdx = headerStr.indexOf(':');
+      if (colonIdx > -1) {
+        headers[headerStr.slice(0, colonIdx).trim()] = headerStr.slice(colonIdx + 1).trim();
+      }
+    }
+
+    // Body
+    let bodyMatch = text.match(/(?:--data-raw|--data-binary|--data|-d)\s+'((?:\\.|[^'])*)'/s);
+    if (!bodyMatch) {
+      bodyMatch = text.match(/(?:--data-raw|--data-binary|--data|-d)\s+"((?:\\.|[^"])*)"/s);
+    }
+    if (!bodyMatch) {
+      bodyMatch = text.match(/(?:--data-raw|--data-binary|--data|-d)\s+([^\s'"][^\s]*)/);
+    }
+    if (bodyMatch) {
+      body = bodyMatch[1].replace(/\\'/g, "'").replace(/\\"/g, '"');
+    }
+
+    // URL
+    const explicitUrlMatch = text.match(/['"]((?:https?:\/\/|\/)[^'"]+)['"]/i);
+    if (explicitUrlMatch) {
+      url = explicitUrlMatch[1].trim();
+    } else {
+      const unquotedUrlMatch = text.match(/(https?:\/\/[^\s'"]+)/i);
+      if (unquotedUrlMatch) {
+        url = unquotedUrlMatch[1].trim();
+      } else {
+        const relMatch = text.match(/['"](\/[^'"]*)['"]/);
+        if (relMatch) {
+          url = relMatch[1].trim();
+        } else {
+          const tokens = text.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [];
+          const skipNext = new Set(['-x', '--request', '-h', '--header', '-d', '--data', '--data-raw', '--data-binary', '-u', '--user', '-a', '--user-agent', '-e', '--referer', '-o', '--output', '-m', '--max-time']);
+          let shouldSkip = false;
+          for (let i = 1; i < tokens.length; i++) {
+            const t = tokens[i].trim();
+            const cleanToken = t.replace(/^['"]|['"]$/g, '');
+            if (shouldSkip) { shouldSkip = false; continue; }
+            if (skipNext.has(cleanToken.toLowerCase())) { shouldSkip = true; continue; }
+            if (cleanToken.startsWith('-')) continue;
+            url = cleanToken;
+            break;
+          }
+        }
+      }
+    }
+
+    if (!url) return null;
+
+    let name = '';
+    try {
+      if (url.startsWith('http://') || url.startsWith('https://')) {
+        const uObj = new URL(url);
+        name = `${method} ${uObj.pathname}`;
+      } else {
+        name = `${method} ${url}`;
+      }
+    } catch {
+      name = `${method} API Endpoint`;
+    }
+
+    return {
+      name,
+      url,
+      method,
+      headers: Object.keys(headers).length > 0 ? JSON.stringify(headers, null, 2) : "{\n  \"Content-Type\": \"application/json\"\n}",
+      body
+    };
+  }
+
+  function handleCurlInputString(rawText) {
+    if (!rawText) return;
+    const parsed = parseCurlCommand(rawText);
+    if (parsed) {
+      // Re-assign object to trigger Svelte reactivity across all bound inputs
+      manualApiData = {
+        name: parsed.name,
+        url: parsed.url,
+        method: parsed.method,
+        headers: parsed.headers,
+        body: parsed.body
+      };
+      curlPasteInput = "";
+      toast(`✨ แปลงคำสั่ง cURL เรียบร้อยแล้ว (${parsed.method} ${parsed.url})`, "success");
+    } else if (rawText.trim().toLowerCase().startsWith("curl")) {
+      toast("⚠️ รูปแบบ cURL ไม่ถูกต้องหรือไม่พบ URL ปลายทาง", "warning");
+    }
+  }
+
   function handleNameInput(e) {
     const val = e.target.value.trim();
-    if (val.toLowerCase().startsWith("curl ")) {
-      try {
-        let parsedUrl = "";
-        const urlMatch = val.match(/curl\s+(?:-X\s+[A-Z]+\s+)?['"]?([^'"\s]+)['"]?/i);
-        if (urlMatch) {
-            parsedUrl = urlMatch[1];
-            manualApiData.url = parsedUrl;
-        }
-        
-        const methodMatch = val.match(/-X\s+([A-Z]+)/i);
-        if (methodMatch) {
-            manualApiData.method = methodMatch[1].toUpperCase();
-        } else if (val.includes('--data') || val.includes('-d ')) {
-            manualApiData.method = "POST";
-        }
-        
-        const headerMatches = [...val.matchAll(/-H\s+['"]([^'"]+)['"]/gi)];
-        if (headerMatches.length > 0) {
-            const headers = {};
-            headerMatches.forEach(m => {
-                const parts = m[1].split(':');
-                if (parts.length >= 2) {
-                    headers[parts[0].trim()] = parts.slice(1).join(':').trim();
-                }
-            });
-            manualApiData.headers = JSON.stringify(headers, null, 2);
-        }
-        
-        const dataMatch = val.match(/(?:--data-raw|--data|-d)\s+['"](.*?)['"]/is);
-        if (dataMatch) {
-            manualApiData.body = dataMatch[1];
-        }
+    if (val.toLowerCase().startsWith("curl") || val.toLowerCase().includes("curl ")) {
+      handleCurlInputString(val);
+    }
+  }
 
-        try {
-            const urlObj = new URL(parsedUrl);
-            manualApiData.name = "cURL: " + (urlObj.pathname.split('/').pop() || "Endpoint");
-        } catch {
-            manualApiData.name = "Imported cURL API";
-        }
-        
-        toast("นำเข้า cURL Command เรียบร้อยแล้ว!", "success");
-      } catch (err) {
-        console.error("Failed to parse cURL", err);
-      }
+  function handleUrlInput(e) {
+    const val = e.target.value.trim();
+    if (val.toLowerCase().startsWith("curl") || val.toLowerCase().includes("curl ")) {
+      handleCurlInputString(val);
     }
   }
 
@@ -397,7 +491,7 @@
           {#if projectOptions.length > 0}
             <CustomSelect 
               options={projectOptions} 
-              value={selectedProjectId} 
+              bind:value={selectedProjectId} 
               placeholder="Select a project..."
               on:change={handleProjectChange} 
             />
@@ -619,6 +713,34 @@
 <div class="modal-backdrop" transition:fade={{duration: 200}}>
   <div class="modal-content glass-card" transition:fly={{y: -20, duration: 300}} style="text-align: left; align-items: stretch; max-width: 900px; width: 95%;">
     <h3 class="modal-title" style="margin-bottom: 20px; text-align: center;">Add API Manual</h3>
+
+    <!-- Quick cURL Import Bar -->
+    <div class="quick-curl-bar" style="margin-bottom: 20px; background: rgba(139, 92, 246, 0.1); border: 1px dashed rgba(139, 92, 246, 0.45); border-radius: 10px; padding: 12px 14px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+        <span style="font-size: 0.85rem; font-weight: 600; color: #c084fc; display: flex; align-items: center; gap: 6px;">
+          🐚 นำเข้าจากคำสั่ง cURL (Import cURL)
+        </span>
+        <span style="font-size: 0.75rem; color: #94a3b8;">วางคำสั่ง cURL ที่คัดลอกมาเพื่อกรอก Method, URL, Headers และ Body อัตโนมัติ</span>
+      </div>
+      <div style="display: flex; gap: 8px;">
+        <input 
+          type="text" 
+          class="manual-input" 
+          style="flex: 1; background: rgba(0,0,0,0.5); font-family: monospace; font-size: 0.82rem; border-color: rgba(139, 92, 246, 0.35);"
+          bind:value={curlPasteInput} 
+          on:input={(e) => handleCurlInputString(e.target.value)}
+          placeholder="วางคำสั่ง cURL เช่น curl -X POST 'https://api.example.com/users' -H '...' -d '...' ที่นี่"
+        />
+        <button 
+          type="button" 
+          class="btn-primary" 
+          style="background: linear-gradient(135deg, #8b5cf6, #6d28d9); border: none; padding: 8px 16px; border-radius: 8px; font-size: 0.85rem; font-weight: 600; cursor: pointer; white-space: nowrap;"
+          on:click={() => handleCurlInputString(curlPasteInput)}
+        >
+          ⚡ แปลง cURL
+        </button>
+      </div>
+    </div>
     
     <div style="display: grid; grid-template-columns: 1fr 1.5fr; gap: 24px;">
       <!-- Left Column: Basics -->
@@ -645,7 +767,7 @@
         
         <div class="form-group">
           <label style="display: block; margin-bottom: 6px; font-size: 0.9rem; color: #cbd5e1;">Endpoint URL</label>
-          <input type="text" class="manual-input" bind:value={manualApiData.url} placeholder="https://api.example.com/v1/users">
+          <input type="text" class="manual-input" bind:value={manualApiData.url} on:input={handleUrlInput} placeholder="https://api.example.com/v1/users">
         </div>
       </div>
 

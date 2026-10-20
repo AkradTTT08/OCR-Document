@@ -20,7 +20,11 @@ def get_model():
         try:
             from sentence_transformers import SentenceTransformer
             logger.info(f"Loading embedding model: {MODEL_NAME}")
-            model = SentenceTransformer(MODEL_NAME)
+            try:
+                model = SentenceTransformer(MODEL_NAME, local_files_only=True)
+            except Exception as le:
+                logger.info(f"Local files not found or failed ({le}), falling back to online check: {MODEL_NAME}")
+                model = SentenceTransformer(MODEL_NAME)
         except Exception as e:
             logger.error(f"Failed to load sentence_transformers: {e}")
             return None
@@ -970,7 +974,11 @@ def retrieve_comprehensive_qa_context(project_id: str, query: str, history: list
             })
             
         # 5. Semantic Vector Search
-        vector_chunks = search_knowledge_base(query, top_k=20, project_id=project_id)
+        vector_chunks = []
+        try:
+            vector_chunks = search_knowledge_base(query, top_k=20, project_id=project_id)
+        except Exception as ve:
+            logger.warning(f"Vector search failed in retrieve_comprehensive_qa_context: {ve}")
         
         # 6. Keyword / Exact Matches on chunks (for technical IDs like REQ-, TC-, error codes, endpoints)
         keyword_chunks = []

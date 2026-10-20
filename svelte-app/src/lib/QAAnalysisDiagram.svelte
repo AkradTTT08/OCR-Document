@@ -19,6 +19,7 @@
   let flowData = null;
   let selectedScreenId = null;
   let selectedSitemapNode = null;
+  let selectedNodeId = null;
 
   // Wireframe / Mockup Source Modes: 'ai' | 'figma' | 'image'
   let activeWireframeTab = 'ai';
@@ -268,6 +269,7 @@
         flowData = data.analysis;
         if (flowData.screen_mockups && flowData.screen_mockups.length > 0 && !selectedScreenId) {
           selectedScreenId = flowData.screen_mockups[0].screen_id;
+          selectedNodeId = flowData.screen_mockups[0].screen_id;
         }
         await renderCurrentDiagram();
       } else {
@@ -303,6 +305,7 @@
         flowData = data.analysis;
         if (flowData.screen_mockups && flowData.screen_mockups.length > 0) {
           selectedScreenId = flowData.screen_mockups[0].screen_id;
+          selectedNodeId = flowData.screen_mockups[0].screen_id;
         }
         await renderCurrentDiagram();
       } else {
@@ -745,44 +748,809 @@
     panY = Math.max(20, (canvasPanelRef.clientHeight - (svgHeight * zoomLevel)) / 2);
   }
 
-  function handleSelectSitemapNode(node) {
-    selectedSitemapNode = node;
-    if (node.screen_id) {
-      selectedScreenId = node.screen_id;
-    } else if (flowData && flowData.screen_mockups) {
-      const matched = flowData.screen_mockups.find(s => s.screen_name === node.title || (s.route && s.route === node.path));
-      if (matched) selectedScreenId = matched.screen_id;
-    }
-  }
+  function synthesizeMockupForNode(node) {
+    if (!node) return null;
+    const nid = node.id || 'page';
+    const title = node.title || 'Screen';
+    const path = node.path || '/';
+    const sid = node.screen_id || ('SCR-' + String(nid).toUpperCase().replace(/[^A-Z0-9]/g, '_').slice(0, 24));
+    const desc = node.description || `หน้าจอ ${title}`;
+    const category = node.category || 'Module';
 
-  $: currentScreenMockup = (flowData && flowData.screen_mockups) 
-    ? flowData.screen_mockups.find(s => s.screen_id === selectedScreenId) || flowData.screen_mockups[0]
-    : null;
+    const lowerTitle = title.toLowerCase();
+    const lowerPath = path.toLowerCase();
+    const lowerSid = sid.toLowerCase();
+
+    // 1. Login / Register
+    if (lowerPath.includes('login') || lowerTitle.includes('login') || lowerSid.includes('auth-login')) {
+      return {
+        screen_id: "SCR-AUTH-LOGIN",
+        screen_name: "Login / Register",
+        route: path !== '/' ? path : "/auth/login",
+        layout_type: "form",
+        description: "เข้าสู่ระบบสำหรับผู้ใช้งานทั่วไปและร้านค้า พร้อมช่องทางสมัครสมาชิกใหม่และ Social Login",
+        header: {
+          title: "เข้าสู่ระบบ / สมัครสมาชิก (Login & Register)",
+          badge: "Security & Auth",
+          badge_color: "blue",
+          actions: ["🚀 เข้าสู่ระบบ", "🔑 ลืมรหัสผ่าน", "📝 สมัครสมาชิกใหม่"]
+        },
+        stats: [
+          { label: "ระบบความปลอดภัย", value: "TLS 1.3 / OAuth 2.0", sub: "มาตรฐานความปลอดภัยระดับสูง", color: "emerald" },
+          { label: "ช่องทางเข้าสู่ระบบ", value: "3 รูปแบบ", sub: "Email, Google, LINE", color: "blue" },
+          { label: "การยืนยันตัวตน 2FA", value: "เปิดใช้งาน (OTP SMS)", sub: "ป้องกันการเข้าถึงมิชอบ", color: "purple" },
+          { label: "SLA เวลาตอบสนอง", value: "< 180 ms", sub: "Fast Auth API", color: "amber" }
+        ],
+        tabs: ["เข้าสู่ระบบ (Sign In)", "สมัครสมาชิกใหม่ (Register)", "ลืมรหัสผ่าน (Forgot Password)", "นโยบายความปลอดภัย & SSO"],
+        sections: [
+          {
+            section_name: "แบบฟอร์มเข้าสู่ระบบ (User Authentication)",
+            type: "form",
+            fields: [
+              { label: "อีเมล หรือ หมายเลขโทรศัพท์ (Email / Phone)", type: "text", default_value: "user@foodsmile.app", required: true },
+              { label: "รหัสผ่าน (Password)", type: "password", default_value: "••••••••••••", required: true },
+              { label: "จดจำการเข้าสู่ระบบบนอุปกรณ์นี้ (Remember Me)", type: "toggle", default_value: true }
+            ],
+            buttons: [
+              { label: "🚀 เข้าสู่ระบบทันที (Sign In)", variant: "primary", icon: "🚀" },
+              { label: "🔑 เข้าสู่ระบบด้วย Google", variant: "secondary", icon: "🔑" },
+              { label: "💬 เข้าสู่ระบบด้วย LINE", variant: "accent", icon: "💬" }
+            ]
+          },
+          {
+            section_name: "สถานะการตรวจสอบความปลอดภัยของเซสชัน (Active Session & Security)",
+            type: "table",
+            table_headers: ["อุปกรณ์ที่ใช้งาน", "ระบบปฏิบัติการ", "พิกัด IP / ที่ตั้ง", "สถานะเซสชัน", "การจัดการ"],
+            table_rows: [
+              ["Chrome Browser", "Windows 11 (เครื่องนี้)", "192.168.1.155 (กทม.)", "🟢 กำลังออนไลน์", "เซสชันปัจจุบัน"],
+              ["FoodSmile Mobile App", "iOS 18 (iPhone 16 Pro)", "Cellular 5G (กทม.)", "🟢 ใช้งานเมื่อ 10 นาทีที่แล้ว", "ออกจากระบบ"],
+              ["Safari Mobile", "iPadOS 17.5", "Wi-Fi (นนทบุรี)", "⚪ ออกจากระบบแล้ว", "ลบประวัติ"]
+            ]
+          }
+        ],
+        connected_use_cases: ["UC-001: เข้าสู่ระบบ", "UC-002: ยืนยันตัวตน 2FA"],
+        connected_req_codes: ["REQ-AUTH-001", "REQ-SEC-002"]
+      };
+    }
+
+    // 2. PDPA Consent
+    if (lowerPath.includes('pdpa') || lowerTitle.includes('pdpa') || lowerSid.includes('pdpa')) {
+      return {
+        screen_id: "SCR-AUTH-PDPA",
+        screen_name: "PDPA Consent",
+        route: path !== '/' ? path : "/auth/pdpa-consent",
+        layout_type: "form",
+        description: "แบบฟอร์มขอความยินยอมในการประมวลผลข้อมูลส่วนบุคคลตาม พ.ร.บ. คุ้มครองข้อมูลส่วนบุคคล พ.ศ. 2562",
+        header: {
+          title: "หนังสือขอความยินยอมคุ้มครองข้อมูลส่วนบุคคล (PDPA Consent)",
+          badge: "Privacy Compliance",
+          badge_color: "emerald",
+          actions: ["✅ ยินยอมทั้งหมด", "❌ ปฏิเสธ", "📥 ดาวน์โหลดนโยบาย PDF"]
+        },
+        stats: [
+          { label: "มาตรฐานกฎหมาย", value: "พ.ร.บ. PDPA 2562", sub: "มาตรฐาน ISO/IEC 27701", color: "emerald" },
+          { label: "สถานะความยินยอม", value: "รอดำเนินการ (Pending)", sub: "ต้องยินยอมก่อนใช้งาน", color: "amber" },
+          { label: "เวอร์ชันนโยบาย", value: "v2.1 (อัปเดต 2026)", sub: "ปรับปรุงเงื่อนไข Delivery", color: "blue" },
+          { label: "สิทธิถอนความยินยอม", value: "ถอนได้ 100%", sub: "ผ่านหน้า Account Settings", color: "purple" }
+        ],
+        tabs: ["ข้อกำหนดและเงื่อนไขหลัก", "ความยินยอมด้านการตลาด", "การแบ่งปันข้อมูลกับพันธมิตร"],
+        sections: [
+          {
+            section_name: "รายการความยินยอมในการประมวลผลข้อมูลส่วนบุคคล (Consent Preferences)",
+            type: "form",
+            fields: [
+              { label: "ยินยอมให้เก็บรวบรวมข้อมูลเพื่อการสั่งอาหารและการจัดส่ง (จำเป็น)", type: "toggle", default_value: true, required: true },
+              { label: "ยินยอมให้ประมวลผลพิกัด GPS เพื่อค้นหาร้านอาหารและคำนวณระยะทาง", type: "toggle", default_value: true },
+              { label: "ยินยอมรับข่าวสาร สิทธิพิเศษ ส่วนลด และโปรโมชั่นจาก FoodSmile", type: "toggle", default_value: false },
+              { label: "ยินยอมให้ใช้คุกกี้เพื่อวิเคราะห์และปรับปรุงประสบการณ์การใช้งาน", type: "toggle", default_value: true }
+            ],
+            buttons: [
+              { label: "✅ ยินยอมและดำเนินการต่อ (Accept & Continue)", variant: "primary", icon: "✅" },
+              { label: "❌ ปฏิเสธและออกจากระบบ", variant: "outline", icon: "❌" }
+            ]
+          },
+          {
+            section_name: "สรุปสิทธิของเจ้าของข้อมูลส่วนบุคคล (Data Subject Rights Summary)",
+            type: "table",
+            table_headers: ["สิทธิตามกฎหมาย PDPA", "รายละเอียดการใช้สิทธิ", "ช่องทางดำเนินการ", "ระยะเวลา SLA"],
+            table_rows: [
+              ["สิทธิในการเข้าถึงและขอรับสำเนา (Right to Access)", "ขอรับไฟล์ข้อมูลประวัติการสั่งซื้อและบัญชี", "เมนู Account Settings", "ภายใน 24 ชม."],
+              ["สิทธิในการขอให้ลบหรือทำลาย (Right to Erasure)", "ลบบัญชีและทำลายข้อมูลถาวร", "เมนูขอลบบัญชี", "ภายใน 7 วัน"],
+              ["สิทธิในการถอนความยินยอม (Right to Withdraw)", "ยกเลิกการรับ SMS/Email การตลาด", "สลับ Toggle ในหน้านี้", "มีผลทันที"]
+            ]
+          }
+        ],
+        connected_use_cases: ["UC-AUTH-003: บันทึกความยินยอม PDPA"],
+        connected_req_codes: ["REQ-PDPA-001", "REQ-PDPA-002"]
+      };
+    }
+
+    // 3. Account Settings & Deletion
+    if (lowerPath.includes('account') || lowerTitle.includes('account') || lowerPath.includes('setting')) {
+      return {
+        screen_id: "SCR-AUTH-ACCOUNT",
+        screen_name: "Account Settings & Deletion",
+        route: path !== '/' ? path : "/auth/account",
+        layout_type: "form",
+        description: "จัดการข้อมูลโปรไฟล์ผู้ใช้งาน ตั้งค่าความปลอดภัย 2FA การแจ้งเตือน และขอลบบัญชีถาวร",
+        header: {
+          title: "การตั้งค่าบัญชีและความปลอดภัย (Account & Security Settings)",
+          badge: "User Profile",
+          badge_color: "purple",
+          actions: ["💾 บันทึกข้อมูล", "🔒 เปลี่ยนรหัสผ่าน", "⚠️ ขอลบบัญชีถาวร"]
+        },
+        stats: [
+          { label: "สถานะบัญชี", value: "ยืนยันแล้ว (Verified)", sub: "ระดับ FoodSmile Gold", color: "emerald" },
+          { label: "ความปลอดภัย 2FA", value: "เปิดใช้งาน (OTP)", sub: "SMS เบอร์ 089-xxx-4567", color: "blue" },
+          { label: "แต้มสะสมปัจจุบัน", value: "1,240 แต้ม", sub: "แลกส่วนลดได้ ฿120", color: "amber" },
+          { label: "การเชื่อมต่อ Social", value: "Google & LINE", sub: "Linked Accounts", color: "purple" }
+        ],
+        tabs: ["ข้อมูลโปรไฟล์", "ความปลอดภัย & รหัสผ่าน", "การแจ้งเตือน", "ขอลบบัญชีถาวร (Danger Zone)"],
+        sections: [
+          {
+            section_name: "ข้อมูลผู้ใช้งาน (Profile Information)",
+            type: "form",
+            fields: [
+              { label: "ชื่อ - นามสกุล (Full Name)", type: "text", default_value: "เอกรัฐ พัฒนาพาณิชย์", required: true },
+              { label: "อีเมลติดต่อ (Email Address)", type: "text", default_value: "ekkarat.p@example.com", required: true },
+              { label: "หมายเลขโทรศัพท์มือถือ", type: "text", default_value: "089-123-4567", required: true },
+              { label: "ที่อยู่จัดส่งอาหารหลัก (Default Address)", type: "textarea", default_value: "คอนโดเลต ซอยสุขุมวิท 71 แขวงพระโขนงเหนือ เขตวัฒนา กรุงเทพฯ 10110", required: true },
+              { label: "เปิดใช้งานการยืนยันตัวตน 2FA ทุกครั้งที่เข้าสู่ระบบ", type: "toggle", default_value: true }
+            ],
+            buttons: [
+              { label: "💾 บันทึกการเปลี่ยนแปลง (Save Profile)", variant: "primary", icon: "💾" },
+              { label: "🔄 คืนค่าเดิม", variant: "outline", icon: "🔄" }
+            ]
+          },
+          {
+            section_name: "ประวัติการใช้งานและการเข้าสู่ระบบล่าสุด (Login Audit Log)",
+            type: "table",
+            table_headers: ["เวลาเข้าสู่ระบบ", "อุปกรณ์ / บราวเซอร์", "ที่อยู่ IP", "ช่องทาง", "ผลลัพธ์"],
+            table_rows: [
+              ["14 ต.ค. 2026, 13:45", "Chrome 129 / Windows 11", "192.168.1.155", "Email + Password", "✅ สำเร็จ"],
+              ["14 ต.ค. 2026, 11:20", "FoodSmile App / iOS 18", "171.96.120.4", "Google OAuth 2.0", "✅ สำเร็จ"],
+              ["13 ต.ค. 2026, 19:30", "Chrome 129 / Windows 11", "192.168.1.155", "LINE SSO", "✅ สำเร็จ"]
+            ]
+          }
+        ],
+        connected_use_cases: ["UC-AUTH-004: แก้ไขข้อมูลบัญชี", "UC-AUTH-005: ขอลบบัญชี"],
+        connected_req_codes: ["REQ-AUTH-004", "REQ-SEC-005"]
+      };
+    }
+
+    // 4. Review & Rating Submission
+    if (lowerPath.includes('review') || lowerTitle.includes('review') || lowerSid.includes('review-submit')) {
+      return {
+        screen_id: "SCR-REVIEW-SUBMIT",
+        screen_name: "Review & Rating Submission",
+        route: path !== '/' ? path : "/app/restaurant/:id/review",
+        layout_type: "form",
+        description: "แบบฟอร์มให้คะแนนดาว เขียนรีวิวความคิดเห็น แนบรูปภาพอาหาร และแชร์ประสบการณ์",
+        header: {
+          title: "เขียนรีวิวและให้คะแนนร้านอาหาร (Review & Rating)",
+          badge: "Customer Feedback",
+          badge_color: "amber",
+          actions: ["⭐ โพสต์รีวิว", "📷 แนบรูปภาพ", "ย้อนกลับ"]
+        },
+        stats: [
+          { label: "คะแนนเฉลี่ยร้าน", value: "4.85 ★", sub: "จาก 342 รีวิว", color: "amber" },
+          { label: "แต้มสะสมที่จะได้รับ", value: "+50 Points", sub: "เมื่อรีวิวพร้อมรูปถ่าย", color: "emerald" },
+          { label: "สถานะรีวิว", value: "แบบร่าง (Draft)", sub: "ยังไม่ได้เผยแพร่", color: "blue" },
+          { label: "ระดับผู้รีวิว", value: "FoodSmile Foodie", sub: "รีวิวแล้ว 14 ครั้ง", color: "purple" }
+        ],
+        tabs: ["เขียนรีวิวใหม่", "รีวิวของฉันในอดีต", "เงื่อนไขการรับแต้ม"],
+        sections: [
+          {
+            section_name: "แบบฟอร์มให้คะแนนและเขียนรีวิว (Rating & Feedback Form)",
+            type: "form",
+            fields: [
+              { label: "คะแนนความพึงพอใจ (1-5 ดาว)", type: "select", options: ["⭐⭐⭐⭐⭐ (5 ดาว - ประทับใจมาก)", "⭐⭐⭐⭐ (4 ดาว - ดีมาก)", "⭐⭐⭐ (3 ดาว - ปานกลาง)", "⭐⭐ (2 ดาว - พอใช้)", "⭐ (1 ดาว - ต้องปรับปรุง)"], default_value: "⭐⭐⭐⭐⭐ (5 ดาว - ประทับใจมาก)", required: true },
+              { label: "หัวข้อรีวิวสรุปสั้นๆ", type: "text", default_value: "อาหารรสเด็ด วัตถุดิบสดใหม่ บริการประทับใจมาก!", required: true },
+              { label: "รายละเอียดความคิดเห็น", type: "textarea", default_value: "สั่งส้มตำแซ่บเวอร์และไก่ย่างมารับประทาน รสชาติจัดจ้านกำลังดี วัตถุดิบสดใหม่ สะอาด พนักงานบริการดีมากครับ จะกลับมาอุดหนุนอีกแน่นอน", required: true },
+              { label: "ยินยอมให้แสดงชื่อและรูปโปรไฟล์บนรีวิวสาธารณะ", type: "toggle", default_value: true }
+            ],
+            buttons: [
+              { label: "🚀 โพสต์รีวิวทันที (Submit Review)", variant: "accent", icon: "⭐" },
+              { label: "💾 บันทึกแบบร่าง", variant: "outline", icon: "💾" }
+            ]
+          }
+        ],
+        connected_use_cases: ["UC-C04: เขียนรีวิวร้านอาหาร"],
+        connected_req_codes: ["REQ-REV-001"]
+      };
+    }
+
+    // 5. Favorite Restaurants
+    if (lowerPath.includes('favorite') || lowerTitle.includes('favorite') || lowerSid.includes('favorites')) {
+      return {
+        screen_id: "SCR-FAVORITES",
+        screen_name: "Favorite Restaurants",
+        route: path !== '/' ? path : "/app/favorites",
+        layout_type: "table",
+        description: "รายการร้านอาหารโปรดที่บันทึกไว้ จัดการหมวดหมู่ และสั่งอาหารด่วนในคลิกเดียว",
+        header: {
+          title: "ร้านอาหารโปรดของฉัน (My Favorite Restaurants)",
+          badge: "Saved Places",
+          badge_color: "amber",
+          actions: ["🔍 ค้นหาร้านโปรด", "🗺️ ดูบนแผนที่"]
+        },
+        stats: [
+          { label: "ร้านอาหารโปรดทั้งหมด", value: "12 ร้าน", sub: "บันทึกใน 3 หมวดหมู่", color: "amber" },
+          { label: "เปิดบริการตอนนี้", value: "8 ร้าน", sub: "พร้อมสั่งทันที", color: "emerald" },
+          { label: "ร้านที่มีโปรโมชั่น", value: "5 ร้าน", sub: "ส่วนลดสูงสุด 30%", color: "blue" },
+          { label: "ร้านที่ใกล้ที่สุด", value: "450 ม.", sub: "Zaap Ver พระโขนง", color: "purple" }
+        ],
+        tabs: ["ร้านโปรดทั้งหมด (12)", "ร้านเปิดบริการอยู่ (8)", "โปรโมชั่นพิเศษ (5)"],
+        sections: [
+          {
+            section_name: "รายการร้านอาหารที่บันทึกไว้ (Favorite Bookmarks)",
+            type: "table",
+            table_headers: ["ชื่อร้านอาหาร", "หมวดหมู่อาหาร", "คะแนนรีวิว", "ระยะทาง", "สถานะ", "การสั่งซื้อ"],
+            table_rows: [
+              ["Zaap Ver ส้มตำพระโขนง", "อาหารอีสานรสเด็ด", "4.90 ★", "450 ม.", "🟢 เปิดบริการ", "สั่งอาหารทันที"],
+              ["FoodSmile Gourmet Cafe", "อาหารไทยฟิวชั่น", "4.85 ★", "1.2 กม.", "🟢 เปิดบริการ", "สั่งอาหารทันที"],
+              ["Tokyo Shokudo ราเมน", "อาหารญี่ปุ่น", "4.75 ★", "2.1 กม.", "🟢 เปิดบริการ", "สั่งอาหารทันที"],
+              ["Sweet Treats Cafe & Bakery", "ของหวานและเครื่องดื่ม", "4.60 ★", "3.4 กม.", "🔴 ปิดบริการ", "ดูเมนู"]
+            ]
+          }
+        ],
+        connected_use_cases: ["UC-C05: จัดการร้านอาหารโปรด"],
+        connected_req_codes: ["REQ-FAV-001"]
+      };
+    }
+
+    // 6. Home & Map Search
+    if (lowerPath.includes('home') || lowerTitle.includes('home') || lowerPath.includes('map') || lowerSid.includes('home-map') || (lowerPath === '/app')) {
+      return {
+        screen_id: "SCR-HOME-MAP",
+        screen_name: "Home & Map Search",
+        route: path !== '/' ? path : "/app/home",
+        layout_type: "dashboard",
+        description: "หน้าแรกค้นหาร้านอาหารบนแผนที่แบบเรียลไทม์ ตัวกรองอาหาร หมวดหมู่ยอดนิยม และร้านใกล้ฉัน",
+        header: {
+          title: "ค้นหาร้านอาหารและแผนที่ใกล้ฉัน (Home & Map Discovery)",
+          badge: "Discovery & Map",
+          badge_color: "blue",
+          actions: ["📍 ปักหมุดพิกัดปัจจุบัน", "🔍 ค้นหาขั้นสูง", "🏷️ ดูโปรโมชั่น"]
+        },
+        stats: [
+          { label: "ร้านอาหารในพื้นที่", value: "142 ร้าน", sub: "เปิดบริการอยู่ 118 ร้าน", color: "emerald" },
+          { label: "พิกัดปัจจุบัน", value: "สุขุมวิท 71, กทม.", sub: "ความแม่นยำ GPS ±5 ม.", color: "blue" },
+          { label: "รัศมีการค้นหา", value: "5.0 กม.", sub: "ปรับเพิ่มได้สูงสุด 15 กม.", color: "purple" },
+          { label: "โปรโมชั่นวันนี้", value: "38 ดีลพิเศษ", sub: "ลดสูงสุด 50%", color: "amber" }
+        ],
+        tabs: ["ร้านอาหารแนะนำใกล้คุณ", "หมวดหมู่อาหารยอดนิยม", "ดีลและส่วนลดพิเศษ", "มุมมองแผนที่แบบเต็มจอ"],
+        sections: [
+          {
+            section_name: "ตัวกรองและค้นหาร้านอาหาร (Restaurant Search & Filters)",
+            type: "form",
+            fields: [
+              { label: "คำค้นหา (ชื่อร้านอาหาร, เมนูเด็ด, หรือสถานที่)", type: "text", default_value: "ส้มตำแซ่บเวอร์ พระโขนง", required: true },
+              { label: "หมวดหมู่อาหาร", type: "select", options: ["ทั้งหมด", "อาหารไทยฟิวชั่น", "อาหารอีสานรสเด็ด", "อาหารญี่ปุ่น", "คาเฟ่ & เบเกอรี่", "เครื่องดื่ม"], default_value: "อาหารอีสานรสเด็ด" },
+              { label: "รัศมีการค้นหา", type: "select", options: ["1.0 กม. (เดินถึง)", "3.0 กม. (ใกล้เคียง)", "5.0 กม. (พื้นที่จัดส่ง)", "10.0 กม. (ทั้งเขต)"], default_value: "5.0 กม. (พื้นที่จัดส่ง)" },
+              { label: "แสดงเฉพาะร้านที่เปิดบริการอยู่ตอนนี้ (Open Now)", type: "toggle", default_value: true }
+            ],
+            buttons: [
+              { label: "🔍 ค้นหาร้านอาหารทันที", variant: "primary", icon: "🔍" },
+              { label: "🗺️ สลับดูบนแผนที่ Live Map", variant: "secondary", icon: "🗺️" }
+            ]
+          },
+          {
+            section_name: "ผลการค้นหาร้านอาหารยอดนิยม (Nearby Restaurant Results)",
+            type: "table",
+            table_headers: ["ชื่อร้านอาหาร", "หมวดหมู่", "คะแนนรีวิว", "ระยะทาง", "สถานะ", "การสั่งอาหาร"],
+            table_rows: [
+              ["Zaap Ver ส้มตำพระโขนง", "อาหารอีสานรสเด็ด", "4.90 ★ (420 รีวิว)", "450 ม.", "🟢 เปิดบริการ", "สั่งอาหารทันที"],
+              ["FoodSmile Gourmet Cafe", "อาหารไทยฟิวชั่น", "4.85 ★ (342 รีวิว)", "1.2 กม.", "🟢 เปิดบริการ", "สั่งอาหารทันที"],
+              ["Tokyo Shokudo ราเมน", "อาหารญี่ปุ่น", "4.75 ★ (188 รีวิว)", "2.1 กม.", "🟢 เปิดบริการ", "สั่งอาหารทันที"],
+              ["Sweet Treats Cafe & Bakery", "ของหวานและเครื่องดื่ม", "4.60 ★ (95 รีวิว)", "3.4 กม.", "🔴 ปิดบริการ", "ดูรายละเอียด"]
+            ]
+          }
+        ],
+        connected_use_cases: ["UC-C01: ค้นหาร้านอาหาร", "UC-C02: ดูพิกัดบนแผนที่"],
+        connected_req_codes: ["REQ-CUST-001", "REQ-MAP-002"]
+      };
+    }
+
+    // 7. Admin KYC Approval
+    if (lowerPath.includes('kyc') || lowerTitle.includes('kyc') || lowerSid.includes('admin-kyc')) {
+      return {
+        screen_id: "SCR-ADMIN-KYC",
+        screen_name: "Merchant KYC Approval",
+        route: path !== '/' ? path : "/admin/kyc",
+        layout_type: "table",
+        description: "ระบบตรวจสอบและอนุมัติการเปิดร้านค้าของ Admin ตรวจสอบเอกสาร ภพ.20 บัตร ปชช. และผลประเมิน AI Fraud Score",
+        header: {
+          title: "คิวตรวจสอบและอนุมัติร้านค้า (Merchant KYC Approval Queue)",
+          badge: "Compliance Gate",
+          badge_color: "emerald",
+          actions: ["✅ อนุมัติรายการที่เลือก", "⛔ ปฏิเสธ / ขอเอกสารเพิ่ม", "🔄 รีเฟรช"]
+        },
+        stats: [
+          { label: "รายการรอดำเนินการ", value: "14 ร้าน", sub: "SLA อนุมัติใน 24 ชม.", color: "amber" },
+          { label: "อนุมัติแล้ววันนี้", value: "42 ร้าน", sub: "ผ่านเกณฑ์ 100%", color: "emerald" },
+          { label: "ถูกปฏิเสธ / ส่งกลับ", value: "3 ร้าน", sub: "เอกสารไม่ชัดเจน", color: "blue" },
+          { label: "AI Pre-screen แม่นยำ", value: "98.4%", sub: "ระบบตรวจจับเอกสารปลอม", color: "purple" }
+        ],
+        tabs: ["รอดำเนินการ (14)", "อนุมัติแล้ว (42)", "ถูกปฏิเสธ (3)", "บันทึกประวัติการตรวจสอบ"],
+        sections: [
+          {
+            section_name: "คิวคำขอลงทะเบียนเปิดร้านค้า (Merchant Onboarding Applications)",
+            type: "table",
+            table_headers: ["รหัสคำขอ", "ชื่อร้านค้า", "ผู้ยื่นคำขอ", "เอกสารที่แนบ", "คะแนนความเสี่ยง AI", "สถานะ", "การตัดสินใจ"],
+            table_rows: [
+              ["#KYC-801", "ส้มตำแซ่บเวอร์ พระโขนง", "คุณเอกรัฐ พัฒนาพาณิชย์", "ภพ.20, บัตร ปชช., สมุดบัญชี", "🟢 ต่ำ (0.02)", "⏳ รอ Admin ยืนยัน", "กดอนุมัติ"],
+              ["#KYC-802", "Cafe De Bangkok สุขุมวิท", "คุณศิริพร บุญเสริม", "บัตร ปชช., หน้าร้าน", "🟢 ต่ำ (0.01)", "⏳ รอ Admin ยืนยัน", "กดอนุมัติ"],
+              ["#KYC-803", "ก๋วยเตี๋ยวเรืออยุธยา ลาดพร้าว", "คุณสมชาย สุขเกษม", "บัตร ปชช. (ภาพเบลอ)", "🟡 ปานกลาง (0.35)", "⚠️ ขอเอกสารเพิ่ม", "ส่งข้อความเตือน"]
+            ]
+          }
+        ],
+        connected_use_cases: ["UC-A01: ตรวจสอบและอนุมัติร้านค้า"],
+        connected_req_codes: ["REQ-ADMIN-001", "REQ-KYC-001"]
+      };
+    }
+
+    // 8. Content Moderation
+    if (lowerPath.includes('moderation') || lowerTitle.includes('moderation') || lowerSid.includes('admin-moderation')) {
+      return {
+        screen_id: "SCR-ADMIN-MODERATION",
+        screen_name: "Content Moderation",
+        route: path !== '/' ? path : "/admin/moderation",
+        layout_type: "table",
+        description: "ระบบคัดกรองเนื้อหา ตรวจสอบรีวิวที่ถูกแจ้งรายงาน ข้อความไม่สุภาพ และรูปภาพอาหารที่ไม่เหมาะสม",
+        header: {
+          title: "ระบบคัดกรองเนื้อหาและรีวิว (Content Moderation Queue)",
+          badge: "Content Safety",
+          badge_color: "amber",
+          actions: ["🛡️ ลบและตักเตือน", "✅ ปลดระงับ (ผ่านเกณฑ์)", "🔄 รีเฟรช"]
+        },
+        stats: [
+          { label: "รีวิวรอดำเนินการ", value: "9 รายการ", sub: "ระบบ AI ตรวจจับคำหยาบ", color: "amber" },
+          { label: "ตรวจสอบแล้ววันนี้", value: "128 รายการ", sub: "SLA 100% ภายใน 1 ชม.", color: "emerald" },
+          { label: "สแปมที่ถูกบล็อก", value: "24 รายการ", sub: "Bot Traffic ป้องกันสำเร็จ", color: "blue" },
+          { label: "ความแม่นยำ AI Safety", value: "99.2%", sub: "Gemini Content Guard", color: "purple" }
+        ],
+        tabs: ["ข้อความถูกรายงาน (9)", "ภาพถ่ายต้องสงสัย (4)", "ประวัติการจัดการย้อนหลัง"],
+        sections: [
+          {
+            section_name: "รายการรีวิวที่ถูกรายงาน (Flagged Content Queue)",
+            type: "table",
+            table_headers: ["รหัสรีวิว", "ร้านอาหารเป้าหมาย", "ผู้เขียนรีวิว", "ข้อความที่ถูก Flag", "คะแนน Toxicity", "สถานะ", "การดำเนินการ"],
+            table_rows: [
+              ["#REV-991", "FoodSmile Gourmet", "User #9812", "อาหารรสชาติแย่มาก พนักงาน...", "🟡 0.42 (ถ้อยคำรุนแรง)", "⚠️ รอตัดสิน", "ตรวจสอบ"],
+              ["#REV-992", "ส้มตำแซ่บเวอร์", "User #4412", "คลิกลิงก์นี้รับเงินฟรี www.spam.xyz", "🔴 0.98 (Spam/Phishing)", "🚫 บล็อกแล้ว", "ลบถาวร"],
+              ["#REV-993", "Tokyo Shokudo", "User #1120", "อาหารอร่อยมาก แต่รอนานนิดหน่อย", "🟢 0.05 (Normal)", "✅ ปกติ", "ปลด Flag"]
+            ]
+          }
+        ],
+        connected_use_cases: ["UC-A02: จัดการเนื้อหาไม่เหมาะสม"],
+        connected_req_codes: ["REQ-ADMIN-002", "REQ-SAFE-001"]
+      };
+    }
+
+    // 9. Master Data Management
+    if (lowerPath.includes('masterdata') || lowerTitle.includes('masterdata') || lowerSid.includes('admin-masterdata')) {
+      return {
+        screen_id: "SCR-ADMIN-MASTERDATA",
+        screen_name: "Master Data Management",
+        route: path !== '/' ? path : "/admin/masterdata",
+        layout_type: "table",
+        description: "จัดการข้อมูลหลักของระบบ หมวดหมู่อาหาร อัตราค่า GP ส่วนแบ่ง และพื้นที่การจัดส่ง",
+        header: {
+          title: "การจัดการข้อมูลหลักของระบบ (Master Data Management)",
+          badge: "System Master Data",
+          badge_color: "blue",
+          actions: ["➕ สร้างหมวดหมู่ใหม่", "💾 บันทึก Master Data", "📥 Export CSV"]
+        },
+        stats: [
+          { label: "หมวดหมู่อาหารทั้งหมด", value: "24 หมวดหมู่", sub: "เปิดใช้งาน 22 | ปิด 2", color: "emerald" },
+          { label: "พื้นที่ให้บริการ", value: "50 เขต", sub: "กรุงเทพฯ และปริมณฑล", color: "blue" },
+          { label: "อัตรา GP มาตรฐาน", value: "15.0 - 20.0%", sub: "ตามสัญญาความร่วมมือ", color: "purple" },
+          { label: "อัปเดตล่าสุด", value: "วันนี้ 11:30 น.", sub: "โดย Admin System", color: "amber" }
+        ],
+        tabs: ["หมวดหมู่อาหาร (Categories)", "อัตราค่าบริการและ GP", "พื้นที่ให้บริการ (Delivery Zones)"],
+        sections: [
+          {
+            section_name: "ตารางหมวดหมู่อาหารหลัก (Food Categories Catalog)",
+            type: "table",
+            table_headers: ["รหัสหมวดหมู่", "ชื่อหมวดหมู่ (ภาษาไทย)", "ชื่อภาษาอังกฤษ", "จำนวนร้านค้า", "ลำดับการแสดงผล", "สถานะ", "จัดการ"],
+            table_rows: [
+              ["#CAT-01", "อาหารไทยฟิวชั่น", "Thai Fusion Cuisine", "48 ร้าน", "1", "🟢 เปิดใช้งาน", "แก้ไข"],
+              ["#CAT-02", "อาหารอีสานรสเด็ด", "Isan Traditional Food", "64 ร้าน", "2", "🟢 เปิดใช้งาน", "แก้ไข"],
+              ["#CAT-03", "อาหารญี่ปุ่น", "Japanese Cuisine", "35 ร้าน", "3", "🟢 เปิดใช้งาน", "แก้ไข"],
+              ["#CAT-04", "คาเฟ่ & เบเกอรี่", "Cafe & Bakery", "52 ร้าน", "4", "🟢 เปิดใช้งาน", "แก้ไข"]
+            ]
+          }
+        ],
+        connected_use_cases: ["UC-A03: จัดการ Master Data"],
+        connected_req_codes: ["REQ-ADMIN-003"]
+      };
+    }
+
+    // 10. Analytics Dashboard
+    if (lowerPath.includes('analytics') || lowerTitle.includes('analytics') || lowerSid.includes('admin-analytics')) {
+      return {
+        screen_id: "SCR-ADMIN-ANALYTICS",
+        screen_name: "Analytics Dashboard",
+        route: path !== '/' ? path : "/admin/analytics",
+        layout_type: "dashboard",
+        description: "แดชบอร์ดสรุปสถิติภาพรวม แพลตฟอร์ม ยอดรวม GMV จำนวนผู้ใช้งาน และอัตราการเติบโต",
+        header: {
+          title: "แดชบอร์ดภาพรวมและสถิติแพลตฟอร์ม (Platform Analytics Dashboard)",
+          badge: "Business Intelligence",
+          badge_color: "blue",
+          actions: ["📥 ส่งออกรายงาน PDF/Excel", "🔄 รีเฟรชข้อมูลเรียลไทม์", "⚙️ ตั้งค่า KPI Alerts"]
+        },
+        stats: [
+          { label: "ยอดใช้จ่ายรวมวันนี้ (GMV)", value: "฿2,845,000", sub: "+14.8% จากสัปดาห์ก่อน", color: "emerald" },
+          { label: "ผู้ใช้งาน Active รายวัน (DAU)", value: "18,450 คน", sub: "สมาชิกใหม่ +420 คน", color: "blue" },
+          { label: "ออเดอร์จัดส่งสำเร็จ", value: "12,380 รายการ", sub: "SLA จัดส่งสำเร็จ 99.4%", color: "purple" },
+          { label: "คะแนนความพึงพอใจเฉลี่ย", value: "4.88 ★", sub: "จาก 1,850 รีวิวสัปดาห์นี้", color: "amber" }
+        ],
+        tabs: ["ภาพรวมยอดขาย & GMV", "พฤติกรรมผู้ใช้งาน (DAU/MAU)", "ประสิทธิภาพการจัดส่ง (Delivery SLA)", "ร้านอาหารยอดนิยม"],
+        sections: [
+          {
+            section_name: "สรุปสถิติการดำเนินงานรายชั่วโมง (Hourly Operations Breakdown)",
+            type: "table",
+            table_headers: ["ช่วงเวลา", "จำนวนออเดอร์", "ยอดขายรวม (GMV)", "เวลาจัดส่งเฉลี่ย", "สถานะไรเดอร์", "สถานะระบบ"],
+            table_rows: [
+              ["11:00 - 12:00 (Peak Lunch)", "2,450 รายการ", "฿560,000", "26 นาที", "🟢 เพียงพอ (94%)", "🟢 ปกติ"],
+              ["12:00 - 13:00 (Peak Lunch)", "3,120 รายการ", "฿715,000", "28 นาที", "🟢 เพียงพอ (98%)", "🟢 ปกติ"],
+              ["13:00 - 14:00 (After Lunch)", "1,240 รายการ", "฿280,000", "22 นาที", "🟢 พร้อมให้บริการ", "🟢 ปกติ"],
+              ["17:00 - 18:00 (Peak Dinner)", "2,890 รายการ", "฿680,000", "25 นาที", "🟢 เพียงพอ (96%)", "🟢 ปกติ"]
+            ]
+          }
+        ],
+        connected_use_cases: ["UC-A04: ดูสถิติและรายงานแพลตฟอร์ม"],
+        connected_req_codes: ["REQ-ADMIN-004", "REQ-RPT-001"]
+      };
+    }
+
+    // 11. Store Onboarding / Claim
+    if (lowerPath.includes('onboard') || lowerTitle.includes('claim') || lowerTitle.includes('onboarding') || lowerSid.includes('merch-onboard')) {
+      return {
+        screen_id: "SCR-MERCH-ONBOARD",
+        screen_name: "Store Onboarding / Claim",
+        route: path !== '/' ? path : "/merchant/onboarding",
+        layout_type: "form",
+        description: "พอร์ทัลลงทะเบียนร้านค้าใหม่ เคลมสิทธิ์เจ้าของร้าน และอัปโหลดเอกสารยืนยันตัวตน KYC",
+        header: {
+          title: "ลงทะเบียนร้านค้าและยืนยันสิทธิ์ (Merchant Onboarding & Claim)",
+          badge: "Merchant Verification",
+          badge_color: "emerald",
+          actions: ["💾 บันทึกแบบร่าง", "▶️ ส่งเอกสาร KYC", "📞 ช่วยเหลือ"]
+        },
+        stats: [
+          { label: "สถานะการตรวจสอบ", value: "รอส่งเอกสาร (Step 2/4)", sub: "SLA: อนุมัติใน 24 ชม.", color: "blue" },
+          { label: "เอกสารที่จำเป็น", value: "4 รายการ", sub: "บัตร ปชช., ภพ.20, สมุดบัญชี", color: "amber" },
+          { label: "ค่าธรรมเนียมแรกเข้า", value: "ฟรี 0 บาท", sub: "ไม่มีค่าธรรมเนียมรายปี", color: "emerald" },
+          { label: "ความสมบูรณ์ข้อมูล", value: "65%", sub: "กรอกข้อมูลร้านแล้ว", color: "purple" }
+        ],
+        tabs: ["1. ข้อมูลร้านค้า", "2. ข้อมูลเจ้าของ & นิติบุคคล", "3. อัปโหลดเอกสาร KYC", "4. สรุปและยืนยัน"],
+        sections: [
+          {
+            section_name: "ข้อมูลและรายละเอียดร้านค้า (Merchant Profile)",
+            type: "form",
+            fields: [
+              { label: "ชื่อร้านอาหาร (ภาษาไทย)", type: "text", default_value: "ส้มตำแซ่บเวอร์ สาขาพระโขนง", required: true },
+              { label: "ชื่อร้านอาหาร (English)", type: "text", default_value: "Zaap Ver FoodSmile Cafe" },
+              { label: "เลขทะเบียนพาณิชย์ / เลขประจำตัวผู้เสียภาษี", type: "text", default_value: "0105563012345", required: true },
+              { label: "ประเภทธุรกิจ", type: "select", options: ["บุคคลธรรมดา", "นิติบุคคล (บริษัทจำกัด/ห้างหุ้นส่วน)"], default_value: "นิติบุคคล (บริษัทจำกัด/ห้างหุ้นส่วน)" },
+              { label: "เบอร์โทรศัพท์เจ้าของร้าน", type: "text", default_value: "081-234-5678", required: true },
+              { label: "อีเมลสำหรับรับใบเสร็จและแจ้งเตือน", type: "text", default_value: "merchant.contact@foodsmile.app" },
+              { label: "ที่อยู่ตั้งร้านค้า", type: "textarea", default_value: "เลขที่ 88/1 ถนนสุขุมวิท แขวงพระโขนง เขตคลองเตย กรุงเทพฯ 10110", required: true },
+              { label: "ยินยอมให้ทีมงานลงพื้นที่ตรวจสอบร้านจริง", type: "toggle", default_value: true }
+            ],
+            buttons: [
+              { label: "💾 บันทึกแบบร่าง", variant: "outline", icon: "💾" },
+              { label: "ถัดไป: อัปโหลดเอกสาร KYC", variant: "primary", icon: "📄" }
+            ]
+          },
+          {
+            section_name: "รายการเอกสารประกอบการเคลมและยืนยันสิทธิ์ (KYC Checklist)",
+            type: "table",
+            table_headers: ["ลำดับ", "รายการเอกสาร", "สถานะ", "ไฟล์ที่แนบ", "การดำเนินการ"],
+            table_rows: [
+              ["1", "สำเนาบัตรประชาชนผู้มีอำนาจลงนาม", "✅ อัปโหลดแล้ว", "id_card_owner.jpg", "ดูไฟล์"],
+              ["2", "หนังสือรับรองบริษัท / ภพ.20", "✅ อัปโหลดแล้ว", "vat20_certificate.pdf", "ดูไฟล์"],
+              ["3", "หน้าสมุดบัญชีธนาคารสำหรับรับเงินโอน", "⏳ รอเอกสาร", "-", "อัปโหลด"],
+              ["4", "ภาพถ่ายหน้าร้านพร้อมป้ายชื่อร้านที่มองเห็นชัดเจน", "✅ อัปโหลดแล้ว", "storefront_photo.png", "ดูไฟล์"]
+            ]
+          }
+        ],
+        connected_use_cases: ["UC-M01: สมัครเปิดร้านและเคลมสิทธิ์"],
+        connected_req_codes: ["REQ-MERCH-001", "REQ-KYC-002"]
+      };
+    }
+
+    // 12. Store Management
+    if (lowerPath.includes('manage') || lowerTitle.includes('store management') || lowerSid.includes('merch-manage')) {
+      return {
+        screen_id: "SCR-MERCH-MANAGE",
+        screen_name: "Store Management",
+        route: path !== '/' ? path : "/merchant/manage/:id",
+        layout_type: "form",
+        description: "จัดการร้านค้า เมนูอาหาร ราคา เวลาเปิด-ปิด และสลับสถานะเปิดรับออเดอร์ Delivery",
+        header: {
+          title: "ระบบจัดการร้านค้าและเมนูอาหาร (Store Management Portal)",
+          badge: "Merchant Admin",
+          badge_color: "emerald",
+          actions: ["💾 บันทึกการตั้งค่าร้าน", "➕ เพิ่มเมนูใหม่", "📊 สรุปยอดขาย"]
+        },
+        stats: [
+          { label: "สถานะเปิดร้าน", value: "🟢 เปิดรับออเดอร์", sub: "ปิดรับ 22:00 น.", color: "emerald" },
+          { label: "ยอดขายวันนี้", value: "฿14,250", sub: "48 ออเดอร์สำเร็จ", color: "blue" },
+          { label: "เมนูอาหารทั้งหมด", value: "32 รายการ", sub: "พร้อมขาย 28 | หมด 4", color: "purple" },
+          { label: "คะแนนเฉลี่ยร้าน", value: "4.85 ★", sub: "จาก 342 รีวิว", color: "amber" }
+        ],
+        tabs: ["ข้อมูลร้านและการเปิด-ปิด", "จัดการรายการเมนูอาหาร", "จัดการโปรโมชั่น", "รีวิวจากลูกค้า"],
+        sections: [
+          {
+            section_name: "การตั้งค่าการเปิดบริการ (Operating Status & Timing)",
+            type: "form",
+            fields: [
+              { label: "เปิดรับออเดอร์ Delivery ตอนนี้", type: "toggle", default_value: true },
+              { label: "เวลาทำการประจำวัน", type: "text", default_value: "จันทร์ - อาทิตย์ 10:00 - 22:00 น.", required: true },
+              { label: "ระยะทางจัดส่งสูงสุด (กม.)", type: "text", default_value: "12 กม." },
+              { label: "ข้อความแจ้งเตือนลูกค้าหน้าร้าน", type: "textarea", default_value: "ส้มตำแซ่บเวอร์ ยินดีต้อนรับ! วันนี้มีเมนูพิเศษ ส้มตำถาดทะเลเดือด" }
+            ],
+            buttons: [
+              { label: "💾 บันทึกสถานะร้าน", variant: "primary", icon: "💾" }
+            ]
+          },
+          {
+            section_name: "รายการเมนูอาหารของร้าน (Store Menu Catalog)",
+            type: "table",
+            table_headers: ["รหัสเมนู", "ชื่อเมนูอาหาร", "หมวดหมู่", "ราคา (บาท)", "สถานะพร้อมขาย", "การจัดการ"],
+            table_rows: [
+              ["#MN-001", "ส้มตำไทยแซ่บ + ไข่เค็ม", "อาหารอีสาน", "85.-", "🟢 พร้อมขาย", "แก้ไข"],
+              ["#MN-002", "ไก่ย่างสมุนไพรเขาสวนกวาง (ครึ่งตัว)", "จานหลัก", "140.-", "🟢 พร้อมขาย", "แก้ไข"],
+              ["#MN-003", "ต้มแซ่บกระดูกหมูอ่อน", "ต้ม/แกง", "150.-", "🟢 พร้อมขาย", "แก้ไข"],
+              ["#MN-004", "คอหมูย่างคลุกฝุ่น", "อาหารทานเล่น", "120.-", "🔴 สินค้าหมด", "เปิดขาย"]
+            ]
+          }
+        ],
+        connected_use_cases: ["UC-M02: จัดการสถานะร้านและเมนู"],
+        connected_req_codes: ["REQ-MERCH-002", "REQ-MENU-001"]
+      };
+    }
+
+    // 13. Merchant Web Portal (Overview)
+    if (lowerPath.includes('merchant') || lowerTitle.includes('merchant') || lowerSid.includes('merch-dash') || (lowerPath === '/merchant')) {
+      return {
+        screen_id: "SCR-MERCH-DASH",
+        screen_name: "Merchant Web Portal",
+        route: path !== '/' ? path : "/merchant",
+        layout_type: "dashboard",
+        description: "ศูนย์ควบคุมร้านค้าสำหรับผู้ประกอบการ สรุปยอดขาย ออเดอร์เรียลไทม์ และคำขอเปิดร้าน",
+        header: {
+          title: "ศูนย์รวมร้านค้าและพอร์ทัลร้านอาหาร (Merchant Web Portal)",
+          badge: "Merchant Hub",
+          badge_color: "blue",
+          actions: ["🏪 จัดการร้านของฉัน", "📝 ยื่นคำขอเปิดร้าน (Claim)", "🔄 รีเฟรช"]
+        },
+        stats: [
+          { label: "ร้านค้าที่คุณดูแล", value: "1 ร้าน", sub: "ส้มตำแซ่บเวอร์ พระโขนง", color: "emerald" },
+          { label: "สถานะการตรวจสอบ KYC", value: "✅ ผ่านการตรวจสอบ", sub: "ยืนยันเมื่อ 1 ต.ค. 2026", color: "blue" },
+          { label: "รายได้รอบจ่ายถัดไป", value: "฿38,420", sub: "โอนเข้าบัญชี 18 ต.ค.", color: "purple" },
+          { label: "การแจ้งเตือนร้านค้า", value: "3 ข้อความใหม่", sub: "ออเดอร์ใหม่ & รีวิว", color: "amber" }
+        ],
+        tabs: ["ภาพรวมร้านค้าของฉัน", "คำขอ Onboarding & Claim", "รอบบัญชีและการรับเงิน"],
+        sections: [
+          {
+            section_name: "รายชื่อร้านอาหารที่คุณเป็นเจ้าของ (My Managed Stores)",
+            type: "table",
+            table_headers: ["ชื่อร้านอาหาร", "สาขา", "สถานะการเปิดร้าน", "ยอดขายสัปดาห์นี้", "คะแนนรีวิว", "การเข้าจัดการ"],
+            table_rows: [
+              ["ส้มตำแซ่บเวอร์", "สาขาพระโขนง", "🟢 เปิดบริการอยู่", "฿62,100", "4.90 ★ (420)", "เข้าสู่ระบบร้าน"]
+            ]
+          }
+        ],
+        connected_use_cases: ["UC-M01: Dashboard ร้านค้า"],
+        connected_req_codes: ["REQ-MERCH-001"]
+      };
+    }
+
+    // 14. Admin Dashboard (Overview)
+    if (lowerPath.includes('admin') || lowerTitle.includes('admin') || lowerSid.includes('admin-dash') || (lowerPath === '/admin')) {
+      return {
+        screen_id: "SCR-ADMIN-DASH",
+        screen_name: "Admin Dashboard",
+        route: path !== '/' ? path : "/admin",
+        layout_type: "dashboard",
+        description: "ศูนย์ควบคุมและบริหารระบบสำหรับผู้ดูแลระบบ (Admin) ควบคุมการทำงาน ภาพรวมเซิร์ฟเวอร์ และการแจ้งเตือนฉุกเฉิน",
+        header: {
+          title: "ศูนย์ควบคุมและบริหารระบบ (Admin Master Control Center)",
+          badge: "Super Admin",
+          badge_color: "blue",
+          actions: ["⚡ ตรวจสอบสุขภาพระบบ (Healthcheck)", "📥 ดู System Logs", "🔄 รีเฟรชสถานะ"]
+        },
+        stats: [
+          { label: "สถานะระบบเซิร์ฟเวอร์", value: "🟢 Healthy (99.98%)", sub: "Cluster 4 Nodes Active", color: "emerald" },
+          { label: "เวลารอตอบสนอง API (P95)", value: "128 ms", sub: "เกณฑ์มาตรฐาน < 300 ms", color: "blue" },
+          { label: "คำขอ KYC รออนุมัติ", value: "14 รายการ", sub: "ต้องดำเนินการวันนี้", color: "amber" },
+          { label: "การรักษาความปลอดภัย", value: "TLS 1.3 / Zero Alerts", sub: "ไม่มีการละเมิดข้อมูล", color: "purple" }
+        ],
+        tabs: ["ภาพรวมระบบ (Overview)", "จัดการผู้ใช้งาน & สิทธิ์", "บันทึกการทำงานของระบบ (Audit Logs)"],
+        sections: [
+          {
+            section_name: "บันทึกกิจกรรมระบบที่สำคัญล่าสุด (Recent System Audit Trails)",
+            type: "table",
+            table_headers: ["เวลา", "ผู้ดำเนินการ", "ประเภทกิจกรรม", "เป้าหมาย", "สถานะ", "รายละเอียด"],
+            table_rows: [
+              ["14 ต.ค. 2026, 14:15", "admin@domain.com", "KYC Approval", "ส้มตำแซ่บเวอร์ พระโขนง", "✅ สำเร็จ", "อนุมัติเปิดร้าน"],
+              ["14 ต.ค. 2026, 13:50", "system-auto", "Daily Database Backup", "PostgreSQL Primary", "✅ สำเร็จ", "ขนาด Snapshot 4.2 GB"],
+              ["14 ต.ค. 2026, 12:30", "moderator@domain.com", "Content Review", "Review #REV-992", "✅ สำเร็จ", "ลบข้อความสแปม"]
+            ]
+          }
+        ],
+        connected_use_cases: ["UC-A01: ภาพรวม Admin"],
+        connected_req_codes: ["REQ-ADMIN-001"]
+      };
+    }
+
+    // 15. Default Detail (Restaurant Details)
+    return {
+      screen_id: "SCR-REST-DETAIL",
+      screen_name: "Restaurant Details",
+      route: path !== '/' ? path : "/app/restaurant/:id",
+      layout_type: "detail",
+      description: "หน้ารายละเอียดร้านอาหาร เมนูแนะนำ รีวิวคะแนน แผนที่ และสั่งอาหาร Delivery",
+      header: {
+        title: "ร้านอาหารอร่อยเลิศ (FoodSmile Gourmet Cafe)",
+        badge: "Verified Merchant",
+        badge_color: "emerald",
+        actions: ["แชร์หน้าร้าน", "บันทึกร้านโปรด", "ย้อนกลับ"]
+      },
+      stats: [
+        { label: "คะแนนเฉลี่ย", value: "4.85 ★", sub: "จาก 342 รีวิว", color: "amber" },
+        { label: "สถานะปัจจุบัน", value: "เปิดบริการอยู่", sub: "ปิด 22:00 น.", color: "emerald" },
+        { label: "เวลาจัดส่งเฉลี่ย", value: "25-35 นาที", sub: "ระยะทาง 1.8 กม.", color: "blue" },
+        { label: "ระดับราคา", value: "฿฿ (100-250 บาท)", sub: "รับชำระ PromptPay/บัตร", color: "purple" }
+      ],
+      tabs: ["ข้อมูลทั่วไป", "รายการเมนูยอดนิยม", "รีวิว & คะแนน", "แผนที่และการเดินทาง"],
+      sections: [
+        {
+          section_name: "Image Gallery & Highlights",
+          type: "gallery",
+          banner_tag: "🔥 เมนูแนะนำประจำสัปดาห์: สเต๊กแซลมอนย่างเกลือหิมาลายัน",
+          images: [
+            { title: "บรรยากาศหน้าร้าน", desc: "ตกแต่งสไตล์ Modern Cozy มีที่จอดรถสะดวกสบาย" },
+            { title: "โซน Dining Room", desc: "รองรับจัดเลี้ยงกลุ่ม 10-30 ท่าน มีห้อง VIP" },
+            { title: "ครัวเปิด Open Kitchen", desc: "ได้มาตรฐานความสะอาด SHA Plus+ และ HACCP" }
+          ]
+        },
+        {
+          section_name: "ข้อมูลและรายละเอียดร้าน (Basic Info)",
+          type: "form",
+          fields: [
+            { label: "ชื่อร้านอาหาร", type: "text", default_value: "FoodSmile Gourmet Cafe", required: true },
+            { label: "ประเภทอาหาร", type: "select", options: ["อาหารไทยฟิวชั่น", "อาหารญี่ปุ่น", "คาเฟ่ & เบเกอรี่", "เครื่องดื่ม"], default_value: "อาหารไทยฟิวชั่น" },
+            { label: "เวลาทำการ", type: "text", default_value: "จันทร์ - อาทิตย์: 10:00 - 22:00 น.", required: true },
+            { label: "เบอร์โทรศัพท์ติดต่อ", type: "text", default_value: "02-123-4567, 089-987-6543" },
+            { label: "ที่อยู่ / สถานที่ตั้ง", type: "textarea", default_value: "123/45 ถนนสุขุมวิท 71 แขวงพระโขนงเหนือ เขตวัฒนา กรุงเทพฯ 10110", required: true },
+            { label: "เปิดรับออเดอร์ Delivery", type: "toggle", default_value: true }
+          ],
+          buttons: [
+            { label: "โทรออกหาร้าน", variant: "outline", icon: "📞" },
+            { label: "นำทาง (Google Maps)", variant: "secondary", icon: "🧭" },
+            { label: "สั่งอาหาร Delivery", variant: "primary", icon: "🛵" },
+            { label: "เขียนรีวิวให้คะแนน", variant: "accent", icon: "⭐" }
+          ]
+        },
+        {
+          section_name: "รายการเมนูอาหารยอดนิยม (Popular Menu Items)",
+          type: "table",
+          table_headers: ["รหัสเมนู", "ชื่อเมนูอาหาร", "หมวดหมู่", "ราคา (บาท)", "สถานะพร้อมเสิร์ฟ", "การสั่งซื้อ"],
+          table_rows: [
+            ["#MN-001", "สเต๊กแซลมอนนอร์เวย์ซอสเลมอนเนยสด", "จานหลัก (Main Course)", "320.-", "พร้อมเสิร์ฟ", "สั่งซื้อเลย"],
+            ["#MN-002", "สปาเก็ตตี้คาโบนาร่าทรัฟเฟิล", "พาสต้า (Pasta)", "260.-", "พร้อมเสิร์ฟ", "สั่งซื้อเลย"],
+            ["#MN-003", "ยำแซลมอนแซ่บพริกสด", "อาหารทานเล่น (Appetizer)", "195.-", "พร้อมเสิร์ฟ", "สั่งซื้อเลย"],
+            ["#MN-004", "มัทฉะลาเต้เย็นเกรดพิธีการ", "เครื่องดื่ม (Beverage)", "110.-", "พร้อมเสิร์ฟ", "สั่งซื้อเลย"]
+          ]
+        },
+        {
+          section_name: "รีวิวจากลูกค้าล่าสุด (Customer Reviews)",
+          type: "reviews",
+          reviews: [
+            { user: "นันทนา กุลสวัสดิ์", rating: 5, comment: "อาหารอร่อยมาก โดยเฉพาะสเต๊กแซลมอน บริการดี บรรยากาศน่านั่ง แนะนำเลยค่ะ!", time: "1 ชั่วโมงที่แล้ว" },
+            { user: "เอกรัฐ พัฒนา", rating: 5, comment: "ที่จอดรถสะดวก อาหารเสิร์ฟไว พนักงานสุภาพมากครับ จะกลับมาอุดหนุนอีกแน่นอน", time: "เมื่อวานนี้" }
+          ]
+        }
+      ],
+      connected_use_cases: ["UC-C01: ดูข้อมูลร้าน"],
+      connected_req_codes: ["REQ-001"]
+    };
+  }
 
   // ── Prototype Interactive State ──
   let prototypeDevice = 'desktop'; // 'desktop' | 'tablet' | 'mobile'
   let activePrototypeTab = '';
   let isFavorite = false;
   let formValues = {};
+  let currentFormValues = {};
   let isSimulatingSubmit = false;
   let activePrototypeModal = null; // null | { title: '...', content: '...', type: '...' }
 
+  function handleSelectSitemapNode(node) {
+    if (!node) return;
+    selectedSitemapNode = node;
+    selectedNodeId = node.id || node.screen_id || node.path || node.title;
+
+    // Search for existing mockup by screen_id, route, title, or node_id
+    let matched = null;
+    if (flowData && flowData.screen_mockups && flowData.screen_mockups.length > 0) {
+      matched = flowData.screen_mockups.find(s => 
+        (node.screen_id && s.screen_id === node.screen_id) ||
+        (node.path && s.route === node.path) ||
+        (node.title && (s.screen_name === node.title || s.screen_name?.toLowerCase().includes(node.title.toLowerCase())))
+      );
+    }
+
+    if (!matched) {
+      // Synthesize a dedicated interactive mockup so it NEVER stays stuck on screen 0
+      matched = synthesizeMockupForNode(node);
+      if (flowData) {
+        if (!flowData.screen_mockups) flowData.screen_mockups = [];
+        flowData.screen_mockups = [...flowData.screen_mockups, matched];
+      }
+    }
+
+    // Synchronously initialize formValues for this screen BEFORE changing selectedScreenId
+    const sid = matched.screen_id || 'DEFAULT';
+    if (!formValues[sid]) {
+      formValues[sid] = {};
+    }
+    if (matched.sections) {
+      matched.sections.forEach(sec => {
+        if (sec.fields) {
+          sec.fields.forEach(f => {
+            if (formValues[sid][f.label] === undefined) {
+              formValues[sid][f.label] = f.default_value !== undefined ? f.default_value : (f.default !== undefined ? f.default : (f.placeholder || ''));
+            }
+          });
+        }
+      });
+    }
+    currentFormValues = formValues[sid];
+
+    // Reset prototype tab and scroll position
+    activePrototypeTab = (matched.tabs && matched.tabs[0]) || '';
+    isFavorite = false;
+    selectedScreenId = matched.screen_id;
+  }
+
+  $: currentScreenMockup = (flowData && flowData.screen_mockups && flowData.screen_mockups.length > 0) 
+    ? (flowData.screen_mockups.find(s => s.screen_id === selectedScreenId) ||
+       (selectedSitemapNode ? (flowData.screen_mockups.find(s => 
+         (selectedSitemapNode.screen_id && s.screen_id === selectedSitemapNode.screen_id) ||
+         (selectedSitemapNode.path && s.route === selectedSitemapNode.path) ||
+         (selectedSitemapNode.title && s.screen_name === selectedSitemapNode.title)
+       ) || synthesizeMockupForNode(selectedSitemapNode)) : flowData.screen_mockups[0]))
+    : null;
+
   // Reactive default form values sync when screen changes
   $: if (currentScreenMockup) {
-    if (currentScreenMockup.tabs && currentScreenMockup.tabs.length > 0 && !activePrototypeTab) {
-      activePrototypeTab = currentScreenMockup.tabs[0];
-    }
     const mockId = currentScreenMockup.screen_id || 'DEFAULT';
     if (!formValues[mockId]) {
       formValues[mockId] = {};
-      if (currentScreenMockup.sections) {
-        currentScreenMockup.sections.forEach(sec => {
-          if (sec.fields) {
-            sec.fields.forEach(f => {
+    }
+    if (currentScreenMockup.sections) {
+      currentScreenMockup.sections.forEach(sec => {
+        if (sec.fields) {
+          sec.fields.forEach(f => {
+            if (formValues[mockId][f.label] === undefined) {
               formValues[mockId][f.label] = f.default_value !== undefined ? f.default_value : (f.default !== undefined ? f.default : (f.placeholder || ''));
-            });
-          }
-        });
+            }
+          });
+        }
+      });
+    }
+    currentFormValues = formValues[mockId];
+
+    if (currentScreenMockup.tabs && currentScreenMockup.tabs.length > 0) {
+      if (!activePrototypeTab || !currentScreenMockup.tabs.includes(activePrototypeTab)) {
+        activePrototypeTab = currentScreenMockup.tabs[0];
       }
     }
   }
@@ -810,6 +1578,7 @@
         }
       });
     }
+    currentFormValues = { ...formValues[mockId] };
     toast('⚡ เติมข้อมูลจำลองสำหรับทดสอบ Prototype เรียบร้อย', 'success');
   }
 
@@ -817,6 +1586,7 @@
     if (!currentScreenMockup) return;
     const mockId = currentScreenMockup.screen_id || 'DEFAULT';
     formValues[mockId] = {};
+    currentFormValues = {};
     isFavorite = false;
     toast('🔄 รีเซ็ตค่าฟอร์ม Prototype สำเร็จ', 'info');
   }
@@ -1117,7 +1887,7 @@
                 <div class="empty-hint">ไม่พบข้อมูล Sitemap</div>
               {:else}
                 {#each flowData.sitemap as node}
-                  <div class="sitemap-node-card" class:active={selectedScreenId === node.screen_id} on:click={() => handleSelectSitemapNode(node)}>
+                  <div class="sitemap-node-card" class:active={selectedNodeId ? selectedNodeId === (node.id || node.screen_id || node.path || node.title) : (selectedScreenId && selectedScreenId === node.screen_id)} on:click={() => handleSelectSitemapNode(node)}>
                     <div class="node-main">
                       <span class="node-icon">{node.icon || '📁'}</span>
                       <div class="node-text">
@@ -1141,7 +1911,7 @@
                     {#if node.children && node.children.length > 0}
                       <div class="node-children">
                         {#each node.children as child}
-                          <div class="sitemap-child-card" class:active={selectedScreenId === child.screen_id} on:click|stopPropagation={() => handleSelectSitemapNode(child)}>
+                          <div class="sitemap-child-card" class:active={selectedNodeId ? selectedNodeId === (child.id || child.screen_id || child.path || child.title) : (selectedScreenId && selectedScreenId === child.screen_id)} on:click|stopPropagation={() => handleSelectSitemapNode(child)}>
                             <span class="child-icon">{child.icon || '📄'}</span>
                             <div class="child-info">
                               <span class="child-title">{child.title}</span>
@@ -1446,7 +2216,7 @@
                       </div>
 
                       <div class="proto-header-action-toolbar">
-                        {#if currentScreenMockup.header?.actions}
+                        {#if currentScreenMockup.header?.actions && currentScreenMockup.header.actions.length > 0}
                           {#each currentScreenMockup.header.actions as act}
                             <button 
                               class="btn-proto-header-action" 
@@ -1458,20 +2228,20 @@
                                 {isFavorite ? '❤️ เป็นร้านโปรดแล้ว' : '🤍 ' + act}
                               {:else if act.includes('ย้อน') || act.includes('back')}
                                 ◀ {act}
+                              {:else if act.includes('เข้าสู่ระบบ') || act.includes('login') || act.includes('sign in')}
+                                🚀 {act}
+                              {:else if act.includes('ค้นหา') || act.includes('search')}
+                                🔍 {act}
+                              {:else if act.includes('บันทึก') || act.includes('save')}
+                                💾 {act}
                               {:else}
                                 ⚙️ {act}
                               {/if}
                             </button>
                           {/each}
                         {:else}
-                          <button class="btn-proto-header-action" on:click={() => handlePrototypeHeaderAction('แชร์หน้าร้าน')}>
-                            🔗 แชร์
-                          </button>
-                          <button 
-                            class="btn-proto-header-action" 
-                            class:favorited={isFavorite}
-                            on:click={() => handlePrototypeHeaderAction('บันทึกรายการโปรด')}>
-                            {isFavorite ? '❤️ รายการโปรด' : '🤍 บันทึก'}
+                          <button class="btn-proto-header-action" on:click={() => handlePrototypeHeaderAction('รีเฟรช')}>
+                            🔄 รีเฟรช
                           </button>
                         {/if}
                       </div>
@@ -1489,30 +2259,6 @@
                             {/if}
                           </div>
                         {/each}
-                      </div>
-                    {:else}
-                      <!-- Fallback Smart Metric Grid for standard screens -->
-                      <div class="proto-stats-grid">
-                        <div class="proto-stat-card amber">
-                          <div class="stat-card-label">คะแนนความพึงพอใจ</div>
-                          <div class="stat-card-value">4.85 ★</div>
-                          <div class="stat-card-sub">จาก 342 รีวิว</div>
-                        </div>
-                        <div class="proto-stat-card emerald">
-                          <div class="stat-card-label">สถานะการทำงาน</div>
-                          <div class="stat-card-value">เปิดบริการอยู่</div>
-                          <div class="stat-card-sub">ปิด 22:00 น.</div>
-                        </div>
-                        <div class="proto-stat-card blue">
-                          <div class="stat-card-label">เวลาจัดส่งเฉลี่ย</div>
-                          <div class="stat-card-value">25-35 นาที</div>
-                          <div class="stat-card-sub">ระยะทาง 1.8 กม.</div>
-                        </div>
-                        <div class="proto-stat-card purple">
-                          <div class="stat-card-label">ระดับราคา</div>
-                          <div class="stat-card-value">฿฿ (100-250)</div>
-                          <div class="stat-card-sub">รับ PromptPay/บัตร</div>
-                        </div>
                       </div>
                     {/if}
 
@@ -1536,7 +2282,7 @@
                         {#each currentScreenMockup.sections as sec, secIdx}
                           
                           <!-- SECTION: GALLERY / BANNER -->
-                          {#if sec.type === 'gallery' || sec.images}
+                          {#if (sec.type === 'gallery' || sec.images) && sec.images && sec.images.length > 0}
                             <div class="proto-section-card gallery">
                               <div class="proto-sec-header">
                                 <div class="mock-sec-title">🖼️ {sec.section_name || 'Image Gallery & Highlights'}</div>
@@ -1545,7 +2291,7 @@
                                 {/if}
                               </div>
                               <div class="proto-gallery-grid">
-                                {#each (sec.images || [{ title: 'ภาพบรรยากาศหลัก', desc: 'โซนที่นั่งสบาย มีที่จอดรถ' }, { title: 'โซน Dining Room', desc: 'ห้องปรับอากาศรองรับ 30 ที่นั่ง' }, { title: 'Open Kitchen', desc: 'มาตรฐานความสะอาด SHA Plus+' }]) as img, idx}
+                                {#each sec.images as img, idx}
                                   <div class="gallery-photo-card" on:click={() => toast(`🔍 ดูภาพขยาย: ${img.title}`, 'info')}>
                                     <div class="photo-visual-placeholder grad-{idx % 4}">
                                       <span class="photo-cam-icon">📷</span>
@@ -1580,12 +2326,12 @@
                                         <label class="proto-switch">
                                           <input 
                                             type="checkbox" 
-                                            bind:checked={formValues[currentScreenMockup.screen_id || 'DEFAULT'][f.label]}
+                                            bind:checked={currentFormValues[f.label]}
                                           />
                                           <span class="switch-slider"></span>
                                         </label>
                                         <span class="toggle-status-text">
-                                          {formValues[currentScreenMockup.screen_id || 'DEFAULT'][f.label] ? '🟢 เปิดใช้งาน (Active)' : '⚪ ปิดใช้งาน (Disabled)'}
+                                          {currentFormValues[f.label] ? '🟢 เปิดใช้งาน (Active)' : '⚪ ปิดใช้งาน (Disabled)'}
                                         </span>
                                       </div>
 
@@ -1594,7 +2340,7 @@
                                         <select 
                                           id="fld-{secIdx}-{f.label}"
                                           class="proto-real-select"
-                                          bind:value={formValues[currentScreenMockup.screen_id || 'DEFAULT'][f.label]}
+                                          bind:value={currentFormValues[f.label]}
                                         >
                                           {#each (f.options || ['ตัวเลือก 1', 'ตัวเลือก 2', 'ตัวเลือก 3']) as opt}
                                             <option value={opt}>{opt}</option>
@@ -1609,14 +2355,14 @@
                                         class="proto-real-textarea"
                                         rows="3"
                                         placeholder={f.placeholder || f.label}
-                                        bind:value={formValues[currentScreenMockup.screen_id || 'DEFAULT'][f.label]}
+                                        bind:value={currentFormValues[f.label]}
                                       ></textarea>
 
                                     {:else if f.type === 'checkbox'}
                                       <label class="proto-real-checkbox">
                                         <input 
                                           type="checkbox" 
-                                          bind:checked={formValues[currentScreenMockup.screen_id || 'DEFAULT'][f.label]} 
+                                          bind:checked={currentFormValues[f.label]} 
                                         />
                                         <span>{f.label}</span>
                                       </label>
@@ -1628,12 +2374,12 @@
                                           id="fld-{secIdx}-{f.label}"
                                           class="proto-real-input"
                                           placeholder={f.placeholder || f.label}
-                                          bind:value={formValues[currentScreenMockup.screen_id || 'DEFAULT'][f.label]}
+                                          bind:value={currentFormValues[f.label]}
                                         />
-                                        {#if formValues[currentScreenMockup.screen_id || 'DEFAULT'][f.label]}
+                                        {#if currentFormValues[f.label]}
                                           <button 
                                             class="btn-input-clear" 
-                                            on:click={() => formValues[currentScreenMockup.screen_id || 'DEFAULT'][f.label] = ''} 
+                                            on:click={() => currentFormValues[f.label] = ''} 
                                             title="ล้างข้อมูล">✕</button>
                                         {/if}
                                       </div>
@@ -1680,7 +2426,7 @@
                                     </tr>
                                   </thead>
                                   <tbody>
-                                    {#each (sec.table_rows || [['#01', 'สเต๊กแซลมอนนอร์เวย์', 'จานหลัก', '320.-', 'พร้อมเสิร์ฟ', 'สั่งซื้อเลย'], ['#02', 'สปาเก็ตตี้คาโบนาร่าทรัฟเฟิล', 'พาสต้า', '260.-', 'พร้อมเสิร์ฟ', 'สั่งซื้อเลย']]) as row}
+                                    {#each (sec.table_rows || []) as row}
                                       <tr class="proto-table-row">
                                         {#each row as cell, cellIdx}
                                           <td>
@@ -1996,7 +2742,7 @@
                         <td><span class="sitemap-pill">{row.sitemap_node_title || '-'}</span></td>
                         <td><span class="usecase-pill">{row.use_case_id || '-'}</span></td>
                         <td>
-                          <button class="screen-link-btn" on:click={() => { activeTab = 'sitemap'; selectedScreenId = row.screen_id; }}>
+                          <button class="screen-link-btn" on:click={() => { activeTab = 'sitemap'; selectedScreenId = row.screen_id; selectedNodeId = row.screen_id; }}>
                             💻 {row.screen_name || row.screen_id || '-'}
                           </button>
                         </td>

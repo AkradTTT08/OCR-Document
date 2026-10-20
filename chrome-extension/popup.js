@@ -9,10 +9,18 @@ document.addEventListener("DOMContentLoaded", () => {
   const backendInput = document.getElementById("backend-url-input");
   const projectSelect = document.getElementById("project-select");
 
+  function getCleanBackendUrl() {
+    let url = (backendInput.value || "http://localhost:5000").trim();
+    url = url.replace(/\/+$/, '');
+    url = url.replace(/\/api$/, '');
+    return url || "http://localhost:5000";
+  }
+
   // Fetch available projects from backend
   async function loadProjects() {
     try {
-      const url = `${backendInput.value.trim()}/api/projects`;
+      const baseUrl = getCleanBackendUrl();
+      const url = `${baseUrl}/api/projects`;
       const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
@@ -29,6 +37,11 @@ document.addEventListener("DOMContentLoaded", () => {
       console.warn("Could not fetch projects from backend:", e);
     }
   }
+
+  backendInput.addEventListener("change", () => {
+    backendInput.value = getCleanBackendUrl();
+    loadProjects();
+  });
 
   loadProjects();
 
@@ -133,12 +146,13 @@ document.addEventListener("DOMContentLoaded", () => {
     syncBtn.disabled = true;
     syncBtn.textContent = "⏳ กำลัง Sync ข้อมูล...";
 
+    const cleanUrl = getCleanBackendUrl();
     const selectedProjId = projectSelect ? projectSelect.value : 1;
     chrome.runtime.sendMessage({
       action: "SYNC_BACKEND",
       tabId: currentTabId,
       projectId: selectedProjId,
-      backendUrl: backendInput.value.trim()
+      backendUrl: cleanUrl
     }, (res) => {
       syncBtn.disabled = false;
       syncBtn.textContent = "📥 Sync เข้าสู่ Spectra QA Repository";
