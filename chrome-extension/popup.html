@@ -352,8 +352,13 @@
         <option value="1">TIFFA Cargo Import System (Default)</option>
       </select>
     </div>
-    <div style="margin-top: 4px;">Target Backend Host:</div>
-    <input type="text" id="backend-url-input" value="http://localhost:5000" placeholder="http://localhost:5000" />
+    <div style="margin-top: 6px; display: flex; flex-direction: column; gap: 3px;">
+      <label for="backend-url-input" style="font-size: 10.5px; color: #cbd5e1; font-weight: 600;">
+        🌐 Spectra QA Server URL (เซิร์ฟเวอร์ระบบ Spectra):
+      </label>
+      <input type="text" id="backend-url-input" value="http://localhost:5000" placeholder="http://localhost:5000" />
+      <span style="font-size: 9.5px; color: #94a3b8; line-height: 1.3;">⚠️ ต้องระบุเป็นเซิร์ฟเวอร์ Spectra (เช่น http://localhost:5000) ไม่ใช่ URL ของหน้าเว็บที่กำลังแคปเจอร์</span>
+    </div>
     <button class="btn btn-sync" id="sync-btn">📥 Sync เข้าสู่ Spectra QA Repository</button>
   </div>
 

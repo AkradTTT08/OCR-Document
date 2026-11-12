@@ -41,6 +41,41 @@
   let showDeleteProjConfirm = false;
   let isDeletingProject = false;
 
+  // Pagination State
+  const pageSizeOptions = [5, 10, 20, 50];
+  let currentPage = 1;
+  let pageSize = 10;
+
+  $: totalPages = Math.max(1, Math.ceil(projects.length / pageSize));
+  $: if (currentPage > totalPages) currentPage = totalPages;
+  $: if (currentPage < 1) currentPage = 1;
+  $: pageStart = (currentPage - 1) * pageSize;
+  $: pagedProjects = projects.slice(pageStart, pageStart + pageSize);
+  $: pageNumbers = buildPageNumbers(currentPage, totalPages);
+
+  function buildPageNumbers(current, total) {
+    if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+    const pages = [1];
+    const start = Math.max(2, current - 1);
+    const end = Math.min(total - 1, current + 1);
+    if (start > 2) pages.push('...');
+    for (let i = start; i <= end; i++) pages.push(i);
+    if (end < total - 1) pages.push('...');
+    pages.push(total);
+    return pages;
+  }
+
+  function goToPage(page) {
+    if (page < 1 || page > totalPages || page === currentPage) return;
+    currentPage = page;
+    expandedProjectId = null;
+  }
+
+  function onPageSizeChange() {
+    currentPage = 1;
+    expandedProjectId = null;
+  }
+
   onMount(async () => {
     await loadProjects();
   });
@@ -429,7 +464,7 @@
               </tr>
             </thead>
             <tbody>
-              {#each projects as p}
+              {#each pagedProjects as p (p.id)}
                 <tr class:selected={selectedProject === p.id} on:click={() => selectProject(p)}>
                   <td style="text-align: center;" on:click|stopPropagation>
                     <button class="btn-expand" on:click={(e) => toggleExpand(p, e)}>
@@ -508,6 +543,36 @@
             </tbody>
           </table>
         </div>
+
+        {#if projects.length > 0}
+          <div class="pagination-bar">
+            <div class="pagination-info">
+              แสดง {pageStart + 1}–{Math.min(pageStart + pageSize, projects.length)} จาก {projects.length} รายการ
+            </div>
+            <div class="pagination-controls">
+              <button class="page-btn" on:click={() => goToPage(1)} disabled={currentPage === 1} title="หน้าแรก">«</button>
+              <button class="page-btn" on:click={() => goToPage(currentPage - 1)} disabled={currentPage === 1} title="ก่อนหน้า">‹</button>
+              {#each pageNumbers as n}
+                {#if n === '...'}
+                  <span class="page-ellipsis">…</span>
+                {:else}
+                  <button class="page-btn" class:active={n === currentPage} on:click={() => goToPage(n)}>{n}</button>
+                {/if}
+              {/each}
+              <button class="page-btn" on:click={() => goToPage(currentPage + 1)} disabled={currentPage === totalPages} title="ถัดไป">›</button>
+              <button class="page-btn" on:click={() => goToPage(totalPages)} disabled={currentPage === totalPages} title="หน้าสุดท้าย">»</button>
+            </div>
+            <label class="page-size">
+              <span>แสดง</span>
+              <select bind:value={pageSize} on:change={onPageSizeChange}>
+                {#each pageSizeOptions as s}
+                  <option value={s}>{s}</option>
+                {/each}
+              </select>
+              <span>/ หน้า</span>
+            </label>
+          </div>
+        {/if}
       {/if}
     </div>
 
@@ -891,6 +956,87 @@
   .btn-icon:hover {
     background: rgba(255, 255, 255, 0.1);
     opacity: 1;
+  }
+
+  /* Pagination */
+  .pagination-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 12px 20px;
+    border-top: 1px solid var(--pm-border);
+    background: rgba(0, 0, 0, 0.2);
+    font-size: 13px;
+  }
+
+  .pagination-info {
+    color: var(--pm-text-muted);
+  }
+
+  .pagination-controls {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .page-btn {
+    min-width: 32px;
+    height: 32px;
+    padding: 0 8px;
+    border-radius: 6px;
+    border: 1px solid var(--pm-border);
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--pm-text);
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .page-btn:hover:not(:disabled):not(.active) {
+    background: rgba(99, 102, 241, 0.15);
+    border-color: rgba(99, 102, 241, 0.4);
+    transform: translateY(-1px);
+  }
+
+  .page-btn.active {
+    background: linear-gradient(135deg, var(--pm-primary), #8b5cf6);
+    border-color: transparent;
+    color: #fff;
+    font-weight: 600;
+    box-shadow: 0 2px 10px rgba(99, 102, 241, 0.4);
+  }
+
+  .page-btn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
+
+  .page-ellipsis {
+    color: var(--pm-text-muted);
+    padding: 0 4px;
+  }
+
+  .page-size {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--pm-text-muted);
+  }
+
+  .page-size select {
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--pm-text);
+    border: 1px solid var(--pm-border);
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+
+  .page-size select option {
+    background: #111827;
   }
 
   .empty-table {

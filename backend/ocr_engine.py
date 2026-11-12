@@ -97,8 +97,13 @@ def _generate_fallback_words(text: str, width: int, height: int) -> list:
     y_step = 1.0 / num_lines
     
     for idx, line in enumerate(lines):
-        line_words = line.split()
-        num_words = max(len(line_words), 1)
+        # ข้ามบรรทัดแบ่งหัวตาราง markdown เช่น |---|---|
+        if re.match(r'^[|:\s-]+$', line.strip()):
+            continue
+        line_words = [w for w in line.split() if w not in ('|', '||')]
+        if not line_words:
+            continue
+        num_words = len(line_words)
         x_step = 1.0 / num_words
         
         for w_idx, w in enumerate(line_words):
@@ -174,16 +179,17 @@ def ocr_image(pil_image: Image.Image, lang: str = 'tha+eng', filename: str = Non
     model_name = os.environ.get('GEMINI_MODEL', 'gemini-3.1-flash')
     w, h = pil_image.size
 
-    # ลดขนาด Prompt ลงเพื่อประหยัด Token และให้กระชับที่สุด แต่เพิ่มเงื่อนไข Mermaid
+    # ปรับปรุง System Prompt ให้เก็บเนื้อหาครบถ้วน รองรับตารางแบบ Markdown และไม่ตัดจบกลางคัน
     system_prompt = (
-        "Extract text from image exactly as is. DO NOT fix typos or grammar. "
-        "Return raw text only without markdown. Stop generating when text ends. "
-        "CRITICAL INSTRUCTION FOR FLOWCHARTS: If the image contains a flowchart or process diagram, "
-        "you MUST convert it into a Mermaid.js graph. Embed the Mermaid code within the text using ```mermaid ... ``` block. "
-        "Preserve the semantic meaning, steps, and conditions accurately."
+        "You are an expert OCR transcription assistant specializing in Thai and English documents, forms, technical cards, diagrams, and spreadsheets.\n"
+        "Transcribe ALL content from the image accurately, completely, and faithfully without omitting any rows, columns, or text blocks.\n"
+        "- If the image contains a table or spreadsheet, transcribe it strictly as a standard Markdown table (| Col 1 | Col 2 | ...) with header separator row (|---|---|). For multi-line text within a cell, use <br> instead of raw line breaks to preserve table structure.\n"
+        "- If the image contains a flowchart or process diagram, transcribe or convert it into a Mermaid.js diagram inside a ```mermaid ... ``` code block, preserving steps and conditions accurately.\n"
+        "- Preserve original typos, grammar, dates, numbers, IDs, URLs, and punctuation exactly as shown.\n"
+        "- Do NOT truncate, summarize, or skip content. Transcribe all rows from top to bottom completely.\n"
+        "- Do NOT hallucinate or loop repeating phrases."
     )
-    user_prompt = "Transcribe exactly. Preserve typos. Convert flowcharts to Mermaid.js code if present."
-
+    user_prompt = "Transcribe all text from this image completely and accurately. If there are tables, preserve the table structure with Markdown format."
 
     try:
         from google.genai import types
@@ -192,18 +198,20 @@ def ocr_image(pil_image: Image.Image, lang: str = 'tha+eng', filename: str = Non
         clients = [_get_gemini_client(i) for i in range(len(keys))] if keys else [_get_gemini_client()]
         logger.info(f"Calling Gemini API ({model_name}) with {len(clients)} available API keys...")
 
-        # --- Image Optimization to Save Tokens ---
+        # --- Image Optimization ---
+        # รองรับเอกสารขนาดใหญ่ (เช่น A3, Spreadsheets ตารางกว้าง, ภาพความละเอียดสูง)
+        # โดยไม่บีบอัดลงมาจนตัวหนังสือเล็กๆ เบลอ (ค่าเดิม 1600 บีบจนตัวหนังสือไทยขนาดเล็กอ่านไม่ออก)
         img_to_send = pil_image
-        max_dim = 1600
+        max_dim = int(os.environ.get('OCR_MAX_DIM', 3200))
         if max(w, h) > max_dim:
             ratio = max_dim / max(w, h)
             new_w, new_h = int(w * ratio), int(h * ratio)
             img_to_send = pil_image.resize((new_w, new_h), Image.Resampling.LANCZOS)
-            logger.info(f"Resized image from {w}x{h} to {new_w}x{new_h} to save tokens.")
+            logger.info(f"Resized image from {w}x{h} to {new_w}x{new_h} (max_dim={max_dim}).")
 
-        # แปลง PIL Image เป็น bytes
+        # แปลง PIL Image เป็น bytes คุณภาพสูง
         img_buffer = io.BytesIO()
-        img_to_send.save(img_buffer, format='JPEG', quality=85)
+        img_to_send.save(img_buffer, format='JPEG', quality=90)
         img_bytes = img_buffer.getvalue()
         # -----------------------------------------
 
@@ -231,7 +239,7 @@ def ocr_image(pil_image: Image.Image, lang: str = 'tha+eng', filename: str = Non
                             config=types.GenerateContentConfig(
                                 system_instruction=system_prompt,
                                 temperature=0.1,
-                                max_output_tokens=2048,
+                                max_output_tokens=8192,
                             )
                         )
                         success = True
@@ -280,7 +288,7 @@ def ocr_image(pil_image: Image.Image, lang: str = 'tha+eng', filename: str = Non
                         config=types.GenerateContentConfig(
                             system_instruction=system_prompt,
                             temperature=0.1,
-                            max_output_tokens=2048,
+                            max_output_tokens=8192,
                         )
                     )
                     success = True

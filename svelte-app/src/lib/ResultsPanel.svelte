@@ -138,9 +138,9 @@
       // ตรวจสอบว่าเป็นบรรทัดของตารางหรือไม่
       if (line.startsWith("|") && line.endsWith("|")) {
         const cells = line
-          .split("|")
-          .map((c) => c.trim())
-          .slice(1, -1);
+          .slice(1, -1)
+          .split(/(?<!\\)\|/)
+          .map((c) => c.replace(/\\\|/g, "|").trim());
 
         if (!inTable) {
           const nextLine = (lines[i + 1] || "").trim();
@@ -200,6 +200,25 @@
   }
 
   /**
+   * แปลง markdown links/images และ URLs ใน cell ตารางให้ออกมาเป็น HTML
+   * @param {string} cell
+   * @returns {string}
+   */
+  function formatCellContent(cell) {
+    if (!cell) return "";
+    let formatted = cell
+      .replace(
+        /!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g,
+        '<img src="$2" alt="$1" style="max-width: 220px; max-height: 140px; border-radius: 6px; display: block; margin: 4px 0; border: 1px solid rgba(255,255,255,0.15);" />'
+      )
+      .replace(
+        /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
+        '<a href="$2" target="_blank" rel="noopener noreferrer" style="color: var(--accent, #38bdf8); text-decoration: underline; word-break: break-all;">$1</a>'
+      );
+    return formatted;
+  }
+
+  /**
    * @param {string[]} headers
    * @param {string[][]} rows
    * @returns {string}
@@ -209,7 +228,7 @@
     if (headers.length > 0) {
       html.push("<thead><tr>");
       headers.forEach((h) => {
-        html.push(`<th>${h}</th>`);
+        html.push(`<th>${formatCellContent(h)}</th>`);
       });
       html.push("</tr></thead>");
     }
@@ -218,7 +237,7 @@
       rows.forEach((row) => {
         html.push("<tr>");
         row.forEach((cell) => {
-          html.push(`<td>${cell}</td>`);
+          html.push(`<td>${formatCellContent(cell)}</td>`);
         });
         html.push("</tr>");
       });
@@ -1432,25 +1451,41 @@
     width: 100%;
     overflow-x: auto;
     margin: 16px 0;
-    border-radius: 8px;
-    border: 1px solid var(--border2);
+    border-radius: var(--radius-md, 12px);
+    border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.1));
+    background: rgba(15, 23, 42, 0.7);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
   }
   .rendered-html :global(table) {
     width: 100%;
     border-collapse: collapse;
-    margin: 16px 0;
-    color: var(--text);
-    background: var(--surface);
+    margin: 0;
+    color: var(--text-main, #f8fafc);
+    background: transparent;
+    font-size: 13.5px;
+    line-height: 1.6;
   }
   .rendered-html :global(th),
   .rendered-html :global(td) {
-    border: 1px solid var(--border2);
-    padding: 8px 12px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    padding: 10px 14px;
     text-align: left;
+    vertical-align: top;
+    min-width: 120px;
+    word-break: break-word;
   }
   .rendered-html :global(th) {
-    background: var(--surface2);
-    font-weight: bold;
+    background: rgba(30, 41, 59, 0.95);
+    font-weight: 600;
+    color: #e2e8f0;
+    white-space: nowrap;
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    border-bottom: 2px solid rgba(255, 255, 255, 0.15);
+  }
+  .rendered-html :global(tr:hover td) {
+    background: rgba(255, 255, 255, 0.03);
   }
   .rendered-html :global(div[align="center"]) {
     text-align: center;

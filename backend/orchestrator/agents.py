@@ -48,7 +48,7 @@ class FinalReviewerAgent:
                 return state
 
             client = _get_gemini_client(0)
-            model_name = os.environ.get('GEMINI_MODEL', 'gemini-3.1-flash')
+            model_name = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash')
             
             system_prompt = """You are the Final Reviewer Agent in a multi-agent pipeline.
 Your job is to read the original document text, along with the reported spelling and format errors.
@@ -113,7 +113,7 @@ class QAConsultAgent:
                 return state
                 
             client = _get_gemini_client(0)
-            gemini_model = os.environ.get('GEMINI_MODEL', 'gemini-3.1-pro')
+            gemini_model = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash')
             
             skill_section = f"--- คำสั่งพิเศษเพิ่มเติมจาก AI Skill ---\n{state.skill_instructions}\n" if state.skill_instructions else ""
             
@@ -151,9 +151,9 @@ class QAConsultAgent:
 {state.instruction}
 """
             
-            raw_fallback_models = [gemini_model, 'gemini-3.1-flash', 'gemini-2.5-flash', 'gemini-2.5-flash-lite']
+            raw_fallback_models = [gemini_model, 'gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash-lite']
             seen = set()
-            fallback_models = [m for m in raw_fallback_models if not (m in seen or seen.add(m))]
+            fallback_models = [m for m in raw_fallback_models if m not in ('gemini-3.1-pro', 'gemini-3.1-flash') and not (m in seen or seen.add(m))]
             
             response = None
             for key_idx in range(len(keys)):
@@ -248,10 +248,10 @@ USER QUERY (คำถามของผู้ใช้):
             
         system_instruction, prompt = QAResearchAgent._build_prompt_and_system(state)
         
-        gemini_model = os.environ.get('GEMINI_MODEL', 'gemini-3.1-pro')
-        raw_fallback_models = [gemini_model, 'gemini-3.1-flash', 'gemini-2.5-flash', 'gemini-2.5-flash-lite']
+        gemini_model = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash')
+        raw_fallback_models = [gemini_model, 'gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.5-pro']
         seen = set()
-        fallback_models = [m for m in raw_fallback_models if not (m in seen or seen.add(m))]
+        fallback_models = [m for m in raw_fallback_models if m not in ('gemini-3.1-pro', 'gemini-3.1-flash') and not (m in seen or seen.add(m))]
         
         success = False
         for key_idx in range(len(keys)):
@@ -267,9 +267,35 @@ USER QUERY (คำถามของผู้ใช้):
                             temperature=0.2, # Lower temperature for higher accuracy and factual consistency
                         )
                     )
+                    last_usage = None
+                    total_output_chars = 0
                     for chunk in response_stream:
+                        if hasattr(chunk, 'usage_metadata') and chunk.usage_metadata:
+                            last_usage = chunk.usage_metadata
                         if chunk and chunk.text:
+                            total_output_chars += len(chunk.text)
                             yield chunk.text
+                            
+                    if last_usage:
+                        try:
+                            from db_ingestion import log_api_usage
+                            log_api_usage("QAResearch_Agent", current_model, last_usage)
+                        except Exception as log_err:
+                            logger.warning(f"Failed to log API usage in QAResearch Stream: {log_err}")
+                    else:
+                        try:
+                            from db_ingestion import log_api_usage
+                            prompt_toks = max(1, len(prompt + system_instruction) // 4)
+                            comp_toks = max(1, total_output_chars // 4)
+                            usage_meta = {
+                                "prompt_token_count": prompt_toks,
+                                "candidates_token_count": comp_toks,
+                                "total_token_count": prompt_toks + comp_toks
+                            }
+                            log_api_usage("QAResearch_Agent", current_model, usage_meta)
+                        except Exception as log_err:
+                            logger.warning(f"Failed to log estimated stream API usage: {log_err}")
+                            
                     success = True
                     break
                 except Exception as model_err:
@@ -299,10 +325,10 @@ USER QUERY (คำถามของผู้ใช้):
                 
             system_instruction, prompt = QAResearchAgent._build_prompt_and_system(state)
             
-            gemini_model = os.environ.get('GEMINI_MODEL', 'gemini-3.1-pro')
-            raw_fallback_models = [gemini_model, 'gemini-3.1-flash', 'gemini-2.5-flash', 'gemini-2.5-flash-lite']
+            gemini_model = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash')
+            raw_fallback_models = [gemini_model, 'gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.5-pro']
             seen = set()
-            fallback_models = [m for m in raw_fallback_models if not (m in seen or seen.add(m))]
+            fallback_models = [m for m in raw_fallback_models if m not in ('gemini-3.1-pro', 'gemini-3.1-flash') and not (m in seen or seen.add(m))]
             
             response = None
             for key_idx in range(len(keys)):

@@ -12,6 +12,22 @@
   let projects = [];
   $: selectedProjectId = $selectedProjectStore ? ($selectedProjectStore.id || $selectedProjectStore.project_id) : "";
   let showExtensionModal = false;
+
+  onMount(async () => {
+    await fetchProjects();
+  });
+
+  async function fetchProjects() {
+    try {
+      const res = await fetch("/api/projects");
+      if (res.ok) {
+        const data = await res.json();
+        projects = data.projects || [];
+      }
+    } catch (err) {
+      console.error("Failed to fetch projects", err);
+    }
+  }
   
   let testName = "";
   let scriptFileName = "";
@@ -123,26 +139,40 @@
     toast("🔍 กำลังสแกน Network Calls & Inspecting Web APIs...", "info");
 
     try {
-      await new Promise(r => setTimeout(r, 1500));
+      const res = await fetch("/api/api-collections/sniff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project_id: selectedProjectId,
+          target_url: targetSniffUrl
+        })
+      });
 
-      sniffedEndpoints = [
-        { id: 201, method: "GET", path: "/api/users", name: "Get All Users List" },
-        { id: 202, method: "POST", path: "/api/login", name: "User Authentication" },
-        { id: 203, method: "POST", path: "/api/upload", name: "Upload Document Payload" },
-        { id: 204, method: "GET", path: "/api/projects", name: "Fetch QA Projects" },
-        { id: 205, method: "GET", path: "/api/kb/documents", name: "Query Knowledge Base" }
-      ];
+      if (res.ok) {
+        const data = await res.json();
+        sniffedEndpoints = (data.endpoints || []).map((ep, idx) => ({
+          id: ep.id || (idx + 1),
+          method: (ep.method || "GET").toUpperCase(),
+          path: ep.path || (ep.url ? new URL(ep.url, window.location.origin).pathname : `/api/endpoint_${idx+1}`),
+          name: ep.name || ep.summary || ep.path || "API Endpoint",
+          status: ep.status || 200,
+          category: ep.category || "General"
+        }));
+      } else {
+        sniffedEndpoints = [];
+      }
 
       selectedSniffIds = sniffedEndpoints.map(e => e.id);
-      toast(`✅ พบ API ทั้งหมด ${sniffedEndpoints.length} รายการจากหน้าเว็บ!`, "success");
+      toast(`✅ พบ API ทั้งหมด ${sniffedEndpoints.length} รายการ!`, "success");
     } catch (e) {
+      console.error("Sniff error", e);
       toast("เกิดข้อผิดพลาดในการแกะ API", "error");
     } finally {
       isSniffing = false;
     }
   }
 
-  function importSelectedSniffedApis() {
+  async function importSelectedSniffedApis() {
     const toImport = sniffedEndpoints.filter(e => selectedSniffIds.includes(e.id));
     if (toImport.length === 0) {
       toast("กรุณาเลือก API อย่างน้อย 1 รายการ", "warning");
@@ -150,24 +180,200 @@
     }
 
     // Merge with current apiEndpoints
-    const newItems = toImport.filter(imp => !apiEndpoints.some(curr => curr.path === imp.path && curr.method === imp.method));
+    const newItems = toImport
+      .filter(imp => !apiEndpoints.some(curr => curr.path === imp.path && curr.method === imp.method))
+      .map((item, idx) => ({
+        id: apiEndpoints.length + idx + 1,
+        method: item.method,
+        path: item.path,
+        name: item.name,
+        source: "Web Sniffer"
+      }));
+
     apiEndpoints = [...apiEndpoints, ...newItems];
-    selectedEndpointIds = [...new Set([...selectedEndpointIds, ...toImport.map(i => i.id)])];
-    toast(`นำเข้า API เพิ่มเติม ${toImport.length} รายการเรียบร้อยแล้ว!`, "success");
+    if (newItems.length > 0 && selectedEndpointIds.length === 0) {
+      selectedEndpointIds = [newItems[0].id];
+    }
+    toast(`นำเข้า API เพิ่มเติม ${newItems.length} รายการเรียบร้อยแล้ว!`, "success");
     showSnifferModal = false;
+
+    // Persist to backend if project is selected
+    if (selectedProjectId && newItems.length > 0) {
+      try {
+        await fetch("/api/api-collections/save-sniffed", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            project_id: selectedProjectId,
+            endpoints: newItems.map(f => ({
+              method: f.method,
+              url: f.path,
+              name: f.name,
+              category: "Web Sniffer"
+            }))
+          })
+        });
+      } catch (e) {
+        console.warn("Failed to persist sniffed APIs to backend", e);
+      }
+    }
   }
 
+  async function handleExtensionSynced(event) {
+    const syncedList = event.detail || [];
+    if (syncedList.length === 0) return;
 
-  // Mock fetching endpoints when project changes
-  $: if (selectedProjectId) {
-      apiEndpoints = [
-          { id: 1, method: "GET", path: "/api/users", name: "Get Users" },
-          { id: 2, method: "POST", path: "/api/login", name: "User Login" },
-          { id: 3, method: "POST", path: "/api/upload", name: "Upload Document" }
-      ];
-      if (scriptType === 'single') {
-          selectedEndpointIds = [];
+    const newEndpoints = syncedList.map((item, idx) => ({
+      id: apiEndpoints.length + idx + 1,
+      method: (item.method || "GET").toUpperCase(),
+      path: item.path || "",
+      name: item.summary || item.name || `${item.method} ${item.path}`,
+      source: "Chrome Extension"
+    }));
+
+    const filtered = newEndpoints.filter(imp => !apiEndpoints.some(curr => curr.path === imp.path && curr.method === imp.method));
+    apiEndpoints = [...apiEndpoints, ...filtered];
+    if (filtered.length > 0 && selectedEndpointIds.length === 0) {
+      selectedEndpointIds = [filtered[0].id];
+    }
+    toast(`📥 นำเข้า API จาก Chrome Extension เพิ่มเติม ${filtered.length} รายการแล้ว`, "success");
+
+    if (selectedProjectId && filtered.length > 0) {
+      try {
+        await fetch("/api/api-collections/save-sniffed", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            project_id: selectedProjectId,
+            endpoints: filtered.map(f => ({
+              method: f.method,
+              url: f.path,
+              name: f.name,
+              category: "Chrome Extension"
+            }))
+          })
+        });
+      } catch (e) {
+        console.warn("Failed to persist extension synced APIs", e);
       }
+    }
+  }
+
+  let isLoadingEndpoints = false;
+
+  $: if (selectedProjectId) {
+      fetchProjectEndpoints(selectedProjectId);
+  }
+
+  async function fetchProjectEndpoints(projectId) {
+    if (!projectId) {
+      apiEndpoints = [];
+      selectedEndpointIds = [];
+      return;
+    }
+    isLoadingEndpoints = true;
+    try {
+      // 1. Try dedicated project endpoints route first
+      const res = await fetch(`/api/projects/${projectId}/endpoints`);
+      if (res.ok) {
+        const data = await res.json();
+        apiEndpoints = data.endpoints || [];
+      } else {
+        // Fallback: Query collections and requirements directly
+        const [colRes, reqRes] = await Promise.all([
+          fetch(`/api/projects/${projectId}/api-collections`),
+          fetch(`/api/requirements?project_id=${projectId}`)
+        ]);
+
+        let combined = [];
+        let seen = new Set();
+
+        if (colRes.ok) {
+          const colData = await colRes.json();
+          const collections = colData.collections || [];
+          collections.forEach(col => {
+            (col.endpoints || []).forEach(ep => {
+              const method = (ep.method || 'GET').toUpperCase();
+              let rawPath = ep.path || ep.url || '';
+              if (rawPath.includes('://')) {
+                try {
+                  rawPath = new URL(rawPath).pathname;
+                } catch (e) {}
+              }
+              const path = rawPath.startsWith('/') ? rawPath : `/${rawPath}`;
+              const key = `${method}:${path}`;
+              if (path && !seen.has(key)) {
+                seen.add(key);
+                combined.push({
+                  id: combined.length + 1,
+                  method,
+                  path,
+                  name: ep.summary || ep.name || path,
+                  source: `Collection: ${col.name}`
+                });
+              }
+            });
+          });
+        }
+
+        if (reqRes.ok) {
+          const reqData = await reqRes.json();
+          const reqs = reqData.requirements || [];
+          reqs.forEach(req => {
+            const apiList = req.api_endpoints || [];
+            apiList.forEach(item => {
+              if (typeof item === 'string') {
+                const s = item.trim();
+                const m = s.match(/^(GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD)\s+(.+)$/i);
+                let method = 'POST';
+                let rawPath = s;
+                if (m) {
+                  method = m[1].toUpperCase();
+                  rawPath = m[2].trim();
+                } else if (s.startsWith('/')) {
+                  method = 'GET';
+                  rawPath = s;
+                } else {
+                  method = 'POST';
+                  const slug = s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+                  rawPath = `/api/${slug}`;
+                }
+
+                if (rawPath.includes('://')) {
+                  try {
+                    rawPath = new URL(rawPath).pathname;
+                  } catch (e) {}
+                }
+                const path = rawPath.startsWith('/') ? rawPath : `/${rawPath}`;
+                const key = `${method}:${path}`;
+                if (path && !seen.has(key)) {
+                  seen.add(key);
+                  combined.push({
+                    id: combined.length + 1,
+                    method,
+                    path,
+                    name: req.title ? `${req.title} (${req.req_code})` : s,
+                    source: `Requirement: ${req.req_code}`
+                  });
+                }
+              }
+            });
+          });
+        }
+
+        apiEndpoints = combined;
+      }
+    } catch (err) {
+      console.error("Failed to load project endpoints", err);
+      apiEndpoints = [];
+    } finally {
+      isLoadingEndpoints = false;
+      if (apiEndpoints.length > 0) {
+        selectedEndpointIds = [apiEndpoints[0].id];
+      } else {
+        selectedEndpointIds = [];
+      }
+    }
   }
 
   $: if (scriptType === 'single' && selectedEndpointIds.length > 1) {
@@ -279,19 +485,6 @@
       { value: 'single', label: 'Single Endpoint (1 เส้นต่อ 1 สคริปต์)' },
       { value: 'scenario', label: 'Scenario (ทดสอบหลายเส้นต่อเนื่องกัน)' }
   ];
-
-  onMount(async () => {
-    try {
-      const res = await fetch("/api/projects");
-      if (res.ok) {
-        const data = await res.json();
-        projects = data.projects || [];
-      }
-    } catch (e) {
-      console.error("Failed to fetch projects:", e);
-      toast("ไม่สามารถโหลดข้อมูลโปรเจกต์ได้", "error");
-    }
-  });
 
   async function generateScript() {
     if (!selectedProjectId) {
@@ -524,22 +717,53 @@
               </button>
             </div>
           </div>
-          <div class="api-list">
-            {#each apiEndpoints as api}
-              <label class="api-item">
-                {#if scriptType === 'single'}
-                  <input type="radio" name="api_selection" value={api.id} 
-                         checked={selectedEndpointIds[0] === api.id} 
-                         on:change={() => selectedEndpointIds = [api.id]} />
-                {:else}
-                  <input type="checkbox" value={api.id} bind:group={selectedEndpointIds} />
-                {/if}
-                <span class="method {api.method.toLowerCase()}">{api.method}</span>
-                <span class="path">{api.path}</span>
-                <span class="name">({api.name})</span>
-              </label>
-            {/each}
-          </div>
+          {#if isLoadingEndpoints}
+            <div class="api-loading-state">
+              <div class="spinner-sm"></div>
+              <span>กำลังดึงรายการ API ของโครงการ...</span>
+            </div>
+          {:else if apiEndpoints.length === 0}
+            <div class="api-empty-state">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="28" height="28" style="color: #94a3b8; margin-bottom: 6px;">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="8" x2="12" y2="12"></line>
+                <line x1="12" y1="16" x2="12.01" y2="16"></line>
+              </svg>
+              <div style="font-size: 13px; font-weight: 600; color: #cbd5e1;">ไม่พบ API ในโครงการนี้</div>
+              <div style="font-size: 11px; color: #94a3b8; margin-top: 2px;">
+                สามารถคลิก <strong>"🔍 แกะ API จากเว็บ"</strong> หรือ <strong>"🧩 Chrome Extension Live Sync"</strong> เพื่อสแกนและนำเข้า API ได้
+              </div>
+            </div>
+          {:else}
+            <div class="api-list">
+              {#each apiEndpoints as api}
+                <label class="api-item" class:selected={selectedEndpointIds.includes(api.id)}>
+                  {#if scriptType === 'single'}
+                    <input type="radio" name="api_selection" value={api.id} 
+                           checked={selectedEndpointIds[0] == api.id} 
+                           on:change={() => selectedEndpointIds = [api.id]} />
+                  {:else}
+                    <input type="checkbox" value={api.id} bind:group={selectedEndpointIds} />
+                  {/if}
+                  <span class="method {api.method.toLowerCase()}">{api.method}</span>
+                  <span class="path">{api.path}</span>
+                  <span class="name" title={api.name}>({api.name})</span>
+                  {#if api.source}
+                    <span class="badge-source">{api.source}</span>
+                  {/if}
+                </label>
+              {/each}
+            </div>
+            <div class="api-list-footer">
+              <span class="api-count">พบทั้งหมด {apiEndpoints.length} รายการ API</span>
+              {#if scriptType === 'scenario'}
+                <div style="display: flex; gap: 8px;">
+                  <button type="button" class="btn-text-action" on:click={() => selectedEndpointIds = apiEndpoints.map(a => a.id)}>เลือกทั้งหมด</button>
+                  <button type="button" class="btn-text-action" on:click={() => selectedEndpointIds = []}>ล้างการเลือก</button>
+                </div>
+              {/if}
+            </div>
+          {/if}
         </div>
 
       <div class="params-grid">
@@ -791,7 +1015,7 @@
   </div>
 {/if}
 
-<ExtensionSyncModal bind:showModal={showExtensionModal} projectId={selectedProjectId} />
+<ExtensionSyncModal bind:showModal={showExtensionModal} projectId={selectedProjectId} on:synced={handleExtensionSynced} />
 
 <!-- Web API Sniffer Modal -->
 {#if showSnifferModal}
@@ -1344,6 +1568,31 @@
     box-shadow: none;
   }
 
+  .api-loading-state {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 24px;
+    background: rgba(15, 23, 42, 0.3);
+    border: 1px dashed rgba(148, 163, 184, 0.2);
+    border-radius: var(--radius-md);
+    color: #94a3b8;
+    font-size: 13px;
+  }
+
+  .api-empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 24px 16px;
+    background: rgba(15, 23, 42, 0.3);
+    border: 1px dashed rgba(148, 163, 184, 0.2);
+    border-radius: var(--radius-md);
+  }
+
   .api-list {
     display: flex;
     flex-direction: column;
@@ -1352,8 +1601,36 @@
     border: 1px solid rgba(148, 163, 184, 0.2);
     border-radius: var(--radius-md);
     padding: 12px;
-    max-height: 200px;
+    max-height: 220px;
     overflow-y: auto;
+  }
+
+  .api-list-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 6px;
+    font-size: 11px;
+    color: #94a3b8;
+    padding: 0 4px;
+  }
+
+  .api-count {
+    color: #a78bfa;
+    font-weight: 500;
+  }
+
+  .btn-text-action {
+    background: transparent;
+    border: none;
+    color: #a78bfa;
+    font-size: 11px;
+    cursor: pointer;
+    text-decoration: underline;
+    padding: 0 4px;
+  }
+  .btn-text-action:hover {
+    color: #c084fc;
   }
 
   .api-item {
@@ -1373,10 +1650,26 @@
     border-color: rgba(148, 163, 184, 0.3);
   }
 
+  .api-item.selected {
+    background: rgba(168, 85, 247, 0.12);
+    border-color: rgba(168, 85, 247, 0.35);
+  }
+
   .api-item input {
     margin: 0;
     width: auto;
     cursor: pointer;
+  }
+
+  .badge-source {
+    margin-left: auto;
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(148, 163, 184, 0.1);
+    color: #94a3b8;
+    border: 1px solid rgba(148, 163, 184, 0.15);
+    white-space: nowrap;
   }
 
   .method {
@@ -1385,13 +1678,15 @@
     padding: 2px 6px;
     border-radius: 4px;
     color: #fff;
-    min-width: 40px;
+    min-width: 42px;
     text-align: center;
   }
   .method.get { background: #3b82f6; }
   .method.post { background: #10b981; }
   .method.put { background: #f59e0b; }
   .method.delete { background: #ef4444; }
+  .method.patch { background: #8b5cf6; }
+  .method.options, .method.head { background: #64748b; }
 
   .path {
     font-family: monospace;
@@ -1402,6 +1697,19 @@
   .name {
     font-size: 12px;
     color: #94a3b8;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 250px;
+  }
+
+  .spinner-sm {
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    border-top-color: #a78bfa;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
   }
 
   .result-panel {

@@ -140,21 +140,34 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 });
 
 async function syncToSpectraBackend(projectId, backendUrl, apisToSync) {
-  const target = backendUrl || targetBackend;
+  let target = (backendUrl || targetBackend || "http://localhost:5000").trim();
+  // Strip trailing slashes
+  target = target.replace(/\/+$/, '');
+  // Strip /api if user typed it
+  target = target.replace(/\/api$/, '');
+  
   const endpoint = `${target}/api/extension/sync-apis`;
   
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      project_id: projectId,
-      captured_at: new Date().toISOString(),
-      total_count: apisToSync.length,
-      apis: apisToSync
-    })
-  });
+  let response;
+  try {
+    response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        project_id: projectId,
+        captured_at: new Date().toISOString(),
+        total_count: apisToSync.length,
+        apis: apisToSync
+      })
+    });
+  } catch (err) {
+    throw new Error(`ไม่สามารถเชื่อมต่อ Spectra Server ที่ ${target} ได้ (กรุณาตรวจสอบว่าเซิร์ฟเวอร์ Backend รันอยู่ที่พอร์ต 5000 หรือไม่)`);
+  }
 
   if (!response.ok) {
+    if (response.status === 404) {
+      throw new Error(`Server ตอบกลับ 404 Not Found (URL: ${endpoint})\n\n💡 สาเหตุที่เป็นไปได้:\n1. ช่อง "Spectra QA Server URL" ใน Extension ถูกเปลี่ยนเป็น URL อื่น กรุณาตรวจสอบให้เป็น http://localhost:5000\n2. Backend Server บนพอร์ต 5000 อาจยังไม่ได้รัน`);
+    }
     throw new Error(`Server responded with ${response.status}`);
   }
   return await response.json();
