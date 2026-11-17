@@ -42,6 +42,49 @@
   let isQaGroupsExpanded = true;
   let isQaHistoryExpanded = true;
   let isPerfHistoryExpanded = true;
+  let isSidebarCollapsed = false;
+  let isMobileSidebarOpen = false;
+  let sidebarHistorySearch = "";
+  let activeHistoryId = null;
+  let navSectionOpen = {
+    discovery: true,
+    testing: true,
+    agents: true,
+    admin_ocr: true,
+    admin_platform: true,
+    admin_api: true
+  };
+
+  function toggleNavSection(key) {
+    if (isSidebarCollapsed) {
+      isSidebarCollapsed = false;
+      navSectionOpen[key] = true;
+      return;
+    }
+    navSectionOpen[key] = !navSectionOpen[key];
+  }
+
+  function getHistoryExitStatus(item) {
+    const st = String(item?.exit_criteria_eval?.status || item?.status || '').toUpperCase();
+    if (st === 'PASSED' || st === 'PASS') return 'passed';
+    if (st.includes('CONDITIONAL')) return 'conditional';
+    if (st === 'REJECTED' || st === 'FAIL' || st === 'FAILED') return 'rejected';
+    return 'neutral';
+  }
+
+  function handleSidebarProjectSelect(e) {
+    const val = e.target.value;
+    if (!val) {
+      selectedProjectStore.set(null);
+      activeSidebarGroup.set(null);
+      return;
+    }
+    const found = sidebarProjects.find(p => String(p.id || p.project_id) === String(val));
+    if (found) {
+      selectedProjectStore.set(found);
+      activeSidebarGroup.set(null);
+    }
+  }
 
   function formatCleanGroupName(name) {
     let clean = String(name || 'General').trim();
@@ -581,6 +624,16 @@
       return tB - tA;
     });
   })();
+
+  $: displayedQAHistory = (() => {
+    const q = String(sidebarHistorySearch || '').trim().toLowerCase();
+    if (!q) return filteredQAHistory;
+    return filteredQAHistory.filter(h => {
+      const fn = String(h.filename || '').toLowerCase();
+      const gn = formatCleanGroupName(h.group_name).toLowerCase();
+      return fn.includes(q) || gn.includes(q);
+    });
+  })();
 </script>
 
 <svelte:window on:keydown={handleGlobalKeydown} />
@@ -595,37 +648,280 @@
 {#if $showLogin}
     <Login />
   {:else}
+    {#if isMobileSidebarOpen}
+      <div
+        class="sidebar-mobile-backdrop"
+        aria-hidden="true"
+        on:click={() => (isMobileSidebarOpen = false)}
+      ></div>
+    {/if}
+
     <!-- ── Sidebar ── -->
-    <aside class="sidebar">
+    <aside
+      class="sidebar"
+      class:collapsed={isSidebarCollapsed}
+      class:mobile-open={isMobileSidebarOpen}
+    >
       <div class="sidebar-logo">
-        <div class="logo-icon" style="padding: 2px;">
-          <img src="/spectra-favicon.svg" alt="Logo" style="width: 100%; height: 100%; object-fit: contain; border-radius: 4px;" />
+        <div class="logo-brand-group">
+          <div class="logo-icon">
+            <img src="/spectra-favicon.svg" alt="Spectra QA Logo" />
+          </div>
+          {#if !isSidebarCollapsed}
+            <div class="logo-text-wrap">
+              <div class="logo-title">Spectra QA</div>
+              <div class="logo-sub">Intelligent Document Analysis</div>
+            </div>
+          {/if}
         </div>
-        <div>
-          <div class="logo-title">Spectra QA</div>
-          <div class="logo-sub">Intelligent Document Analysis</div>
-        </div>
+        <button
+          type="button"
+          class="btn-sidebar-collapse"
+          aria-label={isSidebarCollapsed ? "ขยายแถบเมนูด้านข้าง" : "ย่อแถบเมนูด้านข้าง"}
+          title={isSidebarCollapsed ? "ขยายแถบเมนู (Expand)" : "ย่อแถบเมนู (Collapse)"}
+          on:click={() => {
+            if (isMobileSidebarOpen) {
+              isMobileSidebarOpen = false;
+            } else {
+              isSidebarCollapsed = !isSidebarCollapsed;
+            }
+          }}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+            {#if isSidebarCollapsed}
+              <polyline points="9 18 15 12 9 6"></polyline>
+            {:else}
+              <polyline points="15 18 9 12 15 6"></polyline>
+            {/if}
+          </svg>
+        </button>
       </div>
 
       <nav class="sidebar-nav" aria-label="Primary Navigation">
-        {#if $authRole === 'admin'}
-          <div class="nav-group-label">Document &amp; OCR</div>
-          {#if isMenuAllowed('ocr')}
-            <button class="nav-item" class:active={activeView === "ocr" && !scanResult} on:click={() => { activeView = "ocr"; scanResult = null; }}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z"/></svg>
-              Scan OCR
+        <div class="sidebar-menu-zone">
+          {#if $authRole === 'admin'}
+            <button
+              type="button"
+              class="nav-group-header"
+              on:click={() => toggleNavSection('admin_ocr')}
+              aria-expanded={navSectionOpen.admin_ocr}
+            >
+              <span class="nav-group-label">Document &amp; OCR</span>
+              {#if !isSidebarCollapsed}
+                <svg class="nav-group-chevron" class:collapsed={!navSectionOpen.admin_ocr} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="11" height="11">
+                  <polyline points="6 9 12 15 18 9"></polyline>
+                </svg>
+              {/if}
             </button>
-            
-            {#if activeView === 'ocr'}
-              <div class="history-section ocr-history-section" style="margin-top: 4px; padding-top: 6px;">
-                <!-- Collapsible Header with Toggle Button & Count Badge -->
-                <div 
+            {#if navSectionOpen.admin_ocr || isSidebarCollapsed}
+              {#if isMenuAllowed('ocr')}
+                <button
+                  class="nav-item"
+                  title="Scan OCR"
+                  class:active={activeView === "ocr" && !scanResult}
+                  on:click={() => { activeView = "ocr"; scanResult = null; isMobileSidebarOpen = false; }}
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z"/></svg>
+                  <span class="nav-item-label">Scan OCR</span>
+                </button>
+              {/if}
+            {/if}
+
+            <button
+              type="button"
+              class="nav-group-header"
+              on:click={() => toggleNavSection('admin_platform')}
+              aria-expanded={navSectionOpen.admin_platform}
+            >
+              <span class="nav-group-label">Platform &amp; Knowledge</span>
+              {#if !isSidebarCollapsed}
+                <svg class="nav-group-chevron" class:collapsed={!navSectionOpen.admin_platform} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="11" height="11">
+                  <polyline points="6 9 12 15 18 9"></polyline>
+                </svg>
+              {/if}
+            </button>
+            {#if navSectionOpen.admin_platform || isSidebarCollapsed}
+              {#if isMenuAllowed('project_management')}
+                <button class="nav-item" title="Project Management" class:active={activeView === "project_management"} on:click={() => { activeView = "project_management"; isMobileSidebarOpen = false; }}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
+                  <span class="nav-item-label">Project Management</span>
+                </button>
+              {/if}
+              {#if isMenuAllowed('kb')}
+                <button class="nav-item" title="Knowledge Base" class:active={activeView === "kb"} on:click={() => { activeView = "kb"; isMobileSidebarOpen = false; }}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"></path></svg>
+                  <span class="nav-item-label">Knowledge Base</span>
+                </button>
+              {/if}
+              {#if isMenuAllowed('skills')}
+                <button class="nav-item" title="AI Skills" class:active={activeView === "skills"} on:click={() => { activeView = "skills"; isMobileSidebarOpen = false; }}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"></path></svg>
+                  <span class="nav-item-label">AI Skills</span>
+                </button>
+              {/if}
+              {#if isMenuAllowed('qa_member')}
+                <button class="nav-item" title="QA Member" class:active={activeView === "qa_member"} on:click={() => { activeView = "qa_member"; isMobileSidebarOpen = false; }}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+                  <span class="nav-item-label">QA Member</span>
+                </button>
+              {/if}
+              {#if isMenuAllowed('exit_criteria')}
+                <button class="nav-item" title="Exit Criteria" class:active={activeView === "exit_criteria"} on:click={() => { activeView = "exit_criteria"; isMobileSidebarOpen = false; }}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M9 11l3 3L22 4"></path><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>
+                  <span class="nav-item-label">Exit Criteria</span>
+                </button>
+              {/if}
+            {/if}
+
+            <button
+              type="button"
+              class="nav-group-header"
+              on:click={() => toggleNavSection('admin_api')}
+              aria-expanded={navSectionOpen.admin_api}
+            >
+              <span class="nav-group-label">API &amp; Telemetry</span>
+              {#if !isSidebarCollapsed}
+                <svg class="nav-group-chevron" class:collapsed={!navSectionOpen.admin_api} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="11" height="11">
+                  <polyline points="6 9 12 15 18 9"></polyline>
+                </svg>
+              {/if}
+            </button>
+            {#if navSectionOpen.admin_api || isSidebarCollapsed}
+              {#if isMenuAllowed('api_collection')}
+                <button class="nav-item" title="API Collections" class:active={activeView === "api_collection"} on:click={() => { activeView = "api_collection"; isMobileSidebarOpen = false; }}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
+                  <span class="nav-item-label">API Collections</span>
+                </button>
+              {/if}
+              {#if isMenuAllowed('api_usage')}
+                <button class="nav-item" title="Token Usage" class:active={activeView === "api_usage"} on:click={() => { activeView = "api_usage"; isMobileSidebarOpen = false; }}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M3 3v18h18"/><path d="M18.7 8l-5.1 5.2-2.8-2.7L7 14.3"/></svg>
+                  <span class="nav-item-label">Token Usage</span>
+                </button>
+              {/if}
+            {/if}
+
+          {:else if $authRole === 'user'}
+            <button
+              type="button"
+              class="nav-group-header"
+              on:click={() => toggleNavSection('discovery')}
+              aria-expanded={navSectionOpen.discovery}
+            >
+              <span class="nav-group-label">Discovery &amp; Docs</span>
+              {#if !isSidebarCollapsed}
+                <svg class="nav-group-chevron" class:collapsed={!navSectionOpen.discovery} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="11" height="11">
+                  <polyline points="6 9 12 15 18 9"></polyline>
+                </svg>
+              {/if}
+            </button>
+            {#if navSectionOpen.discovery || isSidebarCollapsed}
+              {#if isMenuAllowed('qa_consult')}
+                <button class="nav-item" title="QA Consult" class:active={activeView === "qa_consult"} on:click={() => { activeView = "qa_consult"; isMobileSidebarOpen = false; }}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+                  <span class="nav-item-label">QA Consult</span>
+                </button>
+              {/if}
+              {#if isMenuAllowed('qa_doc_creation')}
+                <button class="nav-item" title="QA Document Creation" class:active={activeView === "qa_doc_creation"} on:click={() => { activeView = "qa_doc_creation"; isMobileSidebarOpen = false; }}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+                  <span class="nav-item-label">QA Document Creation</span>
+                </button>
+              {/if}
+              {#if isMenuAllowed('qa_analysis_diagram')}
+                <button class="nav-item" title="QA Analysis Diagram" class:active={activeView === "qa_analysis_diagram"} on:click={() => { activeView = "qa_analysis_diagram"; isMobileSidebarOpen = false; }}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+                  <span class="nav-item-label">QA Analysis Diagram</span>
+                </button>
+              {/if}
+            {/if}
+
+            <button
+              type="button"
+              class="nav-group-header"
+              on:click={() => toggleNavSection('testing')}
+              aria-expanded={navSectionOpen.testing}
+            >
+              <span class="nav-group-label">Quality &amp; Testing</span>
+              {#if !isSidebarCollapsed}
+                <svg class="nav-group-chevron" class:collapsed={!navSectionOpen.testing} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="11" height="11">
+                  <polyline points="6 9 12 15 18 9"></polyline>
+                </svg>
+              {/if}
+            </button>
+            {#if navSectionOpen.testing || isSidebarCollapsed}
+              {#if isMenuAllowed('qa_board')}
+                <button class="nav-item" title="QA Board Card" class:active={activeView === "qa_board"} on:click={() => { activeView = "qa_board"; isMobileSidebarOpen = false; }}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="9" y1="3" x2="9" y2="21"></line><line x1="15" y1="3" x2="15" y2="21"></line></svg>
+                  <span class="nav-item-label">QA Board Card</span>
+                </button>
+              {/if}
+              {#if isMenuAllowed('qa_automate')}
+                <button class="nav-item" title="QA Test Automation" class:active={activeView === "qa_automate"} on:click={() => { activeView = "qa_automate"; isMobileSidebarOpen = false; }}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M12 2v20m-7-7h14m-14-6h14"></path><path d="M2 12h20"></path></svg>
+                  <span class="nav-item-label">QA Test Automation</span>
+                </button>
+              {/if}
+              {#if isMenuAllowed('qa_performance')}
+                <button class="nav-item" title="QA Performance" class:active={activeView === "qa_performance"} on:click={() => { activeView = "qa_performance"; isMobileSidebarOpen = false; }}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path></svg>
+                  <span class="nav-item-label">QA Performance</span>
+                </button>
+              {/if}
+              {#if isMenuAllowed('qa_security')}
+                <button class="nav-item" title="QA Security" class:active={activeView === "qa_security"} on:click={() => { activeView = "qa_security"; isMobileSidebarOpen = false; }}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+                  <span class="nav-item-label">QA Security</span>
+                </button>
+              {/if}
+              {#if isMenuAllowed('qa_research')}
+                <button class="nav-item" title="QA Research" class:active={activeView === "qa_research"} on:click={() => { activeView = "qa_research"; isMobileSidebarOpen = false; }}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line><path d="M11 7v4l3 3"></path></svg>
+                  <span class="nav-item-label">QA Research</span>
+                </button>
+              {/if}
+            {/if}
+
+            <button
+              type="button"
+              class="nav-group-header"
+              on:click={() => toggleNavSection('agents')}
+              aria-expanded={navSectionOpen.agents}
+            >
+              <span class="nav-group-label">AI Agents</span>
+              {#if !isSidebarCollapsed}
+                <svg class="nav-group-chevron" class:collapsed={!navSectionOpen.agents} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="11" height="11">
+                  <polyline points="6 9 12 15 18 9"></polyline>
+                </svg>
+              {/if}
+            </button>
+            {#if navSectionOpen.agents || isSidebarCollapsed}
+              {#if isMenuAllowed('master_agent')}
+                <button class="nav-item nav-agent-master" title="Master Agent" class:active={activeView === "master_agent"} on:click={() => { activeView = "master_agent"; isMobileSidebarOpen = false; }}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M12 2a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h6z"></path><path d="M22 10v6a2 2 0 0 1-2 2h-6l-4 4v-4H6a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+                  <span class="nav-item-label">Master Agent</span>
+                </button>
+              {/if}
+              {#if isMenuAllowed('workflow_builder')}
+                <button class="nav-item nav-agent-workflow" title="AI Workflow Builder" class:active={activeView === "workflow_builder"} on:click={() => { activeView = "workflow_builder"; isMobileSidebarOpen = false; }}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line></svg>
+                  <span class="nav-item-label">AI Workflow Builder</span>
+                </button>
+              {/if}
+            {/if}
+          {/if}
+        </div>
+
+        <!-- ── Contextual Workspace Zone (Stretches dynamically to fill remaining height) ── -->
+        {#if !isSidebarCollapsed}
+          {#if $authRole === 'admin' && activeView === 'ocr'}
+            <div class="sidebar-context-zone">
+              <div class="history-section" class:expanded={isOcrHistoryExpanded}>
+                <button
+                  type="button"
                   class="history-title-toggle"
+                  aria-expanded={isOcrHistoryExpanded}
                   on:click={() => (isOcrHistoryExpanded = !isOcrHistoryExpanded)}
-                  on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && (isOcrHistoryExpanded = !isOcrHistoryExpanded)}
-                  role="button"
-                  tabindex="0"
-                  title={isOcrHistoryExpanded ? 'คลิกเพื่อซ่อนประวัติ' : 'คลิกเพื่อแสดงประวัติ'}
                 >
                   <div class="history-title-left">
                     <span class="history-title-text">ประวัติการสแกนล่าสุด</span>
@@ -633,384 +929,323 @@
                       <span class="history-count-badge">{$ocrHistory.length}</span>
                     {/if}
                   </div>
-                  <button 
-                    class="btn-toggle-expand" 
-                    type="button" 
-                    aria-label={isOcrHistoryExpanded ? 'ซ่อนประวัติ' : 'แสดงประวัติ'}
-                    on:click|stopPropagation={() => (isOcrHistoryExpanded = !isOcrHistoryExpanded)}
-                  >
-                    <svg class="chevron-icon" class:collapsed={!isOcrHistoryExpanded} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="13" height="13">
-                      <polyline points="6 9 12 15 18 9"></polyline>
-                    </svg>
-                  </button>
-                </div>
+                  <svg class="chevron-icon" class:collapsed={!isOcrHistoryExpanded} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="13" height="13">
+                    <polyline points="6 9 12 15 18 9"></polyline>
+                  </svg>
+                </button>
 
                 {#if isOcrHistoryExpanded}
                   {#if $ocrHistory.length > 0}
-                    <div class="history-list ocr-scrollable-list">
-                      {#each $ocrHistory.slice(0, 30) as item}
-                        <button class="history-item" class:active={scanResult && scanResult.id === item.id} on:click={() => selectOCRHistory(item)}>
-                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="flex-shrink: 0;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path></svg>
-
-                          <div class="history-details" style="flex: 1; min-width: 0;">
-                            <span class="h-filename" style="color: #60a5fa;" title={item.filename}>{item.filename || 'Unknown Document'}</span>
-                            <span class="h-project">{formatHistoryDate(item.date)}</span>
-                          </div>
-                          <div class="btn-delete-history" on:click|stopPropagation={() => deleteOCRHistory(item.id)} title="ลบประวัติ">
+                    <div class="history-list qa-flex-scroll">
+                      {#each $ocrHistory as item}
+                        <div class="sidebar-item-row">
+                          <button type="button" class="history-item" class:active={scanResult && scanResult.id === item.id} on:click={() => { selectOCRHistory(item); isMobileSidebarOpen = false; }}>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path></svg>
+                            <div class="history-details">
+                              <span class="h-filename" title={item.filename}>{item.filename || 'Unknown Document'}</span>
+                              <span class="h-date">{formatHistoryDate(item.date)}</span>
+                            </div>
+                          </button>
+                          <button
+                            type="button"
+                            class="btn-sidebar-delete"
+                            title="ลบประวัติ"
+                            aria-label={`ลบประวัติ ${item.filename}`}
+                            on:click|stopPropagation={() => deleteOCRHistory(item.id)}
+                          >
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M18 6L6 18M6 6l12 12"></path></svg>
-                          </div>
-                        </button>
+                          </button>
+                        </div>
                       {/each}
                     </div>
                   {:else}
-                    <div style="padding: 12px; text-align: center; color: #9ca3af; font-size: 12px; background: rgba(0,0,0,0.2); border-radius: 8px; margin-top: 4px;">
-                        ยังไม่มีประวัติการสแกน
-                    </div>
+                    <div class="sidebar-empty-box">ยังไม่มีประวัติการสแกน</div>
                   {/if}
                 {/if}
               </div>
-            {/if}
-          {/if}
-          
-          <div class="nav-group-label">Platform &amp; Knowledge</div>
-          {#if isMenuAllowed('project_management')}
-            <button class="nav-item" class:active={activeView === "project_management"} on:click={() => (activeView = "project_management")}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
-              Project Management
-            </button>
-          {/if}
-          {#if isMenuAllowed('kb')}
-            <button class="nav-item" class:active={activeView === "kb"} on:click={() => (activeView = "kb")}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"></path></svg>
-              Knowledge Base
-            </button>
-          {/if}
-          {#if isMenuAllowed('skills')}
-            <button class="nav-item" class:active={activeView === "skills"} on:click={() => (activeView = "skills")}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"></path></svg>
-              AI Skills
-            </button>
-          {/if}
-          {#if isMenuAllowed('qa_member')}
-            <button class="nav-item" class:active={activeView === "qa_member"} on:click={() => (activeView = "qa_member")}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
-              QA Member
-            </button>
-          {/if}
-          {#if isMenuAllowed('exit_criteria')}
-            <button class="nav-item" class:active={activeView === "exit_criteria"} on:click={() => (activeView = "exit_criteria")}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M9 11l3 3L22 4"></path><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>
-              Exit Criteria
-            </button>
-          {/if}
-          <div class="nav-group-label">API &amp; Telemetry</div>
-          {#if isMenuAllowed('api_collection')}
-            <button class="nav-item" class:active={activeView === "api_collection"} on:click={() => (activeView = "api_collection")}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
-              API Collections
-            </button>
-          {/if}
-          {#if isMenuAllowed('api_usage')}
-            <button class="nav-item" class:active={activeView === "api_usage"} on:click={() => (activeView = "api_usage")}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M3 3v18h18"/><path d="M18.7 8l-5.1 5.2-2.8-2.7L7 14.3"/></svg>
-              Token Usage
-            </button>
-          {/if}
-
-        {:else if $authRole === 'user'}
-          <div class="nav-group-label">Discovery &amp; Docs</div>
-          {#if isMenuAllowed('qa_consult')}
-            <button class="nav-item" class:active={activeView === "qa_consult"} on:click={() => (activeView = "qa_consult")}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
-              QA Consult
-            </button>
-          {/if}
-          {#if isMenuAllowed('qa_doc_creation')}
-            <button class="nav-item" class:active={activeView === "qa_doc_creation"} on:click={() => (activeView = "qa_doc_creation")}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
-              QA Document Creation
-            </button>
-          {/if}
-          {#if isMenuAllowed('qa_analysis_diagram')}
-            <button class="nav-item" class:active={activeView === "qa_analysis_diagram"} on:click={() => (activeView = "qa_analysis_diagram")}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
-              QA Analysis Diagram
-            </button>
-          {/if}
-          <div class="nav-group-label">Quality &amp; Testing</div>
-          {#if isMenuAllowed('qa_board')}
-            <button class="nav-item" class:active={activeView === "qa_board"} on:click={() => (activeView = "qa_board")}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="9" y1="3" x2="9" y2="21"></line><line x1="15" y1="3" x2="15" y2="21"></line></svg>
-              QA Board Card
-            </button>
-          {/if}
-          {#if isMenuAllowed('qa_automate')}
-            <button class="nav-item" class:active={activeView === "qa_automate"} on:click={() => (activeView = "qa_automate")}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M12 2v20m-7-7h14m-14-6h14"></path><path d="M2 12h20"></path></svg>
-              QA Test Automation
-            </button>
-          {/if}
-          {#if isMenuAllowed('qa_performance')}
-            <button class="nav-item" class:active={activeView === "qa_performance"} on:click={() => (activeView = "qa_performance")}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path></svg>
-              QA Performance
-            </button>
-          {/if}
-          {#if isMenuAllowed('qa_security')}
-            <button class="nav-item" class:active={activeView === "qa_security"} on:click={() => (activeView = "qa_security")}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
-              QA Security
-            </button>
-          {/if}
-          {#if isMenuAllowed('qa_research')}
-            <button class="nav-item" class:active={activeView === "qa_research"} on:click={() => (activeView = "qa_research")}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line><path d="M11 7v4l3 3"></path></svg>
-              QA Research
-            </button>
-          {/if}
-          
-          <div class="nav-group-label">AI Agents</div>
-          {#if isMenuAllowed('master_agent')}
-            <button class="nav-item" style="color: #c084fc;" class:active={activeView === "master_agent"} on:click={() => (activeView = "master_agent")}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M12 2a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h6z"></path><path d="M22 10v6a2 2 0 0 1-2 2h-6l-4 4v-4H6a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
-              Master Agent
-            </button>
-          {/if}
-          
-          {#if isMenuAllowed('workflow_builder')}
-            <button class="nav-item" style="color: #34d399;" class:active={activeView === "workflow_builder"} on:click={() => (activeView = "workflow_builder")}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line></svg>
-              AI Workflow Builder
-            </button>
-          {/if}
-          {#if activeView === 'qa_performance'}
-            <!-- Performance History -->
-            {#if $selectedProjectStore && $perfHistory.filter(h => h.project_id === ($selectedProjectStore.id || $selectedProjectStore.project_id)).length > 0}
-              {@const projPerfList = $perfHistory.filter(h => h.project_id === ($selectedProjectStore.id || $selectedProjectStore.project_id))}
-              <div class="history-section">
-                <button
-                  type="button"
-                  class="history-title-toggle"
-                  aria-expanded={isPerfHistoryExpanded}
-                  on:click={() => (isPerfHistoryExpanded = !isPerfHistoryExpanded)}
-                >
-                  <div class="history-title-left">
-                    <span class="history-title-text">ประวัติ Performance</span>
-                    <span class="history-count-badge">{projPerfList.length}</span>
+            </div>
+          {:else if $authRole === 'user' && (activeView === 'qa_consult' || activeView === 'qa_performance')}
+            <div class="sidebar-context-zone">
+              <!-- Active Project Quick Switcher -->
+              {#if sidebarProjects.length > 0}
+                <div class="sidebar-project-bar">
+                  <div class="sidebar-proj-label-row">
+                    <span class="sidebar-proj-dot"></span>
+                    <span class="sidebar-proj-caption">โครงการ (Project)</span>
                   </div>
-                  <svg class="chevron-icon" class:collapsed={!isPerfHistoryExpanded} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="13" height="13">
-                    <polyline points="6 9 12 15 18 9"></polyline>
-                  </svg>
-                </button>
-                {#if isPerfHistoryExpanded}
-                  <div class="history-list qa-compact-scroll">
-                    {#each projPerfList.slice(0, 10) as item}
-                      <button class="history-item" on:click={() => { activeView = "qa_performance"; selectedPerfHistory.set(item); }}>
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="flex-shrink: 0;"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path></svg>
-                        <div class="history-details">
-                          <span class="h-filename" style="color: #facc15;">{item.name}</span>
-                          <div class="h-meta-row">
-                            <span class="h-group-pill">{item.scriptFileName || 'k6_test.js'}</span>
-                            {#if item.date}
-                              <span class="h-date">{formatHistoryDate(item.date)}</span>
-                            {/if}
-                          </div>
-                        </div>
-                      </button>
-                    {/each}
-                  </div>
-                {/if}
-              </div>
-            {/if}
-          {:else if $selectedProjectStore && activeView === 'qa_consult'}
-            <!-- Groups filtered by selected project -->
-            {#if activeProjectGroups.length > 0}
-              <div class="history-section">
-                <button
-                  type="button"
-                  class="history-title-toggle"
-                  aria-expanded={isQaGroupsExpanded}
-                  on:click={() => (isQaGroupsExpanded = !isQaGroupsExpanded)}
-                >
-                  <div class="history-title-left">
-                    <span class="history-title-text">กลุ่มการตรวจสอบ (Groups)</span>
-                    <span class="history-count-badge">{activeProjectGroups.length}</span>
-                  </div>
-                  <svg class="chevron-icon" class:collapsed={!isQaGroupsExpanded} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="13" height="13">
-                    <polyline points="6 9 12 15 18 9"></polyline>
-                  </svg>
-                </button>
-
-                {#if isQaGroupsExpanded}
-                  <div class="history-list qa-compact-scroll">
-                    {#each activeProjectGroups as group}
-                      {@const isGroupActive = $activeSidebarGroup && formatCleanGroupName($activeSidebarGroup.group_name).toLowerCase() === formatCleanGroupName(group.group_name).toLowerCase()}
-                      <div class="sidebar-item-row">
-                        <button
-                          type="button"
-                          class="history-item group-item"
-                          class:active={isGroupActive}
-                          on:click={() => handleGroupClick(group)}
-                        >
-                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="flex-shrink: 0;">
-                            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
-                          </svg>
-                          <div class="history-details">
-                            <div class="h-title-row">
-                              <span class="h-type-badge">{formatGroupType(group)}</span>
-                              <span class="h-filename" title={formatCleanGroupName(group.group_name)}>{formatCleanGroupName(group.group_name)}</span>
-                            </div>
-                            <div class="h-meta-row">
-                              {#if group.scan_count > 0}
-                                <span class="h-date">{group.scan_count} ไฟล์ที่ตรวจแล้ว</span>
-                              {:else}
-                                <span class="h-date" style="color: #f59e0b;">ยังไม่มีไฟล์</span>
-                              {/if}
-                            </div>
-                          </div>
-                        </button>
-                        <button 
-                          type="button"
-                          class="btn-sidebar-delete" 
-                          title="ลบกลุ่มนี้" 
-                          aria-label={`ลบกลุ่ม ${formatCleanGroupName(group.group_name)}`}
-                          on:click|stopPropagation={() => promptDeleteGroup(group)}
-                        >
-                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13">
-                            <polyline points="3 6 5 6 21 6"></polyline>
-                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                          </svg>
-                        </button>
-                      </div>
-                    {/each}
-                  </div>
-                {/if}
-              </div>
-            {/if}
-
-            <!-- History filtered by selected group OR all project history if no group selected -->
-            {#if filteredQAHistory.length > 0}
-              <div class="history-section">
-                <div class="history-header-bar">
-                  <button
-                    type="button"
-                    class="history-title-toggle flex-1"
-                    aria-expanded={isQaHistoryExpanded}
-                    on:click={() => (isQaHistoryExpanded = !isQaHistoryExpanded)}
+                  <select
+                    class="sidebar-proj-select"
+                    aria-label="เลือกโครงการ"
+                    value={$selectedProjectStore ? String($selectedProjectStore.id || $selectedProjectStore.project_id) : ""}
+                    on:change={handleSidebarProjectSelect}
                   >
-                    <div class="history-title-left" style="min-width: 0;">
-                      <span class="history-title-text truncate">
-                        {#if $activeSidebarGroup}
-                          ประวัติ ({formatCleanGroupName($activeSidebarGroup.group_name)})
-                        {:else}
-                          ประวัติล่าสุด
-                        {/if}
-                      </span>
-                      <span class="history-count-badge">{filteredQAHistory.length}</span>
-                    </div>
-                    <svg class="chevron-icon" class:collapsed={!isQaHistoryExpanded} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="13" height="13">
-                      <polyline points="6 9 12 15 18 9"></polyline>
-                    </svg>
-                  </button>
-                  {#if $activeSidebarGroup}
-                    <button 
-                      type="button"
-                      class="btn-reset-group-pill" 
-                      title="คลิกเพื่อแสดงประวัติทั้งหมดในโครงการ"
-                      on:click={() => activeSidebarGroup.set(null)}
-                    >
-                      ดูทั้งหมด
-                    </button>
-                  {/if}
+                    <option value="">— เลือกโครงการ —</option>
+                    {#each sidebarProjects as p}
+                      <option value={String(p.id || p.project_id)}>
+                        [{p.project_code}] {p.name || p.project_name}
+                      </option>
+                    {/each}
+                  </select>
                 </div>
+              {/if}
 
-                {#if isQaHistoryExpanded}
-                  <div class="history-list qa-compact-scroll">
-                    {#each filteredQAHistory.slice(0, 12) as item}
-                      <div class="sidebar-item-row">
-                        <button type="button" class="history-item" class:is-processing={item.is_processing} on:click={() => { activeView = "qa_consult"; selectedHistory.set(item); }}>
-                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path></svg>
-                          <div class="history-details">
-                            <span class="h-filename" title={item.filename}>{item.filename}</span>
-                            {#if item.is_processing}
-                              <span class="h-status" style="color: #60a5fa; font-size: 11px; margin-top: 2px; display: flex; align-items: center; gap: 4px;">
-                                <svg class="spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="10" height="10" style="animation: spin 2s linear infinite;">
-                                  <line x1="12" y1="2" x2="12" y2="6"></line>
-                                  <line x1="12" y1="18" x2="12" y2="22"></line>
-                                  <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line>
-                                  <line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line>
-                                  <line x1="2" y1="12" x2="6" y2="12"></line>
-                                  <line x1="18" y1="12" x2="22" y2="12"></line>
-                                  <line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line>
-                                  <line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line>
-                                </svg>
-                                กำลังประมวลผล...
-                              </span>
-                            {:else}
+              {#if activeView === 'qa_performance' && $selectedProjectStore}
+                {@const projPerfList = $perfHistory.filter(h => h.project_id === ($selectedProjectStore.id || $selectedProjectStore.project_id))}
+                {#if projPerfList.length > 0}
+                  <div class="history-section" class:expanded={isPerfHistoryExpanded}>
+                    <button
+                      type="button"
+                      class="history-title-toggle"
+                      aria-expanded={isPerfHistoryExpanded}
+                      on:click={() => (isPerfHistoryExpanded = !isPerfHistoryExpanded)}
+                    >
+                      <div class="history-title-left">
+                        <span class="history-title-text">ประวัติ Performance</span>
+                        <span class="history-count-badge">{projPerfList.length}</span>
+                      </div>
+                      <svg class="chevron-icon" class:collapsed={!isPerfHistoryExpanded} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="13" height="13">
+                        <polyline points="6 9 12 15 18 9"></polyline>
+                      </svg>
+                    </button>
+                    {#if isPerfHistoryExpanded}
+                      <div class="history-list qa-flex-scroll">
+                        {#each projPerfList as item}
+                          <button class="history-item" on:click={() => { activeView = "qa_performance"; selectedPerfHistory.set(item); isMobileSidebarOpen = false; }}>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path></svg>
+                            <div class="history-details">
+                              <span class="h-filename" style="color: #facc15;">{item.name}</span>
                               <div class="h-meta-row">
-                                <span class="h-group-pill">{formatCleanGroupName(item.group_name)}</span>
+                                <span class="h-group-pill">{item.scriptFileName || 'k6_test.js'}</span>
                                 {#if item.date}
                                   <span class="h-date">{formatHistoryDate(item.date)}</span>
                                 {/if}
                               </div>
-                            {/if}
-                          </div>
-                        </button>
-                        {#if !item.is_processing}
-                          <button 
-                            type="button"
-                            class="btn-sidebar-delete" 
-                            title="ลบประวัติการตรวจนี้" 
-                            aria-label={`ลบประวัติ ${item.filename}`}
-                            on:click|stopPropagation={() => promptDeleteHistory(item)}
-                          >
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13">
-                              <polyline points="3 6 5 6 21 6"></polyline>
-                              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                            </svg>
+                            </div>
                           </button>
-                        {/if}
+                        {/each}
                       </div>
-                    {/each}
+                    {/if}
                   </div>
                 {/if}
-              </div>
-            {:else if $activeSidebarGroup}
-              <div class="history-section">
-                <div class="history-header-bar">
-                  <span class="history-title-text truncate">ประวัติ ({formatCleanGroupName($activeSidebarGroup.group_name)})</span>
-                  <button 
-                    type="button"
-                    class="btn-reset-group-pill" 
-                    on:click={() => activeSidebarGroup.set(null)}
-                  >
-                    ดูทั้งหมด
-                  </button>
-                </div>
-                <div style="padding: 10px 12px; font-size: 12px; color: #94a3b8; font-style: italic; background: rgba(255, 255, 255, 0.03); border-radius: 8px; margin-top: 4px;">
-                  ยังไม่มีประวัติการตรวจในกลุ่มนี้
-                </div>
-              </div>
-            {/if}
+              {:else if activeView === 'qa_consult' && $selectedProjectStore}
+                <!-- Groups filtered by selected project -->
+                {#if activeProjectGroups.length > 0}
+                  <div class="history-section" class:expanded={isQaGroupsExpanded}>
+                    <button
+                      type="button"
+                      class="history-title-toggle"
+                      aria-expanded={isQaGroupsExpanded}
+                      on:click={() => (isQaGroupsExpanded = !isQaGroupsExpanded)}
+                    >
+                      <div class="history-title-left">
+                        <span class="history-title-text">กลุ่มการตรวจสอบ (Groups)</span>
+                        <span class="history-count-badge">{activeProjectGroups.length}</span>
+                      </div>
+                      <svg class="chevron-icon" class:collapsed={!isQaGroupsExpanded} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="13" height="13">
+                        <polyline points="6 9 12 15 18 9"></polyline>
+                      </svg>
+                    </button>
+
+                    {#if isQaGroupsExpanded}
+                      <div class="history-list qa-flex-scroll">
+                        {#each activeProjectGroups as group}
+                          {@const isGroupActive = $activeSidebarGroup && formatCleanGroupName($activeSidebarGroup.group_name).toLowerCase() === formatCleanGroupName(group.group_name).toLowerCase()}
+                          <div class="sidebar-item-row">
+                            <button
+                              type="button"
+                              class="history-item group-item"
+                              class:active={isGroupActive}
+                              on:click={() => { handleGroupClick(group); isMobileSidebarOpen = false; }}
+                            >
+                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                              </svg>
+                              <div class="history-details">
+                                <div class="h-title-row">
+                                  <span class="h-type-badge">{formatGroupType(group)}</span>
+                                  <span class="h-filename" title={formatCleanGroupName(group.group_name)}>{formatCleanGroupName(group.group_name)}</span>
+                                </div>
+                                <div class="h-meta-row">
+                                  {#if group.scan_count > 0}
+                                    <span class="h-date">{group.scan_count} ไฟล์ที่ตรวจแล้ว</span>
+                                  {:else}
+                                    <span class="h-date" style="color: #f59e0b;">ยังไม่มีไฟล์</span>
+                                  {/if}
+                                </div>
+                              </div>
+                            </button>
+                            <button 
+                              type="button"
+                              class="btn-sidebar-delete" 
+                              title="ลบกลุ่มนี้" 
+                              aria-label={`ลบกลุ่ม ${formatCleanGroupName(group.group_name)}`}
+                              on:click|stopPropagation={() => promptDeleteGroup(group)}
+                            >
+                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13">
+                                <polyline points="3 6 5 6 21 6"></polyline>
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                              </svg>
+                            </button>
+                          </div>
+                        {/each}
+                      </div>
+                    {/if}
+                  </div>
+                {/if}
+
+                <!-- History filtered by selected group OR all project history -->
+                {#if filteredQAHistory.length > 0}
+                  <div class="history-section" class:expanded={isQaHistoryExpanded}>
+                    <div class="history-header-bar">
+                      <button
+                        type="button"
+                        class="history-title-toggle flex-1"
+                        aria-expanded={isQaHistoryExpanded}
+                        on:click={() => (isQaHistoryExpanded = !isQaHistoryExpanded)}
+                      >
+                        <div class="history-title-left" style="min-width: 0;">
+                          <span class="history-title-text truncate">
+                            {#if $activeSidebarGroup}
+                              ประวัติ ({formatCleanGroupName($activeSidebarGroup.group_name)})
+                            {:else}
+                              ประวัติล่าสุด
+                            {/if}
+                          </span>
+                          <span class="history-count-badge">{filteredQAHistory.length}</span>
+                        </div>
+                        <svg class="chevron-icon" class:collapsed={!isQaHistoryExpanded} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="13" height="13">
+                          <polyline points="6 9 12 15 18 9"></polyline>
+                        </svg>
+                      </button>
+                      {#if $activeSidebarGroup}
+                        <button 
+                          type="button"
+                          class="btn-reset-group-pill" 
+                          title="คลิกเพื่อแสดงประวัติทั้งหมดในโครงการ"
+                          on:click={() => activeSidebarGroup.set(null)}
+                        >
+                          ดูทั้งหมด
+                        </button>
+                      {/if}
+                    </div>
+
+                    {#if isQaHistoryExpanded}
+                      {#if filteredQAHistory.length > 4}
+                        <div class="sidebar-filter-box">
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                          <input
+                            type="text"
+                            bind:value={sidebarHistorySearch}
+                            placeholder="กรองชื่อไฟล์ประวัติ..."
+                            aria-label="กรองชื่อไฟล์ประวัติ"
+                          />
+                          {#if sidebarHistorySearch}
+                            <button type="button" class="btn-clear-filter" aria-label="ล้างคำค้นหา" on:click={() => (sidebarHistorySearch = "")}>✕</button>
+                          {/if}
+                        </div>
+                      {/if}
+
+                      <div class="history-list qa-flex-scroll">
+                        {#each displayedQAHistory as item}
+                          {@const exitStatus = getHistoryExitStatus(item)}
+                          <div class="sidebar-item-row">
+                            <button
+                              type="button"
+                              class="history-item"
+                              class:active={activeHistoryId === item.id}
+                              class:is-processing={item.is_processing}
+                              on:click={() => { activeView = "qa_consult"; activeHistoryId = item.id; selectedHistory.set(item); isMobileSidebarOpen = false; }}
+                            >
+                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path></svg>
+                              <div class="history-details">
+                                <div class="h-title-row">
+                                  <span class="h-status-dot {exitStatus}" title={`Exit Status: ${exitStatus.toUpperCase()}`}></span>
+                                  <span class="h-filename" title={item.filename}>{item.filename}</span>
+                                </div>
+                                {#if item.is_processing}
+                                  <span class="h-status" style="color: #60a5fa; font-size: 11px; margin-top: 2px; display: flex; align-items: center; gap: 4px;">
+                                    <svg class="spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="10" height="10" style="animation: spin 2s linear infinite;">
+                                      <line x1="12" y1="2" x2="12" y2="6"></line>
+                                      <line x1="12" y1="18" x2="12" y2="22"></line>
+                                      <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line>
+                                      <line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line>
+                                      <line x1="2" y1="12" x2="6" y2="12"></line>
+                                      <line x1="18" y1="12" x2="22" y2="12"></line>
+                                      <line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line>
+                                      <line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line>
+                                    </svg>
+                                    กำลังประมวลผล...
+                                  </span>
+                                {:else}
+                                  <div class="h-meta-row">
+                                    <span class="h-group-pill">{formatCleanGroupName(item.group_name)}</span>
+                                    {#if item.date}
+                                      <span class="h-date">{formatHistoryDate(item.date)}</span>
+                                    {/if}
+                                  </div>
+                                {/if}
+                              </div>
+                            </button>
+                            {#if !item.is_processing}
+                              <button 
+                                type="button"
+                                class="btn-sidebar-delete" 
+                                title="ลบประวัติการตรวจนี้" 
+                                aria-label={`ลบประวัติ ${item.filename}`}
+                                on:click|stopPropagation={() => promptDeleteHistory(item)}
+                              >
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13">
+                                  <polyline points="3 6 5 6 21 6"></polyline>
+                                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                                </svg>
+                              </button>
+                            {/if}
+                          </div>
+                        {:else}
+                          <div class="sidebar-empty-box">ไม่พบไฟล์ที่ตรงกับ "{sidebarHistorySearch}"</div>
+                        {/each}
+                      </div>
+                    {/if}
+                  </div>
+                {:else if $activeSidebarGroup}
+                  <div class="history-section">
+                    <div class="history-header-bar">
+                      <span class="history-title-text truncate">ประวัติ ({formatCleanGroupName($activeSidebarGroup.group_name)})</span>
+                      <button 
+                        type="button"
+                        class="btn-reset-group-pill" 
+                        on:click={() => activeSidebarGroup.set(null)}
+                      >
+                        ดูทั้งหมด
+                      </button>
+                    </div>
+                    <div class="sidebar-empty-box">ยังไม่มีประวัติการตรวจในกลุ่มนี้</div>
+                  </div>
+                {/if}
+              {/if}
+            </div>
           {/if}
         {/if}
       </nav>
 
       <div class="sidebar-footer">
-        <!-- Tutorial Button -->
-        <button class="btn-tutorial" on:click={() => (showTutorial = true)} title="เปิดคู่มือการใช้งาน">
+        <button class="btn-tutorial" on:click={() => (showTutorial = true)} title="เปิดคู่มือการใช้งาน (Tutorial Guide)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
             <circle cx="12" cy="12" r="10"/>
             <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
             <line x1="12" y1="17" x2="12.01" y2="17"/>
           </svg>
-          Tutorial
-          <span class="tutorial-badge">Guide</span>
+          {#if !isSidebarCollapsed}
+            <span class="footer-btn-text">Tutorial</span>
+            <span class="tutorial-badge">Guide</span>
+          {/if}
         </button>
 
-        <button class="btn-logout" on:click={logout}>
+        <button class="btn-logout" on:click={logout} title="ออกจากระบบ (Logout)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
-          Logout
+          {#if !isSidebarCollapsed}
+            <span class="footer-btn-text">Logout</span>
+          {/if}
         </button>
       </div>
     </aside>
@@ -1020,6 +1255,18 @@
       <!-- Topbar -->
       <header class="topbar">
         <div class="topbar-left">
+          <button
+            type="button"
+            class="btn-mobile-menu"
+            aria-label="เปิดเมนูด้านข้าง"
+            on:click={() => (isMobileSidebarOpen = !isMobileSidebarOpen)}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+              <line x1="3" y1="6" x2="21" y2="6"></line>
+              <line x1="3" y1="12" x2="21" y2="12"></line>
+              <line x1="3" y1="18" x2="21" y2="18"></line>
+            </svg>
+          </button>
           <div class="breadcrumb">WORKSPACE / <span class="bc-active">{VIEW_LABELS[activeView] || activeView.toUpperCase()}</span></div>
           {#if $selectedProjectStore}
             <span class="active-project-pill" title={$selectedProjectStore.name || $selectedProjectStore.project_code}>
@@ -1453,49 +1700,110 @@
 
   /* ── Sidebar ── */
   .sidebar {
-    width: 260px;
+    width: clamp(260px, 18.5vw, 296px);
+    height: 100vh;
     background: var(--glass-bg);
     backdrop-filter: var(--glass-blur);
     border-right: 1px solid var(--glass-border);
     display: flex;
     flex-direction: column;
     flex-shrink: 0;
-    z-index: 10;
-    box-shadow: 4px 0 24px rgba(0,0,0,0.2);
+    z-index: 100;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.37);
+    transition: width 0.28s cubic-bezier(0.16, 1, 0.3, 1), transform 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .sidebar.collapsed {
+    width: 72px;
   }
 
   .sidebar-logo {
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 14px 16px 12px;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 14px 14px 12px 16px;
     border-bottom: 1px solid var(--glass-border);
     flex-shrink: 0;
   }
 
+  .sidebar.collapsed .sidebar-logo {
+    padding: 14px 10px 12px;
+    justify-content: center;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .logo-brand-group {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    min-width: 0;
+  }
+
   .logo-icon {
-    width: 36px; height: 36px;
+    width: 36px;
+    height: 36px;
+    padding: 2px;
     background: linear-gradient(135deg, var(--primary), var(--secondary));
-    border-radius: 9px;
-    display: flex; align-items: center; justify-content: center;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     flex-shrink: 0;
+  }
+
+  .logo-icon img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    border-radius: 6px;
+  }
+
+  .logo-text-wrap {
+    min-width: 0;
   }
 
   .logo-title {
     font-family: var(--font-en);
-    font-size: 18px;
+    font-size: 17.5px;
     font-weight: 700;
     color: var(--text-main);
     line-height: 1.2;
-    letter-spacing: 0.5px;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
   }
   
   .logo-sub {
     font-family: var(--font-en);
-    font-size: 11px;
+    font-size: 10.5px;
     color: var(--text-muted);
     font-weight: 500;
-    letter-spacing: 0.5px;
+    letter-spacing: 0.03em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .btn-sidebar-collapse {
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: all 0.2s ease;
+  }
+
+  .btn-sidebar-collapse:hover {
+    background: rgba(99, 102, 241, 0.16);
+    border-color: rgba(99, 102, 241, 0.35);
+    color: var(--text-main);
   }
 
   .sidebar-nav {
@@ -1504,31 +1812,312 @@
     padding: 8px 10px 10px 12px;
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 8px;
     overflow-y: auto;
     overflow-x: hidden;
     scrollbar-width: thin;
-    scrollbar-color: rgba(139, 92, 246, 0.4) transparent;
-  }
-  
-  .sidebar-nav::-webkit-scrollbar {
-    width: 5px;
-  }
-  .sidebar-nav::-webkit-scrollbar-track {
-    background: transparent;
-  }
-  .sidebar-nav::-webkit-scrollbar-thumb {
-    background: rgba(139, 92, 246, 0.3);
-    border-radius: 4px;
-  }
-  .sidebar-nav::-webkit-scrollbar-thumb:hover {
-    background: rgba(168, 85, 247, 0.6);
+    scrollbar-color: rgba(139, 92, 246, 0.35) transparent;
   }
 
-  .history-section.ocr-history-section {
-    margin-top: 4px;
-    padding-top: 6px;
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
+  .sidebar.collapsed .sidebar-nav {
+    padding: 8px 8px;
+    align-items: center;
+  }
+
+  .sidebar-menu-zone {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex-shrink: 0;
+  }
+
+  .sidebar.collapsed .sidebar-menu-zone {
+    width: 100%;
+    align-items: center;
+  }
+
+  /* ── Contextual Workspace Zone (Fills Remaining Vertical Space Dynamically) ── */
+  .sidebar-context-zone {
+    flex: 1 1 auto;
+    min-height: 210px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--glass-border);
+    overflow: hidden;
+  }
+
+  .sidebar-project-bar {
+    background: rgba(18, 20, 28, 0.65);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    padding: 7px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    flex-shrink: 0;
+  }
+
+  .sidebar-proj-label-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .sidebar-proj-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--primary);
+    box-shadow: 0 0 8px rgba(99, 102, 241, 0.6);
+  }
+
+  .sidebar-proj-caption {
+    font-family: var(--font-th);
+    font-size: 10.5px;
+    font-weight: 600;
+    color: var(--text-muted);
+    letter-spacing: 0.02em;
+  }
+
+  .sidebar-proj-select {
+    width: 100%;
+    background: rgba(10, 11, 18, 0.85);
+    color: var(--text-main);
+    border: 1px solid rgba(168, 85, 247, 0.3);
+    border-radius: 8px;
+    padding: 5px 8px;
+    font-family: var(--font-th);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    outline: none;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  .sidebar-proj-select:focus {
+    border-color: var(--secondary);
+    box-shadow: 0 0 0 2px rgba(168, 85, 247, 0.2);
+  }
+
+  .sidebar-filter-box {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(10, 11, 18, 0.75);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    padding: 5px 8px;
+    margin-bottom: 6px;
+    flex-shrink: 0;
+    transition: border-color 0.2s ease;
+  }
+
+  .sidebar-filter-box:focus-within {
+    border-color: rgba(99, 102, 241, 0.45);
+  }
+
+  .sidebar-filter-box svg {
+    color: var(--text-muted);
+    flex-shrink: 0;
+  }
+
+  .sidebar-filter-box input {
+    flex: 1;
+    min-width: 0;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--text-main);
+    font-family: var(--font-th);
+    font-size: 11.5px;
+  }
+
+  .sidebar-filter-box input::placeholder {
+    color: var(--text-dim);
+  }
+
+  .btn-clear-filter {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-size: 10px;
+    cursor: pointer;
+    padding: 0 2px;
+    line-height: 1;
+  }
+
+  .btn-clear-filter:hover {
+    color: var(--text-main);
+  }
+
+  .sidebar-empty-box {
+    padding: 10px 12px;
+    font-size: 12px;
+    color: var(--text-muted);
+    text-align: center;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+  }
+
+  /* Custom Ultra-Clean Scrollbars (No Windows Arrows) */
+  .sidebar-nav::-webkit-scrollbar,
+  .qa-flex-scroll::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+  }
+  .sidebar-nav::-webkit-scrollbar-button,
+  .qa-flex-scroll::-webkit-scrollbar-button {
+    display: none;
+    width: 0;
+    height: 0;
+  }
+  .sidebar-nav::-webkit-scrollbar-track,
+  .qa-flex-scroll::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .sidebar-nav::-webkit-scrollbar-thumb,
+  .qa-flex-scroll::-webkit-scrollbar-thumb {
+    background: rgba(139, 92, 246, 0.32);
+    border-radius: 8px;
+  }
+  .sidebar-nav::-webkit-scrollbar-thumb:hover,
+  .qa-flex-scroll::-webkit-scrollbar-thumb:hover {
+    background: rgba(168, 85, 247, 0.65);
+  }
+
+  .nav-group-header {
+    width: 100%;
+    background: transparent;
+    border: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 10px 3px;
+    cursor: pointer;
+    color: var(--text-dim);
+    transition: color 0.2s ease;
+  }
+
+  .nav-group-header:first-child {
+    padding-top: 2px;
+  }
+
+  .nav-group-header:hover .nav-group-label,
+  .nav-group-header:hover .nav-group-chevron {
+    color: var(--text-muted);
+  }
+
+  .sidebar.collapsed .nav-group-header {
+    display: none;
+  }
+
+  .nav-group-label {
+    font-family: var(--font-en);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    transition: color 0.2s ease;
+  }
+
+  .nav-group-chevron {
+    color: var(--text-dim);
+    transition: transform 0.22s ease, color 0.2s ease;
+  }
+
+  .nav-group-chevron.collapsed {
+    transform: rotate(-90deg);
+  }
+
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: clamp(7px, 0.85vh, 10px) 12px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-md);
+    color: var(--text-muted);
+    font-family: var(--font-en);
+    font-size: 13.5px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+    text-align: left;
+    position: relative;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+
+  .sidebar.collapsed .nav-item {
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .sidebar.collapsed .nav-item-label {
+    display: none;
+  }
+
+  .nav-item-label {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .nav-agent-master {
+    color: #c084fc;
+  }
+
+  .nav-agent-workflow {
+    color: #34d399;
+  }
+
+  .nav-item:hover {
+    color: var(--text-main);
+    background: var(--glass-bg-hover);
+    border-color: var(--glass-border);
+  }
+
+  .nav-item.active {
+    color: #fff;
+    background: rgba(99, 102, 241, 0.15);
+    border-color: rgba(99, 102, 241, 0.3);
+    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.1);
+  }
+
+  .nav-item.active::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    height: 100%;
+    width: 4px;
+    background: var(--gradient-main);
+    border-radius: 0 4px 4px 0;
+  }
+  
+  .nav-item.active svg {
+    color: var(--secondary);
+    filter: drop-shadow(0 0 8px rgba(168, 85, 247, 0.5));
+  }
+
+  .history-section {
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    min-height: 0;
+  }
+
+  .history-section.expanded {
+    flex: 1 1 0;
+    min-height: 105px;
+    overflow: hidden;
   }
 
   .history-title-toggle {
@@ -1539,25 +2128,30 @@
     align-items: center;
     justify-content: space-between;
     padding: 6px 8px;
-    border-radius: 6px;
+    border-radius: 8px;
     cursor: pointer;
     user-select: none;
     transition: all 0.2s ease;
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid rgba(255, 255, 255, 0.06);
     margin-bottom: 6px;
+    flex-shrink: 0;
   }
+
   .history-title-toggle.flex-1 {
     flex: 1;
     min-width: 0;
     margin-bottom: 0;
   }
+
   .history-header-bar {
     display: flex;
     align-items: center;
     gap: 6px;
     margin-bottom: 6px;
+    flex-shrink: 0;
   }
+
   .btn-reset-group-pill {
     flex-shrink: 0;
     background: rgba(168, 85, 247, 0.14);
@@ -1566,11 +2160,12 @@
     font-family: var(--font-th);
     font-size: 10.5px;
     font-weight: 500;
-    padding: 4px 8px;
-    border-radius: 6px;
+    padding: 5px 8px;
+    border-radius: 8px;
     cursor: pointer;
     transition: all 0.2s ease;
   }
+
   .btn-reset-group-pill:hover {
     background: rgba(168, 85, 247, 0.28);
     color: #ffffff;
@@ -1601,6 +2196,7 @@
   .history-count-badge {
     background: rgba(99, 102, 241, 0.25);
     color: #a5b4fc;
+    font-family: var(--font-en);
     font-size: 10px;
     font-weight: 700;
     padding: 1px 6px;
@@ -1609,172 +2205,31 @@
     border: 1px solid rgba(99, 102, 241, 0.3);
   }
 
-  .btn-toggle-expand {
-    background: transparent;
-    border: none;
-    color: var(--text-muted);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 2px;
-    cursor: pointer;
-    border-radius: 4px;
-    transition: color 0.2s;
-  }
-
-  .history-title-toggle:hover .btn-toggle-expand {
-    color: #fff;
-  }
-
   .chevron-icon {
     transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    flex-shrink: 0;
   }
 
   .chevron-icon.collapsed {
     transform: rotate(-90deg);
   }
 
-  .ocr-scrollable-list {
-    max-height: min(560px, calc(100vh - 360px));
-    min-height: 260px;
-    overflow-y: auto;
-    overflow-x: hidden;
-    padding-right: 4px;
-    scrollbar-width: thin;
-    scrollbar-color: rgba(139, 92, 246, 0.5) rgba(0, 0, 0, 0.2);
-  }
-
-  .ocr-scrollable-list::-webkit-scrollbar {
-    width: 6px;
-  }
-
-  .ocr-scrollable-list::-webkit-scrollbar-track {
-    background: rgba(0, 0, 0, 0.2);
-    border-radius: 6px;
-  }
-
-  .ocr-scrollable-list::-webkit-scrollbar-thumb {
-    background: rgba(139, 92, 246, 0.55);
-    border-radius: 6px;
-    min-height: 48px;
-  }
-
-  .ocr-scrollable-list::-webkit-scrollbar-thumb:hover {
-    background: rgba(168, 85, 247, 0.85);
-  }
-
-  .btn-delete-history {
-    padding: 4px;
-    border-radius: 4px;
-    color: #ef4444;
-    background: rgba(239, 68, 68, 0.1);
-    cursor: pointer;
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.2s;
-  }
-
-  .btn-delete-history:hover {
-    background: rgba(239, 68, 68, 0.25);
-    color: #fca5a5;
-    transform: scale(1.1);
-  }
-
-  .nav-group-label {
-    font-family: var(--font-en);
-    font-size: 10px;
-    font-weight: 600;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--text-dim);
-    padding: 8px 10px 2px;
-  }
-  .nav-group-label:first-child {
-    padding-top: 2px;
-  }
-
-  .nav-item {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 9px 12px;
-    background: transparent;
-    border: 1px solid transparent;
-    border-radius: var(--radius-md);
-    color: var(--text-muted);
-    font-family: var(--font-en);
-    font-size: 13.5px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-    text-align: left;
-    position: relative;
-    overflow: hidden;
-    flex-shrink: 0;
-  }
-
-  .nav-item:hover {
-    color: var(--text-main);
-    background: var(--glass-bg-hover);
-    border-color: var(--glass-border);
-  }
-
-  .nav-item.active {
-    color: #fff;
-    background: rgba(99, 102, 241, 0.15); /* Primary tint */
-    border-color: rgba(99, 102, 241, 0.3);
-    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.1);
-  }
-
-  .nav-item.active::before {
-    content: '';
-    position: absolute;
-    left: 0; top: 0; height: 100%; width: 4px;
-    background: var(--gradient-main);
-    border-radius: 0 4px 4px 0;
-  }
-  
-  .nav-item.active svg {
-    color: var(--secondary);
-    filter: drop-shadow(0 0 8px rgba(168, 85, 247, 0.5));
-  }
-
-  .history-section {
-    margin-top: 8px;
-    padding-top: 10px;
-    border-top: 1px solid var(--glass-border);
-    flex-shrink: 0;
-  }
-  .history-title {
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--text-muted);
-    letter-spacing: 0.05em;
-    margin-bottom: 6px;
-    padding-left: 8px;
-  }
   .history-list {
     display: flex;
     flex-direction: column;
     gap: 4px;
   }
-  .qa-compact-scroll {
-    max-height: 175px;
+
+  .qa-flex-scroll {
+    flex: 1 1 auto;
+    min-height: 0;
     overflow-y: auto;
     overflow-x: hidden;
     padding-right: 3px;
     scrollbar-width: thin;
-    scrollbar-color: rgba(139, 92, 246, 0.45) transparent;
+    scrollbar-color: rgba(139, 92, 246, 0.35) transparent;
   }
-  .qa-compact-scroll::-webkit-scrollbar {
-    width: 4px;
-  }
-  .qa-compact-scroll::-webkit-scrollbar-thumb {
-    background: rgba(139, 92, 246, 0.45);
-    border-radius: 4px;
-  }
+
   .history-item {
     display: flex;
     align-items: flex-start;
@@ -1788,35 +2243,45 @@
     transition: all 0.2s ease;
     color: var(--text-muted);
   }
+
   .history-item:hover {
     background: rgba(255, 255, 255, 0.06);
     border-color: rgba(255, 255, 255, 0.12);
     color: var(--text-main);
   }
-  .history-item.group-item {
-    transition: all 0.2s ease;
+
+  .history-item.active {
+    border-color: rgba(99, 102, 241, 0.45);
+    background: rgba(99, 102, 241, 0.14);
+    color: #fff;
   }
+
   .history-item.group-item:hover {
     border-color: rgba(139, 92, 246, 0.4);
     background: rgba(139, 92, 246, 0.08);
   }
+
   .history-item.group-item.active {
     border-color: rgba(168, 85, 247, 0.55);
     background: rgba(168, 85, 247, 0.16);
     color: #fff;
   }
+
   .sidebar-item-row {
     position: relative;
     display: flex;
     align-items: center;
     width: 100%;
     border-radius: 8px;
+    flex-shrink: 0;
   }
+
   .sidebar-item-row .history-item {
     flex: 1;
     min-width: 0;
     padding-right: 26px;
   }
+
   .btn-sidebar-delete {
     position: absolute;
     right: 5px;
@@ -1828,7 +2293,7 @@
     color: #94a3b8;
     width: 24px;
     height: 24px;
-    border-radius: 6px;
+    border-radius: 8px;
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -1836,19 +2301,23 @@
     transition: all 0.2s ease;
     z-index: 2;
   }
+
   .sidebar-item-row:hover .btn-sidebar-delete,
   .btn-sidebar-delete:focus-visible {
     opacity: 0.85;
   }
+
   .btn-sidebar-delete:hover {
     opacity: 1 !important;
     color: #f87171;
     background: rgba(239, 68, 68, 0.18);
   }
+
   .history-item svg {
     margin-top: 2px;
     flex-shrink: 0;
   }
+
   .history-details {
     display: flex;
     flex-direction: column;
@@ -1857,12 +2326,37 @@
     flex: 1;
     overflow: hidden;
   }
+
   .h-title-row {
     display: flex;
     align-items: center;
     gap: 5px;
     min-width: 0;
   }
+
+  .h-status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: #64748b;
+  }
+
+  .h-status-dot.passed {
+    background: var(--success, #10b981);
+    box-shadow: 0 0 6px rgba(16, 185, 129, 0.55);
+  }
+
+  .h-status-dot.conditional {
+    background: var(--warning, #f59e0b);
+    box-shadow: 0 0 6px rgba(245, 158, 11, 0.5);
+  }
+
+  .h-status-dot.rejected {
+    background: var(--danger, #f43f5e);
+    box-shadow: 0 0 6px rgba(244, 63, 94, 0.55);
+  }
+
   .h-type-badge {
     flex-shrink: 0;
     font-family: var(--font-en);
@@ -1875,6 +2369,7 @@
     border-radius: 4px;
     line-height: 1.3;
   }
+
   .h-meta-row {
     display: flex;
     align-items: center;
@@ -1882,6 +2377,7 @@
     min-width: 0;
     flex-wrap: wrap;
   }
+
   .h-group-pill {
     font-size: 10px;
     font-weight: 500;
@@ -1895,8 +2391,9 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+
   .h-filename {
-    font-size: 12.5px;
+    font-size: 12.2px;
     font-weight: 500;
     line-height: 1.35;
     color: var(--text-main);
@@ -1904,13 +2401,9 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .h-project {
-    font-size: 10px;
-    line-height: 1.3;
-    color: var(--secondary);
-    opacity: 0.85;
-  }
+
   .h-date {
+    font-family: var(--font-en);
     font-size: 10px;
     line-height: 1.3;
     color: var(--text-muted);
@@ -1925,35 +2418,46 @@
     gap: 4px;
   }
 
+  .sidebar.collapsed .sidebar-footer {
+    padding: 10px 8px;
+    align-items: center;
+  }
+
   /* ── Tutorial Button ── */
   .btn-tutorial {
-    display: flex; align-items: center; gap: 10px;
-    width: 100%; padding: 9px 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 9px 12px;
     background: rgba(99, 102, 241, 0.06);
     border: 1px solid rgba(99, 102, 241, 0.18);
-    color: rgba(167, 139, 250, 0.85);
-    font-size: 13px; font-weight: 500; cursor: pointer;
-    border-radius: var(--radius-md); transition: all 0.3s;
-    margin-bottom: 0;
+    color: rgba(167, 139, 250, 0.9);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    border-radius: var(--radius-md);
+    transition: all 0.25s ease;
     position: relative;
     overflow: hidden;
   }
-  .btn-tutorial::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background: linear-gradient(90deg, rgba(99,102,241,0.08), rgba(168,85,247,0.08));
-    opacity: 0;
-    transition: opacity 0.3s;
+
+  .sidebar.collapsed .btn-tutorial,
+  .sidebar.collapsed .btn-logout {
+    width: 44px;
+    height: 40px;
+    padding: 0;
+    justify-content: center;
   }
+
   .btn-tutorial:hover {
-    background: rgba(99, 102, 241, 0.12);
+    background: rgba(99, 102, 241, 0.14);
     border-color: rgba(99, 102, 241, 0.35);
-    color: #a78bfa;
+    color: #c4b5fd;
     transform: translateY(-1px);
     box-shadow: 0 4px 14px rgba(99, 102, 241, 0.15);
   }
-  .btn-tutorial:hover::before { opacity: 1; }
+
   .tutorial-badge {
     margin-left: auto;
     font-size: 10px;
@@ -1965,23 +2469,45 @@
     border-radius: 20px;
     color: #818cf8;
     font-family: var(--font-en);
-    animation: pulse-badge 2s ease-in-out infinite;
-  }
-  @keyframes pulse-badge {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.55; }
   }
 
   .btn-logout {
-    display: flex; align-items: center; gap: 10px;
-    width: 100%; padding: 9px 12px;
-    background: transparent; border: 1px solid transparent;
-    color: var(--danger); font-size: 13px; font-weight: 500; cursor: pointer;
-    border-radius: var(--radius-md); transition: all 0.3s;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 9px 12px;
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--danger);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    border-radius: var(--radius-md);
+    transition: all 0.25s ease;
   }
+
   .btn-logout:hover {
     background: rgba(244, 63, 94, 0.1);
     border-color: rgba(244, 63, 94, 0.2);
+  }
+
+  .btn-mobile-menu {
+    display: none;
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--glass-border);
+    color: var(--text-main);
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  .sidebar-mobile-backdrop {
+    display: none;
   }
 
   /* ── Main Workspace ── */
@@ -2217,14 +2743,54 @@
     flex: 1;
   }
 
-  /* Responsive */
-  @media (max-width: 900px) {
-    .app-container { flex-direction: column; }
-    .sidebar { width: 100%; height: auto; border-right: none; border-bottom: 1px solid var(--glass-border); }
-    .sidebar-nav { flex-direction: row; overflow-x: auto; align-items: center; }
-    .nav-group-label { display: none; }
-    .nav-item { white-space: nowrap; flex-shrink: 0; }
-    .nav-item.active::before { left: 10%; top: 100%; width: 80%; height: 4px; border-radius: 4px 4px 0 0; }
+  /* Responsive Height & Viewport Scaling */
+  @media (max-height: 860px) {
+    .sidebar-logo {
+      padding: 10px 12px;
+    }
+    .nav-group-header {
+      padding: 5px 10px 2px;
+    }
+    .nav-item {
+      padding: 6px 10px;
+      font-size: 13px;
+    }
+    .sidebar-footer {
+      padding: 8px 10px;
+    }
+    .btn-tutorial,
+    .btn-logout {
+      padding: 7px 10px;
+      font-size: 12.5px;
+    }
+  }
+
+  @media (max-width: 960px) {
+    .btn-mobile-menu {
+      display: inline-flex;
+    }
+    .sidebar-mobile-backdrop {
+      display: block;
+      position: fixed;
+      inset: 0;
+      background: rgba(5, 5, 5, 0.65);
+      backdrop-filter: blur(4px);
+      z-index: 1090;
+    }
+    .sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      width: 280px !important;
+      height: 100vh;
+      transform: translateX(-100%);
+      z-index: 1100;
+      background: rgba(10, 11, 18, 0.96);
+    }
+    .sidebar.mobile-open {
+      transform: translateX(0);
+    }
     .topbar { height: 56px; padding: 0 16px; }
     .topbar-right { gap: 10px; }
     .search-box { display: none; }
