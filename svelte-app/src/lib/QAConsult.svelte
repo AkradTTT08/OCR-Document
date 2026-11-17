@@ -46,6 +46,29 @@
   
   // Use store for selected project so App.svelte can filter history
   $: selectedProjectObj = $selectedProjectStore;
+  $: if (selectedProjectObj && projects.length > 0) {
+    const curName = String(selectedProjectObj.name || selectedProjectObj.project_name || '').trim();
+    const curCode = String(selectedProjectObj.project_code || '').trim();
+    if (!curName || curName === curCode) {
+      const matchedProj = projects.find(p =>
+        (selectedProjectObj.id && String(p.id) === String(selectedProjectObj.id)) ||
+        (selectedProjectObj.project_id && String(p.project_id || p.id) === String(selectedProjectObj.project_id)) ||
+        (curCode && String(p.project_code || '').trim().toLowerCase() === curCode.toLowerCase())
+      );
+      if (matchedProj && (matchedProj.name || matchedProj.project_name) && (matchedProj.name || matchedProj.project_name) !== curCode) {
+        selectedProjectStore.set(matchedProj);
+      }
+    }
+  }
+  $: resolvedProjectLabel = (() => {
+    if (!selectedProjectObj) return '';
+    const code = String(selectedProjectObj.project_code || '').trim();
+    const name = String(selectedProjectObj.name || selectedProjectObj.project_name || '').trim();
+    if (code && name && code.toLowerCase() !== name.toLowerCase()) {
+      return `${code} — ${name}`;
+    }
+    return code || name || 'Project';
+  })();
   /** @param {any} p */
   function selectProject(p) {
     selectedProjectStore.set(p);
@@ -392,7 +415,7 @@
 
   // Recent Project History Pagination
   let historyCurrentPage = 1;
-  const historyItemsPerPage = 10;
+  const historyItemsPerPage = 6;
   let lastHistoryProjectId = null;
 
   $: historyTotalPages = Math.max(1, Math.ceil(currentProjectHistory.length / historyItemsPerPage));
@@ -1278,402 +1301,466 @@
 
   {:else if !isGroupNameSet}
     <!-- GROUP MANAGEMENT & CREATION VIEW -->
-    <div class="top-nav">
-      <button class="btn-back" on:click={() => { selectedProjectStore.set(null); isGroupNameSet = false; scanGroupName = ""; }}>
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
-          <path fill-rule="evenodd" d="M11.354 1.646a.5.5 0 0 1 0 .708L5.707 8l5.647 5.646a.5.5 0 0 1-.708.708l-6-6a.5.5 0 0 1 0-.708l6-6a.5.5 0 0 1 .708 0z"/>
-        </svg>
-        ย้อนกลับไปหน้าเลือกโครงการ
-      </button>
-    </div>
-
-    <div class="header-text-local">
-      <h2>QA Consult - เลือกกลุ่มการตรวจสอบ (Scan Group)</h2>
-      <p>เลือกกลุ่มการตรวจสอบที่มีอยู่เพื่อทำการสแกนต่อ หรือสร้างกลุ่มการตรวจสอบใหม่สำหรับโครงการ</p>
-      <div class="active-project-badge">
-        โครงการปัจจุบัน: <strong>{selectedProjectObj.project_code} - {selectedProjectObj.name}</strong>
-      </div>
-    </div>
-
-    <!-- EXISTING GROUPS SECTION (IF ANY) -->
-    {#if currentProjectGroups.length > 0}
-      <div class="group-management-section">
-        <div class="section-title-bar">
-          <div class="title-with-badge">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
-              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+    <div class="scan-group-view">
+      <div class="scan-group-command-banner">
+        <div class="banner-left">
+          <button type="button" class="btn-back-pill" on:click={() => { selectedProjectStore.set(null); isGroupNameSet = false; scanGroupName = ""; }}>
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16">
+              <path fill-rule="evenodd" d="M11.354 1.646a.5.5 0 0 1 0 .708L5.707 8l5.647 5.646a.5.5 0 0 1-.708.708l-6-6a.5.5 0 0 1 0-.708l6-6a.5.5 0 0 1 .708 0z"/>
             </svg>
-            <h3>กลุ่มการตรวจสอบที่มีอยู่ในโครงการ ({currentProjectGroups.length})</h3>
-          </div>
-          <button class="btn-create-group-trigger" on:click={openCreateGroupModal}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-              <line x1="12" y1="5" x2="12" y2="19"></line>
-              <line x1="5" y1="12" x2="19" y2="12"></line>
-            </svg>
-            สร้างกลุ่มใหม่
+            <span>ย้อนกลับไปหน้าเลือกโครงการ</span>
           </button>
-        </div>
-
-        <div class="existing-groups-grid">
-          {#each currentProjectGroups as group}
-            <div class="group-card-item" on:click={() => selectExistingGroup(group)}>
-              <div class="group-card-top">
-                <div class="group-icon-wrap">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                    <polyline points="14 2 14 8 20 8"></polyline>
-                  </svg>
-                </div>
-                <div class="group-title-info">
-                  <div class="group-type-tag">[{group.group_type || 'Project Plan'}]</div>
-                  <div class="group-name-text" title={group.group_name}>{group.group_name}</div>
-                </div>
-                <button 
-                  class="btn-card-delete" 
-                  title="ลบกลุ่มนี้" 
-                  on:click|stopPropagation={() => requestDeleteGroup(group)}
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                    <polyline points="3 6 5 6 21 6"></polyline>
-                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                  </svg>
-                </button>
-              </div>
-
-              <div class="group-card-bottom">
-                <div class="group-meta-stat">
-                  {#if group.scan_count > 0}
-                    <span class="stat-badge count-active">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><polyline points="20 6 9 17 4 12"></polyline></svg>
-                      {group.scan_count} ไฟล์ตรวจแล้ว
-                    </span>
-                  {:else}
-                    <span class="stat-badge count-empty">ยังไม่มีไฟล์</span>
-                  {/if}
-                  {#if group.latest_date}
-                    <span class="stat-date">{formatHistoryTime(group.latest_date)}</span>
-                  {/if}
-                </div>
-                <button class="btn-select-group" on:click|stopPropagation={() => selectExistingGroup(group)}>
-                  เลือกกลุ่มนี้ &rarr;
-                </button>
-              </div>
-            </div>
-          {/each}
-        </div>
-      </div>
-    {:else}
-      <!-- EMPTY STATE WHEN NO GROUPS EXIST -->
-      <div class="group-management-section">
-        <div class="empty-groups-box">
-          <div class="empty-groups-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="44" height="44">
-              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
-            </svg>
+          <div class="banner-titles">
+            <h2>QA Consult — เลือกกลุ่มการตรวจสอบ (Scan Group)</h2>
+            <p>เลือกกลุ่มการตรวจสอบที่มีอยู่เพื่อทำการสแกนต่อ หรือสร้างกลุ่มการตรวจสอบใหม่สำหรับโครงการ</p>
           </div>
-          <h4>ยังไม่มีกลุ่มการตรวจสอบในโครงการนี้</h4>
-          <p>สร้างกลุ่มการตรวจสอบ (Scan Group) แรก เพื่อจัดระเบียบเอกสารและเริ่มการตรวจ QA สำหรับโครงการนี้</p>
-          <button class="btn-create-group-trigger lg" on:click={openCreateGroupModal}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
-              <line x1="12" y1="5" x2="12" y2="19"></line>
-              <line x1="5" y1="12" x2="19" y2="12"></line>
-            </svg>
-            สร้างกลุ่มการตรวจสอบใหม่
-          </button>
+        </div>
+
+        <div class="banner-right">
+          <div class="active-project-pill">
+            <span class="proj-live-dot" aria-hidden="true"></span>
+            <span class="proj-lbl">โครงการปัจจุบัน:</span>
+            <strong>{resolvedProjectLabel}</strong>
+          </div>
+          <div class="project-quick-stats">
+            <span class="q-stat">
+              <strong>{currentProjectGroups.length}</strong> กลุ่มตรวจ
+            </span>
+            <span class="q-divider" aria-hidden="true">•</span>
+            <span class="q-stat">
+              <strong>{currentProjectHistory.length}</strong> ประวัติสแกน
+            </span>
+          </div>
         </div>
       </div>
-    {/if}
 
-    <!-- MODAL: CREATE NEW GROUP -->
-    {#if showCreateGroupModal}
-      <div class="modal-backdrop" transition:fade={{ duration: 150 }} on:click={closeCreateGroupModal}>
-        <div class="modal-group-dialog" on:click|stopPropagation>
-          <div class="modal-dialog-header">
-            <div class="modal-dialog-title-wrap">
-              <div class="modal-dialog-icon">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
-                  <line x1="12" y1="5" x2="12" y2="19"></line>
-                  <line x1="5" y1="12" x2="19" y2="12"></line>
+      <!-- EXISTING GROUPS SECTION (IF ANY) -->
+      {#if currentProjectGroups.length > 0}
+        <div class="group-management-section">
+          <div class="section-title-bar">
+            <div class="title-with-badge">
+              <span class="section-icon-badge" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
                 </svg>
-              </div>
-              <div>
-                <h3 class="modal-dialog-title">สร้างกลุ่มการตรวจสอบใหม่</h3>
-                <div class="modal-dialog-sub">โครงการ: <span class="sub-proj-name">{selectedProjectObj.project_code} - {selectedProjectObj.name}</span></div>
-              </div>
+              </span>
+              <h3>กลุ่มการตรวจสอบที่มีอยู่ในโครงการ</h3>
+              <span class="section-count-pill">{currentProjectGroups.length}</span>
             </div>
-            <button class="btn-dialog-close" title="ปิดหน้าต่าง" on:click={closeCreateGroupModal}>✕</button>
+            <button type="button" class="btn-create-group-trigger" on:click={openCreateGroupModal}>
+              <svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="15" height="15">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+              <span>สร้างกลุ่มใหม่</span>
+            </button>
           </div>
 
-          <div class="modal-dialog-body">
-            <div class="setting-group relative">
-              <label>ชื่อการตรวจสอบ (Group Name) <span class="req-star">*</span></label>
-              <input
-                type="text"
-                class="modal-form-input"
-                bind:value={scanGroupName}
-                placeholder="เช่น ตรวจเอกสาร UAT รอบที่ 1, Sprint 2 Review..."
-                autofocus
-                on:keydown={(e) => {
-                  if (e.key === 'Enter' && scanGroupName.trim() !== '') {
-                    confirmGroup();
-                  }
-                }}
-              />
+          <div class="existing-groups-grid">
+            {#each currentProjectGroups as group, idx}
+              {@const cleanGName = String(group.group_name || '').replace(/^\[.*?\]\s*/, '').trim() || group.group_name}
+              {@const gType = group.group_type || 'Project Plan'}
+              <div
+                class="group-card-item"
+                style="--card-idx: {idx};"
+                data-gtype={gType.toLowerCase().includes('srs') ? 'srs' : gType.toLowerCase().includes('test') ? 'testcase' : 'plan'}
+                role="button"
+                tabindex="0"
+                on:click={() => selectExistingGroup(group)}
+                on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), selectExistingGroup(group))}
+              >
+                <div class="group-card-top">
+                  <div class="group-icon-wrap">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="19" height="19">
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                      <polyline points="14 2 14 8 20 8"></polyline>
+                    </svg>
+                  </div>
+                  <div class="group-title-info">
+                    <div class="group-type-tag">{gType}</div>
+                    <div class="group-name-text" title={cleanGName}>{cleanGName}</div>
+                  </div>
+                  <button 
+                    type="button"
+                    class="btn-card-delete" 
+                    title="ลบกลุ่มนี้" 
+                    aria-label={`ลบกลุ่ม ${cleanGName}`}
+                    on:click|stopPropagation={() => requestDeleteGroup(group)}
+                    on:keydown|stopPropagation
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                      <polyline points="3 6 5 6 21 6"></polyline>
+                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                    </svg>
+                  </button>
+                </div>
+
+                <div class="group-card-bottom">
+                  <div class="group-meta-stat">
+                    {#if group.scan_count > 0}
+                      <span class="stat-badge count-active">
+                        <span class="active-stat-dot" aria-hidden="true"></span>
+                        {group.scan_count} ไฟล์ตรวจแล้ว
+                      </span>
+                    {:else}
+                      <span class="stat-badge count-empty">ยังไม่มีไฟล์</span>
+                    {/if}
+                    {#if group.latest_date}
+                      <span class="stat-date">{formatHistoryTime(group.latest_date)}</span>
+                    {/if}
+                  </div>
+                  <button type="button" class="btn-select-group" on:click|stopPropagation={() => selectExistingGroup(group)}>
+                    <span>เลือกกลุ่มนี้</span>
+                    <span class="btn-arrow" aria-hidden="true">&rarr;</span>
+                  </button>
+                </div>
+              </div>
+            {/each}
+          </div>
+        </div>
+      {:else}
+        <!-- EMPTY STATE WHEN NO GROUPS EXIST -->
+        <div class="group-management-section">
+          <div class="empty-groups-box">
+            <div class="empty-groups-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="44" height="44">
+                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+              </svg>
+            </div>
+            <h4>ยังไม่มีกลุ่มการตรวจสอบในโครงการนี้</h4>
+            <p>สร้างกลุ่มการตรวจสอบ (Scan Group) แรก เพื่อจัดระเบียบเอกสารและเริ่มการตรวจ QA สำหรับโครงการนี้</p>
+            <button type="button" class="btn-create-group-trigger lg" on:click={openCreateGroupModal}>
+              <svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+              <span>สร้างกลุ่มการตรวจสอบใหม่</span>
+            </button>
+          </div>
+        </div>
+      {/if}
+
+      <!-- MODAL: CREATE NEW GROUP -->
+      {#if showCreateGroupModal}
+        <div class="modal-backdrop" transition:fade={{ duration: 150 }} on:click={closeCreateGroupModal}>
+          <div class="modal-group-dialog" on:click|stopPropagation>
+            <div class="modal-dialog-header">
+              <div class="modal-dialog-title-wrap">
+                <div class="modal-dialog-icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                  </svg>
+                </div>
+                <div>
+                  <h3 class="modal-dialog-title">สร้างกลุ่มการตรวจสอบใหม่</h3>
+                  <div class="modal-dialog-sub">โครงการ: <span class="sub-proj-name">{resolvedProjectLabel}</span></div>
+                </div>
+              </div>
+              <button class="btn-dialog-close" title="ปิดหน้าต่าง" on:click={closeCreateGroupModal}>✕</button>
             </div>
 
-            <div class="setting-group relative" style="margin-top: 16px;">
-              <label>ประเภทเอกสารหลัก (Group Type)</label>
-              <!-- Custom Dropdown for Group Type -->
-              <div class="custom-select" on:click|stopPropagation={() => { groupTypeOpen = !groupTypeOpen; }}>
-                <div class="select-trigger" class:open={groupTypeOpen}>
-                  {scanGroupType}
-                  <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+            <div class="modal-dialog-body">
+              <div class="setting-group relative">
+                <label>ชื่อการตรวจสอบ (Group Name) <span class="req-star">*</span></label>
+                <input
+                  type="text"
+                  class="modal-form-input"
+                  bind:value={scanGroupName}
+                  placeholder="เช่น ตรวจเอกสาร UAT รอบที่ 1, Sprint 2 Review..."
+                  autofocus
+                  on:keydown={(e) => {
+                    if (e.key === 'Enter' && scanGroupName.trim() !== '') {
+                      confirmGroup();
+                    }
+                  }}
+                />
+              </div>
+
+              <div class="setting-group relative" style="margin-top: 16px;">
+                <label>ประเภทเอกสารหลัก (Group Type)</label>
+                <!-- Custom Dropdown for Group Type -->
+                <div class="custom-select" on:click|stopPropagation={() => { groupTypeOpen = !groupTypeOpen; }}>
+                  <div class="select-trigger" class:open={groupTypeOpen}>
+                    {scanGroupType}
+                    <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                  </div>
+                  {#if groupTypeOpen}
+                    <div class="options-menu" transition:fade={{duration: 100}}>
+                      {#each masterGroupTypes as type}
+                        <div class="option-item" class:selected={scanGroupType === type} on:click|stopPropagation={() => { scanGroupType = type; groupTypeOpen = false; }}>
+                          {type}
+                        </div>
+                      {/each}
+                    </div>
+                  {/if}
                 </div>
-                {#if groupTypeOpen}
-                  <div class="options-menu" transition:fade={{duration: 100}}>
-                    {#each masterGroupTypes as type}
-                      <div class="option-item" class:selected={scanGroupType === type} on:click|stopPropagation={() => { scanGroupType = type; groupTypeOpen = false; }}>
-                        {type}
+              </div>
+
+              <!-- Exit Criteria Mapping Status / Missing Warning Alert -->
+              <div class="criteria-mapping-status" style="margin-top: 16px;">
+                {#if isCheckingCriteria}
+                  <div class="criteria-badge-box loading">
+                    <div class="box-icon spin">⏳</div>
+                    <div class="box-content">
+                      <div class="box-title">กำลังตรวจสอบ Exit Criteria...</div>
+                    </div>
+                  </div>
+                {:else if matchedCriteriaTemplate}
+                  <div class="criteria-badge-box matched">
+                    <div class="box-icon">🎯</div>
+                    <div class="box-content">
+                      <div class="box-title">เชื่อมโยง Exit Criteria: <span class="highlight">{matchedCriteriaTemplate.title}</span></div>
+                      <div class="box-desc">
+                        ระบบจะตรวจสอบด้วยเกณฑ์เฉพาะ <strong>"{scanGroupType}"</strong> ควบคู่กับเกณฑ์มาตรฐานกลาง <strong>(ALL)</strong> โดยอัตโนมัติ
                       </div>
-                    {/each}
+                    </div>
+                  </div>
+                {:else}
+                  <div class="criteria-badge-box warning">
+                    <div class="box-icon">⚠️</div>
+                    <div class="box-content">
+                      <div class="box-title">ยังไม่มี Exit Criteria สำหรับประเภท <span class="highlight-warn">"{scanGroupType}"</span> ในการตรวจสอบ</div>
+                      <div class="box-desc">
+                        ระบบจะใช้เฉพาะเกณฑ์มาตรฐานกลาง (ALL) ในการตรวจสอบ หรือสามารถเพิ่มเกณฑ์เฉพาะได้ที่เมนู <strong>Exit Criteria</strong>
+                      </div>
+                    </div>
                   </div>
                 {/if}
               </div>
             </div>
 
-            <!-- Exit Criteria Mapping Status / Missing Warning Alert -->
-            <div class="criteria-mapping-status" style="margin-top: 16px;">
-              {#if isCheckingCriteria}
-                <div class="criteria-badge-box loading">
-                  <div class="box-icon spin">⏳</div>
-                  <div class="box-content">
-                    <div class="box-title">กำลังตรวจสอบ Exit Criteria...</div>
-                  </div>
-                </div>
-              {:else if matchedCriteriaTemplate}
-                <div class="criteria-badge-box matched">
-                  <div class="box-icon">🎯</div>
-                  <div class="box-content">
-                    <div class="box-title">เชื่อมโยง Exit Criteria: <span class="highlight">{matchedCriteriaTemplate.title}</span></div>
-                    <div class="box-desc">
-                      ระบบจะตรวจสอบด้วยเกณฑ์เฉพาะ <strong>"{scanGroupType}"</strong> ควบคู่กับเกณฑ์มาตรฐานกลาง <strong>(ALL)</strong> โดยอัตโนมัติ
-                    </div>
-                  </div>
-                </div>
-              {:else}
-                <div class="criteria-badge-box warning">
-                  <div class="box-icon">⚠️</div>
-                  <div class="box-content">
-                    <div class="box-title">ยังไม่มี Exit Criteria สำหรับประเภท <span class="highlight-warn">"{scanGroupType}"</span> ในการตรวจสอบ</div>
-                    <div class="box-desc">
-                      ระบบจะใช้เฉพาะเกณฑ์มาตรฐานกลาง (ALL) ในการตรวจสอบ หรือสามารถเพิ่มเกณฑ์เฉพาะได้ที่เมนู <strong>Exit Criteria</strong>
-                    </div>
-                  </div>
-                </div>
-              {/if}
+            <div class="modal-dialog-footer">
+              <button class="btn-dialog-cancel" on:click={closeCreateGroupModal}>ยกเลิก</button>
+              <button 
+                class="btn-primary btn-dialog-submit" 
+                disabled={!scanGroupName.trim()}
+                on:click={confirmGroup}
+              >
+                บันทึกกลุ่มและเข้าสู่หน้าสแกน &rarr;
+              </button>
             </div>
-          </div>
-
-          <div class="modal-dialog-footer">
-            <button class="btn-dialog-cancel" on:click={closeCreateGroupModal}>ยกเลิก</button>
-            <button 
-              class="btn-primary btn-dialog-submit" 
-              disabled={!scanGroupName.trim()}
-              on:click={confirmGroup}
-            >
-              บันทึกกลุ่มและเข้าสู่หน้าสแกน &rarr;
-            </button>
           </div>
         </div>
-      </div>
-    {/if}
+      {/if}
 
-    <!-- MODAL: DELETE GROUP CONFIRMATION -->
-    {#if showDeleteGroupModal && groupToDelete}
-      <div class="modal-backdrop" transition:fade={{ duration: 150 }} on:click={cancelDeleteGroup}>
-        <div class="modal-delete-dialog" on:click|stopPropagation>
-          <div class="modal-delete-icon-wrap">
-            <div class="delete-icon-circle">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="28" height="28">
-                <polyline points="3 6 5 6 21 6"></polyline>
-                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                <line x1="10" y1="11" x2="10" y2="17"></line>
-                <line x1="14" y1="11" x2="14" y2="17"></line>
-              </svg>
-            </div>
-          </div>
-
-          <div class="modal-delete-content">
-            <h3 class="modal-delete-title">ยืนยันการลบกลุ่มการตรวจสอบ</h3>
-            <p class="modal-delete-desc">
-              คุณต้องการลบกลุ่ม <span class="delete-target-badge">[{groupToDelete.group_type || 'General'}] {groupToDelete.group_name}</span>
-            </p>
-
-            <div class="delete-warning-box">
-              <div class="warning-icon">⚠️</div>
-              <div class="warning-text">
-                ประวัติการสแกนเอกสารและรายงานผล QA ทั้งหมดในกลุ่มนี้จะถูกลบอย่างถาวร
-              </div>
-            </div>
-          </div>
-
-          <div class="modal-delete-actions">
-            <button class="btn-dialog-cancel" on:click={cancelDeleteGroup} disabled={isDeletingGroup}>
-              ยกเลิก
-            </button>
-            <button class="btn-danger-confirm" on:click={executeDeleteGroup} disabled={isDeletingGroup}>
-              {#if isDeletingGroup}
-                <span>กำลังลบ...</span>
-              {:else}
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+      <!-- MODAL: DELETE GROUP CONFIRMATION -->
+      {#if showDeleteGroupModal && groupToDelete}
+        <div class="modal-backdrop" transition:fade={{ duration: 150 }} on:click={cancelDeleteGroup}>
+          <div class="modal-delete-dialog" on:click|stopPropagation>
+            <div class="modal-delete-icon-wrap">
+              <div class="delete-icon-circle">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="28" height="28">
                   <polyline points="3 6 5 6 21 6"></polyline>
                   <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                  <line x1="10" y1="11" x2="10" y2="17"></line>
+                  <line x1="14" y1="11" x2="14" y2="17"></line>
                 </svg>
-                ยืนยันการลบกลุ่ม
-              {/if}
-            </button>
-          </div>
-        </div>
-      </div>
-    {/if}
-
-    <!-- RECENT PROJECT SCAN HISTORY SECTION -->
-    {#if currentProjectHistory.length > 0}
-      <div class="project-history-section">
-        <div class="section-title-bar">
-          <div class="title-with-badge">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-              <polyline points="14 2 14 8 20 8"></polyline>
-              <line x1="16" y1="13" x2="8" y2="13"></line>
-              <line x1="16" y1="17" x2="8" y2="17"></line>
-            </svg>
-            <h3>ประวัติการตรวจสอบล่าสุดในโครงการนี้ ({currentProjectHistory.length})</h3>
-          </div>
-          <span class="sub-hint">คลิกเอกสารเพื่อเปิดดูรายงานผลการตรวจย้อนหลัง</span>
-        </div>
-
-        <div class="history-table-container">
-          <table class="project-history-table">
-            <thead>
-              <tr>
-                <th>ชื่อไฟล์เอกสาร</th>
-                <th>กลุ่มการตรวจสอบ</th>
-                <th>ประเภท</th>
-                <th>วันที่ตรวจ</th>
-                <th style="text-align: right;">การจัดการ</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each paginatedProjectHistory as item}
-                <tr class="history-table-row" on:click={() => selectedHistory.set(item)}>
-                  <td class="td-filename">
-                    <div class="file-name-cell">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="color: #60a5fa; flex-shrink: 0;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path></svg>
-                      <span>{item.filename || 'Unknown Document'}</span>
-                    </div>
-                  </td>
-                  <td>
-                    <span class="group-pill">{item.group_name || 'General'}</span>
-                  </td>
-                  <td>
-                    <span class="type-pill">{item.docType || item.group_type || 'General'}</span>
-                  </td>
-                  <td class="td-date">{formatHistoryTime(item.date)}</td>
-                  <td style="text-align: right;">
-                    <button class="btn-table-view" on:click|stopPropagation={() => selectedHistory.set(item)}>
-                      ดูรายงาน
-                    </button>
-                  </td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-
-        {#if historyTotalPages > 1}
-          <div class="project-history-pagination">
-            <span class="pagination-info">
-              หน้า {historyCurrentPage} จาก {historyTotalPages} (ทั้งหมด {currentProjectHistory.length} รายการ)
-            </span>
-            <div class="pagination-nav">
-              <button 
-                class="btn-page-nav" 
-                disabled={historyCurrentPage === 1} 
-                on:click={() => goToHistoryPage(historyCurrentPage - 1)}
-                title="หน้าก่อนหน้า"
-              >
-                <svg viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2" fill="none"><polyline points="15 18 9 12 15 6"></polyline></svg>
-                <span>ก่อนหน้า</span>
-              </button>
-              
-              <div class="page-numbers">
-                {#each getVisibleHistoryPages(historyCurrentPage, historyTotalPages) as p}
-                  {#if p === '...'}
-                    <span class="page-ellipsis">...</span>
-                  {:else}
-                    <button 
-                      class="btn-page-num" 
-                      class:active={historyCurrentPage === p} 
-                      on:click={() => goToHistoryPage(p)}
-                    >
-                      {p}
-                    </button>
-                  {/if}
-                {/each}
               </div>
+            </div>
 
-              <button 
-                class="btn-page-nav" 
-                disabled={historyCurrentPage === historyTotalPages} 
-                on:click={() => goToHistoryPage(historyCurrentPage + 1)}
-                title="หน้าถัดไป"
-              >
-                <span>ถัดไป</span>
-                <svg viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2" fill="none"><polyline points="9 18 15 12 9 6"></polyline></svg>
+            <div class="modal-delete-content">
+              <h3 class="modal-delete-title">ยืนยันการลบกลุ่มการตรวจสอบ</h3>
+              <p class="modal-delete-desc">
+                คุณต้องการลบกลุ่ม <span class="delete-target-badge">[{groupToDelete.group_type || 'General'}] {groupToDelete.group_name}</span>
+              </p>
+
+              <div class="delete-warning-box">
+                <div class="warning-icon">⚠️</div>
+                <div class="warning-text">
+                  ประวัติการสแกนเอกสารและรายงานผล QA ทั้งหมดในกลุ่มนี้จะถูกลบอย่างถาวร
+                </div>
+              </div>
+            </div>
+
+            <div class="modal-delete-actions">
+              <button class="btn-dialog-cancel" on:click={cancelDeleteGroup} disabled={isDeletingGroup}>
+                ยกเลิก
+              </button>
+              <button class="btn-danger-confirm" on:click={executeDeleteGroup} disabled={isDeletingGroup}>
+                {#if isDeletingGroup}
+                  <span>กำลังลบ...</span>
+                {:else}
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                    <polyline points="3 6 5 6 21 6"></polyline>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                  </svg>
+                  ยืนยันการลบกลุ่ม
+                {/if}
               </button>
             </div>
           </div>
-        {/if}
-      </div>
-    {/if}
+        </div>
+      {/if}
+
+      <!-- RECENT PROJECT SCAN HISTORY SECTION -->
+      {#if currentProjectHistory.length > 0}
+        <div class="project-history-section">
+          <div class="section-title-bar">
+            <div class="title-with-badge">
+              <span class="section-icon-badge history-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                  <polyline points="14 2 14 8 20 8"></polyline>
+                  <line x1="16" y1="13" x2="8" y2="13"></line>
+                  <line x1="16" y1="17" x2="8" y2="17"></line>
+                </svg>
+              </span>
+              <h3>ประวัติการตรวจสอบล่าสุดในโครงการนี้</h3>
+              <span class="section-count-pill">{currentProjectHistory.length}</span>
+            </div>
+            <span class="sub-hint">คลิกเอกสารเพื่อเปิดดูรายงานผลการตรวจย้อนหลัง</span>
+          </div>
+
+          <div class="history-table-container">
+            <table class="project-history-table">
+              <thead>
+                <tr>
+                  <th>ชื่อไฟล์เอกสาร</th>
+                  <th style="width: 190px;">กลุ่มการตรวจสอบ</th>
+                  <th style="width: 140px;">ประเภท</th>
+                  <th style="width: 150px;">วันที่ตรวจ</th>
+                  <th style="width: 120px; text-align: right;">การจัดการ</th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each paginatedProjectHistory as item, rIdx}
+                  {@const cleanItemGroup = String(item.group_name || 'General').replace(/^\[.*?\]\s*/, '').trim() || 'General'}
+                  <tr
+                    class="history-table-row"
+                    style="--row-idx: {rIdx};"
+                    on:click={() => selectedHistory.set(item)}
+                  >
+                    <td class="td-filename">
+                      <div class="file-name-cell">
+                        <span class="file-row-icon" aria-hidden="true">
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
+                        </span>
+                        <span class="file-row-name">{item.filename || 'Unknown Document'}</span>
+                      </div>
+                    </td>
+                    <td>
+                      <span class="group-pill">{cleanItemGroup}</span>
+                    </td>
+                    <td>
+                      <span class="type-pill">{item.docType || item.group_type || 'General'}</span>
+                    </td>
+                    <td class="td-date">{formatHistoryTime(item.date)}</td>
+                    <td style="text-align: right;">
+                      <button type="button" class="btn-table-view" on:click|stopPropagation={() => selectedHistory.set(item)}>
+                        <span>ดูรายงาน</span>
+                        <span class="view-arrow" aria-hidden="true">&rarr;</span>
+                      </button>
+                    </td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+
+          {#if historyTotalPages > 1}
+            <div class="project-history-pagination">
+              <span class="pagination-info">
+                หน้า <strong>{historyCurrentPage}</strong> จาก <strong>{historyTotalPages}</strong> • แสดง {(historyCurrentPage - 1) * historyItemsPerPage + 1}–{Math.min(historyCurrentPage * historyItemsPerPage, currentProjectHistory.length)} จาก {currentProjectHistory.length} รายการ
+              </span>
+              <div class="pagination-nav">
+                <button 
+                  type="button"
+                  class="btn-page-nav" 
+                  disabled={historyCurrentPage === 1} 
+                  on:click={() => goToHistoryPage(historyCurrentPage - 1)}
+                  title="หน้าก่อนหน้า"
+                >
+                  <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><polyline points="15 18 9 12 15 6"></polyline></svg>
+                  <span>ก่อนหน้า</span>
+                </button>
+                
+                <div class="page-numbers">
+                  {#each getVisibleHistoryPages(historyCurrentPage, historyTotalPages) as p}
+                    {#if p === '...'}
+                      <span class="page-ellipsis">...</span>
+                    {:else}
+                      <button 
+                        type="button"
+                        class="btn-page-num" 
+                        class:active={historyCurrentPage === p} 
+                        on:click={() => goToHistoryPage(p)}
+                      >
+                        {p}
+                      </button>
+                    {/if}
+                  {/each}
+                </div>
+
+                <button 
+                  type="button"
+                  class="btn-page-nav" 
+                  disabled={historyCurrentPage === historyTotalPages} 
+                  on:click={() => goToHistoryPage(historyCurrentPage + 1)}
+                  title="หน้าถัดไป"
+                >
+                  <span>ถัดไป</span>
+                  <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                </button>
+              </div>
+            </div>
+          {/if}
+        </div>
+      {/if}
+    </div>
 
   {:else if !isProcessing && !scanResult}
     <!-- INPUT FORM -->
-    <div class="top-nav">
-      <button class="btn-back" on:click={() => { selectedProjectStore.set(null); isGroupNameSet = false; scanGroupName = ""; }}>
+    <div class="top-nav upload-top-nav">
+      <button type="button" class="btn-back" on:click={() => { isGroupNameSet = false; }}>
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
           <path fill-rule="evenodd" d="M11.354 1.646a.5.5 0 0 1 0 .708L5.707 8l5.647 5.646a.5.5 0 0 1-.708.708l-6-6a.5.5 0 0 1 0-.708l6-6a.5.5 0 0 1 .708 0z"/>
         </svg>
-        ย้อนกลับไปหน้าเลือกโครงการ
+        ย้อนกลับไปเลือกกลุ่มการตรวจสอบ
       </button>
-    </div>
 
-    <div class="header-text">
-      <h2>QA Consult - ระบบตรวจสอบเอกสารอัตโนมัติ</h2>
-      <p>อัปโหลดเอกสารของคุณเพื่อเปรียบเทียบกับฐานข้อมูล Knowledge Base ของบริษัท และรับรายงานข้อผิดพลาดทางอีเมล</p>
-      <div class="active-project-badge">
-        โครงการปัจจุบัน: <strong>{selectedProjectObj.project_code} - {selectedProjectObj.name}</strong>
-        <span style="margin: 0 10px; color: #8b5cf6;">|</span>
-        ชื่อการตรวจสอบ: <strong>[{scanGroupType}] {scanGroupName}</strong>
-        <button class="btn-text-change" on:click={() => isGroupNameSet = false}>[ แก้ไข ]</button>
+      <div class="active-context-pills">
+        <span class="ctx-pill project-ctx">
+          <span class="ctx-dot"></span>
+          โครงการ: <strong>{resolvedProjectLabel}</strong>
+        </span>
+        <span class="ctx-pill group-ctx">
+          กลุ่ม: <strong>[{scanGroupType}] {String(scanGroupName || '').replace(/^\[.*?\]\s*/, '').trim() || scanGroupName}</strong>
+          <button type="button" class="btn-text-change" on:click={() => isGroupNameSet = false}>เปลี่ยนกลุ่ม</button>
+        </span>
       </div>
     </div>
 
-    <div class="main-card">
+    <div class="header-text upload-header-text">
+      <h2>QA Consult — ระบบตรวจสอบเอกสารอัตโนมัติ</h2>
+      <p>อัปโหลดเอกสารของคุณเพื่อเปรียบเทียบกับฐานข้อมูล Knowledge Base ของโครงการ และรับรายงานผลการตรวจสอบทางอีเมล</p>
+    </div>
+
+    <div class="main-card upload-workspace-card">
       <div class="form-grid">
         <!-- LEFT: File Upload -->
         <div class="upload-section">
-          <!-- svelte-ignore a11y-no-static-element-interactions -->
+          <div class="pane-header">
+            <span class="pane-step">1</span>
+            <div>
+              <h3 class="pane-title">อัปโหลดไฟล์เอกสาร</h3>
+              <p class="pane-sub">รองรับเอกสารข้อกำหนด (.pdf) และตาราง Test Case (.xlsx, .xls)</p>
+            </div>
+          </div>
+
           <div
             class="drop-zone"
             class:dragging={isDragging}
+            class:has-file={!!file}
+            role="button"
+            tabindex="0"
+            aria-label="อัปโหลดไฟล์ PDF หรือ Excel"
             on:dragenter={handleDragEnter}
             on:dragleave={handleDragLeave}
             on:dragover|preventDefault
             on:drop={handleDrop}
             on:click={triggerFileInput}
-            on:keydown={(e) => e.key === "Enter" && triggerFileInput()}
+            on:keydown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), triggerFileInput())}
           >
             {#if file}
               <div class="file-info" on:click|stopPropagation on:keydown|stopPropagation role="group">
@@ -1687,29 +1774,36 @@
                       <line x1="10" y1="9" x2="8" y2="9"></line>
                     </svg>
                   {:else}
-                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="28" height="28"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
                   {/if}
                 </div>
                 <div class="file-details">
-                  <div class="file-name" style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+                  <div class="file-name" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
                     <span>{file.name}</span>
                     {#if isExcelFile(file.name)}
-                      <span style="font-size: 10px; background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4); border-radius: 4px; padding: 1px 6px;">Excel Test Case</span>
+                      <span class="file-kind-badge excel">Excel Test Case</span>
                     {:else}
-                      <span style="font-size: 10px; background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4); border-radius: 4px; padding: 1px 6px;">PDF</span>
+                      <span class="file-kind-badge pdf">PDF Document</span>
                     {/if}
                   </div>
-                  <div class="file-size">{(file.size / 1024).toFixed(1)} KB</div>
+                  <div class="file-size">ขนาดไฟล์ {(file.size / 1024).toFixed(1)} KB • พร้อมตรวจสอบ</div>
                 </div>
-                <button class="btn-remove" on:click={removeFile} title="ลบไฟล์">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                <button type="button" class="btn-remove" aria-label="ลบไฟล์ที่เลือก" on:click={removeFile} title="ลบไฟล์">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
                 </button>
               </div>
             {:else}
               <div class="drop-content">
-                <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                <div class="upload-icon-orb" aria-hidden="true">
+                  <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                </div>
                 <p class="drop-title">ลากไฟล์ PDF หรือ Excel มาวางที่นี่</p>
-                <p class="drop-sub">หรือ <span>คลิกเพื่อเลือกไฟล์</span> (รองรับ .pdf, .xlsx, .xls สำหรับตรวจ Test case)</p>
+                <p class="drop-sub">หรือ <span>คลิกเพื่อเลือกไฟล์จากเครื่อง</span> สำหรับตรวจสอบกับ Knowledge Base</p>
+                <div class="supported-formats" aria-hidden="true">
+                  <span class="fmt-pill pdf">.PDF</span>
+                  <span class="fmt-pill excel">.XLSX</span>
+                  <span class="fmt-pill excel">.XLS</span>
+                </div>
               </div>
             {/if}
           </div>
@@ -1724,6 +1818,13 @@
 
         <!-- RIGHT: Settings -->
         <div class="settings-section">
+          <div class="pane-header">
+            <span class="pane-step">2</span>
+            <div>
+              <h3 class="pane-title">ตั้งค่าเงื่อนไขการตรวจสอบ &amp; ผู้รับรายงาน</h3>
+              <p class="pane-sub">กำหนดมาตรฐานเอกสาร ทักษะ AI และอีเมลสำหรับรับผลการวิเคราะห์</p>
+            </div>
+          </div>
           <div class="setting-group relative">
             <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px;">
               <label style="margin-bottom: 0;">ประเภทเอกสาร (Document Type) <span style="font-size: 11px; color: #94a3b8; font-weight: normal;">(เลือกหรือไม่เลือกก็ได้)</span></label>
@@ -1855,10 +1956,15 @@
             <span class="hint-text">รายงานการเปรียบเทียบจะถูกจัดส่งไปยังอีเมลทั้งหมดนี้</span>
           </div>
 
-          <button class="btn-primary" on:click={processQAConsult} disabled={!file || (emailList.length === 0 && emailInput.trim() === '')}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
-            เริ่มตรวจสอบเอกสาร
-          </button>
+          <div class="submit-action-area">
+            {#if !file}
+              <div class="submit-readiness-hint">กรุณาอัปโหลดไฟล์เอกสารทางด้านซ้ายเพื่อเริ่มการตรวจสอบ</div>
+            {/if}
+            <button type="button" class="btn-primary btn-start-scan" on:click={processQAConsult} disabled={!file || (emailList.length === 0 && emailInput.trim() === '')}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+              เริ่มตรวจสอบเอกสาร
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -1883,62 +1989,90 @@
 
     <!-- RESULT STATE -->
     <div class="result-state">
-      <div class="dashboard-top-bar" id="qa-top-header" style="display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 8px; padding-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,0.1); width: 100%; flex-wrap: wrap; gap: 16px;">
-        <div class="left-content" style="display: flex; flex-direction: column; gap: 10px;">
-          <div class="header-text" style="text-align: left; margin: 0;">
-            <h2 style="font-size: 22px; margin-bottom: 2px;">ผลการวิเคราะห์ QA & Exit Criteria Review Gate</h2>
-            <p style="font-size: 13px; margin: 0; color: #9ca3af;">ตรวจสอบรายงานด้านล่าง ก่อนกดยืนยันการส่งอีเมล</p>
-          </div>
-          <div class="result-summary" style="margin: 0; padding: 0; background: none; border: none; justify-content: flex-start; gap: 24px;">
-            <div class="summary-item" style="flex-direction: row; align-items: baseline; gap: 8px;">
-              <span class="lbl" style="margin: 0;">ส่งผลลัพธ์ไปที่:</span>
-              <span class="val" style="margin: 0;">{scanResult.email || "- ไม่ระบุ -"}</span>
+      <div class="dashboard-top-bar" id="qa-top-header">
+        <div class="left-content">
+          <div class="header-text">
+            <div class="result-title-row">
+              <span class="result-title-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="20" height="20">
+                  <path d="M9 12l2 2 4-4"></path>
+                  <path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"></path>
+                </svg>
+              </span>
+              <h2>ผลการวิเคราะห์ QA & Exit Criteria Review Gate</h2>
             </div>
-            <div class="summary-item" style="flex-direction: row; align-items: baseline; gap: 8px;">
-              <span class="lbl" style="margin: 0;">{isExcelFile(scanResult.filename) ? 'จำนวนแผ่นงาน:' : 'จำนวนหน้า:'}</span>
-              <span class="val" style="margin: 0;">{scanResult.total_pages ? (isExcelFile(scanResult.filename) ? scanResult.total_pages + ' แผ่นงาน (Sheets)' : scanResult.total_pages + ' หน้า') : '- ไม่ทราบ -'}</span>
+            <p class="result-subtitle">ตรวจสอบรายงานผลการวิเคราะห์ด้านล่าง ก่อนกดยืนยันการส่งรายงานเข้าอีเมล</p>
+          </div>
+          <div class="result-meta-strip">
+            {#if scanResult.filename}
+              <div class="meta-chip">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                  <polyline points="14 2 14 8 20 8"></polyline>
+                </svg>
+                <span class="lbl">ไฟล์:</span>
+                <span class="val" title={scanResult.filename}>{scanResult.filename}</span>
+              </div>
+            {/if}
+            <div class="meta-chip">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
+                <polyline points="22,6 12,13 2,6"></polyline>
+              </svg>
+              <span class="lbl">ส่งผลลัพธ์ไปที่:</span>
+              <span class="val">{scanResult.email || "- ไม่ระบุ -"}</span>
+            </div>
+            <div class="meta-chip">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                <rect x="3" y="4" width="18" height="16" rx="2"></rect>
+                <line x1="7" y1="8" x2="17" y2="8"></line>
+                <line x1="7" y1="12" x2="17" y2="12"></line>
+                <line x1="7" y1="16" x2="12" y2="16"></line>
+              </svg>
+              <span class="lbl">{isExcelFile(scanResult.filename) ? 'จำนวนแผ่นงาน:' : 'จำนวนหน้า:'}</span>
+              <span class="val">{scanResult.total_pages ? (isExcelFile(scanResult.filename) ? scanResult.total_pages + ' แผ่นงาน (Sheets)' : scanResult.total_pages + ' หน้า') : '- ไม่ทราบ -'}</span>
             </div>
             {#if scanResult.emailSent}
-              <div class="summary-item" style="flex-direction: row; align-items: baseline; gap: 8px;">
-                <span class="lbl" style="margin: 0;">สถานะส่งอีเมล:</span>
-                <span class="val success" style="margin: 0;">ส่งสำเร็จแล้ว</span>
+              <div class="meta-chip success">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="14" height="14">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+                <span class="lbl">สถานะส่งอีเมล:</span>
+                <span class="val success">ส่งสำเร็จแล้ว</span>
               </div>
             {/if}
           </div>
         </div>
 
-        <div class="right-actions" style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+        <div class="right-actions">
           {#if (scanResult.qa_findings && scanResult.qa_findings.length > 0) || (scanResult.exit_criteria_eval && scanResult.exit_criteria_eval.status !== 'PASSED')}
             <button class="btn-auto-fix-glow" on:click={sendFindingsToDocCreation} disabled={isSendingToDocCreation} title="ส่งข้อบกพร่องที่พบไปยัง QA Document Creation เพื่อปรับปรุงเอกสารให้ผ่าน และบันทึก Rule ปรับปรุง Agent">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15">
                 <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
                 <path d="M12 8v4l3 3"/>
               </svg>
-              {isSendingToDocCreation ? 'กำลังส่งข้อมูล...' : `🔄 ส่งแก้ไขใน QA Doc Creation (${getTotalCorrectionCount()} ข้อ)`}
+              {isSendingToDocCreation ? 'กำลังส่งข้อมูล...' : `ส่งแก้ไขใน QA Doc Creation (${getTotalCorrectionCount()} ข้อ)`}
             </button>
           {/if}
 
           {#if scanResult.exit_criteria_eval}
-            <button class="btn-outline-glow" on:click={() => { gateResultData = scanResult.exit_criteria_eval; showGateModal = true; }} style="height: 42px; font-weight: 600;">
-              ✨ แสดง Modal Animation
+            <button class="btn-outline-glow" on:click={() => { gateResultData = scanResult.exit_criteria_eval; showGateModal = true; }}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15">
+                <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+              </svg>
+              แสดง Modal Animation
             </button>
           {/if}
 
-          <button class="btn-outline" on:click={resetForm} disabled={isSendingEmail} style="padding: 10px 16px; min-width: 0; height: 42px; margin: 0;">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><polyline points="1 4 1 10 7 10"></polyline><polyline points="23 20 23 14 17 14"></polyline><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"></path></svg>
-            เริ่มใหม่
-          </button>
-          
           {#if scanResult.excel_url}
             <a 
               href={scanResult.excel_url} 
               download 
               target="_blank" 
               rel="noopener noreferrer" 
-              class="btn-download-excel" 
-              style="padding: 10px 16px; margin: 0; height: 42px; border-radius: 8px; font-size: 14px; box-shadow: none;"
+              class="btn-download-excel"
             >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15">
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                 <polyline points="7 10 12 15 17 10"></polyline>
                 <line x1="12" y1="15" x2="12" y2="3"></line>
@@ -1947,14 +2081,19 @@
             </a>
           {/if}
 
-          <button class="btn-primary" on:click={sendEmail} disabled={isSendingEmail || scanResult.emailSent || !scanResult.email} style="padding: 10px 20px; min-width: 0; height: 42px; margin: 0; border-radius: 8px; font-size: 14px;">
+          <button class="btn-outline-action" on:click={resetForm} disabled={isSendingEmail}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><polyline points="1 4 1 10 7 10"></polyline><polyline points="23 20 23 14 17 14"></polyline><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"></path></svg>
+            เริ่มใหม่
+          </button>
+
+          <button class="btn-primary-action" on:click={sendEmail} disabled={isSendingEmail || scanResult.emailSent || !scanResult.email}>
             {#if isSendingEmail}
               กำลังส่ง...
             {:else if scanResult.emailSent}
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><polyline points="20 6 9 17 4 12"></polyline></svg>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><polyline points="20 6 9 17 4 12"></polyline></svg>
               ส่งแล้ว
             {:else}
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
               ส่งรายงานเข้าอีเมล
             {/if}
           </button>
@@ -1967,11 +2106,6 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
           นำทางด่วน:
         </span>
-        {#if scanResult.exit_criteria_eval}
-          <button class="btn-quick-nav" on:click={() => scrollToSection('exit-criteria-section')}>
-            📋 Exit Criteria Gate ({scanResult.exit_criteria_eval.score_percentage}%)
-          </button>
-        {/if}
         {#if scanResult.qa_findings && scanResult.qa_findings.length > 0}
           <button class="btn-quick-nav" on:click={() => scrollToSection('qa-findings-section')}>
             📊 QA Audit Findings ({scanResult.qa_findings.length})
@@ -1981,99 +2115,104 @@
             ✅ QA Audit Findings (ผ่าน)
           </button>
         {/if}
+        {#if scanResult.exit_criteria_eval}
+          <button class="btn-quick-nav" on:click={() => scrollToSection('exit-criteria-section')}>
+            📋 Exit Criteria Gate ({scanResult.exit_criteria_eval.score_percentage}%)
+          </button>
+        {/if}
         <button class="btn-quick-nav highlight-btn" on:click={() => scrollToSection('consult-report-section')}>
           📝 Spectra QA Consult Report (รายงานวิเคราะห์)
         </button>
       </div>
 
       <!-- QA Findings Report Card (Always show) -->
-        <div class="qa-findings-card glass-panel" id="qa-findings-section" style="margin-bottom: 20px;">
-          <div class="gate-result-header" style="margin-bottom: 16px;">
-            <div class="gate-header-title">
-              <h3>📊 QA Audit Findings Report</h3>
-              {#if scanResult.qa_findings && scanResult.qa_findings.length > 0}
-                <span class="template-badge">ประเด็นที่พบจากการวิเคราะห์</span>
-              {:else}
-                <span class="template-badge" style="background: rgba(52, 211, 153, 0.15); color: #34d399; border-color: rgba(52, 211, 153, 0.3);">✅ ผ่านการตรวจสอบ</span>
-              {/if}
-            </div>
-            <div class="gate-header-actions" style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-              {#if scanResult.qa_findings && scanResult.qa_findings.length > 0}
-                <span class="gate-status-pill status-info">
-                  พบ {scanResult.qa_findings.length} รายการ
-                </span>
-                <button class="btn-mini-autofix" on:click={sendFindingsToDocCreation} disabled={isSendingToDocCreation}>
-                  🔄 ส่งแก้ไขใน QA Doc Creation
-                </button>
-              {:else}
-                <span class="gate-status-pill status-passed">
-                  ✅ ไม่พบข้อผิดพลาด
-                </span>
-              {/if}
-              <button class="btn-table-toggle" on:click={() => isFindingsTableExpanded = !isFindingsTableExpanded}>
-                {isFindingsTableExpanded ? '🔽 ย่อตาราง' : '🔼 ขยายเต็ม'}
-              </button>
-            </div>
+      <div class="qa-findings-card glass-panel" id="qa-findings-section">
+        <div class="gate-result-header">
+          <div class="gate-header-title">
+            <h3>📊 QA Audit Findings Report</h3>
+            {#if scanResult.qa_findings && scanResult.qa_findings.length > 0}
+              <span class="template-badge">ประเด็นที่พบจากการวิเคราะห์</span>
+            {:else}
+              <span class="template-badge" style="background: rgba(52, 211, 153, 0.15); color: #34d399; border-color: rgba(52, 211, 153, 0.3);">✅ ผ่านการตรวจสอบ</span>
+            {/if}
           </div>
-
-          <div class="exit-checklist-table-wrapper" class:expanded={isFindingsTableExpanded}>
-            <table class="exit-checklist-table">
-              <thead>
-                <tr>
-                  <th style="width: 50px;">ลำดับ</th>
-                  <th style="width: 150px;">ประเภทการตรวจ</th>
-                  <th>ประเด็นที่พบ (Issue)</th>
-                  <th style="width: 100px;">ความรุนแรง</th>
-                  <th>สิ่งที่ควรเป็น</th>
-                  <th>ข้อเสนอแนะ</th>
-                </tr>
-              </thead>
-              <tbody>
-                {#if scanResult.qa_findings && scanResult.qa_findings.length > 0}
-                  {#each scanResult.qa_findings as finding, i}
-                    <tr class="row-status-{finding.severity === 'Critical' || finding.severity === 'High' ? 'fail' : finding.severity === 'Medium' ? 'na' : 'pass'}">
-                      <td class="item-code-cell" style="text-align: center;">{i + 1}</td>
-                      <td class="category-cell">{finding.check_type || '-'}</td>
-                      <td class="question-cell">
-                        <strong>{finding.issue || '-'}</strong>
-                        {#if finding.found_incorrect && finding.found_incorrect !== '-'}
-                          <div class="evidence-text" style="margin-top: 8px;">
-                            <span style="color: #f87171;">ข้อความในเอกสาร:</span> {finding.found_incorrect}
-                          </div>
-                        {/if}
-                      </td>
-                      <td class="severity-cell" style="text-align: center;">
-                        <span class="badge-sev badge-sev-{finding.severity.toLowerCase()}">{finding.severity}</span>
-                      </td>
-                      <td class="remarks-cell">{finding.correct_value || '-'}</td>
-                      <td class="remarks-cell">{finding.recommendation || '-'}</td>
-                    </tr>
-                  {/each}
-                {:else}
-                  <tr>
-                    <td colspan="6" style="text-align: center; padding: 40px 20px;">
-                      <div style="display: flex; flex-direction: column; align-items: center; gap: 12px;">
-                        <div style="font-size: 48px; opacity: 0.9;">✅</div>
-                        <div style="font-size: 16px; font-weight: 600; color: #34d399;">ไม่พบข้อผิดพลาดในเอกสาร</div>
-                        <div style="font-size: 13px; color: #9ca3af; max-width: 400px;">เอกสารผ่านการตรวจสอบ QA Audit เรียบร้อย ไม่พบประเด็นข้อบกพร่องที่ต้องแก้ไข</div>
-                      </div>
-                    </td>
-                  </tr>
-                {/if}
-              </tbody>
-            </table>
+          <div class="gate-header-actions">
+            {#if scanResult.qa_findings && scanResult.qa_findings.length > 0}
+              <span class="gate-status-pill status-info">
+                พบ {scanResult.qa_findings.length} รายการ
+              </span>
+              <button class="btn-mini-autofix" on:click={sendFindingsToDocCreation} disabled={isSendingToDocCreation}>
+                🔄 ส่งแก้ไขใน QA Doc Creation
+              </button>
+            {:else}
+              <span class="gate-status-pill status-passed">
+                ✅ ไม่พบข้อผิดพลาด
+              </span>
+            {/if}
+            <button class="btn-table-toggle" on:click={() => isFindingsTableExpanded = !isFindingsTableExpanded}>
+              {isFindingsTableExpanded ? '🔽 ย่อตาราง' : '🔼 ขยายเต็ม'}
+            </button>
           </div>
         </div>
 
+        <div class="exit-checklist-table-wrapper" class:expanded={isFindingsTableExpanded}>
+          <table class="exit-checklist-table">
+            <thead>
+              <tr>
+                <th style="width: 60px; text-align: center;">ลำดับ</th>
+                <th style="width: 160px;">ประเภทการตรวจ</th>
+                <th style="width: 28%;">ประเด็นที่พบ (Issue)</th>
+                <th style="width: 110px; text-align: center;">ความรุนแรง</th>
+                <th style="width: 24%;">สิ่งที่ควรเป็น</th>
+                <th>ข้อเสนอแนะ</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#if scanResult.qa_findings && scanResult.qa_findings.length > 0}
+                {#each scanResult.qa_findings as finding, i}
+                  <tr class="row-status-{finding.severity === 'Critical' || finding.severity === 'High' ? 'fail' : finding.severity === 'Medium' ? 'na' : 'pass'}">
+                    <td class="item-code-cell" style="text-align: center;"><strong>{i + 1}</strong></td>
+                    <td class="category-cell">{finding.check_type || '-'}</td>
+                    <td class="question-cell">
+                      <strong class="issue-headline">{finding.issue || '-'}</strong>
+                      {#if finding.found_incorrect && finding.found_incorrect !== '-'}
+                        <div class="evidence-text" style="margin-top: 6px;">
+                          <span class="evidence-lbl">ข้อความในเอกสาร:</span> {finding.found_incorrect}
+                        </div>
+                      {/if}
+                    </td>
+                    <td class="severity-cell" style="text-align: center;">
+                      <span class="badge-sev badge-sev-{(finding.severity || 'info').toLowerCase()}">{finding.severity || 'Info'}</span>
+                    </td>
+                    <td class="remarks-cell">{finding.correct_value || '-'}</td>
+                    <td class="remarks-cell">{finding.recommendation || '-'}</td>
+                  </tr>
+                {/each}
+              {:else}
+                <tr>
+                  <td colspan="6" style="text-align: center; padding: 40px 20px;">
+                    <div style="display: flex; flex-direction: column; align-items: center; gap: 12px;">
+                      <div style="font-size: 48px; opacity: 0.9;">✅</div>
+                      <div style="font-size: 16px; font-weight: 600; color: #34d399;">ไม่พบข้อผิดพลาดในเอกสาร</div>
+                      <div style="font-size: 13px; color: #9ca3af; max-width: 400px;">เอกสารผ่านการตรวจสอบ QA Audit เรียบร้อย ไม่พบประเด็นข้อบกพร่องที่ต้องแก้ไข</div>
+                    </div>
+                  </td>
+                </tr>
+              {/if}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       <!-- Exit Criteria Review Gate Card -->
       {#if scanResult.exit_criteria_eval}
-        <div class="exit-criteria-gate-result-card glass-panel" id="exit-criteria-section" style="margin-bottom: 20px;">
+        <div class="exit-criteria-gate-result-card glass-panel" id="exit-criteria-section">
           <div class="gate-result-header">
             <div class="gate-header-title">
               <h3>📋 ผลการประเมิน Exit Criteria Review Gate</h3>
               <span class="template-badge">{scanResult.exit_criteria_eval.template_title}</span>
             </div>
-            <div class="gate-header-actions" style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+            <div class="gate-header-actions">
               {#if activeTabStats.status !== 'PASSED'}
                 <button class="btn-mini-autofix" on:click={sendFindingsToDocCreation} disabled={isSendingToDocCreation}>
                   🔄 ส่งแก้ไขตามเกณฑ์ Gate
@@ -2152,12 +2291,12 @@
             <table class="exit-checklist-table">
               <thead>
                 <tr>
-                  <th style="width: 70px;">ข้อตรวจ</th>
-                  <th style="width: 180px;">หมวดหมู่</th>
-                  <th>รายการประเมิน (Checklist Item)</th>
-                  <th style="width: 150px;">📊 ตัวชี้วัด (KPI Indicator)</th>
-                  <th style="width: 90px;">ความรุนแรง</th>
-                  <th style="width: 95px;">ผลการตรวจ</th>
+                  <th style="width: 68px; text-align: center;">ข้อตรวจ</th>
+                  <th style="width: 170px;">หมวดหมู่</th>
+                  <th style="width: 24%;">รายการประเมิน (Checklist Item)</th>
+                  <th style="width: 165px;">📊 ตัวชี้วัด (KPI Indicator)</th>
+                  <th style="width: 96px; text-align: center;">ความรุนแรง</th>
+                  <th style="width: 96px; text-align: center;">ผลการตรวจ</th>
                   <th>ข้อสังเกต / ร่องรอยที่พบ</th>
                 </tr>
               </thead>
@@ -2171,7 +2310,7 @@
                 {:else}
                   {#each activeTabItems as item}
                     <tr class="row-status-{item.status.toLowerCase()}">
-                      <td class="item-code-cell"><strong>{item.item_code}</strong></td>
+                      <td class="item-code-cell" style="text-align: center;"><strong>{item.item_code}</strong></td>
                       <td class="category-cell">
                         {#if selectedCriteriaTab === 'all' && item.groupTag}
                           <span class="group-prefix-badge">{item.groupTag}</span>
@@ -2182,10 +2321,10 @@
                       <td class="metric-cell">
                         <span class="badge-metric">{item.target_metric || '100% (ผ่านบริบูรณ์)'}</span>
                       </td>
-                      <td class="severity-cell">
-                        <span class="badge-sev badge-sev-{item.severity.toLowerCase()}">{item.severity}</span>
+                      <td class="severity-cell" style="text-align: center;">
+                        <span class="badge-sev badge-sev-{(item.severity || 'info').toLowerCase()}">{item.severity}</span>
                       </td>
-                      <td class="status-cell">
+                      <td class="status-cell" style="text-align: center;">
                         <span class="badge-status status-tag-{item.status.toLowerCase()}">
                           {item.status === 'PASS' ? '✅ PASS' : item.status === 'FAIL' ? '❌ FAIL' : '⚪ N/A'}
                         </span>
@@ -2208,17 +2347,17 @@
       <!-- Spectra QA Consult Report Box -->
       <div class="report-box email-preview" id="consult-report-section">
         <div class="email-header">
-          <div style="display: flex; align-items: center; gap: 8px;">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+          <div class="email-header-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
               <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
               <polyline points="14 2 14 8 20 8"></polyline>
               <line x1="16" y1="13" x2="8" y2="13"></line>
               <line x1="16" y1="17" x2="8" y2="17"></line>
               <polyline points="10 9 9 9 8 9"></polyline>
             </svg>
-            <h2 style="margin: 0; font-size: 1.15rem; font-weight: 700;">Spectra QA Consult Report</h2>
+            <h3>Spectra QA Consult Report</h3>
           </div>
-          <div style="display: flex; gap: 8px; align-items: center;">
+          <div class="email-header-actions">
             {#if scanResult.report}
               <button class="btn-report-action" on:click={copyReportText} title="คัดลอกข้อความรายงาน">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
@@ -2239,7 +2378,7 @@
           {#if scanResult.report}
             <pre>{scanResult.report}</pre>
           {:else}
-            <div style="color: red; padding: 10px; background: #fee2e2; border-radius: 4px;">
+            <div class="report-missing-error">
               ไม่พบเนื้อหารายงาน (AI ไม่ได้ส่งข้อความกลับมา หรือเกิดข้อผิดพลาดในการรับข้อมูล)<br>
               <pre style="font-size: 11px; margin-top: 10px;">{JSON.stringify(scanResult, null, 2)}</pre>
             </div>
@@ -2248,8 +2387,6 @@
           <p class="footer-note"><small>สร้างโดย Spectra QA Intelligent Analysis System</small></p>
         </div>
       </div>
-
-
     </div>
   {/if}
 </div>
@@ -2309,10 +2446,10 @@
     max-width: 100%;
     height: 100%;
     margin: 0;
-    padding: 20px 40px 60px;
+    padding: 16px 24px 36px;
     display: flex;
     flex-direction: column;
-    gap: 30px;
+    gap: 18px;
     overflow-y: auto;
     scroll-behavior: smooth;
     box-sizing: border-box;
@@ -2329,10 +2466,10 @@
   .main-card,
   .loading-card,
   .analysis-controls {
-    max-width: 1400px;
+    max-width: 100%;
     width: 100%;
-    margin-left: auto;
-    margin-right: auto;
+    margin-left: 0;
+    margin-right: 0;
     box-sizing: border-box;
   }
   .header-text-local {
@@ -2342,117 +2479,327 @@
     font-size: 28px;
     font-weight: 700;
     margin-bottom: 10px;
-    background: linear-gradient(90deg, #fff, #9ca3af);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
+    color: var(--text-main, #f8fafc);
   }
   .header-text-local p {
-    color: var(--text3);
+    color: var(--text-muted, #94a3b8);
     font-size: 16px;
   }
+  .upload-top-nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 4px;
+  }
+  .active-context-pills {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .ctx-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 13px;
+    color: var(--text-muted, #94a3b8);
+    background: rgba(18, 20, 28, 0.72);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+  }
+  .ctx-pill strong {
+    color: var(--text-main, #f8fafc);
+    font-weight: 600;
+  }
+  .project-ctx {
+    border-color: rgba(99, 102, 241, 0.35);
+    background: rgba(99, 102, 241, 0.1);
+  }
+  .project-ctx strong {
+    color: #c7d2fe;
+  }
+  .ctx-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--primary, #6366f1);
+    box-shadow: 0 0 8px var(--primary, #6366f1);
+  }
+  .group-ctx {
+    border-color: rgba(168, 85, 247, 0.35);
+    background: rgba(168, 85, 247, 0.1);
+  }
+  .group-ctx strong {
+    color: #e9d5ff;
+  }
+  .upload-header-text {
+    text-align: left;
+    margin-bottom: -8px;
+  }
+  .upload-header-text h2 {
+    font-size: clamp(22px, 2.4vw, 28px);
+    font-weight: 700;
+    color: var(--text-main, #f8fafc);
+    margin: 0 0 6px 0;
+  }
+  .upload-header-text p {
+    font-size: 14.5px;
+    color: var(--text-muted, #94a3b8);
+    margin: 0;
+  }
   .main-card {
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: 16px;
-    padding: 30px;
+    background: rgba(18, 20, 28, 0.58);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: var(--radius-lg, 20px);
+    padding: 28px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.38);
   }
   .form-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 40px;
+    grid-template-columns: minmax(340px, 1.05fr) minmax(380px, 1fr);
+    gap: 32px;
+    align-items: stretch;
+  }
+  @media (max-width: 960px) {
+    .form-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+  .upload-section {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .pane-header {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  }
+  .pane-step {
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.25), rgba(168, 85, 247, 0.25));
+    border: 1px solid rgba(168, 85, 247, 0.45);
+    color: #e0e7ff;
+    font-family: var(--font-en, 'Outfit', sans-serif);
+    font-size: 13px;
+    font-weight: 700;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+  .pane-title {
+    margin: 0 0 2px 0;
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--text-main, #f8fafc);
+  }
+  .pane-sub {
+    margin: 0;
+    font-size: 12.5px;
+    color: var(--text-muted, #94a3b8);
   }
   
   /* Upload Section */
   .drop-zone {
-    border: 2px dashed var(--border);
-    border-radius: 12px;
-    height: 100%;
-    min-height: 250px;
+    flex: 1;
+    border: 1.5px dashed rgba(168, 85, 247, 0.38);
+    border-radius: 16px;
+    min-height: 310px;
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    transition: all 0.2s;
-    background: rgba(0,0,0,0.2);
+    transition: all 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+    background: radial-gradient(circle at 50% 35%, rgba(99, 102, 241, 0.08), rgba(10, 11, 18, 0.55) 70%);
+    padding: 28px;
+    position: relative;
+    overflow: hidden;
   }
-  .drop-zone.dragging, .drop-zone:hover {
-    border-color: #9333ea;
-    background: rgba(147, 51, 234, 0.05);
+  .drop-zone.dragging,
+  .drop-zone:hover,
+  .drop-zone:focus-visible {
+    border-color: var(--secondary, #a855f7);
+    background: radial-gradient(circle at 50% 35%, rgba(168, 85, 247, 0.16), rgba(14, 16, 26, 0.72) 75%);
+    box-shadow: 0 12px 32px -10px rgba(168, 85, 247, 0.28);
+    transform: translateY(-2px);
+  }
+  .drop-zone.has-file {
+    border-style: solid;
+    border-color: rgba(99, 102, 241, 0.45);
   }
   .drop-content {
     text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    max-width: 420px;
+  }
+  .upload-icon-orb {
+    width: 68px;
+    height: 68px;
+    border-radius: 20px;
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.18), rgba(168, 85, 247, 0.18));
+    border: 1px solid rgba(168, 85, 247, 0.35);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 18px;
+    box-shadow: 0 8px 24px rgba(99, 102, 241, 0.22);
+    transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.28s ease;
+  }
+  .drop-zone:hover .upload-icon-orb,
+  .drop-zone.dragging .upload-icon-orb {
+    transform: translateY(-4px) scale(1.05);
+    border-color: rgba(168, 85, 247, 0.7);
   }
   .upload-icon {
-    width: 48px;
-    height: 48px;
-    color: var(--text3);
-    margin-bottom: 15px;
+    width: 30px;
+    height: 30px;
+    color: #c4b5fd;
+    margin-bottom: 0;
+    transition: color 0.22s ease;
   }
   .drop-zone:hover .upload-icon {
-    color: #9333ea;
+    color: #ffffff;
   }
   .drop-title {
     font-size: 18px;
-    font-weight: 600;
-    color: var(--text);
-    margin-bottom: 5px;
+    font-weight: 700;
+    color: var(--text-main, #f8fafc);
+    margin: 0 0 6px 0;
   }
   .drop-sub {
-    font-size: 14px;
-    color: var(--text3);
+    font-size: 13.5px;
+    color: var(--text-muted, #94a3b8);
+    margin: 0 0 18px 0;
+    line-height: 1.5;
   }
   .drop-sub span {
-    color: #9333ea;
+    color: #c084fc;
+    font-weight: 600;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+  .supported-formats {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .fmt-pill {
+    font-family: var(--font-en, 'Outfit', sans-serif);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    padding: 4px 10px;
+    border-radius: 6px;
+  }
+  .fmt-pill.pdf {
+    background: rgba(244, 63, 94, 0.14);
+    border: 1px solid rgba(244, 63, 94, 0.32);
+    color: #fda4af;
+  }
+  .fmt-pill.excel {
+    background: rgba(16, 185, 129, 0.14);
+    border: 1px solid rgba(16, 185, 129, 0.32);
+    color: #6ee7b7;
   }
   .file-info {
     display: flex;
     align-items: center;
-    gap: 15px;
-    background: var(--surface);
-    padding: 20px;
-    border-radius: 8px;
-    border: 1px solid #9333ea;
-    width: 80%;
+    gap: 16px;
+    background: rgba(15, 18, 30, 0.85);
+    padding: 20px 22px;
+    border-radius: 14px;
+    border: 1px solid rgba(168, 85, 247, 0.45);
+    width: 100%;
+    max-width: 520px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
   }
   .file-icon {
-    width: 40px;
-    height: 40px;
-    background: rgba(147, 51, 234, 0.2);
-    border-radius: 8px;
+    width: 48px;
+    height: 48px;
+    background: rgba(168, 85, 247, 0.16);
+    border: 1px solid rgba(168, 85, 247, 0.35);
+    border-radius: 12px;
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #9333ea;
+    color: #c084fc;
+    flex-shrink: 0;
+  }
+  .file-icon.excel-icon {
+    background: rgba(16, 185, 129, 0.14);
+    border-color: rgba(16, 185, 129, 0.35);
   }
   .file-details {
     flex: 1;
+    min-width: 0;
   }
   .file-name {
-    font-weight: 500;
-    font-size: 14px;
+    font-weight: 600;
+    font-size: 14.5px;
+    color: var(--text-main, #f8fafc);
     margin-bottom: 4px;
     word-break: break-all;
   }
+  .file-kind-badge {
+    font-family: var(--font-en, 'Outfit', sans-serif);
+    font-size: 10.5px;
+    font-weight: 700;
+    border-radius: 5px;
+    padding: 2px 7px;
+  }
+  .file-kind-badge.excel {
+    background: rgba(16, 185, 129, 0.18);
+    color: #34d399;
+    border: 1px solid rgba(16, 185, 129, 0.4);
+  }
+  .file-kind-badge.pdf {
+    background: rgba(244, 63, 94, 0.18);
+    color: #fda4af;
+    border: 1px solid rgba(244, 63, 94, 0.4);
+  }
   .file-size {
     font-size: 12px;
-    color: var(--text3);
+    color: var(--text-muted, #94a3b8);
   }
   .btn-remove {
-    background: none;
-    border: none;
-    color: var(--text3);
+    background: rgba(244, 63, 94, 0.1);
+    border: 1px solid rgba(244, 63, 94, 0.25);
+    color: #fda4af;
     cursor: pointer;
-    padding: 5px;
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: all 0.2s ease;
   }
   .btn-remove:hover {
-    color: #ef4444;
+    background: rgba(244, 63, 94, 0.25);
+    color: #ffffff;
   }
 
   /* Settings Section */
   .settings-section {
     display: flex;
     flex-direction: column;
-    gap: 24px;
+    gap: 20px;
   }
   .setting-group {
     display: flex;
@@ -2460,25 +2807,28 @@
     gap: 8px;
   }
   .setting-group label {
-    font-size: 14px;
-    font-weight: 500;
-    color: var(--text2);
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--text-main, #f8fafc);
   }
   
   /* Input Email */
   .email-input-container input {
-    background: rgba(0,0,0,0.2);
-    border: 1px solid var(--border);
-    color: var(--text);
+    background: rgba(10, 11, 18, 0.65);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    color: var(--text-main, #f8fafc);
     padding: 12px 16px;
-    border-radius: 8px;
-    font-size: 15px;
+    border-radius: 10px;
+    font-size: 14px;
     outline: none;
-    transition: border-color 0.2s, box-shadow 0.2s;
+    transition: border-color 0.22s ease, box-shadow 0.22s ease;
+  }
+  .email-input-container input::placeholder {
+    color: var(--text-dim, #475569);
   }
   .email-input-container input:focus {
-    border-color: #9333ea;
-    box-shadow: 0 0 0 2px rgba(147, 51, 234, 0.2);
+    border-color: var(--secondary, #a855f7);
+    box-shadow: 0 0 0 3px rgba(168, 85, 247, 0.25);
   }
 
   /* Custom Select Dropdowns */
@@ -2571,7 +2921,7 @@
 
   .hint-text {
     font-size: 12px;
-    color: var(--text3);
+    color: var(--text-muted, #94a3b8);
   }
 
   .email-input-container {
@@ -2582,10 +2932,10 @@
     flex: 1;
   }
   .btn-add-email {
-    background: rgba(255, 255, 255, 0.1);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    color: var(--text-main);
+    background: rgba(99, 102, 241, 0.16);
+    border: 1px solid rgba(99, 102, 241, 0.38);
+    border-radius: 10px;
+    color: var(--text-main, #f8fafc);
     width: 44px;
     display: flex;
     align-items: center;
@@ -2594,29 +2944,29 @@
     transition: all 0.2s;
   }
   .btn-add-email:hover:not(:disabled) {
-    background: #9333ea;
-    border-color: #9333ea;
+    background: var(--primary, #6366f1);
+    border-color: var(--primary, #6366f1);
   }
   .btn-add-email:disabled {
-    opacity: 0.5;
+    opacity: 0.45;
     cursor: not-allowed;
   }
   .email-tags {
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
-    margin-top: 8px;
+    margin-top: 6px;
   }
   .email-tag {
     display: flex;
     align-items: center;
     gap: 6px;
-    background: rgba(147, 51, 234, 0.2);
-    border: 1px solid rgba(147, 51, 234, 0.5);
-    padding: 4px 10px;
+    background: rgba(168, 85, 247, 0.16);
+    border: 1px solid rgba(168, 85, 247, 0.4);
+    padding: 5px 12px;
     border-radius: 16px;
     font-size: 13px;
-    color: #d8b4fe;
+    color: #e9d5ff;
   }
   .remove-tag {
     background: none;
@@ -2634,33 +2984,49 @@
     background: rgba(255, 255, 255, 0.1);
     color: #fff;
   }
-  .btn-primary {
+  .submit-action-area {
     margin-top: auto;
-    background: linear-gradient(135deg, #7c3aed, #3b82f6);
+    padding-top: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .submit-readiness-hint {
+    font-size: 12px;
+    color: #fbbf24;
+    text-align: center;
+  }
+  .btn-primary {
+    width: 100%;
+    background: linear-gradient(135deg, var(--primary, #6366f1), var(--secondary, #a855f7));
     color: white;
     border: none;
-    padding: 16px;
-    border-radius: 8px;
-    font-size: 16px;
+    padding: 15px 20px;
+    border-radius: 12px;
+    font-size: 15.5px;
     font-weight: 600;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 10px;
-    transition: opacity 0.2s, transform 0.1s;
+    box-shadow: 0 8px 24px -4px rgba(99, 102, 241, 0.45);
+    transition: transform 0.24s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.24s ease, opacity 0.2s ease;
   }
   .btn-primary:hover:not(:disabled) {
-    opacity: 0.9;
+    transform: translateY(-2px);
+    box-shadow: 0 12px 28px -4px rgba(168, 85, 247, 0.55);
   }
   .btn-primary:active:not(:disabled) {
-    transform: scale(0.98);
+    transform: translateY(0);
   }
   .btn-primary:disabled {
-    opacity: 0.5;
+    opacity: 0.45;
     cursor: not-allowed;
-    background: var(--surface);
-    color: var(--text3);
+    background: rgba(30, 41, 59, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: var(--text-muted, #94a3b8);
+    box-shadow: none;
   }
 
   /* Loading State */
@@ -2670,9 +3036,9 @@
     align-items: center;
     justify-content: center;
     padding: 60px 20px;
-    background: var(--surface2);
+    background: rgba(18, 20, 28, 0.58);
     border-radius: 16px;
-    border: 1px solid var(--border);
+    border: 1px solid rgba(255, 255, 255, 0.1);
     min-height: 400px;
   }
   
@@ -2682,11 +3048,15 @@
     flex-direction: column;
     align-items: stretch;
     justify-content: flex-start;
-    padding: 24px 32px;
-    background: var(--surface2);
-    border-radius: 16px;
-    border: 1px solid var(--border);
-    min-height: 400px;
+    gap: 18px;
+    width: 100%;
+    flex-shrink: 0;
+    min-height: min-content;
+    padding: 24px 28px 64px;
+    background: rgba(18, 20, 28, 0.58);
+    border-radius: 18px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-sizing: border-box;
   }
   .spinner-box {
     margin-bottom: 30px;
@@ -2696,7 +3066,7 @@
     margin-bottom: 10px;
   }
   .status-msg {
-    color: var(--text2);
+    color: var(--text-muted, #94a3b8);
     margin-bottom: 30px;
   }
   .progress-bar-container {
@@ -2713,53 +3083,187 @@
     transition: width 0.3s ease;
   }
 
-  /* Result State */
-  .success-icon {
-    width: 64px;
-    height: 64px;
-    color: #10b981;
-    margin-bottom: 20px;
-  }
-  .result-state h2 {
-    font-size: 28px;
-    color: #10b981;
-    margin-bottom: 10px;
-  }
-  .result-state p {
-    color: var(--text2);
-    margin-bottom: 30px;
-    text-align: center;
-  }
-  .result-summary {
-    background: rgba(0,0,0,0.2);
-    padding: 20px;
-    border-radius: 8px;
-    width: 100%;
-    max-width: 400px;
-    margin-bottom: 30px;
-  }
-  .summary-item {
+  /* Result State Top Command Bar */
+  .dashboard-top-bar {
     display: flex;
     justify-content: space-between;
-    margin-bottom: 10px;
-    font-size: 14px;
+    align-items: flex-start;
+    gap: 20px;
+    flex-wrap: wrap;
+    width: 100%;
+    padding: 18px 22px;
+    background: rgba(15, 23, 42, 0.72);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 14px;
+    box-sizing: border-box;
+    backdrop-filter: blur(12px);
   }
-  .summary-item:last-child {
-    margin-bottom: 0;
+  .dashboard-top-bar .left-content {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    flex: 1 1 420px;
+    min-width: 0;
   }
-  .summary-item .lbl {
-    color: var(--text3);
+  .dashboard-top-bar .header-text {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    text-align: left;
   }
-  .summary-item .val {
+  .result-title-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .result-title-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+    background: rgba(16, 185, 129, 0.14);
+    border: 1px solid rgba(16, 185, 129, 0.32);
+    color: #34d399;
+    flex-shrink: 0;
+  }
+  .result-state .dashboard-top-bar h2 {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 700;
+    color: #f8fafc;
+    letter-spacing: -0.01em;
+    line-height: 1.3;
+  }
+  .result-state .result-subtitle {
+    margin: 0;
+    padding-left: 44px;
+    font-size: 13px;
+    color: #94a3b8;
+    text-align: left;
+    line-height: 1.45;
+  }
+  .result-meta-strip {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding-left: 44px;
+  }
+  .meta-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 8px;
+    font-size: 12.5px;
+    line-height: 1.3;
+    color: #cbd5e1;
+    max-width: 100%;
+  }
+  .meta-chip svg {
+    color: #818cf8;
+    flex-shrink: 0;
+  }
+  .meta-chip .lbl {
+    color: #94a3b8;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .meta-chip .val {
+    color: #f8fafc;
     font-weight: 600;
+    max-width: 260px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
-  .val.success {
-    color: #10b981;
+  .meta-chip.success {
+    background: rgba(16, 185, 129, 0.12);
+    border-color: rgba(16, 185, 129, 0.3);
   }
+  .meta-chip.success svg,
+  .meta-chip .val.success {
+    color: #34d399;
+  }
+
+  .dashboard-top-bar .right-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-self: center;
+  }
+
+  .btn-outline-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    height: 38px;
+    padding: 0 14px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    color: #e2e8f0;
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.2s ease;
+  }
+  .btn-outline-action:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.24);
+    color: #ffffff;
+    transform: translateY(-1px);
+  }
+  .btn-outline-action:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .btn-primary-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    height: 38px;
+    padding: 0 18px;
+    width: auto;
+    background: linear-gradient(135deg, #6366f1, #9333ea);
+    border: 1px solid rgba(168, 85, 247, 0.45);
+    color: #ffffff;
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    box-shadow: 0 4px 14px rgba(99, 102, 241, 0.35);
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .btn-primary-action:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px rgba(147, 51, 234, 0.5);
+    filter: brightness(1.06);
+  }
+  .btn-primary-action:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    background: rgba(30, 41, 59, 0.7);
+    border-color: rgba(255, 255, 255, 0.1);
+    color: #94a3b8;
+    box-shadow: none;
+  }
+
   .btn-outline {
     background: transparent;
-    border: 1px solid var(--border);
-    color: var(--text);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    color: var(--text-main, #f8fafc);
     padding: 12px 24px;
     border-radius: 8px;
     cursor: pointer;
@@ -2795,7 +3299,7 @@
   .active-project-badge {
     margin-top: 15px;
     font-size: 14px;
-    color: var(--text2);
+    color: var(--text-muted, #94a3b8);
     background: rgba(147, 51, 234, 0.1);
     padding: 8px 16px;
     border-radius: 8px;
@@ -2822,96 +3326,101 @@
   }
 
   .report-box.email-preview {
-    background: #f9fafb;
-    border: 1px solid #e5e7eb;
-    border-radius: 12px;
+    background: rgba(15, 23, 42, 0.82);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 16px;
     padding: 0;
-    margin-bottom: 24px;
+    margin-bottom: 8px;
     text-align: left;
-    max-height: 60vh;
+    max-height: 62vh;
     overflow-y: auto;
     width: 100%;
-    color: #333;
-    font-family: Arial, sans-serif;
+    color: #e2e8f0;
+    backdrop-filter: blur(12px);
+    box-sizing: border-box;
   }
   .email-header {
-    background-color: #7c3aed;
-    color: white;
-    padding: 16px 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.22), rgba(124, 58, 237, 0.25));
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    color: #f8fafc;
+    padding: 14px 22px;
     position: sticky;
     top: 0;
     z-index: 10;
+    backdrop-filter: blur(14px);
   }
-  .email-header h2 {
+  .email-header-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: #c4b5fd;
+  }
+  .email-header-title h3 {
     margin: 0;
-    font-size: 20px;
-    font-weight: 600;
+    font-size: 1rem;
+    font-weight: 700;
+    color: #f8fafc;
+  }
+  .email-header-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
   }
   .email-body {
-    padding: 24px;
+    padding: 22px 24px;
   }
   .email-body p {
-    color: #333;
-    margin-bottom: 12px;
-    font-size: 15px;
+    color: #cbd5e1;
+    margin: 0 0 10px 0;
+    font-size: 14px;
+    text-align: left;
+    line-height: 1.6;
+  }
+  .email-body b {
+    color: #f8fafc;
   }
   .email-body hr {
     border: 0;
-    border-top: 1px solid #e5e7eb;
-    margin: 20px 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    margin: 16px 0;
   }
   .email-body pre {
     white-space: pre-wrap;
     word-break: break-word;
     font-family: inherit;
-    font-size: 15px;
-    line-height: 1.6;
-    color: #333;
+    font-size: 14px;
+    line-height: 1.7;
+    color: #e2e8f0;
     margin: 0;
+    background: rgba(9, 11, 17, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 12px;
+    padding: 18px 20px;
+  }
+  .report-missing-error {
+    color: #fca5a5;
+    padding: 14px 16px;
+    background: rgba(239, 68, 68, 0.12);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: 10px;
   }
   .footer-note {
     margin-bottom: 0 !important;
-    color: #6b7280 !important;
+    color: #64748b !important;
+    text-align: left !important;
   }
 
   .report-box::-webkit-scrollbar {
     width: 8px;
   }
   .report-box::-webkit-scrollbar-thumb {
-    background: rgba(0,0,0,0.2);
+    background: rgba(255, 255, 255, 0.16);
     border-radius: 4px;
-  }
-
-  .result-summary {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 20px;
-    background: rgba(255, 255, 255, 0.03);
-    padding: 16px 24px;
-    border-radius: 12px;
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    margin-bottom: 20px;
-    justify-content: center;
-  }
-  .summary-item {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 6px;
-  }
-  .summary-item .lbl {
-    font-size: 13px;
-    color: var(--text3);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-  }
-  .summary-item .val {
-    font-size: 16px;
-    font-weight: 600;
-    color: var(--text-main);
-  }
-  .summary-item .val.success {
-    color: #10b981;
   }
 
   .action-buttons {
@@ -3055,78 +3564,51 @@
     min-width: 120px;
   }
 
-  /* Excel Download Section */
-  .excel-download-section {
-    margin: 20px 0;
-  }
-  .excel-badge {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    padding: 18px 24px;
-    background: linear-gradient(135deg, rgba(124, 58, 237, 0.08), rgba(59, 130, 246, 0.08));
-    border: 1px solid rgba(124, 58, 237, 0.25);
-    border-radius: 14px;
-    transition: all 0.25s ease;
-  }
-  .excel-badge:hover {
-    border-color: rgba(124, 58, 237, 0.45);
-    background: linear-gradient(135deg, rgba(124, 58, 237, 0.12), rgba(59, 130, 246, 0.12));
-  }
-  .excel-badge > svg {
-    color: #10b981;
-    flex-shrink: 0;
-  }
-  .excel-info {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    flex: 1;
-  }
-  .excel-title {
-    font-weight: 600;
-    font-size: 14px;
-    color: white;
-  }
-  .excel-desc {
-    font-size: 12px;
-    color: #9ca3af;
-  }
+  /* Excel Download Button */
   .btn-download-excel {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
-    padding: 10px 22px;
-    background: linear-gradient(135deg, #10b981, #059669);
-    color: white;
+    justify-content: center;
+    gap: 7px;
+    height: 38px;
+    padding: 0 15px;
+    background: rgba(16, 185, 129, 0.16);
+    border: 1px solid rgba(16, 185, 129, 0.4);
+    color: #34d399;
     text-decoration: none;
     border-radius: 10px;
     font-weight: 600;
     font-size: 13px;
     transition: all 0.2s ease;
     white-space: nowrap;
-    box-shadow: 0 4px 14px rgba(16, 185, 129, 0.25);
   }
   .btn-download-excel:hover {
-    background: linear-gradient(135deg, #059669, #047857);
+    background: linear-gradient(135deg, #10b981, #059669);
+    border-color: #34d399;
+    color: #ffffff;
     transform: translateY(-1px);
-    box-shadow: 0 6px 18px rgba(16, 185, 129, 0.35);
+    box-shadow: 0 4px 14px rgba(16, 185, 129, 0.3);
   }
 
-  /* Exit Criteria Gate Card & Table Styles */
+  /* Unified Card Containers: QA Findings & Exit Criteria Gate */
+  .qa-findings-card,
   .exit-criteria-gate-result-card {
-    background: rgba(15, 23, 42, 0.85);
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(15, 23, 42, 0.82);
+    border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 16px;
-    padding: 20px 24px;
+    padding: 20px 22px;
     backdrop-filter: blur(12px);
+    box-sizing: border-box;
+    width: 100%;
   }
 
   .gate-result-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    gap: 12px;
+    flex-wrap: wrap;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
     padding-bottom: 14px;
     margin-bottom: 16px;
   }
@@ -3134,92 +3616,128 @@
   .gate-header-title {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
+    flex-wrap: wrap;
   }
 
   .gate-header-title h3 {
     margin: 0;
-    font-size: 1.15rem;
+    font-size: 1.05rem;
     font-weight: 700;
     color: #f8fafc;
   }
 
+  .gate-header-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
   .template-badge {
-    background: rgba(99, 102, 241, 0.2);
-    border: 1px solid rgba(99, 102, 241, 0.4);
+    background: rgba(99, 102, 241, 0.16);
+    border: 1px solid rgba(99, 102, 241, 0.35);
     color: #a5b4fc;
     font-size: 0.75rem;
+    font-weight: 500;
     padding: 3px 10px;
-    border-radius: 14px;
+    border-radius: 999px;
   }
 
   .btn-outline-glow {
-    background: rgba(99, 102, 241, 0.15);
-    border: 1px solid rgba(99, 102, 241, 0.4);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    height: 38px;
+    padding: 0 14px;
+    background: rgba(99, 102, 241, 0.14);
+    border: 1px solid rgba(99, 102, 241, 0.38);
     color: #c7d2fe;
-    padding: 6px 14px;
-    border-radius: 8px;
-    font-size: 0.82rem;
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 600;
     cursor: pointer;
+    white-space: nowrap;
     transition: all 0.2s ease;
   }
 
   .btn-outline-glow:hover {
-    background: rgba(99, 102, 241, 0.3);
+    background: rgba(99, 102, 241, 0.28);
+    border-color: rgba(129, 140, 248, 0.6);
     color: #ffffff;
-    box-shadow: 0 0 12px rgba(99, 102, 241, 0.4);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
   }
 
   .gate-status-pill {
-    padding: 6px 16px;
-    border-radius: 20px;
-    font-size: 0.85rem;
+    display: inline-flex;
+    align-items: center;
+    height: 30px;
+    padding: 0 12px;
+    border-radius: 8px;
+    font-size: 0.76rem;
     font-weight: 700;
-    letter-spacing: 0.5px;
+    letter-spacing: 0.03em;
+    white-space: nowrap;
   }
 
-  .gate-status-pill.status-passed { background: #059669; color: #ffffff; }
-  .gate-status-pill.status-conditional_passed { background: #d97706; color: #ffffff; }
-  .gate-status-pill.status-rejected { background: #dc2626; color: #ffffff; }
+  .gate-status-pill.status-info {
+    background: rgba(99, 102, 241, 0.16);
+    border: 1px solid rgba(99, 102, 241, 0.35);
+    color: #c7d2fe;
+  }
+  .gate-status-pill.status-passed {
+    background: rgba(16, 185, 129, 0.18);
+    border: 1px solid rgba(16, 185, 129, 0.4);
+    color: #34d399;
+  }
+  .gate-status-pill.status-conditional_passed {
+    background: rgba(245, 158, 11, 0.18);
+    border: 1px solid rgba(245, 158, 11, 0.4);
+    color: #fbbf24;
+  }
+  .gate-status-pill.status-rejected {
+    background: rgba(239, 68, 68, 0.18);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    color: #f87171;
+  }
 
   .gate-summary-bar {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
     gap: 12px;
-    margin-bottom: 20px;
+    margin-bottom: 16px;
   }
 
   .summary-stat {
-    background: rgba(30, 41, 59, 0.7);
+    background: rgba(30, 41, 59, 0.55);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 12px;
-    padding: 12px;
+    padding: 14px 12px;
     display: flex;
     flex-direction: column;
     align-items: center;
+    justify-content: center;
+    gap: 2px;
   }
 
-  .summary-stat.green { background: rgba(16, 185, 129, 0.12); border-color: rgba(16, 185, 129, 0.3); }
-  .summary-stat.red { background: rgba(239, 68, 68, 0.12); border-color: rgba(239, 68, 68, 0.3); }
-  .summary-stat.gray { background: rgba(148, 163, 184, 0.12); border-color: rgba(148, 163, 184, 0.3); }
+  .summary-stat.green { background: rgba(16, 185, 129, 0.1); border-color: rgba(16, 185, 129, 0.28); }
+  .summary-stat.red { background: rgba(239, 68, 68, 0.1); border-color: rgba(239, 68, 68, 0.28); }
+  .summary-stat.gray { background: rgba(148, 163, 184, 0.08); border-color: rgba(148, 163, 184, 0.22); }
 
-  .stat-num { font-size: 1.25rem; font-weight: 700; color: #f8fafc; }
+  .stat-num {
+    font-family: var(--font-en, 'Outfit', sans-serif);
+    font-size: 1.45rem;
+    font-weight: 700;
+    color: #f8fafc;
+    line-height: 1.15;
+  }
   .summary-stat.green .stat-num { color: #34d399; }
   .summary-stat.red .stat-num { color: #f87171; }
   .summary-stat.gray .stat-num { color: #94a3b8; }
 
-  .stat-lbl { font-size: 0.75rem; color: #94a3b8; margin-top: 2px; }
-
-  /* Result State Container */
-  .result-state {
-    display: flex;
-    flex-direction: column;
-    gap: 20px;
-    width: 100%;
-    flex-shrink: 0;
-    min-height: min-content;
-    padding-bottom: 80px;
-  }
+  .stat-lbl { font-size: 0.76rem; color: #94a3b8; font-weight: 500; }
 
   /* Quick Navigation Bar */
   .quick-nav-bar {
@@ -3227,11 +3745,10 @@
     align-items: center;
     gap: 10px;
     flex-wrap: wrap;
-    background: rgba(30, 41, 59, 0.7);
+    background: rgba(15, 23, 42, 0.65);
     border: 1px solid rgba(255, 255, 255, 0.08);
     padding: 10px 16px;
     border-radius: 12px;
-    margin-bottom: 8px;
     backdrop-filter: blur(8px);
   }
   .nav-label {
@@ -3247,44 +3764,50 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.1);
     color: #e2e8f0;
     padding: 6px 14px;
     border-radius: 8px;
     font-size: 0.8rem;
+    font-weight: 500;
     cursor: pointer;
     transition: all 0.2s ease;
   }
   .btn-quick-nav:hover {
-    background: rgba(99, 102, 241, 0.2);
+    background: rgba(99, 102, 241, 0.18);
     border-color: rgba(99, 102, 241, 0.4);
     color: #ffffff;
     transform: translateY(-1px);
   }
   .btn-quick-nav.highlight-btn {
-    background: rgba(124, 58, 237, 0.25);
-    border-color: rgba(124, 58, 237, 0.45);
-    color: #c4b5fd;
+    background: rgba(124, 58, 237, 0.2);
+    border-color: rgba(168, 85, 247, 0.4);
+    color: #ddd6fe;
     font-weight: 600;
   }
   .btn-quick-nav.highlight-btn:hover {
-    background: rgba(124, 58, 237, 0.4);
+    background: rgba(124, 58, 237, 0.35);
     color: #ffffff;
   }
 
   .btn-table-toggle {
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.15);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 30px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.14);
     color: #cbd5e1;
-    padding: 4px 10px;
-    border-radius: 6px;
+    padding: 0 11px;
+    border-radius: 8px;
     font-size: 0.75rem;
+    font-weight: 500;
     cursor: pointer;
     transition: all 0.2s ease;
   }
   .btn-table-toggle:hover {
-    background: rgba(255, 255, 255, 0.18);
+    background: rgba(255, 255, 255, 0.14);
     color: #ffffff;
   }
 
@@ -3292,17 +3815,19 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    background: rgba(255, 255, 255, 0.15);
-    border: 1px solid rgba(255, 255, 255, 0.25);
-    color: #ffffff;
-    padding: 6px 12px;
-    border-radius: 6px;
+    height: 30px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: #f8fafc;
+    padding: 0 12px;
+    border-radius: 8px;
     font-size: 0.78rem;
+    font-weight: 500;
     cursor: pointer;
     transition: all 0.2s ease;
   }
   .btn-report-action:hover {
-    background: rgba(255, 255, 255, 0.28);
+    background: rgba(255, 255, 255, 0.2);
     transform: translateY(-1px);
   }
 
@@ -3310,8 +3835,8 @@
   .criteria-nav-tabs {
     display: flex;
     gap: 8px;
-    margin: 14px 0 16px 0;
-    padding-bottom: 8px;
+    margin: 0 0 16px 0;
+    padding-bottom: 10px;
     overflow-x: auto;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   }
@@ -3421,9 +3946,9 @@
     overflow-x: auto;
     overflow-y: auto;
     max-height: 480px;
-    border-radius: 8px;
+    border-radius: 10px;
     border: 1px solid rgba(255, 255, 255, 0.08);
-    background: rgba(15, 23, 42, 0.4);
+    background: rgba(10, 14, 24, 0.45);
   }
   .exit-checklist-table-wrapper.expanded {
     max-height: none;
@@ -3432,68 +3957,115 @@
   .exit-checklist-table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 0.85rem;
+    font-size: 0.84rem;
+    line-height: 1.55;
   }
 
   .exit-checklist-table th {
-    background: #1e293b;
+    background: rgba(30, 41, 59, 0.95);
     position: sticky;
     top: 0;
     z-index: 5;
-    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.12);
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.1);
     color: #cbd5e1;
+    font-weight: 600;
+    font-size: 0.8rem;
     text-align: left;
-    padding: 10px 12px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+    padding: 11px 14px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    white-space: nowrap;
   }
 
   .exit-checklist-table td {
-    padding: 10px 12px;
+    padding: 13px 14px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.06);
     color: #e2e8f0;
     vertical-align: top;
   }
+  .exit-checklist-table tbody tr:last-child td {
+    border-bottom: none;
+  }
 
-  .row-status-fail { background: rgba(239, 68, 68, 0.06); }
-  .row-status-pass { background: rgba(16, 185, 129, 0.02); }
+  .issue-headline {
+    color: #f8fafc;
+    font-weight: 600;
+    display: block;
+    line-height: 1.45;
+  }
+  .evidence-lbl {
+    color: #f87171;
+    font-weight: 600;
+  }
+
+  .row-status-fail { background: rgba(239, 68, 68, 0.05); }
+  .row-status-pass { background: rgba(16, 185, 129, 0.015); }
 
   .badge-status {
-    display: inline-block;
-    padding: 3px 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 3px 9px;
     border-radius: 6px;
-    font-size: 0.75rem;
+    font-size: 0.73rem;
     font-weight: 600;
+    white-space: nowrap;
   }
 
-  .status-tag-pass { background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4); }
-  .status-tag-fail { background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4); }
-  .status-tag-na { background: rgba(148, 163, 184, 0.2); color: #94a3b8; border: 1px solid rgba(148, 163, 184, 0.4); }
+  .status-tag-pass { background: rgba(16, 185, 129, 0.18); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.38); }
+  .status-tag-fail { background: rgba(239, 68, 68, 0.18); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.38); }
+  .status-tag-na { background: rgba(148, 163, 184, 0.16); color: #94a3b8; border: 1px solid rgba(148, 163, 184, 0.35); }
 
   .badge-sev {
-    padding: 2px 6px;
-    border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 3px 9px;
+    border-radius: 6px;
     font-size: 0.72rem;
     font-weight: 600;
+    white-space: nowrap;
   }
-  .badge-sev-critical { background: rgba(239, 68, 68, 0.2); color: #f87171; }
-  .badge-sev-major { background: rgba(245, 158, 11, 0.2); color: #fbbf24; }
-  .badge-sev-minor { background: rgba(59, 130, 246, 0.2); color: #60a5fa; }
+  .badge-sev-critical,
+  .badge-sev-high {
+    background: rgba(239, 68, 68, 0.18);
+    border: 1px solid rgba(239, 68, 68, 0.35);
+    color: #f87171;
+  }
+  .badge-sev-major,
+  .badge-sev-medium {
+    background: rgba(245, 158, 11, 0.18);
+    border: 1px solid rgba(245, 158, 11, 0.35);
+    color: #fbbf24;
+  }
+  .badge-sev-minor,
+  .badge-sev-low {
+    background: rgba(59, 130, 246, 0.18);
+    border: 1px solid rgba(59, 130, 246, 0.35);
+    color: #60a5fa;
+  }
+  .badge-sev-info {
+    background: rgba(148, 163, 184, 0.14);
+    border: 1px solid rgba(148, 163, 184, 0.3);
+    color: #cbd5e1;
+  }
 
   .badge-metric {
     display: inline-block;
-    padding: 3px 8px;
-    background: rgba(99, 102, 241, 0.18);
-    border: 1px solid rgba(99, 102, 241, 0.35);
+    padding: 4px 9px;
+    background: rgba(99, 102, 241, 0.15);
+    border: 1px solid rgba(99, 102, 241, 0.32);
     color: #c7d2fe;
     border-radius: 6px;
-    font-size: 0.76rem;
+    font-size: 0.75rem;
     font-weight: 600;
+    line-height: 1.35;
   }
 
   .evidence-text {
-    margin-top: 4px;
+    margin-top: 6px;
     font-size: 0.78rem;
     color: #fbbf24;
+    line-height: 1.5;
   }
 
   /* Criteria Mapping Status Box */
@@ -3557,51 +4129,244 @@
   }
 
   /* Group Management and Selection in QAConsult */
-  .group-management-section {
-    max-width: 900px;
-    margin: 0 auto 24px auto;
+  .scan-group-view {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
     width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+
+  .scan-group-command-banner {
+    position: relative;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 16px;
+    width: 100%;
+    padding: 16px 22px;
+    background: linear-gradient(135deg, rgba(18, 21, 34, 0.82), rgba(15, 18, 28, 0.68));
+    border: 1px solid rgba(168, 85, 247, 0.24);
+    border-radius: 16px;
+    box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    box-sizing: border-box;
+    overflow: hidden;
+    animation: scanBannerIn 0.38s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .scan-group-command-banner::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(168, 85, 247, 0.65), rgba(99, 102, 241, 0.65), transparent);
+    pointer-events: none;
+  }
+
+  .banner-left {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+    flex: 1 1 420px;
+    min-width: 0;
+  }
+
+  .btn-back-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #94a3b8;
+    font-size: 12.5px;
+    font-weight: 500;
+    cursor: pointer;
+    padding: 4px 11px;
+    border-radius: 999px;
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .btn-back-pill svg {
+    transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .btn-back-pill:hover {
+    color: #f8fafc;
+    background: rgba(168, 85, 247, 0.14);
+    border-color: rgba(168, 85, 247, 0.38);
+  }
+  .btn-back-pill:hover svg {
+    transform: translateX(-3px);
+  }
+
+  .banner-titles h2 {
+    margin: 0 0 2px 0;
+    font-size: clamp(19px, 1.8vw, 23px);
+    font-weight: 700;
+    color: #f8fafc;
+    letter-spacing: -0.01em;
+    line-height: 1.25;
+  }
+  .banner-titles p {
+    margin: 0;
+    font-size: 13px;
+    color: #94a3b8;
+    line-height: 1.4;
+  }
+
+  .banner-right {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 7px;
+    flex-shrink: 0;
+  }
+  @media (max-width: 820px) {
+    .banner-right {
+      align-items: flex-start;
+      width: 100%;
+    }
+  }
+
+  .active-project-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 14px;
+    border-radius: 10px;
+    background: rgba(147, 51, 234, 0.12);
+    border: 1px solid rgba(168, 85, 247, 0.35);
+    font-size: 13px;
+    color: #cbd5e1;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  }
+  .active-project-pill .proj-lbl {
+    color: #94a3b8;
+    font-weight: 500;
+  }
+  .active-project-pill strong {
+    color: #e9d5ff;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+  }
+  .proj-live-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #a855f7;
+    box-shadow: 0 0 10px #a855f7;
+    animation: liveDotPulse 2.2s ease-in-out infinite;
+    flex-shrink: 0;
+  }
+
+  .project-quick-stats {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: #94a3b8;
+    padding: 0 4px;
+  }
+  .project-quick-stats strong {
+    font-family: var(--font-en, 'Outfit', sans-serif);
+    color: #e2e8f0;
+    font-weight: 700;
+  }
+  .project-quick-stats .q-divider {
+    color: rgba(148, 163, 184, 0.45);
+  }
+
+  .group-management-section {
+    max-width: 100%;
+    margin: 0;
+    width: 100%;
+    animation: scanBannerIn 0.42s cubic-bezier(0.16, 1, 0.3, 1) 0.04s both;
   }
   .section-title-bar {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 14px;
-    padding: 0 4px;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 10px;
+    padding: 0 2px;
   }
   .title-with-badge {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 9px;
     color: #c084fc;
+  }
+  .section-icon-badge {
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    background: rgba(168, 85, 247, 0.14);
+    border: 1px solid rgba(168, 85, 247, 0.3);
+    color: #c084fc;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .section-icon-badge.history-icon {
+    background: rgba(99, 102, 241, 0.14);
+    border-color: rgba(99, 102, 241, 0.3);
+    color: #818cf8;
   }
   .title-with-badge h3 {
     margin: 0;
-    font-size: 16px;
-    font-weight: 600;
+    font-size: 15px;
+    font-weight: 700;
     color: #f1f5f9;
   }
+  .section-count-pill {
+    font-family: var(--font-en, 'Outfit', sans-serif);
+    font-size: 11.5px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: rgba(168, 85, 247, 0.18);
+    border: 1px solid rgba(168, 85, 247, 0.35);
+    color: #e9d5ff;
+  }
+  .sub-hint {
+    font-size: 12px;
+    color: #94a3b8;
+  }
   .btn-create-group-trigger {
+    position: relative;
+    overflow: hidden;
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    background: linear-gradient(135deg, rgba(147, 51, 234, 0.25), rgba(99, 102, 241, 0.25));
+    gap: 7px;
+    background: linear-gradient(135deg, rgba(147, 51, 234, 0.28), rgba(99, 102, 241, 0.28));
     border: 1px solid rgba(168, 85, 247, 0.5);
-    color: #f1f5f9;
-    padding: 7px 14px;
+    color: #f8fafc;
+    padding: 7px 15px;
     font-size: 13px;
     font-weight: 600;
-    border-radius: 8px;
+    border-radius: 10px;
     cursor: pointer;
-    transition: all 0.25s ease;
-    box-shadow: 0 2px 10px rgba(147, 51, 234, 0.2);
+    transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    box-shadow: 0 4px 12px rgba(147, 51, 234, 0.18);
+  }
+  .btn-create-group-trigger .plus-icon {
+    transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1);
   }
   .btn-create-group-trigger:hover {
     background: linear-gradient(135deg, #9333ea, #6366f1);
-    border-color: #c084fc;
+    border-color: #d8b4fe;
     color: #ffffff;
-    box-shadow: 0 4px 16px rgba(168, 85, 247, 0.4);
+    box-shadow: 0 6px 18px rgba(168, 85, 247, 0.38);
     transform: translateY(-1px);
+  }
+  .btn-create-group-trigger:hover .plus-icon {
+    transform: rotate(90deg);
   }
   .btn-create-group-trigger.lg {
     padding: 10px 20px;
@@ -3613,7 +4378,7 @@
     background: rgba(15, 23, 42, 0.6);
     border: 1px dashed rgba(168, 85, 247, 0.35);
     border-radius: 16px;
-    padding: 36px 24px;
+    padding: 32px 24px;
     text-align: center;
     display: flex;
     flex-direction: column;
@@ -3877,57 +4642,132 @@
     opacity: 0.6;
     cursor: not-allowed;
   }
+
+  /* Full-Width Auto-Fit Group Cards Grid */
   .existing-groups-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
     gap: 14px;
+    width: 100%;
   }
+
   .group-card-item {
-    background: rgba(30, 41, 59, 0.6);
-    border: 1px solid rgba(139, 92, 246, 0.25);
-    border-radius: 12px;
-    padding: 14px 16px;
+    position: relative;
+    overflow: hidden;
+    background: linear-gradient(160deg, rgba(22, 25, 38, 0.78), rgba(14, 17, 26, 0.68));
+    border: 1px solid rgba(139, 92, 246, 0.26);
+    border-radius: 14px;
+    padding: 15px 18px;
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: transform 0.26s cubic-bezier(0.16, 1, 0.3, 1),
+                border-color 0.26s cubic-bezier(0.16, 1, 0.3, 1),
+                box-shadow 0.26s cubic-bezier(0.16, 1, 0.3, 1),
+                background 0.26s ease;
     display: flex;
     flex-direction: column;
     justify-content: space-between;
-    gap: 12px;
+    gap: 14px;
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    animation: scanCardPopIn 0.42s cubic-bezier(0.16, 1, 0.3, 1) both;
+    animation-delay: calc(var(--card-idx, 0) * 65ms);
   }
-  .group-card-item:hover {
-    background: rgba(30, 41, 59, 0.9);
-    border-color: rgba(168, 85, 247, 0.6);
-    transform: translateY(-2px);
-    box-shadow: 0 6px 20px rgba(147, 51, 234, 0.15);
+  .group-card-item::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, #6366f1, #a855f7, #ec4899);
+    opacity: 0.35;
+    transform: scaleX(0.35);
+    transform-origin: left center;
+    transition: transform 0.32s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.32s ease;
   }
+  .group-card-item[data-gtype="testcase"]::before {
+    background: linear-gradient(90deg, #3b82f6, #6366f1, #a855f7);
+  }
+  .group-card-item[data-gtype="plan"]::before {
+    background: linear-gradient(90deg, #10b981, #3b82f6, #6366f1);
+  }
+  .group-card-item:hover,
+  .group-card-item:focus-visible {
+    background: linear-gradient(160deg, rgba(28, 32, 50, 0.92), rgba(18, 22, 36, 0.85));
+    border-color: rgba(168, 85, 247, 0.62);
+    transform: translateY(-4px);
+    box-shadow: 0 14px 30px -10px rgba(147, 51, 234, 0.32), 0 0 0 1px rgba(168, 85, 247, 0.18);
+    outline: none;
+  }
+  .group-card-item:hover::before,
+  .group-card-item:focus-visible::before {
+    opacity: 1;
+    transform: scaleX(1);
+  }
+
   .group-card-top {
     display: flex;
     align-items: flex-start;
-    gap: 10px;
+    gap: 12px;
   }
   .group-icon-wrap {
-    color: #a855f7;
-    background: rgba(168, 85, 247, 0.12);
-    padding: 8px;
-    border-radius: 8px;
+    color: #c084fc;
+    background: rgba(168, 85, 247, 0.14);
+    border: 1px solid rgba(168, 85, 247, 0.3);
+    width: 38px;
+    height: 38px;
+    border-radius: 10px;
     display: flex;
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
+    transition: transform 0.26s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.26s ease, border-color 0.26s ease, box-shadow 0.26s ease;
+  }
+  .group-card-item[data-gtype="testcase"] .group-icon-wrap {
+    color: #93c5fd;
+    background: rgba(59, 130, 246, 0.14);
+    border-color: rgba(59, 130, 246, 0.3);
+  }
+  .group-card-item[data-gtype="plan"] .group-icon-wrap {
+    color: #6ee7b7;
+    background: rgba(16, 185, 129, 0.13);
+    border-color: rgba(16, 185, 129, 0.28);
+  }
+  .group-card-item:hover .group-icon-wrap {
+    transform: scale(1.07) rotate(-3deg);
+    box-shadow: 0 6px 16px rgba(168, 85, 247, 0.25);
   }
   .group-title-info {
     flex: 1;
+    min-width: 0;
     overflow: hidden;
   }
   .group-type-tag {
-    font-size: 11px;
-    color: #a855f7;
-    font-weight: 600;
-    margin-bottom: 2px;
+    display: inline-block;
+    font-family: var(--font-en, 'Outfit', sans-serif);
+    font-size: 10.5px;
+    color: #d8b4fe;
+    background: rgba(168, 85, 247, 0.16);
+    border: 1px solid rgba(168, 85, 247, 0.32);
+    padding: 1px 8px;
+    border-radius: 6px;
+    font-weight: 700;
+    margin-bottom: 4px;
+    letter-spacing: 0.03em;
+  }
+  .group-card-item[data-gtype="testcase"] .group-type-tag {
+    color: #bfdbfe;
+    background: rgba(59, 130, 246, 0.16);
+    border-color: rgba(59, 130, 246, 0.34);
+  }
+  .group-card-item[data-gtype="plan"] .group-type-tag {
+    color: #a7f3d0;
+    background: rgba(16, 185, 129, 0.15);
+    border-color: rgba(16, 185, 129, 0.32);
   }
   .group-name-text {
-    font-size: 14px;
-    font-weight: 600;
+    font-size: 15.5px;
+    font-weight: 700;
     color: #f8fafc;
     white-space: nowrap;
     overflow: hidden;
@@ -3937,15 +4777,16 @@
     background: none;
     border: none;
     color: #ef4444;
-    opacity: 0.6;
+    opacity: 0.55;
     cursor: pointer;
-    padding: 4px;
-    border-radius: 4px;
-    transition: opacity 0.2s;
+    padding: 5px;
+    border-radius: 6px;
+    transition: all 0.2s ease;
   }
   .btn-card-delete:hover {
     opacity: 1;
-    background: rgba(239, 68, 68, 0.15);
+    background: rgba(239, 68, 68, 0.16);
+    transform: scale(1.08);
   }
   .group-card-bottom {
     display: flex;
@@ -3960,49 +4801,74 @@
     gap: 2px;
   }
   .stat-badge {
-    font-size: 11px;
-    font-weight: 500;
-    display: flex;
+    font-size: 11.5px;
+    font-weight: 600;
+    display: inline-flex;
     align-items: center;
-    gap: 4px;
+    gap: 6px;
   }
   .stat-badge.count-active {
     color: #34d399;
+  }
+  .active-stat-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #10b981;
+    box-shadow: 0 0 8px rgba(16, 185, 129, 0.8);
+    animation: liveDotPulse 2s ease-in-out infinite;
   }
   .stat-badge.count-empty {
     color: #f59e0b;
   }
   .stat-date {
-    font-size: 10px;
+    font-size: 10.5px;
     color: #64748b;
   }
   .btn-select-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
     background: rgba(147, 51, 234, 0.18);
-    border: 1px solid rgba(147, 51, 234, 0.4);
-    color: #d8b4fe;
-    padding: 6px 12px;
+    border: 1px solid rgba(168, 85, 247, 0.4);
+    color: #e9d5ff;
+    padding: 6px 13px;
     font-size: 12px;
-    border-radius: 6px;
+    border-radius: 8px;
     cursor: pointer;
-    font-weight: 500;
-    transition: all 0.2s;
+    font-weight: 600;
+    transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
   }
+  .btn-select-group .btn-arrow {
+    display: inline-block;
+    transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .group-card-item:hover .btn-select-group,
   .btn-select-group:hover {
-    background: #9333ea;
-    color: white;
+    background: linear-gradient(135deg, #9333ea, #6366f1);
+    border-color: #c084fc;
+    color: #ffffff;
+    box-shadow: 0 4px 12px rgba(147, 51, 234, 0.35);
+  }
+  .group-card-item:hover .btn-select-group .btn-arrow,
+  .btn-select-group:hover .btn-arrow {
+    transform: translateX(3px);
   }
 
   /* Recent Project History Section */
   .project-history-section {
-    max-width: 900px;
-    margin: 0 auto;
+    max-width: 100%;
+    margin: 0;
     width: 100%;
+    animation: scanBannerIn 0.45s cubic-bezier(0.16, 1, 0.3, 1) 0.1s both;
   }
   .history-table-container {
-    background: rgba(15, 23, 42, 0.5);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 12px;
+    background: rgba(15, 23, 42, 0.58);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 14px;
     overflow-x: auto;
+    backdrop-filter: blur(12px);
+    box-shadow: 0 8px 26px -8px rgba(0, 0, 0, 0.4);
   }
   .project-history-table {
     width: 100%;
@@ -4011,64 +4877,116 @@
     text-align: left;
   }
   .project-history-table th {
-    background: rgba(30, 41, 59, 0.8);
+    background: rgba(30, 41, 59, 0.85);
     color: #94a3b8;
     font-weight: 600;
-    padding: 10px 14px;
+    padding: 9px 14px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
     font-size: 12px;
+    white-space: nowrap;
   }
   .project-history-table td {
-    padding: 12px 14px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    padding: 9px 14px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.045);
     color: #e2e8f0;
+    vertical-align: middle;
+  }
+  .project-history-table tbody tr:last-child td {
+    border-bottom: none;
   }
   .history-table-row {
     cursor: pointer;
-    transition: background 0.15s;
+    transition: background-color 0.18s ease;
+    animation: historyRowSlideIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+    animation-delay: calc(var(--row-idx, 0) * 35ms + 80ms);
   }
   .history-table-row:hover {
-    background: rgba(147, 51, 234, 0.08);
+    background: rgba(147, 51, 234, 0.1);
   }
   .file-name-cell {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 9px;
     font-weight: 500;
     color: #60a5fa;
   }
+  .file-row-icon {
+    width: 26px;
+    height: 26px;
+    border-radius: 7px;
+    background: rgba(59, 130, 246, 0.12);
+    border: 1px solid rgba(59, 130, 246, 0.25);
+    color: #60a5fa;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.2s ease, color 0.2s ease;
+  }
+  .history-table-row:hover .file-row-icon {
+    transform: translateX(2px) scale(1.05);
+    background: rgba(99, 102, 241, 0.22);
+    color: #93c5fd;
+  }
+  .file-row-name {
+    transition: color 0.18s ease;
+  }
+  .history-table-row:hover .file-row-name {
+    color: #93c5fd;
+  }
   .group-pill {
+    display: inline-block;
     background: rgba(168, 85, 247, 0.15);
+    border: 1px solid rgba(168, 85, 247, 0.3);
     color: #d8b4fe;
-    padding: 3px 8px;
+    padding: 2px 9px;
     border-radius: 6px;
     font-size: 11px;
-    font-weight: 500;
+    font-weight: 600;
   }
   .type-pill {
-    background: rgba(59, 130, 246, 0.15);
+    display: inline-block;
+    background: rgba(59, 130, 246, 0.14);
+    border: 1px solid rgba(59, 130, 246, 0.28);
     color: #93c5fd;
-    padding: 3px 8px;
+    padding: 2px 9px;
     border-radius: 6px;
     font-size: 11px;
+    font-weight: 600;
   }
   .td-date {
     color: #94a3b8;
     font-size: 12px;
+    white-space: nowrap;
   }
   .btn-table-view {
-    background: rgba(59, 130, 246, 0.15);
-    border: 1px solid rgba(59, 130, 246, 0.3);
-    color: #60a5fa;
-    padding: 4px 10px;
-    font-size: 11px;
-    border-radius: 6px;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: rgba(59, 130, 246, 0.14);
+    border: 1px solid rgba(59, 130, 246, 0.32);
+    color: #93c5fd;
+    padding: 4px 11px;
+    font-size: 11.5px;
+    font-weight: 600;
+    border-radius: 7px;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   }
+  .btn-table-view .view-arrow {
+    display: inline-block;
+    transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .history-table-row:hover .btn-table-view,
   .btn-table-view:hover {
-    background: #2563eb;
-    color: white;
+    background: linear-gradient(135deg, #3b82f6, #6366f1);
+    border-color: #93c5fd;
+    color: #ffffff;
+    box-shadow: 0 3px 10px rgba(59, 130, 246, 0.3);
+  }
+  .history-table-row:hover .btn-table-view .view-arrow,
+  .btn-table-view:hover .view-arrow {
+    transform: translateX(2px);
   }
 
   /* Recent Project History Pagination */
@@ -4078,12 +4996,19 @@
     align-items: center;
     flex-wrap: wrap;
     gap: 12px;
-    margin-top: 14px;
-    padding: 6px 4px;
+    margin-top: 10px;
+    padding: 8px 14px;
+    background: rgba(15, 23, 42, 0.5);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 11px;
   }
   .pagination-info {
-    font-size: 13px;
+    font-size: 12.5px;
     color: #94a3b8;
+  }
+  .pagination-info strong {
+    color: #e2e8f0;
+    font-weight: 600;
   }
   .pagination-nav {
     display: flex;
@@ -4097,9 +5022,10 @@
     background: rgba(30, 41, 59, 0.7);
     border: 1px solid rgba(255, 255, 255, 0.1);
     color: #cbd5e1;
-    padding: 6px 12px;
+    padding: 5px 11px;
     border-radius: 7px;
-    font-size: 12.5px;
+    font-size: 12px;
+    font-weight: 500;
     cursor: pointer;
     transition: all 0.2s ease;
   }
@@ -4120,8 +5046,8 @@
     gap: 4px;
   }
   .btn-page-num {
-    min-width: 32px;
-    height: 32px;
+    min-width: 30px;
+    height: 30px;
     padding: 0 6px;
     display: inline-flex;
     align-items: center;
@@ -4130,7 +5056,7 @@
     border: 1px solid rgba(255, 255, 255, 0.08);
     color: #cbd5e1;
     border-radius: 6px;
-    font-size: 13px;
+    font-size: 12.5px;
     font-weight: 500;
     cursor: pointer;
     transition: all 0.2s ease;
@@ -4153,64 +5079,114 @@
     padding: 0 4px;
   }
 
+  @keyframes scanBannerIn {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  @keyframes scanCardPopIn {
+    from {
+      opacity: 0;
+      transform: translateY(14px) scale(0.98);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+  @keyframes historyRowSlideIn {
+    from {
+      opacity: 0;
+      transform: translateX(-8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+  @keyframes liveDotPulse {
+    0%, 100% {
+      transform: scale(1);
+      opacity: 1;
+    }
+    50% {
+      transform: scale(1.25);
+      opacity: 0.65;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .scan-group-command-banner,
+    .group-management-section,
+    .group-card-item,
+    .project-history-section,
+    .history-table-row,
+    .proj-live-dot,
+    .active-stat-dot {
+      animation: none !important;
+    }
+  }
+
   .btn-auto-fix-glow {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
-    background: linear-gradient(135deg, #f59e0b 0%, #ec4899 50%, #8b5cf6 100%);
-    color: #ffffff;
-    border: none;
-    padding: 10px 18px;
-    border-radius: 8px;
-    font-size: 13.5px;
-    font-weight: 700;
+    justify-content: center;
+    gap: 7px;
+    height: 38px;
+    padding: 0 15px;
+    background: linear-gradient(135deg, rgba(245, 158, 11, 0.22), rgba(236, 72, 153, 0.22));
+    border: 1px solid rgba(245, 158, 11, 0.48);
+    color: #fde68a;
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 600;
     cursor: pointer;
-    box-shadow: 0 4px 14px rgba(236, 72, 153, 0.4), 0 0 20px rgba(245, 158, 11, 0.25);
-    transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-    animation: pulseAutoFix 2.5s infinite;
+    white-space: nowrap;
+    box-shadow: 0 4px 14px rgba(245, 158, 11, 0.16);
+    transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
   }
-  .btn-auto-fix-glow:hover {
-    transform: translateY(-2px) scale(1.02);
-    box-shadow: 0 6px 20px rgba(236, 72, 153, 0.6), 0 0 25px rgba(245, 158, 11, 0.4);
-    filter: brightness(1.1);
+  .btn-auto-fix-glow:hover:not(:disabled) {
+    background: linear-gradient(135deg, #f59e0b, #ec4899);
+    border-color: rgba(253, 224, 71, 0.7);
+    color: #ffffff;
+    transform: translateY(-1px);
+    box-shadow: 0 6px 18px rgba(245, 158, 11, 0.32);
   }
-  .btn-auto-fix-glow:active {
+  .btn-auto-fix-glow:active:not(:disabled) {
     transform: translateY(0);
   }
   .btn-auto-fix-glow:disabled {
-    opacity: 0.6;
+    opacity: 0.55;
     cursor: not-allowed;
-    animation: none;
   }
 
   .btn-mini-autofix {
-    background: linear-gradient(135deg, rgba(245, 158, 11, 0.2), rgba(236, 72, 153, 0.25));
-    border: 1px solid rgba(245, 158, 11, 0.5);
-    color: #fde047;
-    font-size: 11px;
-    font-weight: 700;
-    padding: 4px 10px;
-    border-radius: 6px;
-    cursor: pointer;
-    transition: all 0.2s;
     display: inline-flex;
     align-items: center;
-    gap: 4px;
+    justify-content: center;
+    gap: 5px;
+    height: 30px;
+    padding: 0 11px;
+    background: linear-gradient(135deg, rgba(245, 158, 11, 0.16), rgba(236, 72, 153, 0.18));
+    border: 1px solid rgba(245, 158, 11, 0.42);
+    color: #fde68a;
+    font-size: 0.75rem;
+    font-weight: 600;
+    border-radius: 8px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.2s ease;
   }
-  .btn-mini-autofix:hover {
+  .btn-mini-autofix:hover:not(:disabled) {
     background: linear-gradient(135deg, #f59e0b, #ec4899);
     color: #ffffff;
     border-color: transparent;
     transform: translateY(-1px);
-    box-shadow: 0 2px 8px rgba(245, 158, 11, 0.4);
-  }
-
-  @keyframes pulseAutoFix {
-    0%, 100% {
-      box-shadow: 0 4px 14px rgba(236, 72, 153, 0.4), 0 0 20px rgba(245, 158, 11, 0.25);
-    }
-    50% {
-      box-shadow: 0 4px 22px rgba(236, 72, 153, 0.7), 0 0 30px rgba(245, 158, 11, 0.5);
-    }
+    box-shadow: 0 3px 10px rgba(245, 158, 11, 0.3);
   }
 </style>

@@ -1096,7 +1096,10 @@
 <style>
   /* Main QA Performance Styles */
   .perf-container {
-    padding: 24px 32px;
+    padding: 20px 24px;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
     height: 100%;
     display: flex;
     flex-direction: column;

@@ -2,6 +2,7 @@
   import { Handle, Position, useSvelteFlow } from '@xyflow/svelte';
   import { onMount } from 'svelte';
   import { selectedProjectStore } from '../qaHistoryStore.js';
+  import { getCachedSkills, getCachedDocTypes } from './nodeMetadataCache.js';
   export let id;
   export let data;
 
@@ -13,27 +14,13 @@
   let docTypes = [];
 
   onMount(async () => {
-    // Load Skills
-    try {
-      const resSkills = await fetch("/api/skills");
-      if (resSkills.ok) {
-        const d = await resSkills.json();
-        skills = d.skills || [];
-      }
-    } catch (e) { console.error("DebateLoopNode load skills error:", e); }
-
-    // Load Doc Types
-    try {
-      let url = "/api/doc_types";
-      if ($selectedProjectStore) {
-        const pid = $selectedProjectStore.id || $selectedProjectStore.project_id;
-        url += `?project_id=${pid}`;
-      }
-      const resDoc = await fetch(url);
-      if (resDoc.ok) {
-        docTypes = await resDoc.json();
-      }
-    } catch (e) { console.error("DebateLoopNode load doc types error:", e); }
+    const pid = $selectedProjectStore ? ($selectedProjectStore.id || $selectedProjectStore.project_id) : '';
+    const [loadedSkills, loadedDocTypes] = await Promise.all([
+      getCachedSkills(),
+      getCachedDocTypes(pid)
+    ]);
+    skills = loadedSkills;
+    docTypes = loadedDocTypes;
   });
 
   function deleteNode() {
@@ -46,29 +33,29 @@
   <div class="node-header">
     <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.92-10.26l1.08 1.08"></path></svg>
     <span>Iterative Debate Loop</span>
-    <button class="delete-btn" on:click|stopPropagation={deleteNode} title="ลบ Card นี้">✕</button>
+    <button type="button" class="delete-btn" aria-label="ลบ Node นี้" on:click|stopPropagation={deleteNode} title="ลบ Card นี้">✕</button>
   </div>
   <div class="node-content">
     <div class="agent-row">
       <div class="agent-select-wrapper">
-        <label>Generator Agent:</label>
+        <label for="{id}-gen-agent">Generator Agent:</label>
         <div class="agent-select-inner">
-          <select bind:value={data.generator} class="nodrag">
+          <select id="{id}-gen-agent" bind:value={data.generator} class="nodrag">
             <option value="qa_doc_create">QA Doc Creator</option>
             <option value="qa_consult">QA Consult</option>
           </select>
-          <button class="btn-config nodrag" on:click={() => {showGenConfig = !showGenConfig; showCriticConfig = false;}} title="ตั้งค่า Generator">⚙️</button>
+          <button type="button" class="btn-config nodrag" aria-label="ตั้งค่า Generator" aria-expanded={showGenConfig} on:click={() => {showGenConfig = !showGenConfig; showCriticConfig = false;}} title="ตั้งค่า Generator">⚙️</button>
         </div>
       </div>
       <div class="vs-badge">VS</div>
       <div class="agent-select-wrapper">
-        <label>Critic Agent:</label>
+        <label for="{id}-critic-agent">Critic Agent:</label>
         <div class="agent-select-inner">
-          <select bind:value={data.critic} class="nodrag">
+          <select id="{id}-critic-agent" bind:value={data.critic} class="nodrag">
             <option value="qa_consult">QA Consult</option>
             <option value="qa_security_scan">QA Security Scanner</option>
           </select>
-          <button class="btn-config nodrag" on:click={() => {showCriticConfig = !showCriticConfig; showGenConfig = false;}} title="ตั้งค่า Critic">⚙️</button>
+          <button type="button" class="btn-config nodrag" aria-label="ตั้งค่า Critic" aria-expanded={showCriticConfig} on:click={() => {showCriticConfig = !showCriticConfig; showGenConfig = false;}} title="ตั้งค่า Critic">⚙️</button>
         </div>
       </div>
     </div>
@@ -77,79 +64,80 @@
       <div class="config-area nodrag">
         <div style="margin-bottom: 8px; color: #a78bfa; font-weight: bold; font-size: 12px;">ตั้งค่า Generator Agent</div>
         
-        <label>ประเภทเอกสาร (Document Type):</label>
-        <select bind:value={data.generator_doc_type} class="config-select">
+        <label for="{id}-gen-doc-type">ประเภทเอกสาร (Document Type):</label>
+        <select id="{id}-gen-doc-type" bind:value={data.generator_doc_type} class="config-select">
           <option value="">-- ไม่ระบุ --</option>
           {#each docTypes as dt}
             <option value={dt}>{dt}</option>
           {/each}
         </select>
         
-        <label>ทักษะ AI (AI Skill):</label>
-        <select bind:value={data.generator_skill_id} class="config-select">
+        <label for="{id}-gen-skill-id">ทักษะ AI (AI Skill):</label>
+        <select id="{id}-gen-skill-id" bind:value={data.generator_skill_id} class="config-select">
           <option value="">-- ไม่ใช้ Skill --</option>
           {#each skills as s}
             <option value={s.skill_id}>{s.skill_name}</option>
           {/each}
         </select>
 
-        <label>อีเมลผู้รับผลการตรวจสอบ:</label>
-        <input type="text" bind:value={data.generator_emails} placeholder="เช่น user@domain.com" class="config-input" />
+        <label for="{id}-gen-emails">อีเมลผู้รับผลการตรวจสอบ:</label>
+        <input id="{id}-gen-emails" type="text" bind:value={data.generator_emails} placeholder="เช่น user@domain.com" class="config-input" />
 
-        <label>คำสั่งเพิ่มเติม (Instructions):</label>
-        <textarea bind:value={data.generator_instructions} placeholder="กรอกคำสั่งหรือหน้าที่ของ Generator Agent..."></textarea>
+        <label for="{id}-gen-instructions">คำสั่งเพิ่มเติม (Instructions):</label>
+        <textarea id="{id}-gen-instructions" bind:value={data.generator_instructions} placeholder="กรอกคำสั่งหรือหน้าที่ของ Generator Agent..."></textarea>
       </div>
     {/if}
     {#if showCriticConfig}
       <div class="config-area nodrag">
         <div style="margin-bottom: 8px; color: #fb7185; font-weight: bold; font-size: 12px;">ตั้งค่า Critic Agent</div>
 
-        <label>ประเภทเอกสาร (Document Type):</label>
-        <select bind:value={data.critic_doc_type} class="config-select">
+        <label for="{id}-critic-doc-type">ประเภทเอกสาร (Document Type):</label>
+        <select id="{id}-critic-doc-type" bind:value={data.critic_doc_type} class="config-select">
           <option value="">-- ไม่ระบุ --</option>
           {#each docTypes as dt}
             <option value={dt}>{dt}</option>
           {/each}
         </select>
         
-        <label>ทักษะ AI (AI Skill):</label>
-        <select bind:value={data.critic_skill_id} class="config-select">
+        <label for="{id}-critic-skill-id">ทักษะ AI (AI Skill):</label>
+        <select id="{id}-critic-skill-id" bind:value={data.critic_skill_id} class="config-select">
           <option value="">-- ไม่ใช้ Skill --</option>
           {#each skills as s}
             <option value={s.skill_id}>{s.skill_name}</option>
           {/each}
         </select>
 
-        <label>อีเมลผู้รับผลการตรวจสอบ:</label>
-        <input type="text" bind:value={data.critic_emails} placeholder="เช่น user@domain.com" class="config-input" />
+        <label for="{id}-critic-emails">อีเมลผู้รับผลการตรวจสอบ:</label>
+        <input id="{id}-critic-emails" type="text" bind:value={data.critic_emails} placeholder="เช่น user@domain.com" class="config-input" />
 
-        <label>คำสั่งเพิ่มเติม (Instructions):</label>
-        <textarea bind:value={data.critic_instructions} placeholder="กรอกคำสั่งหรือหน้าที่ของ Critic Agent..."></textarea>
+        <label for="{id}-critic-instructions">คำสั่งเพิ่มเติม (Instructions):</label>
+        <textarea id="{id}-critic-instructions" bind:value={data.critic_instructions} placeholder="กรอกคำสั่งหรือหน้าที่ของ Critic Agent..."></textarea>
       </div>
     {/if}
     
-    <label>Max Loops (Iterations):</label>
-    <input type="number" min="1" max="10" bind:value={data.max_loops} />
+    <label for="{id}-max-loops">Max Loops (Iterations):</label>
+    <input id="{id}-max-loops" class="nodrag" type="number" min="1" max="10" bind:value={data.max_loops} />
   </div>
   <Handle type="source" position={Position.Right} isConnectable={true} />
 </div>
 
 <style>
   .custom-node {
-    background: #1e1e2d;
-    border: 1px solid #fbbf24;
-    border-radius: 8px;
-    padding: 10px;
+    background: var(--bg2, #12141c);
+    border: 1px solid var(--warning, #f59e0b);
+    border-radius: var(--radius-sm, 8px);
+    padding: 12px;
     width: 450px;
-    color: white;
-    font-family: sans-serif;
+    max-width: calc(100vw - 48px);
+    color: var(--text-main, #f8fafc);
+    font-family: var(--font-th, 'Prompt', sans-serif);
     position: relative;
   }
   .node-header {
     display: flex;
     align-items: center;
     gap: 8px;
-    font-weight: bold;
+    font-weight: 600;
     font-size: 12px;
     margin-bottom: 10px;
     color: #fcd34d;
@@ -158,16 +146,20 @@
     margin-left: auto;
     background: transparent;
     border: none;
-    color: #ef4444;
+    color: var(--danger, #f43f5e);
     cursor: pointer;
-    font-size: 14px;
-    font-weight: bold;
-    padding: 0 4px;
-    border-radius: 4px;
+    font-size: 13px;
+    font-weight: 700;
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
     transition: background 0.2s;
   }
   .delete-btn:hover {
-    background: rgba(239, 68, 68, 0.2);
+    background: rgba(244, 63, 94, 0.18);
   }
   .node-content {
     display: flex;

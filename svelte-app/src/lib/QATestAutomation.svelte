@@ -344,6 +344,7 @@
   let selectedTestSuite = null;
 
   // Phase 5: Test Execution & Self-Healing state
+  let activePhase = 1; // 1 | 2 | 3 | 4 | 5 | 'all'
   let isRunningTest = false;
   let runTestSuccess = null;
   let runTestOutput = null;
@@ -452,7 +453,30 @@
       {/if}
     </div>
   </div>
+
+  <!-- Stepped Phase Navigation Bar -->
+  <div class="phase-stepper" role="tablist" aria-label="QA Automation Phases">
+    <button type="button" role="tab" aria-selected={activePhase === 1} class="phase-step-btn" class:active={activePhase === 1} class:done={requirements.length > 0} on:click={() => (activePhase = 1)}>
+      1. Requirements
+    </button>
+    <button type="button" role="tab" aria-selected={activePhase === 2} class="phase-step-btn" class:active={activePhase === 2} class:done={!!(exploreResult && exploreResult.file_saved)} on:click={() => (activePhase = 2)}>
+      2. Exploration
+    </button>
+    <button type="button" role="tab" aria-selected={activePhase === 3} class="phase-step-btn" class:active={activePhase === 3} class:done={!!alignResult} on:click={() => (activePhase = 3)}>
+      3. Alignment
+    </button>
+    <button type="button" role="tab" aria-selected={activePhase === 4} class="phase-step-btn" class:active={activePhase === 4} class:done={!!generateResult} on:click={() => (activePhase = 4)}>
+      4. Test Gen
+    </button>
+    <button type="button" role="tab" aria-selected={activePhase === 5} class="phase-step-btn" class:active={activePhase === 5} class:done={runTestSuccess === true} on:click={() => (activePhase = 5)}>
+      5. Execution
+    </button>
+    <button type="button" role="tab" aria-selected={activePhase === 'all'} class="phase-step-btn phase-all-btn" class:active={activePhase === 'all'} on:click={() => (activePhase = 'all')}>
+      All Phases
+    </button>
+  </div>
   
+  {#if activePhase === 'all' || activePhase === 1}
   <div class="glass-panel">
     <div class="panel-header">
       <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
@@ -777,7 +801,9 @@
       {/if}
     {/if}
   </div>
+  {/if}
   
+  {#if activePhase === 'all' || activePhase === 2}
   <div class="glass-panel">
     <div class="panel-header">
       <h3>Phase 2: Autonomous Web Exploration (Agent 2)</h3>
@@ -886,7 +912,9 @@
       </div>
     {/if}
   </div>
+  {/if}
 
+  {#if activePhase === 'all' || activePhase === 3}
   <div class="glass-panel" class:disabled={!exploreResult || !exploreResult.file_saved}>
     <div class="panel-header">
       <h3>Phase 3: Semantic Alignment & Gap Analysis (Agent 3)</h3>
@@ -941,7 +969,9 @@
       </div>
     {/if}
   </div>
+  {/if}
 
+  {#if activePhase === 'all' || activePhase === 4}
   <div class="glass-panel" class:disabled={!alignResult}>
     <div class="panel-header">
       <h3>Phase 4: Test Script Generation (Agent 4)</h3>
@@ -1007,7 +1037,9 @@
       </div>
     {/if}
   </div>
+  {/if}
 
+  {#if activePhase === 'all' || activePhase === 5}
   <div class="glass-panel" class:disabled={!generateResult}>
     <div class="panel-header">
       <h3>Phase 5: Test Execution & Self-Healing (Agent 5)</h3>
@@ -1044,7 +1076,7 @@
     {#if runTestOutput}
       <div class="align-result" transition:slide>
         <h4>Test Execution Output</h4>
-        <div class="code-preview-container" style={runTestSuccess ? 'border-left: 3px solid #10b981;' : 'border-left: 3px solid #ef4444;'}>
+        <div class="code-preview-container" style={runTestSuccess ? 'border-color: rgba(16, 185, 129, 0.45);' : 'border-color: rgba(239, 68, 68, 0.45);'}>
           <pre class="code-preview"><code>{runTestOutput}</code></pre>
         </div>
       </div>
@@ -1056,7 +1088,7 @@
     {/if}
 
     {#if healResult}
-      <div class="align-result" transition:slide style="margin-top: 16px; border-left: 3px solid #f59e0b;">
+      <div class="align-result" transition:slide style="margin-top: 16px; border: 1px solid rgba(245, 158, 11, 0.4);">
         <h4>Healing Complete! Code Updated.</h4>
         <p><strong>Analysis:</strong> {healResult.analysis}</p>
         <p><strong>Fix:</strong> {healResult.fix_explanation}</p>
@@ -1069,6 +1101,7 @@
     {/if}
   </div>
   {/if}
+  {/if}
 </div>
 </div>
 
@@ -1080,10 +1113,11 @@
   }
 
   .qa-automate-container {
-    max-width: 1200px;
+    max-width: 100%;
     width: 100%;
-    margin: 0 auto;
-    padding: 30px;
+    margin: 0;
+    padding: 20px 24px;
+    box-sizing: border-box;
     display: flex;
     flex-direction: column;
     gap: 24px;
@@ -1098,9 +1132,54 @@
     font-size: 28px;
     font-weight: 700;
     margin: 0;
-    background: linear-gradient(135deg, #a78bfa, #f472b6, #38bdf8);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
+    color: var(--text-main);
+  }
+
+  .phase-stepper {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 8px;
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-md);
+  }
+
+  .phase-step-btn {
+    flex: 1 1 auto;
+    min-width: 120px;
+    padding: 9px 14px;
+    border-radius: var(--radius-sm);
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-muted);
+    font-family: var(--font-en);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-align: center;
+  }
+
+  .phase-step-btn:hover {
+    color: var(--text-main);
+    background: var(--glass-bg-hover);
+  }
+
+  .phase-step-btn.done {
+    color: #34d399;
+    border-color: rgba(16, 185, 129, 0.25);
+  }
+
+  .phase-step-btn.active {
+    color: #ffffff;
+    background: rgba(99, 102, 241, 0.18);
+    border-color: rgba(99, 102, 241, 0.45);
+  }
+
+  .phase-all-btn {
+    flex: 0 0 auto;
+    min-width: 96px;
   }
   
   .subtitle {
@@ -1605,7 +1684,7 @@
     padding: 12px;
     border-radius: 8px;
     margin-bottom: 16px;
-    border-left: 3px solid #8b5cf6;
+    border: 1px solid rgba(139, 92, 246, 0.3);
   }
   
   .align-summary p, .align-recommendation p {
@@ -1642,7 +1721,7 @@
     align-items: flex-start;
     gap: 8px;
     background: rgba(255,255,255,0.02);
-    border-left: 3px solid #94a3b8;
+    border: 1px solid rgba(148, 163, 184, 0.25);
   }
   
   .issue-item.severity-high {

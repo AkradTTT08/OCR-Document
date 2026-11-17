@@ -13,7 +13,9 @@
   const dispatch = createEventDispatcher();
   let isOpen = false;
   let selectEl;
+  let triggerEl;
   let menuEl;
+  let focusedIndex = -1;
 
   let menuTop = 0;
   let menuLeft = 0;
@@ -74,15 +76,56 @@
     if (disabled) return;
     isOpen = !isOpen;
     if (isOpen) {
+      const curIdx = normalizedOptions.findIndex(o => String(o.value) === String(value));
+      focusedIndex = curIdx >= 0 ? curIdx : 0;
       await updatePosition();
+    } else {
+      focusedIndex = -1;
     }
   }
 
   function selectOption(opt) {
     value = opt.value;
     isOpen = false;
+    focusedIndex = -1;
     dispatch('change', opt.value);
     dispatch('select', opt);
+    triggerEl?.focus();
+  }
+
+  function handleKeydown(e) {
+    if (disabled) return;
+    const len = normalizedOptions.length;
+    if (!isOpen) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        toggleOpen();
+      }
+      return;
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      isOpen = false;
+      focusedIndex = -1;
+      triggerEl?.focus();
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (len > 0) focusedIndex = (focusedIndex + 1) % len;
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (len > 0) focusedIndex = (focusedIndex - 1 + len) % len;
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      if (len > 0) focusedIndex = 0;
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      if (len > 0) focusedIndex = len - 1;
+    } else if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      if (focusedIndex >= 0 && focusedIndex < len) {
+        selectOption(normalizedOptions[focusedIndex]);
+      }
+    }
   }
 
   function handleOutsideClick(e) {
@@ -121,9 +164,11 @@
   {id}
 >
   <button 
+    bind:this={triggerEl}
     type="button" 
     class="select-trigger-btn" 
-    on:click={toggleOpen} 
+    on:click={toggleOpen}
+    on:keydown={handleKeydown}
     {disabled}
     aria-haspopup="listbox"
     aria-expanded={isOpen}
@@ -150,11 +195,14 @@
       style="position: fixed; top: {menuTop}px; left: {menuLeft}px; width: {menuWidth}px; min-width: {minWidth}; z-index: 999999;"
       role="listbox"
     >
-      {#each normalizedOptions as opt}
-        <div 
+      {#each normalizedOptions as opt, idx}
+        <button 
+          type="button"
           class="custom-option-item" 
           class:is-selected={String(opt.value) === String(value)}
+          class:is-focused={idx === focusedIndex}
           on:click|stopPropagation={() => selectOption(opt)}
+          on:keydown={handleKeydown}
           role="option"
           aria-selected={String(opt.value) === String(value)}
         >
@@ -165,7 +213,7 @@
               <polyline points="20 6 9 17 4 12"></polyline>
             </svg>
           {/if}
-        </div>
+        </button>
       {/each}
     </div>
   {/if}
@@ -287,6 +335,10 @@
   }
 
   .custom-option-item {
+    width: 100%;
+    border: none;
+    background: transparent;
+    text-align: left;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -300,7 +352,8 @@
     transition: all 0.18s ease;
   }
 
-  .custom-option-item:hover {
+  .custom-option-item:hover,
+  .custom-option-item.is-focused {
     background: linear-gradient(135deg, rgba(99, 102, 241, 0.35), rgba(168, 85, 247, 0.35));
     color: #ffffff;
     transform: translateX(3px);

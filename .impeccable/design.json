@@ -1,0 +1,202 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-17T10:59:30+07:00",
+  "title": "Design System: Spectra QA",
+  "extensions": {
+    "colorMeta": {
+      "neon-iris": {
+        "role": "primary",
+        "displayName": "Neon Iris",
+        "canonical": "#6366f1",
+        "tonalRamp": ["#161742", "#26286e", "#373a9b", "#4f52c7", "#6366f1", "#818cf8", "#a5b4fc", "#e0e7ff"]
+      },
+      "plasma-violet": {
+        "role": "secondary",
+        "displayName": "Plasma Violet",
+        "canonical": "#a855f7",
+        "tonalRamp": ["#270e42", "#431970", "#5f249e", "#8238cf", "#a855f7", "#c084fc", "#d8b4fe", "#f3e8ff"]
+      },
+      "signal-cyan": {
+        "role": "tertiary",
+        "displayName": "Signal Cyan",
+        "canonical": "#06b6d4",
+        "tonalRamp": ["#062830", "#0b4654", "#0e677a", "#0891b2", "#06b6d4", "#22d3ee", "#67e8f9", "#cffafe"]
+      },
+      "deep-midnight": {
+        "role": "neutral",
+        "displayName": "Deep Midnight",
+        "canonical": "#050505",
+        "tonalRamp": ["#050505", "#0a0b12", "#12141c", "#1e2230", "#2f3548", "#475569", "#94a3b8", "#f8fafc"]
+      },
+      "obsidian-surface": {
+        "role": "neutral",
+        "displayName": "Obsidian Surface",
+        "canonical": "#0a0b12",
+        "tonalRamp": ["#050505", "#0a0b12", "#12141c", "#1e2230", "#2f3548", "#475569", "#94a3b8", "#f8fafc"]
+      },
+      "slate-panel": {
+        "role": "neutral",
+        "displayName": "Slate Panel",
+        "canonical": "#12141c",
+        "tonalRamp": ["#050505", "#0a0b12", "#12141c", "#1e2230", "#2f3548", "#475569", "#94a3b8", "#f8fafc"]
+      },
+      "crisp-white": {
+        "role": "neutral",
+        "displayName": "Crisp White",
+        "canonical": "#f8fafc",
+        "tonalRamp": ["#0f172a", "#1e293b", "#334155", "#475569", "#64748b", "#94a3b8", "#cbd5e1", "#f8fafc"]
+      },
+      "muted-slate": {
+        "role": "neutral",
+        "displayName": "Muted Slate",
+        "canonical": "#94a3b8",
+        "tonalRamp": ["#0f172a", "#1e293b", "#334155", "#475569", "#64748b", "#94a3b8", "#cbd5e1", "#f8fafc"]
+      },
+      "dim-slate": {
+        "role": "neutral",
+        "displayName": "Dim Slate",
+        "canonical": "#475569",
+        "tonalRamp": ["#0f172a", "#1e293b", "#334155", "#475569", "#64748b", "#94a3b8", "#cbd5e1", "#f8fafc"]
+      },
+      "emerald-ok": {
+        "role": "semantic",
+        "displayName": "Emerald Ok",
+        "canonical": "#10b981",
+        "tonalRamp": ["#06291e", "#0a4734", "#0d694b", "#059669", "#10b981", "#34d399", "#6ee7b7", "#d1fae5"]
+      },
+      "amber-warn": {
+        "role": "semantic",
+        "displayName": "Amber Warn",
+        "canonical": "#f59e0b",
+        "tonalRamp": ["#2e1d04", "#543507", "#805209", "#d97706", "#f59e0b", "#fbbf24", "#fcd34d", "#fef3c7"]
+      },
+      "rose-alert": {
+        "role": "semantic",
+        "displayName": "Rose Alert",
+        "canonical": "#f43f5e",
+        "tonalRamp": ["#330a14", "#5c1223", "#881337", "#e11d48", "#f43f5e", "#fb7185", "#fda4af", "#ffe4e6"]
+      }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "Page and auth hero titles (Outfit)." },
+      "headline": { "displayName": "Headline", "purpose": "Modal headers and section titles (Prompt)." },
+      "title": { "displayName": "Title", "purpose": "Sidebar brand wordmark and card titles (Outfit)." },
+      "body": { "displayName": "Body", "purpose": "Default reading size across workspace views and bilingual OCR results (Prompt)." },
+      "label": { "displayName": "Label", "purpose": "Breadcrumbs, section dividers, and status badges (Outfit)." }
+    },
+    "shadows": [
+      { "name": "glass-panel", "value": "0 8px 32px 0 rgba(0, 0, 0, 0.37)", "purpose": "Ambient separation for frosted glass containers." },
+      { "name": "modal-depth", "value": "0 20px 50px rgba(0, 0, 0, 0.5)", "purpose": "Deep backdrop separation for modals and floating dropdowns." },
+      { "name": "primary-glow", "value": "0 4px 15px rgba(99, 102, 241, 0.3)", "purpose": "Resting glow for primary gradient buttons." },
+      { "name": "primary-glow-hover", "value": "0 8px 25px rgba(99, 102, 241, 0.5)", "purpose": "Lifted hover glow for primary gradient buttons." }
+    ],
+    "motion": [
+      { "name": "ease-standard", "value": "cubic-bezier(0.4, 0, 0.2, 1)", "purpose": "Default easing for navigation and select transitions (0.25s–0.3s)." },
+      { "name": "ambient-drift", "value": "15s ease-in-out infinite alternate", "purpose": "Slow background radial spectrum drift." }
+    ],
+    "breakpoints": [
+      { "name": "xs", "value": "600px" },
+      { "name": "sm", "value": "640px" },
+      { "name": "md", "value": "768px" },
+      { "name": "shell", "value": "900px" },
+      { "name": "lg", "value": "1024px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Primary gradient CTA with lifted indigo glow on hover.",
+      "html": "<button class=\"ds-btn-primary\" type=\"button\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polygon points=\"13 2 3 14 12 14 11 22 21 10 12 10 13 2\"></polygon></svg>Run QA Analysis</button>",
+      "css": ".ds-btn-primary { display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: linear-gradient(135deg, var(--primary, #6366f1), var(--secondary, #a855f7)); border: none; color: #f8fafc; padding: 10px 24px; border-radius: var(--radius-md, 12px); font-family: var(--font-th, 'Prompt', sans-serif); font-weight: 500; font-size: 14px; cursor: pointer; box-shadow: 0 4px 15px rgba(99, 102, 241, 0.3); transition: all 0.3s ease; } .ds-btn-primary:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(99, 102, 241, 0.5); } .ds-btn-primary:active { transform: translateY(0); } .ds-btn-primary:focus-visible { outline: 2px solid #a855f7; outline-offset: 2px; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Subtle frosted secondary action used in modals and toolbars.",
+      "html": "<button class=\"ds-btn-secondary\" type=\"button\">Cancel</button>",
+      "css": ".ds-btn-secondary { display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.08); color: #f8fafc; padding: 10px 20px; border-radius: var(--radius-md, 12px); font-family: var(--font-th, 'Prompt', sans-serif); font-weight: 500; font-size: 14px; cursor: pointer; transition: background 0.2s ease, border-color 0.2s ease; } .ds-btn-secondary:hover { background: rgba(255, 255, 255, 0.1); border-color: rgba(255, 255, 255, 0.15); } .ds-btn-secondary:focus-visible { outline: 2px solid #6366f1; outline-offset: 2px; }"
+    },
+    {
+      "name": "Warning Button",
+      "kind": "button",
+      "refersTo": "button-warning",
+      "description": "Amber outlined button that fills solid on hover for cautionary actions.",
+      "html": "<button class=\"ds-btn-warning\" type=\"button\">Reset Session</button>",
+      "css": ".ds-btn-warning { display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: rgba(245, 158, 11, 0.1); border: 1px solid var(--warning, #f59e0b); color: var(--warning, #f59e0b); padding: 10px 20px; border-radius: var(--radius-md, 12px); font-family: var(--font-en, 'Outfit', 'Inter', sans-serif); font-weight: 500; font-size: 14px; cursor: pointer; transition: all 0.3s ease; } .ds-btn-warning:hover { background: var(--warning, #f59e0b); color: #ffffff; box-shadow: 0 4px 15px rgba(245, 158, 11, 0.4); } .ds-btn-warning:focus-visible { outline: 2px solid #f59e0b; outline-offset: 2px; }"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input-default",
+      "description": "Recessed dark input field with Neon Iris focus border.",
+      "html": "<div class=\"ds-field\"><label class=\"ds-label\" for=\"ds-proj\">Project Name</label><input id=\"ds-proj\" class=\"ds-input\" type=\"text\" placeholder=\"e.g. Spectra Core API\" /></div>",
+      "css": ".ds-field { display: flex; flex-direction: column; gap: 8px; } .ds-label { font-family: var(--font-en, 'Outfit', 'Inter', sans-serif); font-size: 13px; font-weight: 500; color: var(--text-muted, #94a3b8); } .ds-input { background: rgba(0, 0, 0, 0.25); border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.08)); border-radius: var(--radius-md, 12px); padding: 12px 15px; color: var(--text-main, #f8fafc); font-family: var(--font-en, 'Outfit', 'Inter', sans-serif); font-size: 14px; outline: none; transition: border-color 0.3s ease; } .ds-input::placeholder { color: var(--text-dim, #475569); } .ds-input:focus { border-color: var(--primary, #6366f1); }"
+    },
+    {
+      "name": "Sidebar Nav Item",
+      "kind": "nav",
+      "refersTo": "nav-item-active",
+      "description": "Sidebar navigation item with 4px left gradient bar and glowing icon when active.",
+      "html": "<button class=\"ds-nav-item ds-nav-active\" type=\"button\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z\"></path><polyline points=\"14 2 14 8 20 8\"></polyline></svg>OCR Spell Check</button>",
+      "css": ".ds-nav-item { display: flex; align-items: center; gap: 12px; width: 228px; padding: 12px 16px; background: transparent; border: 1px solid transparent; border-radius: var(--radius-md, 12px); color: var(--text-muted, #94a3b8); font-family: var(--font-en, 'Outfit', 'Inter', sans-serif); font-size: 14px; font-weight: 500; cursor: pointer; text-align: left; position: relative; overflow: hidden; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); } .ds-nav-item:hover { color: #f8fafc; background: rgba(255, 255, 255, 0.04); border-color: rgba(255, 255, 255, 0.08); } .ds-nav-active { color: #ffffff; background: rgba(99, 102, 241, 0.15); border-color: rgba(99, 102, 241, 0.3); box-shadow: 0 4px 12px rgba(99, 102, 241, 0.1); } .ds-nav-active::before { content: ''; position: absolute; left: 0; top: 0; height: 100%; width: 4px; background: linear-gradient(135deg, #6366f1, #a855f7); border-radius: 0 4px 4px 0; } .ds-nav-active svg { color: #a855f7; filter: drop-shadow(0 0 8px rgba(168, 85, 247, 0.5)); } .ds-nav-item:focus-visible { outline: 2px solid #6366f1; outline-offset: 2px; }"
+    },
+    {
+      "name": "Status Badge",
+      "kind": "chip",
+      "refersTo": "badge-status",
+      "description": "Topbar system health pill with glowing Emerald Ok dot.",
+      "html": "<span class=\"ds-status-badge\"><span class=\"ds-status-dot\"></span>System Ready</span>",
+      "css": ".ds-status-badge { display: inline-flex; align-items: center; gap: 6px; background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.2); padding: 6px 12px; border-radius: 20px; font-size: 12px; font-weight: 500; color: var(--success, #10b981); font-family: var(--font-en, 'Outfit', 'Inter', sans-serif); } .ds-status-dot { width: 8px; height: 8px; background: var(--success, #10b981); border-radius: 50%; box-shadow: 0 0 8px var(--success, #10b981); }"
+    },
+    {
+      "name": "Glass Panel Card",
+      "kind": "card",
+      "refersTo": "card-glass",
+      "description": "Frosted glass container with 16px backdrop blur and 1px hairline border.",
+      "html": "<div class=\"ds-glass-panel\"><div class=\"ds-card-title\">Thai OCR Proofreader</div><p class=\"ds-card-body\">Upload PDF or image documents for context-aware spelling verification.</p></div>",
+      "css": ".ds-glass-panel { background: rgba(18, 20, 28, 0.45); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: var(--radius-lg, 20px); box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37); padding: 24px 32px; color: #f8fafc; max-width: 360px; } .ds-card-title { font-family: var(--font-en, 'Outfit', 'Inter', sans-serif); font-size: 16px; font-weight: 700; margin-bottom: 8px; } .ds-card-body { font-family: var(--font-th, 'Prompt', sans-serif); font-size: 14px; color: #94a3b8; line-height: 1.6; margin: 0; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Spectrum Command Deck",
+    "overview": "Spectra QA is a dark glassmorphic mission control built for precise, nocturnal, telemetry-driven QA work. Its surfaces stay calm and low-glare so dense test artifacts, API payloads, and bilingual Thai/English OCR results remain effortless to scan over long engineering sessions.\n\nRather than relying on bright chrome or heavy card shadows, the interface pairs deep obsidian canvases with subtle frosted panels, hairline borders, and a restrained indigo-to-violet spectrum accent that activates only on primary actions, active navigation, and live system telemetry. Bright white enterprise dashboards and unstyled browser defaults are explicitly rejected.",
+    "keyCharacteristics": [
+      "Nocturnal obsidian canvas (deep-midnight and obsidian-surface) with a slow-drifting ambient spectrum backdrop.",
+      "Bilingual typographic pairing: geometric English headings/labels (Outfit, Inter) paired with legible Thai body copy (Prompt).",
+      "Flat tonal surfaces separated by 1px translucent borders, reserving glow and lift for hover, focus, and active states.",
+      "Semantic status discipline (emerald-ok, amber-warn, rose-alert, signal-cyan) for health, warnings, and destructive actions."
+    ],
+    "rules": [
+      {
+        "name": "The Glow-On-Intent Rule",
+        "body": "Resting cards and navigation items stay flat; Neon Iris and Plasma Violet glows appear only on primary CTAs, active indicators, hover states, and focus rings.",
+        "section": "colors"
+      },
+      {
+        "name": "The Bilingual Separation Rule",
+        "body": "Use Outfit / Inter for English branding, breadcrumbs, numeric badges, and technical labels; use Prompt for Thai prose, OCR output, and bilingual form controls.",
+        "section": "typography"
+      },
+      {
+        "name": "The Flat-By-Default Rule",
+        "body": "Surfaces are flat and border-defined at rest; elevation shadows and spectrum glows appear only on overlays or in response to hover, focus, and active selection.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do keep resting surfaces dark and flat (Deep Midnight, Obsidian Surface, Slate Panel) separated by 1px translucent borders.",
+      "Do use Prompt for Thai and bilingual content and Outfit / Inter for English headings, navigation, and telemetry labels.",
+      "Do reserve Neon Iris and Plasma Violet glows for active states, hover feedback, focus rings, and primary CTAs.",
+      "Do preserve the 4px left gradient indicator on active sidebar navigation items."
+    ],
+    "donts": [
+      "Don't introduce bright white/light-mode enterprise dashboard surfaces or unstyled browser default <select> / <input> controls.",
+      "Don't add heavy neon drop-shadows to resting cards or inactive list items.",
+      "Don't mix arbitrary border radii; stick to the 8px / 12px / 20px / 28px scale."
+    ]
+  }
+}
+

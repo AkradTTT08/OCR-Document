@@ -6,6 +6,12 @@ export default defineConfig({
   server: {
     port: 5173,
     allowedHosts: true,
+    watch: {
+      awaitWriteFinish: {
+        stabilityThreshold: 120,
+        pollInterval: 40,
+      },
+    },
     proxy: {
       '/api': {
         target: 'http://localhost:5000',

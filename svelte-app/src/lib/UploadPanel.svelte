@@ -250,8 +250,10 @@
       เปลี่ยนเอกสาร<br />ทึบให้เป็นข้อมูลที่มีโครงสร้างในพริบตา
     </p>
     <div class="header-ai-badge">
-      <span class="pulse-sparkle">✨</span>
-      <span>ขับเคลื่อนด้วยโมเดล AI: <strong class="highlight-model">Google Gemini 2.5 Flash & 3.1 Pro (Vision & Multimodal)</strong></span>
+      <svg class="ai-badge-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15" aria-hidden="true">
+        <path d="M12 2L14.5 9.5L22 12L14.5 14.5L12 22L9.5 14.5L2 12L9.5 9.5L12 2Z"></path>
+      </svg>
+      <span>ขับเคลื่อนด้วยโมเดล AI: <strong class="highlight-model">ZhipuAI GLM-OCR &amp; GLM-4-Flash</strong></span>
     </div>
   </div>
 
@@ -289,8 +291,6 @@
           
           <div class="file-types">
             <span class="file-pill">.pdf</span>
-            <span class="file-pill">.docx</span>
-            <span class="file-pill">.png</span>
           </div>
 
           <input
@@ -565,7 +565,7 @@
     color: #fff;
     margin-bottom: 8px;
     box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-    transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+    transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1);
   }
   .drop-icon-box svg {
     width: 32px;

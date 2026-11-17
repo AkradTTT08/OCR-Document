@@ -1,8 +1,6 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700&family=Prompt:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Prompt:wght@300;400;500;600;700&display=swap');
 
 /* ── Global Reset & Variables ── */
-@import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&family=Inter:wght@400;500;600;700&display=swap');
-
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
@@ -38,7 +36,7 @@
   --text-muted:   #94a3b8; /* Slate 400 */
   --text-dim:     #475569; /* Slate 600 */
 
-  --font-en:      'Outfit', 'Inter', sans-serif;
+  --font-en:      'Outfit', sans-serif;
   --font-th:      'Prompt', sans-serif;
   
   /* Metrics */
@@ -103,9 +101,17 @@ body::before {
 }
 
 .text-gradient {
-  background: var(--gradient-text);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+  color: var(--text-main);
+}
+
+::selection {
+  background: rgba(99, 102, 241, 0.35);
+  color: var(--text-main);
+}
+
+:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
 }
 
 /* ── Animations ── */
@@ -223,4 +229,18 @@ select option:focus,
 select option:checked {
   background: linear-gradient(135deg, rgba(99, 102, 241, 0.5), rgba(168, 85, 247, 0.5)) !important;
   color: #ffffff !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body::before {
+    animation: none !important;
+  }
+  *:not(.spinner):not(.typing-dot),
+  *:not(.spinner):not(.typing-dot)::before,
+  *:not(.spinner):not(.typing-dot)::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

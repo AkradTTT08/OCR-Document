@@ -2,6 +2,7 @@
   import { Handle, Position, useSvelteFlow } from '@xyflow/svelte';
   import { onMount } from 'svelte';
   import { selectedProjectStore } from '../qaHistoryStore.js';
+  import { getCachedSkills, getCachedDocTypes } from './nodeMetadataCache.js';
   export let id;
   export let data;
 
@@ -12,27 +13,13 @@
   let docTypes = [];
 
   onMount(async () => {
-    // Load Skills
-    try {
-      const resSkills = await fetch("/api/skills");
-      if (resSkills.ok) {
-        const d = await resSkills.json();
-        skills = d.skills || [];
-      }
-    } catch (e) { console.error("AgentNode load skills error:", e); }
-
-    // Load Doc Types
-    try {
-      let url = "/api/doc_types";
-      if ($selectedProjectStore) {
-        const pid = $selectedProjectStore.id || $selectedProjectStore.project_id;
-        url += `?project_id=${pid}`;
-      }
-      const resDoc = await fetch(url);
-      if (resDoc.ok) {
-        docTypes = await resDoc.json();
-      }
-    } catch (e) { console.error("AgentNode load doc types error:", e); }
+    const pid = $selectedProjectStore ? ($selectedProjectStore.id || $selectedProjectStore.project_id) : '';
+    const [loadedSkills, loadedDocTypes] = await Promise.all([
+      getCachedSkills(),
+      getCachedDocTypes(pid)
+    ]);
+    skills = loadedSkills;
+    docTypes = loadedDocTypes;
   });
 
   function deleteNode() {
@@ -45,45 +32,45 @@
   <div class="node-header">
     <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M8 14s1.5 2 4 2 4-2 4-2"></path><line x1="9" y1="9" x2="9.01" y2="9"></line><line x1="15" y1="9" x2="15.01" y2="9"></line></svg>
     <span>AI Agent</span>
-    <button class="delete-btn" on:click|stopPropagation={deleteNode} title="ลบ Card นี้">✕</button>
+    <button type="button" class="delete-btn" aria-label="ลบ Node นี้" on:click|stopPropagation={deleteNode} title="ลบ Card นี้">✕</button>
   </div>
   <div class="node-content">
-    <label>Agent Type:</label>
+    <label for="{id}-agent-type">Agent Type:</label>
     <div class="agent-select-row">
-      <select bind:value={data.agent_type} class="nodrag">
+      <select id="{id}-agent-type" bind:value={data.agent_type} class="nodrag">
         <option value="qa_doc_create">QA Doc Creator</option>
         <option value="qa_consult">QA Consult (Reviewer)</option>
         <option value="qa_security_scan">QA Security Scanner</option>
         <option value="qa_research">QA Researcher</option>
       </select>
-      <button class="btn-config nodrag" on:click={() => showConfig = !showConfig} title="ตั้งค่ากระบวนการทำงาน">
+      <button type="button" class="btn-config nodrag" aria-label="ตั้งค่ากระบวนการทำงาน" aria-expanded={showConfig} on:click={() => showConfig = !showConfig} title="ตั้งค่ากระบวนการทำงาน">
         ⚙️
       </button>
     </div>
 
     {#if showConfig}
       <div class="config-area nodrag">
-        <label>ประเภทเอกสาร (Document Type):</label>
-        <select bind:value={data.doc_type} class="config-select">
+        <label for="{id}-doc-type">ประเภทเอกสาร (Document Type):</label>
+        <select id="{id}-doc-type" bind:value={data.doc_type} class="config-select">
           <option value="">-- ไม่ระบุ --</option>
           {#each docTypes as dt}
             <option value={dt}>{dt}</option>
           {/each}
         </select>
         
-        <label>ทักษะ AI (AI Skill):</label>
-        <select bind:value={data.skill_id} class="config-select">
+        <label for="{id}-skill-id">ทักษะ AI (AI Skill):</label>
+        <select id="{id}-skill-id" bind:value={data.skill_id} class="config-select">
           <option value="">-- ไม่ใช้ Skill --</option>
           {#each skills as s}
             <option value={s.skill_id}>{s.skill_name}</option>
           {/each}
         </select>
 
-        <label>อีเมลผู้รับผลการตรวจสอบ (คั่นด้วยลูกน้ำ):</label>
-        <input type="text" bind:value={data.emails} placeholder="เช่น user@domain.com, admin@domain.com" class="config-input" />
+        <label for="{id}-emails">อีเมลผู้รับผลการตรวจสอบ (คั่นด้วยลูกน้ำ):</label>
+        <input id="{id}-emails" type="text" bind:value={data.emails} placeholder="เช่น user@domain.com, admin@domain.com" class="config-input" />
 
-        <label>คำสั่งเพิ่มเติม (Instructions):</label>
-        <textarea bind:value={data.instructions} placeholder="กรุณากรอกกระบวนการหรือคำสั่งสำหรับ Agent นี้..."></textarea>
+        <label for="{id}-instructions">คำสั่งเพิ่มเติม (Instructions):</label>
+        <textarea id="{id}-instructions" bind:value={data.instructions} placeholder="กรุณากรอกกระบวนการหรือคำสั่งสำหรับ Agent นี้..."></textarea>
       </div>
     {/if}
   </div>
@@ -92,20 +79,21 @@
 
 <style>
   .custom-node {
-    background: #1e1e2d;
-    border: 1px solid #6366f1;
-    border-radius: 8px;
-    padding: 10px;
+    background: var(--bg2, #12141c);
+    border: 1px solid var(--primary, #6366f1);
+    border-radius: var(--radius-sm, 8px);
+    padding: 12px;
     width: 320px;
-    color: white;
-    font-family: sans-serif;
+    max-width: calc(100vw - 48px);
+    color: var(--text-main, #f8fafc);
+    font-family: var(--font-th, 'Prompt', sans-serif);
     position: relative;
   }
   .node-header {
     display: flex;
     align-items: center;
     gap: 8px;
-    font-weight: bold;
+    font-weight: 600;
     font-size: 12px;
     margin-bottom: 10px;
     color: #a78bfa;
@@ -114,16 +102,20 @@
     margin-left: auto;
     background: transparent;
     border: none;
-    color: #ef4444;
+    color: var(--danger, #f43f5e);
     cursor: pointer;
-    font-size: 14px;
-    font-weight: bold;
-    padding: 0 4px;
-    border-radius: 4px;
+    font-size: 13px;
+    font-weight: 700;
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
     transition: background 0.2s;
   }
   .delete-btn:hover {
-    background: rgba(239, 68, 68, 0.2);
+    background: rgba(244, 63, 94, 0.18);
   }
   .node-content {
     display: flex;
@@ -132,7 +124,7 @@
   }
   label {
     font-size: 11px;
-    color: #a1a1aa;
+    color: var(--text-muted, #94a3b8);
     margin-bottom: 4px;
     display: block;
   }

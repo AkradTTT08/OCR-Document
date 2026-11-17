@@ -280,12 +280,13 @@
    * @param {string} name
    */
   function downloadFile(content, name) {
+    const url = URL.createObjectURL(new Blob([content], { type: "text/plain" }));
     const a = Object.assign(document.createElement("a"), {
-      href: URL.createObjectURL(new Blob([content], { type: "text/plain" })),
+      href: url,
       download: name,
     });
     a.click();
-    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   let checkingSpell = false;
@@ -1807,9 +1808,7 @@
     font-size: 20px;
     font-weight: 600;
     margin: 0 0 8px 0;
-    background: linear-gradient(90deg, #fcd34d, #38bdf8);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
+    color: var(--text-main);
   }
   .proc-subtitle {
     font-size: 14px;

@@ -1,11 +1,15 @@
 <script>
   import { createEventDispatcher, onMount } from 'svelte';
+  import ConfirmModal from './ConfirmModal.svelte';
   import { toast } from './toastStore.js';
   
   export let projectId = "";
   
   let pipelines = [];
   let loading = true;
+  let pendingDeletePipeline = null;
+  let showDeleteConfirm = false;
+  let lastFetchedProjectId = "";
   
   const dispatch = createEventDispatcher();
   
@@ -27,8 +31,14 @@
     }
   }
 
+  $: if (projectId && projectId !== lastFetchedProjectId) {
+    lastFetchedProjectId = projectId;
+    fetchPipelines();
+  }
+
   onMount(() => {
-    if (projectId) {
+    if (projectId && projectId !== lastFetchedProjectId) {
+      lastFetchedProjectId = projectId;
       fetchPipelines();
     }
   });
@@ -41,9 +51,16 @@
     dispatch('create');
   }
 
-  async function deletePipeline(e, pl) {
+  function deletePipeline(e, pl) {
     e.stopPropagation();
-    if (!confirm(`Are you sure you want to delete pipeline "${pl.name}"?`)) return;
+    pendingDeletePipeline = pl;
+    showDeleteConfirm = true;
+  }
+
+  async function confirmDeletePipeline() {
+    const pl = pendingDeletePipeline;
+    pendingDeletePipeline = null;
+    if (!pl) return;
     
     try {
       const res = await fetch(`/api/workflows/${pl.id}`, {
@@ -67,12 +84,10 @@
 </div>
 
 <div class="pipeline-grid">
-  <!-- svelte-ignore a11y-click-events-have-key-events -->
-  <!-- svelte-ignore a11y-no-static-element-interactions -->
-  <div class="pipeline-card create-card" on:click={createNew}>
-    <div class="create-icon">+</div>
+  <button type="button" class="pipeline-card create-card" on:click={createNew}>
+    <div class="create-icon" aria-hidden="true">+</div>
     <div class="p-name">สร้าง Pipeline ใหม่</div>
-  </div>
+  </button>
 
   {#if loading}
     <div class="empty-state">กำลังโหลดข้อมูล...</div>
@@ -80,12 +95,23 @@
     <!-- Empty state not strictly needed since create card is always there, but good to have -->
   {:else}
     {#each pipelines as pl}
-      <!-- svelte-ignore a11y-click-events-have-key-events -->
-      <!-- svelte-ignore a11y-no-static-element-interactions -->
-      <div class="pipeline-card" on:click={() => selectPipeline(pl)}>
+      <div
+        class="pipeline-card"
+        role="button"
+        tabindex="0"
+        on:click={() => selectPipeline(pl)}
+        on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), selectPipeline(pl))}
+      >
         <div class="card-header-row">
           <div class="p-name">{pl.name}</div>
-          <button class="delete-btn" on:click={(e) => deletePipeline(e, pl)} title="Delete Pipeline">
+          <button
+            type="button"
+            class="delete-btn"
+            aria-label={`ลบ Pipeline ${pl.name}`}
+            on:click={(e) => deletePipeline(e, pl)}
+            on:keydown|stopPropagation
+            title="Delete Pipeline"
+          >
             ✕
           </button>
         </div>
@@ -111,6 +137,15 @@
   {/if}
 </div>
 
+<ConfirmModal
+  bind:open={showDeleteConfirm}
+  title="Delete Pipeline"
+  message={`Are you sure you want to delete pipeline "${pendingDeletePipeline?.name || ''}"?`}
+  confirmText="Delete"
+  cancelText="Cancel"
+  on:confirm={confirmDeletePipeline}
+/>
+
 <style>
   .header-text {
     text-align: center;
@@ -120,12 +155,10 @@
     font-size: 28px;
     font-weight: 700;
     margin-bottom: 10px;
-    background: linear-gradient(90deg, #fff, #9ca3af);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
+    color: var(--text-main, #f8fafc);
   }
   .header-text p {
-    color: var(--text3, #9ca3af);
+    color: var(--text-muted, #94a3b8);
     font-size: 16px;
   }
   
@@ -136,6 +169,8 @@
     width: 100%;
   }
   .pipeline-card {
+    font: inherit;
+    color: inherit;
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 16px;

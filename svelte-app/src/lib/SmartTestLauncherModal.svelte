@@ -2,6 +2,7 @@
   import { createEventDispatcher, onMount } from 'svelte';
   import { fade, scale, slide } from 'svelte/transition';
   import SpectraLoading from './SpectraLoading.svelte';
+  import { toast } from './toastStore.js';
 
   export let projectId = '';
   export let projectName = '';
@@ -144,7 +145,7 @@
 
   async function startExecution() {
     if (selectedTestCasesCount === 0) {
-      alert('กรุณาเลือก Test Case อย่างน้อย 1 ข้อเพื่อทำการทดสอบ');
+      toast('กรุณาเลือก Test Case อย่างน้อย 1 ข้อเพื่อทำการทดสอบ', 'warning');
       return;
     }
 

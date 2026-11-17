@@ -1,9 +1,11 @@
 <script>
   import { onMount } from 'svelte';
   import CustomSelect from './CustomSelect.svelte';
+  import ConfirmModal from './ConfirmModal.svelte';
   import { toast } from './toastStore.js';
 
   // ── States ──
+  let showDeleteConfirm = false;
   let skills = [];
   let loading = false;
   let saving = false;
@@ -157,9 +159,13 @@
     }
   }
 
-  async function deleteSkill() {
+  function deleteSkill() {
     if (!form.skill_id) return;
-    if (!confirm(`คุณต้องการลบ Skill "${form.skill_name}" ใช่หรือไม่?`)) return;
+    showDeleteConfirm = true;
+  }
+
+  async function confirmDeleteSkill() {
+    if (!form.skill_id) return;
 
     try {
       const res = await fetch(`/api/skills/${form.skill_id}`, {
@@ -405,6 +411,14 @@ ${form.markdown_instructions}
     {/if}
   </main>
 </div>
+
+<ConfirmModal
+  bind:open={showDeleteConfirm}
+  title="ยืนยันการลบ AI Skill"
+  message={`คุณต้องการลบ Skill "${form.skill_name}" ใช่หรือไม่?`}
+  confirmText="ลบ Skill"
+  on:confirm={confirmDeleteSkill}
+/>
 
 <style>
   .skills-container {

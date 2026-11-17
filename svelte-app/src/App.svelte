@@ -39,6 +39,24 @@
   let showNotifications = false;
   let showNotificationConfigModal = false;
   let isOcrHistoryExpanded = true;
+  let isQaGroupsExpanded = true;
+  let isQaHistoryExpanded = true;
+  let isPerfHistoryExpanded = true;
+
+  function formatCleanGroupName(name) {
+    let clean = String(name || 'General').trim();
+    while (/^\[.*?\]\s*/.test(clean)) {
+      clean = clean.replace(/^\[.*?\]\s*/, '').trim();
+    }
+    return clean || 'General';
+  }
+
+  function formatGroupType(group) {
+    const rawType = String(group?.group_type || '').replace(/^\[|\]$/g, '').trim();
+    if (rawType) return rawType;
+    const match = String(group?.group_name || '').match(/^\[(.*?)\]/);
+    return match ? match[1].trim() : 'General';
+  }
 
   let sidebarProjects = [];
 
@@ -102,6 +120,42 @@
   });
 
   let systemReady = true;
+  let globalSearchInputEl;
+
+  const VIEW_LABELS = {
+    ocr: 'OCR Spell Check',
+    project_management: 'Project Management',
+    kb: 'Knowledge Base',
+    skills: 'AI Skills',
+    qa_member: 'QA Member',
+    exit_criteria: 'Exit Criteria',
+    api_collection: 'API Collections',
+    api_usage: 'Token Usage',
+    qa_consult: 'QA Consult',
+    qa_doc_creation: 'QA Document Creation',
+    qa_analysis_diagram: 'QA Analysis Diagram',
+    qa_board: 'QA Board Card',
+    qa_automate: 'QA Test Automation',
+    qa_performance: 'QA Performance',
+    qa_security: 'QA Security',
+    qa_research: 'QA Research',
+    master_agent: 'Master Agent',
+    workflow_builder: 'AI Workflow Builder',
+  };
+
+  function handleGlobalKeydown(e) {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+      e.preventDefault();
+      globalSearchInputEl?.focus();
+      return;
+    }
+    if (e.key === 'Escape') {
+      if (showMyProfileModal) showMyProfileModal = false;
+      else if (showProfileMenu) showProfileMenu = false;
+      else if (showNotifications) showNotifications = false;
+      else if (showNotificationConfigModal) showNotificationConfigModal = false;
+    }
+  }
 
   function handleGroupClick(group) {
     const cleanClickedName = String(group.group_name || '').replace(/^\[.*?\]\s*/, '').trim().toLowerCase();
@@ -415,8 +469,8 @@
               updateAuthProfile(finalName, finalAvatar);
               topbarAvatarError = false;
               previewImageError = false;
+              showMyProfileModal = false;
               toast('บันทึกข้อมูลส่วนตัวเรียบร้อยแล้ว!', 'success');
-              setTimeout(() => { window.location.reload(); }, 600);
           } else {
               toast(data.error || 'Failed to update profile', 'error');
           }
@@ -529,13 +583,16 @@
   })();
 </script>
 
+<svelte:window on:keydown={handleGlobalKeydown} />
+
 <div class="app-wrapper">
   <!-- ── Animated Spectrum Background ── -->
   <div class="spectrum-bg"></div>
   <div class="spectrum-bg layer-2"></div>
 
   <div class="app-container">
-  {#if $showLogin}
+
+{#if $showLogin}
     <Login />
   {:else}
     <!-- ── Sidebar ── -->
@@ -550,8 +607,9 @@
         </div>
       </div>
 
-      <nav class="sidebar-nav">
+      <nav class="sidebar-nav" aria-label="Primary Navigation">
         {#if $authRole === 'admin'}
+          <div class="nav-group-label">Document &amp; OCR</div>
           {#if isMenuAllowed('ocr')}
             <button class="nav-item" class:active={activeView === "ocr" && !scanResult} on:click={() => { activeView = "ocr"; scanResult = null; }}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z"/></svg>
@@ -614,6 +672,7 @@
             {/if}
           {/if}
           
+          <div class="nav-group-label">Platform &amp; Knowledge</div>
           {#if isMenuAllowed('project_management')}
             <button class="nav-item" class:active={activeView === "project_management"} on:click={() => (activeView = "project_management")}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
@@ -644,6 +703,7 @@
               Exit Criteria
             </button>
           {/if}
+          <div class="nav-group-label">API &amp; Telemetry</div>
           {#if isMenuAllowed('api_collection')}
             <button class="nav-item" class:active={activeView === "api_collection"} on:click={() => (activeView = "api_collection")}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
@@ -658,6 +718,7 @@
           {/if}
 
         {:else if $authRole === 'user'}
+          <div class="nav-group-label">Discovery &amp; Docs</div>
           {#if isMenuAllowed('qa_consult')}
             <button class="nav-item" class:active={activeView === "qa_consult"} on:click={() => (activeView = "qa_consult")}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
@@ -676,6 +737,7 @@
               QA Analysis Diagram
             </button>
           {/if}
+          <div class="nav-group-label">Quality &amp; Testing</div>
           {#if isMenuAllowed('qa_board')}
             <button class="nav-item" class:active={activeView === "qa_board"} on:click={() => (activeView = "qa_board")}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="9" y1="3" x2="9" y2="21"></line><line x1="15" y1="3" x2="15" y2="21"></line></svg>
@@ -707,97 +769,153 @@
             </button>
           {/if}
           
-          <div style="height: 1px; background: var(--glass-border); margin: 8px 0;"></div>
-          
+          <div class="nav-group-label">AI Agents</div>
           {#if isMenuAllowed('master_agent')}
             <button class="nav-item" style="color: #c084fc;" class:active={activeView === "master_agent"} on:click={() => (activeView = "master_agent")}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M12 2a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h6z"></path><path d="M22 10v6a2 2 0 0 1-2 2h-6l-4 4v-4H6a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
-              Master Agent 🤖
+              Master Agent
             </button>
           {/if}
           
           {#if isMenuAllowed('workflow_builder')}
             <button class="nav-item" style="color: #34d399;" class:active={activeView === "workflow_builder"} on:click={() => (activeView = "workflow_builder")}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line></svg>
-              AI Workflow Builder 🔗
+              AI Workflow Builder
             </button>
           {/if}
           {#if activeView === 'qa_performance'}
             <!-- Performance History -->
             {#if $selectedProjectStore && $perfHistory.filter(h => h.project_id === ($selectedProjectStore.id || $selectedProjectStore.project_id)).length > 0}
+              {@const projPerfList = $perfHistory.filter(h => h.project_id === ($selectedProjectStore.id || $selectedProjectStore.project_id))}
               <div class="history-section">
-                <div class="history-title">ประวัติ Performance (History)</div>
-                <div class="history-list">
-                  {#each $perfHistory.filter(h => h.project_id === ($selectedProjectStore.id || $selectedProjectStore.project_id)).slice(0, 10) as item}
-                    <button class="history-item" on:click={() => { activeView = "qa_performance"; selectedPerfHistory.set(item); }}>
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="flex-shrink: 0;"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path></svg>
-                      <div class="history-details">
-                        <span class="h-filename" style="color: #facc15;">{item.name}</span>
-                        <span class="h-project" style="color: #a78bfa;">
-                          [{item.project_code}] {item.scriptFileName || 'k6_performance_test.js'}
-                        </span>
-                        {#if item.date}
-                          <span class="h-date">{formatHistoryDate(item.date)}</span>
-                        {/if}
-                      </div>
-                    </button>
-                  {/each}
-                </div>
+                <button
+                  type="button"
+                  class="history-title-toggle"
+                  aria-expanded={isPerfHistoryExpanded}
+                  on:click={() => (isPerfHistoryExpanded = !isPerfHistoryExpanded)}
+                >
+                  <div class="history-title-left">
+                    <span class="history-title-text">ประวัติ Performance</span>
+                    <span class="history-count-badge">{projPerfList.length}</span>
+                  </div>
+                  <svg class="chevron-icon" class:collapsed={!isPerfHistoryExpanded} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="13" height="13">
+                    <polyline points="6 9 12 15 18 9"></polyline>
+                  </svg>
+                </button>
+                {#if isPerfHistoryExpanded}
+                  <div class="history-list qa-compact-scroll">
+                    {#each projPerfList.slice(0, 10) as item}
+                      <button class="history-item" on:click={() => { activeView = "qa_performance"; selectedPerfHistory.set(item); }}>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="flex-shrink: 0;"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path></svg>
+                        <div class="history-details">
+                          <span class="h-filename" style="color: #facc15;">{item.name}</span>
+                          <div class="h-meta-row">
+                            <span class="h-group-pill">{item.scriptFileName || 'k6_test.js'}</span>
+                            {#if item.date}
+                              <span class="h-date">{formatHistoryDate(item.date)}</span>
+                            {/if}
+                          </div>
+                        </div>
+                      </button>
+                    {/each}
+                  </div>
+                {/if}
               </div>
             {/if}
           {:else if $selectedProjectStore && activeView === 'qa_consult'}
-              <!-- Groups filtered by selected project -->
+            <!-- Groups filtered by selected project -->
             {#if activeProjectGroups.length > 0}
               <div class="history-section">
-                <div class="history-title">กลุ่มการตรวจสอบ (Groups)</div>
-                <div class="history-list">
-                  {#each activeProjectGroups as group}
-                    <div class="sidebar-item-row">
-                      <button class="history-item group-item" class:active={$activeSidebarGroup && String($activeSidebarGroup.group_name || '').replace(/^\[.*?\]\s*/, '').trim().toLowerCase() === String(group.group_name || '').replace(/^\[.*?\]\s*/, '').trim().toLowerCase()} on:click={() => handleGroupClick(group)}>
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="flex-shrink: 0;">
-                          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
-                        </svg>
-                        <div class="history-details">
-                          <span class="h-filename" style="color: #c4b5fd;">[{group.group_type || 'General'}] {group.group_name}</span>
-                          <span class="h-project">{group.project_code}</span>
-                          {#if group.scan_count > 0}
-                            <span class="h-date">{group.scan_count} ไฟล์ที่ scan แล้ว</span>
-                          {:else}
-                            <span class="h-date" style="color: #f59e0b;">ยังไม่มีไฟล์</span>
-                          {/if}
-                        </div>
-                      </button>
-                      <button 
-                        class="btn-sidebar-delete" 
-                        title="ลบกลุ่มนี้" 
-                        on:click|stopPropagation={() => promptDeleteGroup(group)}
-                      >
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13">
-                          <polyline points="3 6 5 6 21 6"></polyline>
-                          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                        </svg>
-                      </button>
-                    </div>
-                  {/each}
-                </div>
+                <button
+                  type="button"
+                  class="history-title-toggle"
+                  aria-expanded={isQaGroupsExpanded}
+                  on:click={() => (isQaGroupsExpanded = !isQaGroupsExpanded)}
+                >
+                  <div class="history-title-left">
+                    <span class="history-title-text">กลุ่มการตรวจสอบ (Groups)</span>
+                    <span class="history-count-badge">{activeProjectGroups.length}</span>
+                  </div>
+                  <svg class="chevron-icon" class:collapsed={!isQaGroupsExpanded} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="13" height="13">
+                    <polyline points="6 9 12 15 18 9"></polyline>
+                  </svg>
+                </button>
+
+                {#if isQaGroupsExpanded}
+                  <div class="history-list qa-compact-scroll">
+                    {#each activeProjectGroups as group}
+                      {@const isGroupActive = $activeSidebarGroup && formatCleanGroupName($activeSidebarGroup.group_name).toLowerCase() === formatCleanGroupName(group.group_name).toLowerCase()}
+                      <div class="sidebar-item-row">
+                        <button
+                          type="button"
+                          class="history-item group-item"
+                          class:active={isGroupActive}
+                          on:click={() => handleGroupClick(group)}
+                        >
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="flex-shrink: 0;">
+                            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                          </svg>
+                          <div class="history-details">
+                            <div class="h-title-row">
+                              <span class="h-type-badge">{formatGroupType(group)}</span>
+                              <span class="h-filename" title={formatCleanGroupName(group.group_name)}>{formatCleanGroupName(group.group_name)}</span>
+                            </div>
+                            <div class="h-meta-row">
+                              {#if group.scan_count > 0}
+                                <span class="h-date">{group.scan_count} ไฟล์ที่ตรวจแล้ว</span>
+                              {:else}
+                                <span class="h-date" style="color: #f59e0b;">ยังไม่มีไฟล์</span>
+                              {/if}
+                            </div>
+                          </div>
+                        </button>
+                        <button 
+                          type="button"
+                          class="btn-sidebar-delete" 
+                          title="ลบกลุ่มนี้" 
+                          aria-label={`ลบกลุ่ม ${formatCleanGroupName(group.group_name)}`}
+                          on:click|stopPropagation={() => promptDeleteGroup(group)}
+                        >
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13">
+                            <polyline points="3 6 5 6 21 6"></polyline>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                          </svg>
+                        </button>
+                      </div>
+                    {/each}
+                  </div>
+                {/if}
               </div>
             {/if}
 
             <!-- History filtered by selected group OR all project history if no group selected -->
             {#if filteredQAHistory.length > 0}
               <div class="history-section">
-                <div class="history-title" style="display: flex; justify-content: space-between; align-items: center;">
-                  <span>
-                    {#if $activeSidebarGroup}
-                      ประวัติ ({$activeSidebarGroup.group_name})
-                    {:else}
-                      ประวัติการวิเคราะห์ล่าสุด
-                    {/if}
-                  </span>
+                <div class="history-header-bar">
+                  <button
+                    type="button"
+                    class="history-title-toggle flex-1"
+                    aria-expanded={isQaHistoryExpanded}
+                    on:click={() => (isQaHistoryExpanded = !isQaHistoryExpanded)}
+                  >
+                    <div class="history-title-left" style="min-width: 0;">
+                      <span class="history-title-text truncate">
+                        {#if $activeSidebarGroup}
+                          ประวัติ ({formatCleanGroupName($activeSidebarGroup.group_name)})
+                        {:else}
+                          ประวัติล่าสุด
+                        {/if}
+                      </span>
+                      <span class="history-count-badge">{filteredQAHistory.length}</span>
+                    </div>
+                    <svg class="chevron-icon" class:collapsed={!isQaHistoryExpanded} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="13" height="13">
+                      <polyline points="6 9 12 15 18 9"></polyline>
+                    </svg>
+                  </button>
                   {#if $activeSidebarGroup}
                     <button 
-                      class="btn-reset-group-filter" 
-                      style="background: transparent; border: none; color: #a78bfa; font-size: 11px; cursor: pointer; text-decoration: underline; padding: 0;"
+                      type="button"
+                      class="btn-reset-group-pill" 
                       title="คลิกเพื่อแสดงประวัติทั้งหมดในโครงการ"
                       on:click={() => activeSidebarGroup.set(null)}
                     >
@@ -805,71 +923,72 @@
                     </button>
                   {/if}
                 </div>
-                <div class="history-list">
-                  {#each filteredQAHistory.slice(0, 10) as item}
-                    <div class="sidebar-item-row">
-                      <button class="history-item" class:is-processing={item.is_processing} on:click={() => { activeView = "qa_consult"; selectedHistory.set(item); }}>
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path></svg>
-                        <div class="history-details">
-                          <span class="h-filename">{item.filename}</span>
-                          <span class="h-project" style="color: #a78bfa;">
-                            {#if item.group_type}[{item.group_type}] {/if}{item.group_name || 'General'}
-                          </span>
-                          {#if item.is_processing}
-                            <span class="h-status" style="color: #60a5fa; font-size: 11px; margin-top: 4px; display: flex; align-items: center; gap: 4px; animation: pulse 1.5s infinite;">
-                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="10" height="10" style="animation: spin 2s linear infinite;">
-                                <line x1="12" y1="2" x2="12" y2="6"></line>
-                                <line x1="12" y1="18" x2="12" y2="22"></line>
-                                <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line>
-                                <line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line>
-                                <line x1="2" y1="12" x2="6" y2="12"></line>
-                                <line x1="18" y1="12" x2="22" y2="12"></line>
-                                <line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line>
-                                <line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line>
-                              </svg>
-                              กำลังประมวลผล...
-                            </span>
-                          {:else if item.date}
-                            <span class="h-date">{formatHistoryDate(item.date)}</span>
-                          {/if}
-                        </div>
-                      </button>
-                      {#if !item.is_processing}
-                        <button 
-                          class="btn-sidebar-delete" 
-                          title="ลบประวัติการตรวจนี้" 
-                          on:click|stopPropagation={() => promptDeleteHistory(item)}
-                        >
-                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13">
-                            <polyline points="3 6 5 6 21 6"></polyline>
-                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                          </svg>
+
+                {#if isQaHistoryExpanded}
+                  <div class="history-list qa-compact-scroll">
+                    {#each filteredQAHistory.slice(0, 12) as item}
+                      <div class="sidebar-item-row">
+                        <button type="button" class="history-item" class:is-processing={item.is_processing} on:click={() => { activeView = "qa_consult"; selectedHistory.set(item); }}>
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path></svg>
+                          <div class="history-details">
+                            <span class="h-filename" title={item.filename}>{item.filename}</span>
+                            {#if item.is_processing}
+                              <span class="h-status" style="color: #60a5fa; font-size: 11px; margin-top: 2px; display: flex; align-items: center; gap: 4px;">
+                                <svg class="spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="10" height="10" style="animation: spin 2s linear infinite;">
+                                  <line x1="12" y1="2" x2="12" y2="6"></line>
+                                  <line x1="12" y1="18" x2="12" y2="22"></line>
+                                  <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line>
+                                  <line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line>
+                                  <line x1="2" y1="12" x2="6" y2="12"></line>
+                                  <line x1="18" y1="12" x2="22" y2="12"></line>
+                                  <line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line>
+                                  <line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line>
+                                </svg>
+                                กำลังประมวลผล...
+                              </span>
+                            {:else}
+                              <div class="h-meta-row">
+                                <span class="h-group-pill">{formatCleanGroupName(item.group_name)}</span>
+                                {#if item.date}
+                                  <span class="h-date">{formatHistoryDate(item.date)}</span>
+                                {/if}
+                              </div>
+                            {/if}
+                          </div>
                         </button>
-                      {/if}
-                    </div>
-                  {/each}
-                </div>
+                        {#if !item.is_processing}
+                          <button 
+                            type="button"
+                            class="btn-sidebar-delete" 
+                            title="ลบประวัติการตรวจนี้" 
+                            aria-label={`ลบประวัติ ${item.filename}`}
+                            on:click|stopPropagation={() => promptDeleteHistory(item)}
+                          >
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13">
+                              <polyline points="3 6 5 6 21 6"></polyline>
+                              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                            </svg>
+                          </button>
+                        {/if}
+                      </div>
+                    {/each}
+                  </div>
+                {/if}
               </div>
             {:else if $activeSidebarGroup}
               <div class="history-section">
-                <div class="history-title" style="display: flex; justify-content: space-between; align-items: center;">
-                  <span>ประวัติ ({$activeSidebarGroup.group_name})</span>
+                <div class="history-header-bar">
+                  <span class="history-title-text truncate">ประวัติ ({formatCleanGroupName($activeSidebarGroup.group_name)})</span>
                   <button 
-                    class="btn-reset-group-filter" 
-                    style="background: transparent; border: none; color: #a78bfa; font-size: 11px; cursor: pointer; text-decoration: underline; padding: 0;"
+                    type="button"
+                    class="btn-reset-group-pill" 
                     on:click={() => activeSidebarGroup.set(null)}
                   >
                     ดูทั้งหมด
                   </button>
                 </div>
                 <div style="padding: 10px 12px; font-size: 12px; color: #94a3b8; font-style: italic; background: rgba(255, 255, 255, 0.03); border-radius: 8px; margin-top: 4px;">
-                  ยังไม่มีประวัติการตรวจในกลุ่มนี้ 
-                  <button 
-                    style="background: none; border: none; color: #818cf8; text-decoration: underline; cursor: pointer; padding: 0; margin-left: 4px; font-size: 12px;"
-                    on:click={() => activeSidebarGroup.set(null)}
-                  >
-                    ดูประวัติทั้งหมด
-                  </button>
+                  ยังไม่มีประวัติการตรวจในกลุ่มนี้
                 </div>
               </div>
             {/if}
@@ -900,11 +1019,19 @@
     <main class="workspace">
       <!-- Topbar -->
       <header class="topbar">
-        <div class="breadcrumb">WORKSPACE / <span class="bc-active">{activeView.toUpperCase()}</span></div>
+        <div class="topbar-left">
+          <div class="breadcrumb">WORKSPACE / <span class="bc-active">{VIEW_LABELS[activeView] || activeView.toUpperCase()}</span></div>
+          {#if $selectedProjectStore}
+            <span class="active-project-pill" title={$selectedProjectStore.name || $selectedProjectStore.project_code}>
+              <span class="proj-dot"></span>
+              {$selectedProjectStore.project_code || $selectedProjectStore.name}
+            </span>
+          {/if}
+        </div>
         <div class="topbar-right">
           <div class="search-box">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-            <input type="text" bind:value={$globalSearchQuery} on:keydown={onGlobalSearchKey} placeholder="ค้นหาเอกสารหรือวิเคราะห์..." />
+            <input bind:this={globalSearchInputEl} type="text" bind:value={$globalSearchQuery} on:keydown={onGlobalSearchKey} placeholder="ค้นหา (Ctrl+K)..." />
           </div>
           <div style="position: relative;">
             <button class="icon-btn" on:click={() => showNotifications = !showNotifications} title="การแจ้งเตือน">
@@ -927,24 +1054,30 @@
           <div class="status-badge" class:error={!systemReady}>
             <span class="dot"></span> {systemReady ? 'System Ready' : 'System Unavailable'}
           </div>
-          <!-- svelte-ignore a11y-click-events-have-key-events -->
-          <div class="user-profile-container" style="position: relative;" on:click={() => showProfileMenu = !showProfileMenu}>
-            <div class="user-info">
-              <span class="user-name">{$authDisplayName || $authUser}</span>
-              <span class="user-role">{$authRole === 'admin' ? 'System Admin' : 'Standard User'}</span>
-            </div>
-            <div class="avatar" title="{$authDisplayName || $authUser} ({$authRole})">
-              {#if $authAvatar && !topbarAvatarError}
-                <img src={`${$authAvatar}`} alt="Profile" on:error={() => topbarAvatarError = true} />
-              {:else}
-                {$authDisplayName ? $authDisplayName.charAt(0).toUpperCase() : ($authUser ? $authUser.charAt(0).toUpperCase() : 'A')}
-              {/if}
-            </div>
+          <div class="user-profile-wrap" style="position: relative;">
+            <button
+              type="button"
+              class="user-profile-container"
+              aria-haspopup="menu"
+              aria-expanded={showProfileMenu}
+              on:click={() => showProfileMenu = !showProfileMenu}
+            >
+              <div class="user-info">
+                <span class="user-name">{$authDisplayName || $authUser}</span>
+                <span class="user-role">{$authRole === 'admin' ? 'System Admin' : 'Standard User'}</span>
+              </div>
+              <div class="avatar" title="{$authDisplayName || $authUser} ({$authRole})">
+                {#if $authAvatar && !topbarAvatarError}
+                  <img src={`${$authAvatar}`} alt="Profile" on:error={() => topbarAvatarError = true} />
+                {:else}
+                  {$authDisplayName ? $authDisplayName.charAt(0).toUpperCase() : ($authUser ? $authUser.charAt(0).toUpperCase() : 'A')}
+                {/if}
+              </div>
+            </button>
             
             {#if showProfileMenu}
-              <!-- svelte-ignore a11y-click-events-have-key-events -->
-              <div class="dropdown-overlay" on:click|stopPropagation={() => showProfileMenu = false}></div>
-              <div class="profile-dropdown">
+              <div class="dropdown-overlay" aria-hidden="true" on:click|stopPropagation={() => showProfileMenu = false}></div>
+              <div class="profile-dropdown" role="menu">
                 <button class="dropdown-item" on:click|stopPropagation={openMyProfileModal}>
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
                   Profile
@@ -964,7 +1097,7 @@
       </header>
 
       <!-- Content Area -->
-      <div class="content-scroll" id="main-content" class:no-padding={['kb', 'ocr', 'qa_consult', 'qa_member', 'qa_analysis_diagram', 'qa_performance', 'qa_research', 'qa_automate', 'qa_board', 'master_agent', 'workflow_builder'].includes(activeView)}>
+      <div class="content-scroll" id="main-content" class:no-padding={['kb', 'ocr', 'qa_consult', 'qa_doc_creation', 'qa_member', 'qa_analysis_diagram', 'qa_performance', 'qa_research', 'qa_security', 'qa_automate', 'qa_board', 'master_agent', 'workflow_builder'].includes(activeView)}>
         {#key activeView}
           <div class="view-wrapper" in:fade="{{ duration: 300, delay: 150 }}">
             {#if activeView === "ocr" && $authRole === "admin"}
@@ -1335,8 +1468,9 @@
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 20px 20px 16px;
+    padding: 14px 16px 12px;
     border-bottom: 1px solid var(--glass-border);
+    flex-shrink: 0;
   }
 
   .logo-icon {
@@ -1351,9 +1485,7 @@
     font-family: var(--font-en);
     font-size: 18px;
     font-weight: 700;
-    background: var(--gradient-text);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
+    color: var(--text-main);
     line-height: 1.2;
     letter-spacing: 0.5px;
   }
@@ -1368,10 +1500,11 @@
 
   .sidebar-nav {
     flex: 1;
-    padding: 10px 12px 10px 16px;
+    min-height: 0;
+    padding: 8px 10px 10px 12px;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 4px;
     overflow-y: auto;
     overflow-x: hidden;
     scrollbar-width: thin;
@@ -1399,6 +1532,9 @@
   }
 
   .history-title-toggle {
+    width: 100%;
+    font: inherit;
+    color: var(--text-muted);
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -1410,6 +1546,34 @@
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid rgba(255, 255, 255, 0.06);
     margin-bottom: 6px;
+  }
+  .history-title-toggle.flex-1 {
+    flex: 1;
+    min-width: 0;
+    margin-bottom: 0;
+  }
+  .history-header-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 6px;
+  }
+  .btn-reset-group-pill {
+    flex-shrink: 0;
+    background: rgba(168, 85, 247, 0.14);
+    border: 1px solid rgba(168, 85, 247, 0.35);
+    color: #d8b4fe;
+    font-family: var(--font-th);
+    font-size: 10.5px;
+    font-weight: 500;
+    padding: 4px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+  .btn-reset-group-pill:hover {
+    background: rgba(168, 85, 247, 0.28);
+    color: #ffffff;
   }
 
   .history-title-toggle:hover {
@@ -1518,23 +1682,37 @@
     transform: scale(1.1);
   }
 
+  .nav-group-label {
+    font-family: var(--font-en);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    padding: 8px 10px 2px;
+  }
+  .nav-group-label:first-child {
+    padding-top: 2px;
+  }
+
   .nav-item {
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 12px 16px;
+    gap: 10px;
+    padding: 9px 12px;
     background: transparent;
     border: 1px solid transparent;
     border-radius: var(--radius-md);
     color: var(--text-muted);
     font-family: var(--font-en);
-    font-size: 14px;
+    font-size: 13.5px;
     font-weight: 500;
     cursor: pointer;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
     text-align: left;
     position: relative;
     overflow: hidden;
+    flex-shrink: 0;
   }
 
   .nav-item:hover {
@@ -1564,16 +1742,17 @@
   }
 
   .history-section {
-    margin-top: 16px;
-    padding-top: 16px;
+    margin-top: 8px;
+    padding-top: 10px;
     border-top: 1px solid var(--glass-border);
+    flex-shrink: 0;
   }
   .history-title {
     font-size: 11px;
     font-weight: 600;
     color: var(--text-muted);
     letter-spacing: 0.05em;
-    margin-bottom: 8px;
+    margin-bottom: 6px;
     padding-left: 8px;
   }
   .history-list {
@@ -1581,35 +1760,49 @@
     flex-direction: column;
     gap: 4px;
   }
+  .qa-compact-scroll {
+    max-height: 175px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding-right: 3px;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(139, 92, 246, 0.45) transparent;
+  }
+  .qa-compact-scroll::-webkit-scrollbar {
+    width: 4px;
+  }
+  .qa-compact-scroll::-webkit-scrollbar-thumb {
+    background: rgba(139, 92, 246, 0.45);
+    border-radius: 4px;
+  }
   .history-item {
     display: flex;
     align-items: flex-start;
-    gap: 10px;
-    background: transparent;
-    border: none;
-    padding: 8px;
-    border-radius: 6px;
+    gap: 8px;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    padding: 7px 8px;
+    border-radius: 8px;
     cursor: pointer;
     text-align: left;
-    transition: background 0.2s;
+    transition: all 0.2s ease;
     color: var(--text-muted);
   }
   .history-item:hover {
-    background: var(--glass-bg-hover);
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.12);
     color: var(--text-main);
   }
   .history-item.group-item {
-    border-left: 3px solid transparent;
-    padding-left: 10px;
     transition: all 0.2s ease;
   }
   .history-item.group-item:hover {
-    border-left-color: #8b5cf6;
+    border-color: rgba(139, 92, 246, 0.4);
     background: rgba(139, 92, 246, 0.08);
   }
   .history-item.group-item.active {
-    border-left-color: #a855f7;
-    background: rgba(168, 85, 247, 0.15);
+    border-color: rgba(168, 85, 247, 0.55);
+    background: rgba(168, 85, 247, 0.16);
     color: #fff;
   }
   .sidebar-item-row {
@@ -1617,24 +1810,25 @@
     display: flex;
     align-items: center;
     width: 100%;
-    border-radius: 6px;
+    border-radius: 8px;
   }
   .sidebar-item-row .history-item {
     flex: 1;
     min-width: 0;
-    padding-right: 28px;
+    padding-right: 26px;
   }
   .btn-sidebar-delete {
     position: absolute;
-    right: 6px;
+    right: 5px;
     top: 50%;
     transform: translateY(-50%);
     opacity: 0;
     background: transparent;
     border: none;
     color: #94a3b8;
-    padding: 5px;
-    border-radius: 4px;
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -1642,8 +1836,9 @@
     transition: all 0.2s ease;
     z-index: 2;
   }
-  .sidebar-item-row:hover .btn-sidebar-delete {
-    opacity: 0.75;
+  .sidebar-item-row:hover .btn-sidebar-delete,
+  .btn-sidebar-delete:focus-visible {
+    opacity: 0.85;
   }
   .btn-sidebar-delete:hover {
     opacity: 1 !important;
@@ -1657,40 +1852,89 @@
   .history-details {
     display: flex;
     flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+    flex: 1;
     overflow: hidden;
   }
+  .h-title-row {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+  }
+  .h-type-badge {
+    flex-shrink: 0;
+    font-family: var(--font-en);
+    font-size: 9.5px;
+    font-weight: 700;
+    color: #d8b4fe;
+    background: rgba(168, 85, 247, 0.18);
+    border: 1px solid rgba(168, 85, 247, 0.32);
+    padding: 1px 5px;
+    border-radius: 4px;
+    line-height: 1.3;
+  }
+  .h-meta-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+  .h-group-pill {
+    font-size: 10px;
+    font-weight: 500;
+    color: #c4b5fd;
+    background: rgba(139, 92, 246, 0.12);
+    padding: 0 5px;
+    border-radius: 4px;
+    line-height: 1.4;
+    max-width: 110px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .h-filename {
-    font-size: 13px;
+    font-size: 12.5px;
+    font-weight: 500;
+    line-height: 1.35;
+    color: var(--text-main);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
   .h-project {
     font-size: 10px;
+    line-height: 1.3;
     color: var(--secondary);
-    opacity: 0.8;
+    opacity: 0.85;
   }
   .h-date {
     font-size: 10px;
+    line-height: 1.3;
     color: var(--text-muted);
-    margin-top: 2px;
   }
 
   .sidebar-footer {
-    padding: 20px 16px;
+    padding: 10px 12px;
     border-top: 1px solid var(--glass-border);
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
   }
 
   /* ── Tutorial Button ── */
   .btn-tutorial {
     display: flex; align-items: center; gap: 10px;
-    width: 100%; padding: 11px 12px;
+    width: 100%; padding: 9px 12px;
     background: rgba(99, 102, 241, 0.06);
     border: 1px solid rgba(99, 102, 241, 0.18);
     color: rgba(167, 139, 250, 0.85);
-    font-size: 14px; font-weight: 500; cursor: pointer;
+    font-size: 13px; font-weight: 500; cursor: pointer;
     border-radius: var(--radius-md); transition: all 0.3s;
-    margin-bottom: 8px;
+    margin-bottom: 0;
     position: relative;
     overflow: hidden;
   }
@@ -1720,7 +1964,7 @@
     border: 1px solid rgba(99, 102, 241, 0.3);
     border-radius: 20px;
     color: #818cf8;
-    font-family: 'Inter', var(--font-en), sans-serif;
+    font-family: var(--font-en);
     animation: pulse-badge 2s ease-in-out infinite;
   }
   @keyframes pulse-badge {
@@ -1730,9 +1974,9 @@
 
   .btn-logout {
     display: flex; align-items: center; gap: 10px;
-    width: 100%; padding: 12px;
+    width: 100%; padding: 9px 12px;
     background: transparent; border: 1px solid transparent;
-    color: var(--danger); font-size: 14px; font-weight: 500; cursor: pointer;
+    color: var(--danger); font-size: 13px; font-weight: 500; cursor: pointer;
     border-radius: var(--radius-md); transition: all 0.3s;
   }
   .btn-logout:hover {
@@ -1832,7 +2076,7 @@
     justify-content: center;
     border: 2px solid var(--bg-dark);
     box-shadow: 0 0 8px rgba(244, 63, 94, 0.6);
-    font-family: 'Inter', sans-serif;
+    font-family: var(--font-en);
   }
 
   .status-badge {
@@ -1859,7 +2103,48 @@
     box-shadow: 0 0 8px rgba(239, 68, 68, 0.6);
   }
 
+  .topbar-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+  }
+
+  .active-project-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 20px;
+    background: rgba(99, 102, 241, 0.12);
+    border: 1px solid rgba(99, 102, 241, 0.3);
+    color: #c7d2fe;
+    font-family: var(--font-en);
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .proj-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--primary);
+    flex-shrink: 0;
+  }
+
+  .user-profile-wrap {
+    display: flex;
+    align-items: center;
+  }
+
   .user-profile-container {
+    background: transparent;
+    color: inherit;
+    font: inherit;
     display: flex;
     align-items: center;
     gap: 12px;
@@ -1936,9 +2221,24 @@
   @media (max-width: 900px) {
     .app-container { flex-direction: column; }
     .sidebar { width: 100%; height: auto; border-right: none; border-bottom: 1px solid var(--glass-border); }
-    .sidebar-nav { flex-direction: row; overflow-x: auto; }
+    .sidebar-nav { flex-direction: row; overflow-x: auto; align-items: center; }
+    .nav-group-label { display: none; }
+    .nav-item { white-space: nowrap; flex-shrink: 0; }
     .nav-item.active::before { left: 10%; top: 100%; width: 80%; height: 4px; border-radius: 4px 4px 0 0; }
-    .topbar { display: none; }
+    .topbar { height: 56px; padding: 0 16px; }
+    .topbar-right { gap: 10px; }
+    .search-box { display: none; }
+    .user-info { display: none; }
+    .status-badge { padding: 4px 10px; font-size: 11px; }
+    .breadcrumb { font-size: 11px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .spectrum-bg,
+    .spectrum-bg.layer-2,
+    .tutorial-badge {
+      animation: none !important;
+    }
   }
 
   /* ── Footer ── */
@@ -2100,9 +2400,7 @@
     font-size: 22px;
     font-weight: 700;
     margin: 0 0 6px 0;
-    background: linear-gradient(135deg, #ffffff 0%, #c084fc 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
+    color: var(--text-main);
   }
   .profile-modal-header .modal-subtitle {
     font-size: 13px;

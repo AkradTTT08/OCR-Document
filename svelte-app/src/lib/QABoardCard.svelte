@@ -5,10 +5,15 @@
   import ProjectSelection from "./ProjectSelection.svelte";
   import { toast } from "./toastStore.js";
   import SmartTestLauncherModal from "./SmartTestLauncherModal.svelte";
+  import ConfirmModal from "./ConfirmModal.svelte";
 
   let projects = [];
   let isTestModalOpen = false;
   let testTargetCard = null;
+  let confirmOpen = false;
+  let confirmTitle = "";
+  let confirmMessage = "";
+  let confirmAction = null;
 
   $: selectedProjectId = $selectedProjectStore ? ($selectedProjectStore.id || $selectedProjectStore.project_id) : "";
 
@@ -242,53 +247,56 @@
   }
 
   // Unsave card from project and remove from RAG
-  async function unsaveCard(card, event) {
+  function unsaveCard(card, event) {
     if (event) event.stopPropagation();
     const cTitle = card.title || 'Card นี้';
-    if (!confirm(`คุณต้องการยกเลิกการบันทึก "${cTitle}" ออกจากโครงการนี้ใช่หรือไม่? (จะนำออกจาก RAG ด้วย)`)) {
-      return;
-    }
-
-    const cardId = card.saved_id || card.id;
-    try {
-      const res = await fetch(`/api/projects/${selectedProjectId}/cards/${cardId}`, {
-        method: "DELETE"
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        toast(data.message || "ยกเลิกการบันทึก Card สำเร็จ", "success");
-        await fetchCards();
-        if (selectedCard && (selectedCard.id === cardId || selectedCard.saved_id === cardId)) {
-          selectedCard = { ...selectedCard, is_saved: false };
+    confirmTitle = 'ยืนยันการยกเลิกบันทึก Card';
+    confirmMessage = `คุณต้องการยกเลิกการบันทึก "${cTitle}" ออกจากโครงการนี้ใช่หรือไม่? (จะนำออกจาก RAG ด้วย)`;
+    confirmAction = async () => {
+      const cardId = card.saved_id || card.id;
+      try {
+        const res = await fetch(`/api/projects/${selectedProjectId}/cards/${cardId}`, {
+          method: "DELETE"
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          toast(data.message || "ยกเลิกการบันทึก Card สำเร็จ", "success");
+          await fetchCards();
+          if (selectedCard && (selectedCard.id === cardId || selectedCard.saved_id === cardId)) {
+            selectedCard = { ...selectedCard, is_saved: false };
+          }
+        } else {
+          toast(data.error || "ยกเลิกการบันทึกไม่สำเร็จ", "error");
         }
-      } else {
-        toast(data.error || "ยกเลิกการบันทึกไม่สำเร็จ", "error");
+      } catch (err) {
+        toast(`เกิดข้อผิดพลาดในการลบ: ${err.message}`, "error");
       }
-    } catch (err) {
-      toast(`เกิดข้อผิดพลาดในการลบ: ${err.message}`, "error");
-    }
+    };
+    confirmOpen = true;
   }
 
   // Clear all saved cards from project and RAG
-  async function clearAllSavedCards() {
+  function clearAllSavedCards() {
     if (savedCards.length === 0) return;
-    if (!confirm(`คุณต้องการลบ Card ที่บันทึกไว้ทั้งหมด ${savedCards.length} ใบออกจากโครงการนี้และ RAG ใช่หรือไม่?`)) {
-      return;
-    }
-    try {
-      const res = await fetch(`/api/projects/${selectedProjectId}/cards/clear-all`, {
-        method: "POST"
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        toast(data.message || "ล้าง Card ที่บันทึกทั้งหมดเรียบร้อยแล้ว", "success");
-        await fetchCards();
-      } else {
-        toast(data.error || "ล้าง Card ไม่สำเร็จ", "error");
+    confirmTitle = 'ยืนยันการล้าง Card ทั้งหมด';
+    confirmMessage = `คุณต้องการลบ Card ที่บันทึกไว้ทั้งหมด ${savedCards.length} ใบออกจากโครงการนี้และ RAG ใช่หรือไม่?`;
+    confirmAction = async () => {
+      try {
+        const res = await fetch(`/api/projects/${selectedProjectId}/cards/clear-all`, {
+          method: "POST"
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          toast(data.message || "ล้าง Card ที่บันทึกทั้งหมดเรียบร้อยแล้ว", "success");
+          await fetchCards();
+        } else {
+          toast(data.error || "ล้าง Card ไม่สำเร็จ", "error");
+        }
+      } catch (err) {
+        toast(`เกิดข้อผิดพลาด: ${err.message}`, "error");
       }
-    } catch (err) {
-      toast(`เกิดข้อผิดพลาด: ${err.message}`, "error");
-    }
+    };
+    confirmOpen = true;
   }
 
   // Smart AI Test Launcher handlers
@@ -2244,6 +2252,14 @@
   />
 {/if}
 
+<ConfirmModal
+  bind:open={confirmOpen}
+  title={confirmTitle}
+  message={confirmMessage}
+  confirmText="ยืนยันการลบ"
+  on:confirm={() => confirmAction && confirmAction()}
+/>
+
 <style>
   .board-container {
     padding: 24px;
@@ -2294,9 +2310,7 @@
     margin: 0;
     font-size: 1.5rem;
     font-weight: 700;
-    background: linear-gradient(135deg, #a855f7 0%, #3b82f6 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
+    color: var(--text-main);
   }
   
   .subtitle {
@@ -2391,7 +2405,7 @@
   .tab-btn {
     background: transparent;
     border: none;
-    border-bottom: 3px solid transparent;
+    border-bottom: 2px solid transparent;
     padding: 10px 18px;
     font-size: 0.95rem;
     font-weight: 600;
@@ -2401,7 +2415,7 @@
     align-items: center;
     gap: 8px;
     transition: all 0.2s ease;
-    border-radius: 8px 8px 0 0;
+    border-radius: 0;
   }
   .tab-btn:hover {
     color: #e2e8f0;

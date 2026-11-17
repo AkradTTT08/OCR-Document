@@ -6,6 +6,7 @@
   import { selectedProjectStore } from './qaHistoryStore.js';
   import ProjectSelection from './ProjectSelection.svelte';
   import PipelineSelection from './PipelineSelection.svelte';
+  import ConfirmModal from './ConfirmModal.svelte';
   
   import AgentNode from './nodes/AgentNode.svelte';
   import DebateLoopNode from './nodes/DebateLoopNode.svelte';
@@ -26,8 +27,25 @@
   let edges = [];
   
   let workflowName = "Untitled Workflow";
+  let workflowDescription = "";
   let currentStep = 'project'; // 'project', 'pipeline', 'canvas'
   let currentWorkflowId = null;
+  let savedSnapshot = "";
+  let showLeaveConfirm = false;
+  let pendingLeaveAction = null;
+
+  function computeSnapshot() {
+    return JSON.stringify({
+      name: workflowName,
+      description: workflowDescription,
+      nodes: (nodes || []).map(n => ({ id: n.id, type: n.type, data: n.data })),
+      edges: (edges || []).map(e => ({ source: e.source, target: e.target }))
+    });
+  }
+
+  function isCanvasDirty() {
+    return currentStep === 'canvas' && !!savedSnapshot && computeSnapshot() !== savedSnapshot;
+  }
   
   // Chat logs from execution
   let chatLogs = [];
@@ -59,11 +77,28 @@
   }
 
   function resetProject() {
+    if (isCanvasDirty()) {
+      pendingLeaveAction = () => {
+        selectedProjectStore.set(null);
+        currentStep = 'project';
+        currentWorkflowId = null;
+      };
+      showLeaveConfirm = true;
+      return;
+    }
     selectedProjectStore.set(null);
     currentStep = 'project';
   }
 
   function backToPipeline() {
+    if (isCanvasDirty()) {
+      pendingLeaveAction = () => {
+        currentStep = 'pipeline';
+        currentWorkflowId = null;
+      };
+      showLeaveConfirm = true;
+      return;
+    }
     currentStep = 'pipeline';
     currentWorkflowId = null;
   }
@@ -71,6 +106,7 @@
   function selectPipeline(pl) {
     currentWorkflowId = pl.id;
     workflowName = pl.name || "Untitled Workflow";
+    workflowDescription = pl.description || "";
     try {
       nodes = typeof pl.nodes === 'string' ? JSON.parse(pl.nodes) : (pl.nodes || []);
       edges = typeof pl.edges === 'string' ? JSON.parse(pl.edges) : (pl.edges || []);
@@ -78,12 +114,14 @@
       nodes = pl.nodes || [];
       edges = pl.edges || [];
     }
+    savedSnapshot = computeSnapshot();
     currentStep = 'canvas';
   }
 
   function createNewPipeline() {
     currentWorkflowId = null;
     workflowName = "Untitled Workflow";
+    workflowDescription = "";
     const pId = selectedProjectObj?.id || selectedProjectObj?.project_id || '';
     nodes = [
       { id: 'start_1', type: 'input', position: { x: 60, y: 200 }, data: { text: "คำแนะนำสำหรับสร้างเอกสาร..." } },
@@ -94,6 +132,7 @@
       { id: 'e1-2', source: 'start_1', target: 'debate_1' },
       { id: 'e2-3', source: 'debate_1', target: 'out_1' },
     ];
+    savedSnapshot = computeSnapshot();
     currentStep = 'canvas';
   }
 
@@ -132,6 +171,28 @@
     event.dataTransfer.setData('application/svelteflow', nodeType);
     event.dataTransfer.effectAllowed = 'move';
   };
+
+  function addNodeFromPalette(type) {
+    if (!type) return;
+    const count = (nodes || []).length;
+    const newNode = {
+      id: `node_${Date.now()}`,
+      type,
+      position: { x: 140 + ((count * 40) % 280), y: 120 + ((count * 35) % 210) },
+      data: getDefaultDataForType(type)
+    };
+    nodes = [...nodes, newNode];
+  }
+
+  async function copyFinalOutput() {
+    if (!finalOutput) return;
+    try {
+      await navigator.clipboard.writeText(finalOutput);
+      toast('คัดลอกผลลัพธ์เรียบร้อยแล้ว', 'success');
+    } catch (err) {
+      toast('ไม่สามารถคัดลอกข้อความได้', 'error');
+    }
+  }
 
   const onDrop = (event) => {
     event.preventDefault();
@@ -205,6 +266,7 @@
     try {
       const payload = {
         name: workflowName,
+        description: workflowDescription,
         project_id: pId,
         nodes: nodes.map(n => ({ id: n.id, type: n.type, data: n.data, position: n.position })),
         edges: edges.map(e => ({ source: e.source, target: e.target }))
@@ -225,6 +287,7 @@
       if (data.id) {
         currentWorkflowId = data.id;
       }
+      savedSnapshot = computeSnapshot();
       toast('Workflow saved successfully!', 'success');
     } catch(e) {
       toast(`บันทึกไม่สำเร็จ: ${e.message}`, 'error');
@@ -234,10 +297,12 @@
 
 <div class="workflow-outer-wrapper">
   {#if currentStep === 'project' || !selectedProjectObj}
-    <ProjectSelection 
-      {projects} 
-      on:select={(e) => selectProject(e.detail)} 
-    />
+    <div class="project-selection-scroll">
+      <ProjectSelection 
+        {projects} 
+        on:select={(e) => selectProject(e.detail)} 
+      />
+    </div>
   {:else if currentStep === 'pipeline'}
     <div class="top-nav">
       <button class="btn-back" on:click={resetProject}>
@@ -250,7 +315,7 @@
         โครงการปัจจุบัน: <strong>{selectedProjectObj.project_code || selectedProjectObj.name}</strong>
       </div>
     </div>
-    <div class="pipeline-selection-wrapper" style="padding: 40px; max-width: 1200px; margin: 0 auto; width: 100%;">
+    <div class="pipeline-selection-wrapper" style="padding: 24px; max-width: 100%; margin: 0; width: 100%; overflow-y: auto; flex: 1; box-sizing: border-box;">
       <PipelineSelection 
         projectId={selectedProjectObj?.id || selectedProjectObj?.project_id}
         on:select={(e) => selectPipeline(e.detail)}
@@ -278,43 +343,44 @@
           AI Workflow Builder
         </div>
 
-        <div class="palette-section-title">ลาก Node ลงบน Canvas</div>
+        <div class="palette-section-title">ลากหรือคลิกเพื่อวาง Node</div>
         
         <div class="palette-nodes">
-          <div class="palette-node type-input" draggable="true" on:dragstart={(e) => onDragStart(e, 'input')}>
-            <span class="node-icon">📥</span>
+          <button type="button" class="palette-node type-input" draggable="true" on:dragstart={(e) => onDragStart(e, 'input')} on:click={() => addNodeFromPalette('input')}>
+            <span class="node-icon" aria-hidden="true">📥</span>
             <div>
               <div class="node-label">Input</div>
               <div class="node-desc">จุดเริ่มต้น / ข้อมูลนำเข้า</div>
             </div>
-          </div>
-          <div class="palette-node type-agent" draggable="true" on:dragstart={(e) => onDragStart(e, 'agent')}>
-            <span class="node-icon">🤖</span>
+          </button>
+          <button type="button" class="palette-node type-agent" draggable="true" on:dragstart={(e) => onDragStart(e, 'agent')} on:click={() => addNodeFromPalette('agent')}>
+            <span class="node-icon" aria-hidden="true">🤖</span>
             <div>
               <div class="node-label">AI Agent</div>
               <div class="node-desc">Agent เดี่ยว ทำงาน 1 ครั้ง</div>
             </div>
-          </div>
-          <div class="palette-node type-debate" draggable="true" on:dragstart={(e) => onDragStart(e, 'debate')}>
-            <span class="node-icon">🔄</span>
+          </button>
+          <button type="button" class="palette-node type-debate" draggable="true" on:dragstart={(e) => onDragStart(e, 'debate')} on:click={() => addNodeFromPalette('debate')}>
+            <span class="node-icon" aria-hidden="true">🔄</span>
             <div>
               <div class="node-label">Debate Loop</div>
               <div class="node-desc">2 AI คุยกันวนจนสมบูรณ์</div>
             </div>
-          </div>
-          <div class="palette-node type-output" draggable="true" on:dragstart={(e) => onDragStart(e, 'output')}>
-            <span class="node-icon">📤</span>
+          </button>
+          <button type="button" class="palette-node type-output" draggable="true" on:dragstart={(e) => onDragStart(e, 'output')} on:click={() => addNodeFromPalette('output')}>
+            <span class="node-icon" aria-hidden="true">📤</span>
             <div>
               <div class="node-label">Output</div>
               <div class="node-desc">ผลลัพธ์สุดท้าย</div>
             </div>
-          </div>
+          </button>
         </div>
 
         <div class="palette-controls">
-          <input type="text" bind:value={workflowName} class="wf-name-input" placeholder="ชื่อ Workflow" />
-          <button class="btn btn-save" on:click={saveWorkflow}>💾 บันทึก</button>
-          <button class="btn btn-run" on:click={executeWorkflow} disabled={isExecuting}>
+          <input type="text" bind:value={workflowName} class="wf-name-input" aria-label="ชื่อ Workflow" placeholder="ชื่อ Workflow" />
+          <input type="text" bind:value={workflowDescription} class="wf-name-input" aria-label="รายละเอียด Workflow" placeholder="รายละเอียด (ไม่บังคับ)" />
+          <button type="button" class="btn btn-save" on:click={saveWorkflow}>💾 บันทึก</button>
+          <button type="button" class="btn btn-run" on:click={executeWorkflow} disabled={isExecuting}>
             {#if isExecuting}
               <span class="spinner"></span> กำลังรัน...
             {:else}
@@ -349,7 +415,7 @@
               <span>💬 AI Agent Conversation</span>
               {#if isExecuting}<span class="live-badge">● LIVE</span>{/if}
             </div>
-            <button class="close-btn" on:click={() => showChat = false}>✕</button>
+            <button type="button" class="close-btn" aria-label="ปิดหน้าต่างแชท" on:click={() => showChat = false}>✕</button>
           </div>
 
           <div class="chat-messages" bind:this={chatScrollEl}>
@@ -377,7 +443,7 @@
 
             {#if isExecuting}
               <div class="typing-indicator">
-                <span></span><span></span><span></span>
+                <span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>
                 <span class="typing-text">กำลังประมวลผล...</span>
               </div>
             {/if}
@@ -386,14 +452,14 @@
           {#if finalOutput && !isExecuting}
             <div class="final-output-bar">
               <span class="final-label">🎯 ผลลัพธ์พร้อมแล้ว</span>
-              <button class="copy-btn" on:click={() => navigator.clipboard.writeText(finalOutput)}>📋 Copy</button>
+              <button type="button" class="copy-btn" on:click={copyFinalOutput}>📋 Copy</button>
             </div>
           {/if}
         </div>
       {/if}
 
       <!-- Toggle chat button -->
-      <button class="chat-toggle-btn" on:click={() => showChat = !showChat}>
+      <button type="button" class="chat-toggle-btn" aria-label="เปิด/ปิดหน้าต่างสนทนา AI" on:click={() => showChat = !showChat}>
         💬
         {#if chatLogs.length > 0}
           <span class="badge">{chatLogs.length}</span>
@@ -402,6 +468,16 @@
     </div>
   {/if}
 </div>
+
+<ConfirmModal
+  bind:open={showLeaveConfirm}
+  title="มีข้อมูลที่ยังไม่ได้บันทึก"
+  message="คุณมีการแก้ไข Workflow ค้างไว้ ต้องการออกจากหน้านี้โดยไม่บันทึกใช่หรือไม่?"
+  confirmText="ออกโดยไม่บันทึก"
+  cancelText="อยู่ต่อ"
+  danger={false}
+  on:confirm={() => pendingLeaveAction && pendingLeaveAction()}
+/>
 
 <style>
   :global(.svelte-flow__node) {
@@ -457,8 +533,9 @@
     font-size: 12px;
   }
 
+  .project-selection-scroll,
   .project-selection-wrapper {
-    padding: 32px 40px;
+    padding: 20px 24px;
     width: 100%;
     height: 100%;
     overflow-y: auto;
@@ -520,22 +597,25 @@
   .palette-nodes { display: flex; flex-direction: column; gap: 8px; }
 
   .palette-node {
+    width: 100%;
+    font: inherit;
+    text-align: left;
     display: flex;
     align-items: center;
     gap: 10px;
     padding: 10px;
-    border-radius: 8px;
-    border: 1px solid #374151;
+    border-radius: var(--radius-sm, 8px);
+    border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.08));
     cursor: grab;
     transition: all 0.2s;
-    background: #111827;
+    background: var(--bg2, #12141c);
   }
-  .palette-node:hover { border-color: #6366f1; transform: translateX(2px); }
+  .palette-node:hover { border-color: var(--primary, #6366f1); transform: translateX(2px); }
   .palette-node:active { cursor: grabbing; }
-  .type-input  { border-left: 3px solid #34d399; }
-  .type-agent  { border-left: 3px solid #818cf8; }
-  .type-debate { border-left: 3px solid #fbbf24; }
-  .type-output { border-left: 3px solid #60a5fa; }
+  .type-input  { border-color: rgba(52, 211, 153, 0.35); }
+  .type-agent  { border-color: rgba(129, 140, 248, 0.35); }
+  .type-debate { border-color: rgba(251, 191, 36, 0.35); }
+  .type-output { border-color: rgba(96, 165, 250, 0.35); }
 
   .node-icon { font-size: 18px; }
   .node-label { font-size: 12px; font-weight: 600; color: #f9fafb; }
@@ -591,7 +671,7 @@
     right: 16px;
     top: 16px;
     bottom: 16px;
-    width: 400px;
+    width: min(400px, calc(100vw - 32px));
     background: rgba(10, 12, 20, 0.97);
     backdrop-filter: blur(20px);
     border: 1px solid #1f2937;
@@ -632,11 +712,15 @@
   .close-btn {
     background: none;
     border: none;
-    color: #6b7280;
+    color: var(--text-muted, #94a3b8);
     cursor: pointer;
     font-size: 14px;
-    padding: 4px;
-    border-radius: 4px;
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
     transition: all 0.2s;
   }
   .close-btn:hover { background: #1f2937; color: #f9fafb; }
@@ -726,12 +810,12 @@
     width: 6px; height: 6px;
     background: #6366f1;
     border-radius: 50%;
-    animation: typing-bounce 1.2s ease-in-out infinite;
+    animation: typingPulse 1.2s ease-in-out infinite;
   }
   .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
   .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
   .typing-text { font-size: 11px; color: #6b7280; margin-left: 4px; }
-  @keyframes typing-bounce { 0%,60%,100% { transform: translateY(0); } 30% { transform: translateY(-6px); } }
+  @keyframes typingPulse { 0%,60%,100% { transform: translateY(0); } 30% { transform: translateY(-6px); } }
 
   /* Final output bar */
   .final-output-bar {
@@ -803,4 +887,32 @@
     display: inline-block;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
+
+  @media (max-width: 900px) {
+    .workflow-container {
+      flex-direction: column;
+    }
+    .node-palette {
+      width: 100%;
+      border-right: none;
+      border-bottom: 1px solid #1f2937;
+      padding: 12px;
+      gap: 10px;
+    }
+    .palette-nodes {
+      flex-direction: row;
+      overflow-x: auto;
+    }
+    .palette-node {
+      min-width: 150px;
+      flex-shrink: 0;
+    }
+    .palette-controls {
+      flex-direction: row;
+      flex-wrap: wrap;
+    }
+    .wf-name-input {
+      flex: 1 1 160px;
+    }
+  }
 </style>

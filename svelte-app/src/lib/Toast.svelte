@@ -48,7 +48,7 @@
   -webkit-backdrop-filter: blur(16px);
   border: 1px solid;
   box-shadow: 0 8px 32px rgba(0,0,0,0.4);
-  animation: slideIn 0.3s cubic-bezier(0.34,1.56,0.64,1);
+  animation: slideIn 0.28s cubic-bezier(0.22, 1, 0.36, 1);
   pointer-events: all;
   font-family: var(--font-th);
   font-size: 13.5px;
@@ -94,7 +94,7 @@
 .toast-msg {
   flex: 1;
   word-break: break-word;
-  color: var(--text);
+  color: var(--text-main);
 }
 
 .toast-close {
@@ -102,7 +102,7 @@
   background: none;
   border: none;
   cursor: pointer;
-  color: var(--text3);
+  color: var(--text-muted);
   padding: 2px;
   border-radius: 4px;
   display: flex;
@@ -110,5 +110,5 @@
   transition: color 0.15s;
   margin-top: 1px;
 }
-.toast-close:hover { color: var(--text); }
+.toast-close:hover { color: var(--text-main); }
 </style>

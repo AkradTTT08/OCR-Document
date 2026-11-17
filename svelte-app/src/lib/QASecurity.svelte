@@ -18,6 +18,8 @@
   let scanReport = null;
   let vulnFound = 0;
 
+  $: codeLineCount = sourceCode ? sourceCode.split("\n").length : 0;
+
   const langOptions = [
     { value: 'auto', label: 'Auto Detect' },
     { value: 'python', label: 'Python' },
@@ -31,10 +33,81 @@
   const stdOptions = [
     { value: 'OWASP Top 10 (2021)', label: 'OWASP Top 10 (2021) - พื้นฐาน' },
     { value: 'OWASP ASVS 4.0.3', label: 'OWASP ASVS 4.0.3 - เชิงลึก' },
-    { value: 'SANS Top 25', label: 'SANS Top 25 - คลอบคลุมช่องโหว่ทั่วไป' },
+    { value: 'SANS Top 25', label: 'SANS Top 25 - ครอบคลุมช่องโหว่ทั่วไป' },
     { value: 'CWE Top 25 Most Dangerous', label: 'CWE Top 25 - จุดอ่อนที่อันตรายที่สุด' },
     { value: 'Auto / Best Practice', label: 'Auto / Best Practice' }
   ];
+
+  function escapeHtml(str) {
+    return String(str || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function formatSecurityMarkdown(md) {
+    if (!md) return "";
+    const codeBlocks = [];
+    let text = String(md).replace(/```([a-zA-Z0-9_-]*)\n([\s\S]*?)```/g, (_, lang, code) => {
+      const idx = codeBlocks.length;
+      codeBlocks.push(`<pre><code class="lang-${escapeHtml(lang)}">${escapeHtml(code.trimEnd())}</code></pre>`);
+      return `@@CODEBLOCK_${idx}@@`;
+    });
+
+    const lines = text.split("\n");
+    const out = [];
+    let inList = false;
+
+    for (const rawLine of lines) {
+      const trimmed = rawLine.trim();
+      if (/^@@CODEBLOCK_\d+@@$/.test(trimmed)) {
+        if (inList) { out.push("</ul>"); inList = false; }
+        out.push(trimmed);
+        continue;
+      }
+      if (!trimmed) {
+        if (inList) { out.push("</ul>"); inList = false; }
+        continue;
+      }
+      let safe = escapeHtml(rawLine)
+        .replace(/`([^`]+)`/g, "<code>$1</code>")
+        .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+
+      if (/^###\s+/.test(safe)) {
+        if (inList) { out.push("</ul>"); inList = false; }
+        out.push(`<h3>${safe.replace(/^###\s+/, "")}</h3>`);
+      } else if (/^##\s+/.test(safe)) {
+        if (inList) { out.push("</ul>"); inList = false; }
+        out.push(`<h2>${safe.replace(/^##\s+/, "")}</h2>`);
+      } else if (/^#\s+/.test(safe)) {
+        if (inList) { out.push("</ul>"); inList = false; }
+        out.push(`<h1>${safe.replace(/^#\s+/, "")}</h1>`);
+      } else if (/^\s*[-*]\s+/.test(safe)) {
+        if (!inList) { out.push("<ul>"); inList = true; }
+        out.push(`<li>${safe.replace(/^\s*[-*]\s+/, "")}</li>`);
+      } else {
+        if (inList) { out.push("</ul>"); inList = false; }
+        out.push(`<p>${safe}</p>`);
+      }
+    }
+    if (inList) out.push("</ul>");
+
+    return out
+      .join("\n")
+      .replace(/@@CODEBLOCK_(\d+)@@/g, (_, i) => codeBlocks[Number(i)] || "");
+  }
+
+  async function copyScanReport() {
+    if (!scanReport) return;
+    try {
+      await navigator.clipboard.writeText(scanReport);
+      toast("คัดลอกรายงานความปลอดภัยเรียบร้อยแล้ว", "success");
+    } catch (e) {
+      toast("ไม่สามารถคัดลอกรายงานได้", "error");
+    }
+  }
 
   onMount(async () => {
     try {
@@ -62,7 +135,7 @@
 
   async function scanCode() {
     if (inputMode === 'paste' && !sourceCode.trim()) {
-      toast("กรุณาใส่ Source Code เพื่อแสกน", "warning");
+      toast("กรุณาใส่ Source Code เพื่อสแกน", "warning");
       return;
     }
     if (inputMode === 'github' && !githubUrl.trim()) {
@@ -102,7 +175,7 @@
       if (vulnFound > 0) {
         toast(`พบช่องโหว่ความปลอดภัย ${vulnFound} จุด!`, "warning");
       } else {
-        toast("แสกนเสร็จสิ้น ไม่พบช่องโหว่ร้ายแรง", "success");
+        toast("สแกนเสร็จสิ้น ไม่พบช่องโหว่ร้ายแรง", "success");
       }
     } catch (err) {
       toast(`เกิดข้อผิดพลาด: ${err.message}`, "error");
@@ -120,20 +193,22 @@
     />
   {:else}
     <div class="top-nav">
-      <button class="btn-back" on:click={resetProject}>
+      <button type="button" class="btn-back" on:click={resetProject}>
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
           <path fill-rule="evenodd" d="M11.354 1.646a.5.5 0 0 1 0 .708L5.707 8l5.647 5.646a.5.5 0 0 1-.708.708l-6-6a.5.5 0 0 1 0-.708l6-6a.5.5 0 0 1 .708 0z"/>
         </svg>
         เปลี่ยนโครงการ
       </button>
+
+      <div class="active-project-badge">
+        <span class="proj-dot" aria-hidden="true"></span>
+        โครงการปัจจุบัน: <strong>{selectedProjectObj.project_code} - {selectedProjectObj.name}</strong>
+      </div>
     </div>
 
     <div class="header-text">
-      <h2>QA Security Code Scanner 🛡️</h2>
-      <p>ตรวจสอบและวิเคราะห์ช่องโหว่ของ Source Code ด้วย AI ตามมาตรฐานสากล (เช่น OWASP)</p>
-      <div class="active-project-badge">
-        โครงการปัจจุบัน: <strong>{selectedProjectObj.project_code} - {selectedProjectObj.name}</strong>
-      </div>
+      <h2>QA Security Code Scanner</h2>
+      <p>ตรวจสอบและวิเคราะห์ช่องโหว่ของ Source Code ด้วย AI ตามมาตรฐานสากล (OWASP, ASVS, SANS, CWE)</p>
     </div>
 
     <div class="main-card glass-panel flex-row">
@@ -154,12 +229,12 @@
         </div>
 
         <div class="tabs-container">
-          <div class="tabs">
-            <button class="tab-btn {inputMode === 'paste' ? 'active' : ''}" on:click={() => inputMode = 'paste'}>
+          <div class="tabs" role="tablist" aria-label="รูปแบบการนำเข้าโค้ด">
+            <button type="button" role="tab" aria-selected={inputMode === 'paste'} class="tab-btn {inputMode === 'paste' ? 'active' : ''}" on:click={() => inputMode = 'paste'}>
               <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
               วาง Source Code
             </button>
-            <button class="tab-btn {inputMode === 'github' ? 'active' : ''}" on:click={() => inputMode = 'github'}>
+            <button type="button" role="tab" aria-selected={inputMode === 'github'} class="tab-btn {inputMode === 'github' ? 'active' : ''}" on:click={() => inputMode = 'github'}>
               <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path></svg>
               ดึงจาก GitHub
             </button>
@@ -168,34 +243,43 @@
 
         {#if inputMode === 'paste'}
           <div class="code-input-wrapper">
-            <label for="code-input">Source Code</label>
+            <div class="code-label-row">
+              <label for="code-input">Source Code</label>
+              <div class="code-meta-tools">
+                {#if sourceCode}
+                  <span class="line-count-pill">{codeLineCount} บรรทัด</span>
+                  <button type="button" class="btn-clear-code" on:click={() => (sourceCode = "")}>ล้างโค้ด</button>
+                {/if}
+              </div>
+            </div>
             <textarea 
               id="code-input" 
               bind:value={sourceCode} 
               placeholder="วาง Source Code ของคุณที่นี่..." 
+              spellcheck="false"
             ></textarea>
           </div>
         {:else}
           <div class="github-input-wrapper">
             <label for="github-input">GitHub Repository URL</label>
             <input 
-              type="text" 
+              type="url" 
               id="github-input" 
               bind:value={githubUrl} 
               placeholder="https://github.com/username/repo" 
             />
             <div class="info-box">
-              <strong>หมายเหตุ:</strong> ระบบจะโคลน Repository แบบชั่วคราวและดึงเฉพาะไฟล์ Source Code ที่รองรับ หากโปรเจกต์มีขนาดใหญ่มาก ระบบอาจจะตัดข้อมูลบางส่วนออกอัตโนมัติเพื่อป้องกัน Error จาก AI
+              <strong>หมายเหตุ:</strong> ระบบจะโคลน Repository แบบชั่วคราวและดึงเฉพาะไฟล์ Source Code ที่รองรับ หากโปรเจกต์มีขนาดใหญ่มาก ระบบจะคัดกรองเฉพาะไฟล์หลักให้อัตโนมัติ
             </div>
           </div>
         {/if}
 
-        <button class="btn-primary scan-btn" on:click={scanCode} disabled={isLoading}>
+        <button type="button" class="btn-primary scan-btn" on:click={scanCode} disabled={isLoading}>
           {#if isLoading}
-            <div class="spinner"></div> กำลังแสกนช่องโหว่...
+            <div class="spinner"></div> กำลังสแกนช่องโหว่...
           {:else}
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-            เริ่มการแสกนโค้ด
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+            เริ่มการสแกนโค้ด
           {/if}
         </button>
       </div>
@@ -204,28 +288,35 @@
       <div class="output-section">
         <div class="output-header">
           <h3>ผลการวิเคราะห์ (Security Report)</h3>
-          {#if scanReport}
-            <div class="badge {vulnFound > 0 ? 'badge-danger' : 'badge-success'}">
-              {vulnFound > 0 ? `พบ ${vulnFound} จุดที่ควรระวัง` : 'ปลอดภัย'}
-            </div>
-          {/if}
+          <div class="output-header-actions">
+            {#if scanReport}
+              <div class="badge {vulnFound > 0 ? 'badge-danger' : 'badge-success'}">
+                {vulnFound > 0 ? `พบ ${vulnFound} จุดที่ควรระวัง` : 'ปลอดภัย'}
+              </div>
+              <button type="button" class="btn-copy-report" on:click={copyScanReport}>
+                คัดลอกรายงาน
+              </button>
+            {/if}
+          </div>
         </div>
 
         <div class="report-content">
           {#if isLoading}
             <div class="loading-state">
               <div class="loader-pulse"></div>
-              <p>AI กำลังวิเคราะห์รูปแบบโค้ดและค้นหาช่องโหว่...</p>
+              <p>AI กำลังวิเคราะห์รูปแบบโค้ดและค้นหาช่องโหว่ตามเกณฑ์ {standard}...</p>
             </div>
           {:else if scanReport}
-            <!-- Render Markdown in production we'd use marked.js -->
             <div class="markdown-preview">
-              {scanReport}
+              {@html formatSecurityMarkdown(scanReport)}
             </div>
           {:else}
             <div class="empty-state">
-              <svg viewBox="0 0 24 24" fill="none" stroke="var(--border-color)" stroke-width="1" width="48" height="48"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
-              <p>วางโค้ดและกดแสกนเพื่อดูผลลัพธ์</p>
+              <div class="empty-shield-orb" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" width="32" height="32"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+              </div>
+              <div class="empty-title">พร้อมตรวจสอบความปลอดภัยของโค้ด</div>
+              <p>วาง Source Code หรือระบุ GitHub URL ทางด้านซ้าย แล้วกดปุ่มเริ่มการสแกนโค้ด</p>
             </div>
           {/if}
         </div>
@@ -238,33 +329,25 @@
   .qa-security-container {
     display: flex;
     flex-direction: column;
-    gap: 20px;
+    gap: 18px;
     min-height: 100%;
     height: auto;
-    padding: 20px 24px;
+    padding: 20px 24px 48px;
     box-sizing: border-box;
     max-width: 100%;
     margin: 0;
     width: 100%;
     overflow-y: auto;
-    animation: fadeIn 0.4s ease-out;
-  }
-
-  .top-nav,
-  .header-section,
-  .dashboard-stats,
-  .security-grid,
-  .threat-matrix-card {
-    max-width: 1600px;
-    width: 100%;
-    margin-left: auto;
-    margin-right: auto;
-    box-sizing: border-box;
+    animation: fadeIn 0.35s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   .top-nav {
     display: flex;
-    justify-content: flex-start;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    width: 100%;
   }
 
   .btn-back {
@@ -273,37 +356,59 @@
     gap: 8px;
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid var(--glass-border);
-    color: var(--text-dim);
+    color: var(--text-muted);
     padding: 8px 16px;
     border-radius: 8px;
     cursor: pointer;
-    font-size: 14px;
+    font-size: 13.5px;
     transition: all 0.2s;
   }
   .btn-back:hover {
     background: rgba(255, 255, 255, 0.1);
-    color: var(--text-light);
+    color: var(--text-main);
   }
 
   .active-project-badge {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    margin-top: 12px;
+    gap: 8px;
     padding: 6px 14px;
-    background: rgba(99, 102, 241, 0.1);
-    border: 1px solid rgba(99, 102, 241, 0.25);
-    color: #a5b4fc;
+    background: rgba(99, 102, 241, 0.12);
+    border: 1px solid rgba(99, 102, 241, 0.3);
+    color: #c7d2fe;
     border-radius: 20px;
     font-size: 13px;
     font-weight: 500;
   }
 
+  .proj-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--primary, #6366f1);
+    box-shadow: 0 0 8px var(--primary, #6366f1);
+  }
+
+  .header-text h2 {
+    font-family: var(--font-en, 'Outfit', sans-serif);
+    font-size: clamp(22px, 2.4vw, 28px);
+    font-weight: 700;
+    color: var(--text-main, #f8fafc);
+    margin: 0 0 6px 0;
+  }
+
+  .header-text p {
+    font-size: 14.5px;
+    color: var(--text-muted, #94a3b8);
+    margin: 0;
+  }
+
   .main-card {
-    background: rgba(15, 23, 42, 0.65);
+    background: rgba(18, 20, 28, 0.62);
     backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
     border: 1px solid var(--glass-border);
-    border-radius: var(--radius-lg, 16px);
+    border-radius: var(--radius-lg, 20px);
     padding: 24px;
     box-sizing: border-box;
     width: 100%;
@@ -311,10 +416,10 @@
 
   .flex-row {
     display: grid;
-    grid-template-columns: 1.1fr 1fr;
+    grid-template-columns: 1.05fr 1fr;
     gap: 28px;
     align-items: stretch;
-    min-height: 580px;
+    min-height: 560px;
   }
 
   .input-section {
@@ -342,8 +447,39 @@
   .code-input-wrapper label,
   .github-input-wrapper label {
     font-size: 13.5px;
+    color: var(--text-main, #f8fafc);
+    font-weight: 600;
+  }
+
+  .code-label-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .code-meta-tools {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .line-count-pill {
+    font-size: 11px;
     color: var(--text-muted);
-    font-weight: 500;
+    background: rgba(255, 255, 255, 0.06);
+    padding: 2px 8px;
+    border-radius: 10px;
+  }
+
+  .btn-clear-code {
+    background: none;
+    border: none;
+    color: #fda4af;
+    font-size: 11.5px;
+    cursor: pointer;
+    text-decoration: underline;
+    padding: 0;
   }
 
   .tabs-container {
@@ -352,7 +488,7 @@
 
   .tabs {
     display: inline-flex;
-    background: rgba(0, 0, 0, 0.35);
+    background: rgba(10, 11, 18, 0.65);
     padding: 4px;
     border-radius: 12px;
     border: 1px solid var(--glass-border);
@@ -374,8 +510,8 @@
     transition: all 0.2s ease;
   }
   .tab-btn:hover:not(.active) {
-    background: rgba(255,255,255,0.06);
-    color: var(--text-light);
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-main);
   }
   .tab-btn.active {
     background: var(--primary, #6366f1);
@@ -402,21 +538,20 @@
   #github-input, #code-input {
     width: 100%;
     padding: 14px 16px;
-    background: rgba(0, 0, 0, 0.3);
-    border: 1px solid var(--glass-border);
+    background: rgba(10, 11, 18, 0.65);
+    border: 1px solid var(--glass-border-light);
     border-radius: 12px;
-    color: var(--text-light);
-    font-family: var(--font-en, monospace);
-    transition: all 0.2s ease;
-    font-size: 13.5px;
-    box-shadow: inset 0 2px 4px rgba(0,0,0,0.15);
+    color: var(--text-main);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    font-size: 13px;
     box-sizing: border-box;
   }
   
   #code-input {
     flex: 1;
     height: 300px;
-    min-height: 220px;
+    min-height: 240px;
     max-height: 520px;
     line-height: 1.6;
     resize: vertical;
@@ -424,33 +559,32 @@
   
   #github-input:focus, #code-input:focus {
     outline: none;
-    border-color: rgba(99, 102, 241, 0.6);
-    background: rgba(0, 0, 0, 0.45);
-    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+    border-color: var(--primary, #6366f1);
+    background: rgba(10, 11, 18, 0.85);
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.22);
   }
 
   .info-box {
     padding: 14px 16px;
     background: rgba(99, 102, 241, 0.1);
-    border: 1px solid rgba(99, 102, 241, 0.2);
+    border: 1px solid rgba(99, 102, 241, 0.22);
     border-radius: 10px;
     font-size: 13px;
-    line-height: 1.5;
+    line-height: 1.55;
     color: #c7d2fe;
   }
 
   .scan-btn {
     width: 100%;
-    padding: 12px 20px;
+    padding: 13px 20px;
     font-weight: 600;
     font-size: 14.5px;
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 8px;
-    border-radius: 10px;
-    box-shadow: 0 4px 16px rgba(99, 102, 241, 0.35);
-    transition: all 0.2s ease;
+    border-radius: 12px;
+    box-shadow: 0 6px 20px -4px rgba(99, 102, 241, 0.4);
   }
 
   .output-section {
@@ -465,6 +599,7 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 10px;
     margin-bottom: 14px;
     padding-bottom: 10px;
     border-bottom: 1px solid var(--glass-border);
@@ -473,7 +608,29 @@
   .output-header h3 {
     margin: 0;
     font-size: 15.5px;
-    color: #f1f5f9;
+    color: var(--text-main);
+  }
+
+  .output-header-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .btn-copy-report {
+    background: rgba(99, 102, 241, 0.14);
+    border: 1px solid rgba(99, 102, 241, 0.35);
+    color: #c7d2fe;
+    padding: 5px 12px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+  .btn-copy-report:hover {
+    background: var(--primary, #6366f1);
+    color: #ffffff;
   }
 
   .report-content {
@@ -482,7 +639,7 @@
     min-height: 440px;
     max-height: 600px;
     overflow-y: auto;
-    background: rgba(0, 0, 0, 0.3);
+    background: rgba(10, 11, 18, 0.65);
     border-radius: 12px;
     padding: 20px;
     border: 1px solid var(--glass-border);
@@ -491,44 +648,50 @@
   
   /* Markdown Styles for Preview */
   .markdown-preview {
-    white-space: pre-wrap;
     line-height: 1.65;
     color: #e2e8f0;
     font-size: 13.5px;
   }
-  .markdown-preview h1, .markdown-preview h2, .markdown-preview h3 {
+  .markdown-preview :global(h1),
+  .markdown-preview :global(h2),
+  .markdown-preview :global(h3) {
     color: #f8fafc;
-    margin-top: 1.2em;
-    margin-bottom: 0.4em;
+    margin-top: 1.1em;
+    margin-bottom: 0.45em;
   }
-  .markdown-preview p {
-    margin-bottom: 0.9em;
+  .markdown-preview :global(h1:first-child),
+  .markdown-preview :global(h2:first-child),
+  .markdown-preview :global(h3:first-child) {
+    margin-top: 0;
   }
-  .markdown-preview code {
-    background: rgba(0,0,0,0.4);
+  .markdown-preview :global(p) {
+    margin: 0 0 0.85em 0;
+  }
+  .markdown-preview :global(code) {
+    background: rgba(99, 102, 241, 0.15);
     padding: 2px 6px;
     border-radius: 4px;
-    font-family: monospace;
-    color: #a5b4fc;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    color: #c7d2fe;
   }
-  .markdown-preview pre {
-    background: rgba(0,0,0,0.5) !important;
-    padding: 16px;
+  .markdown-preview :global(pre) {
+    background: rgba(5, 5, 5, 0.75);
+    padding: 14px 16px;
     border-radius: 8px;
     overflow-x: auto;
     border: 1px solid var(--glass-border);
+    margin: 0.8em 0;
   }
-  .markdown-preview pre code {
+  .markdown-preview :global(pre code) {
     background: transparent;
     padding: 0;
     color: #e2e8f0;
   }
-  .markdown-preview ul, .markdown-preview ol {
-    margin-left: 20px;
-    margin-bottom: 1em;
+  .markdown-preview :global(ul) {
+    margin: 0 0 1em 20px;
   }
-  .markdown-preview li {
-    margin-bottom: 0.4em;
+  .markdown-preview :global(li) {
+    margin-bottom: 0.35em;
   }
 
   .badge {
@@ -537,8 +700,8 @@
     font-size: 12px;
     font-weight: 600;
   }
-  .badge-danger { background: rgba(239, 68, 68, 0.2); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.3); }
-  .badge-success { background: rgba(16, 185, 129, 0.2); color: #6ee7b7; border: 1px solid rgba(16, 185, 129, 0.3); }
+  .badge-danger { background: rgba(244, 63, 94, 0.18); color: #fda4af; border: 1px solid rgba(244, 63, 94, 0.35); }
+  .badge-success { background: rgba(16, 185, 129, 0.18); color: #6ee7b7; border: 1px solid rgba(16, 185, 129, 0.35); }
 
   .empty-state, .loading-state {
     display: flex;
@@ -547,9 +710,28 @@
     justify-content: center;
     height: 100%;
     min-height: 380px;
-    color: var(--text-dim);
+    color: var(--text-muted);
     text-align: center;
-    gap: 16px;
+    gap: 12px;
+  }
+
+  .empty-shield-orb {
+    width: 64px;
+    height: 64px;
+    border-radius: 18px;
+    background: rgba(99, 102, 241, 0.12);
+    border: 1px solid rgba(99, 102, 241, 0.28);
+    color: #a5b4fc;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 4px;
+  }
+
+  .empty-title {
+    font-size: 15.5px;
+    font-weight: 600;
+    color: var(--text-main);
   }
 
   .loader-pulse {
