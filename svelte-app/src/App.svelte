@@ -182,7 +182,7 @@
     qa_performance: 'QA Performance',
     qa_security: 'QA Security',
     qa_research: 'QA Research',
-    master_agent: 'Master Agent',
+    master_agent: 'Spectra QA — Orchestration',
     workflow_builder: 'AI Workflow Builder',
   };
 
@@ -1387,7 +1387,7 @@
             {:else if activeView === "qa_board"}
               <QABoardCard />
             {:else if activeView === "master_agent"}
-              <MasterAgentUI />
+              <MasterAgentUI on:navigate={(e) => { if (e.detail?.view) activeView = e.detail.view; }} />
             {:else if activeView === "workflow_builder"}
               <WorkflowBuilder />
             {/if}

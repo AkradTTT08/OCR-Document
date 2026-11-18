@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@xyflow/svelte": "^1.6.6",
-    "mermaid": "^11.17.2"
+    "mermaid": "^11.17.2",
+    "three": "^0.187.0"
   }
 }
