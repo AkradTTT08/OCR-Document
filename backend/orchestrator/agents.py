@@ -197,17 +197,51 @@ class QAConsultAgent:
         return state
 
 class QAResearchAgent:
+    RESEARCH_MODE_DIRECTIVES = {
+        "deep_research": (
+            "โหมด: 🔍 Deep QA Research (วิเคราะห์เจาะลึกทุกมิติ)\n"
+            "- วิเคราะห์คำถามอย่างละเอียดครบถ้วนจากเอกสารทุกแหล่ง (SRS, Test Case, QA Consult Findings, Diagram, Automation)\n"
+            "- สรุปเป็นโครงสร้างที่ชัดเจน มีตารางเปรียบเทียบ (Markdown Table) และระบุ Citation ทุกหัวข้อ"
+        ),
+        "gap_risk_audit": (
+            "โหมด: ⚠️ Gap & Risk Audit (ตรวจหาช่องโหว่ ข้อขัดแย้ง และความเสี่ยง)\n"
+            "- โฟกัสการเปรียบเทียบ Requirement vs Test Cases vs QA Consult Findings vs Sitemap/Flowchart\n"
+            "- ชี้จุดที่ข้อมูลไม่ตรงกัน, Requirement ที่ยังไม่มี Test Case รองรับ, เงื่อนไข Error/Edge Case ที่ขาดหายไป พร้อมจัดระดับความเสี่ยง (High / Medium / Low) เป็นตาราง"
+        ),
+        "test_brainstorm": (
+            "โหมด: 🧪 Test Scenario & Edge Case Brainstorm\n"
+            "- ออกแบบชุดกรณีทดสอบ (Positive, Negative, Boundary, Security, Permission) โดยอ้างอิงจาก Business Rules จริงในเอกสาร\n"
+            "- แสดงผลเป็นตาราง Markdown ที่มีคอลัมน์: TC-ID | ประเภท | ขั้นตอนย่อ | ข้อมูลทดสอบ | ผลลัพธ์ที่คาดหวัง | อ้างอิง REQ"
+        ),
+        "impact_analysis": (
+            "โหมด: 🔄 Business & Change Impact Analysis\n"
+            "- วิเคราะห์ผลกระทบหากมีการแก้ไขฟีเจอร์หรือเงื่อนไขที่ผู้ใช้ถาม ว่ากระทบหน้าจอ/Sitemap ใด, API ใด, Requirement ข้อใด และ Test Case ชุดใดที่ต้องรัน Regression ใหม่"
+        ),
+        "quick_lookup": (
+            "โหมด: ⚡ Quick Fact Lookup (คำตอบกระชับตรงประเด็น)\n"
+            "- ตอบสั้น กระชับ ตรงคำถามที่สุดเป็น Bullet Points หรือตารางสั้นๆ พร้อมระบุ `[อ้างอิง: ชื่อไฟล์]` ทันที"
+        ),
+    }
+
     @staticmethod
     def _build_prompt_and_system(state: 'QAState'):
+        mode_key = (getattr(state, 'doc_type', None) or 'deep_research').strip().lower()
+        mode_directive = QAResearchAgent.RESEARCH_MODE_DIRECTIVES.get(
+            mode_key, QAResearchAgent.RESEARCH_MODE_DIRECTIVES["deep_research"]
+        )
+
         system_instruction = f"""คุณคือ Rainbow 🌈 ผู้เชี่ยวชาญด้าน QA Research & Requirements Intelligence ประจำระบบ 'Spectra QA'
-หน้าที่หลักของคุณคือ: ตอบคำถามและวิเคราะห์ข้อมูลเกี่ยวกับโครงการ "{state.project_name or 'N/A'}" (รหัสโครงการ: {state.project_code or state.project_id}) อย่างแม่นยำ ละเอียด ลึกซึ้ง และถูกต้อง 100% โดยอ้างอิงจากคลังข้อมูล (Knowledge Base), เอกสารความต้องการ (Requirements), SRS, Test Cases และเอกสารที่อัปโหลดทั้งหมด
+หน้าที่หลักของคุณคือ: ตอบคำถามและวิเคราะห์ข้อมูลเกี่ยวกับโครงการ "{state.project_name or 'N/A'}" (รหัสโครงการ: {state.project_code or state.project_id}) อย่างแม่นยำ ละเอียด ลึกซึ้ง และถูกต้อง 100% โดยอ้างอิงจากคลังข้อมูล (Knowledge Base), เอกสารความต้องการ (Requirements), SRS, Test Cases, ผลตรวจ QA Consult, ผัง QA Analysis Diagram และเอกสารที่อัปโหลดทั้งหมด
+
+### คำสั่งเฉพาะสำหรับโหมดการค้นคว้าปัจจุบัน:
+{mode_directive}
 
 กฎเหล็กในการค้นหาและตอบคำถาม (QA Accuracy & Grounding Rules):
 1. ความแม่นยำและการอ้างอิง (Grounding & Citations):
    - ให้ยึดข้อมูลจาก CONTEXT FROM KNOWLEDGE BASE เป็นหลักความจริงสูงสุด ห้ามคาดเดาหรือสร้างข้อมูลขึ้นมาเอง (Zero Hallucination)
    - ระบุแหล่งที่มาของข้อมูลเสมอเมื่อกล่าวถึงข้อกำหนด เช่น `[อ้างอิง: ชื่อไฟล์]` หรือ `[ความต้องการ: REQ-XXX]`
 2. รูปแบบคำตอบที่ชัดเจน (Structured Output):
-   - ใช้ Markdown จัดโครงสร้างให้อ่านง่าย เช่น หัวข้อย่อย (###), รายการ Bullet Points, ตัวเลขขั้นตอน, ตารางเปรียบเทียบ (Table), และ Code blocks สำหรับ API/JSON
+   - ใช้ Markdown จัดโครงสร้างให้อ่านง่าย เช่น หัวข้อย่อย (###), รายการ Bullet Points, ตัวเลขขั้นตอน, ตารางเปรียบเทียบ (Markdown Table), และ Code blocks สำหรับ API/JSON
    - สำหรับคำถามภาพรวม/สรุปโครงการ: ให้สรุปวัตถุประสงค์, ฟังก์ชันหลัก, กลุ่มผู้ใช้งาน, และรายการเอกสารที่เกี่ยวข้อง
    - สำหรับคำถามเชิงเทคนิค/Business Logic: ให้ระบุเงื่อนไข (Preconditions), กฎการตรวจสอบ (Validation Rules), กรณี Error, และผลลัพธ์ที่คาดหวัง (Expected Results)
 3. ความซื่อสัตย์เมื่อไม่พบข้อมูล (Honesty on Gaps):

@@ -2389,12 +2389,21 @@ def qa_consult_api():
                     pass
 
         # Read file bytes before background worker starts to avoid I/O on closed file
-        doc_filename = secure_filename(file.filename) if file and file.filename else 'document.pdf'
+        raw_original_filename = (getattr(file, 'filename', None) or 'document.pdf').strip()
+        _, raw_ext = os.path.splitext(raw_original_filename)
+        raw_ext_lower = (raw_ext or '.pdf').lower()
+        safe_base = secure_filename(raw_original_filename)
+        if not safe_base or not os.path.splitext(safe_base)[1]:
+            doc_filename = f"document{raw_ext_lower}"
+        else:
+            doc_filename = safe_base
         file_bytes = file.read()
         req_user = get_request_user() or request.form.get('username')
+        source_generated_doc_id = (request.form.get('source_generated_doc_id') or '').strip() or None
 
         from excel_extractor import is_excel_file, extract_text_from_excel_bytes
-        file_is_excel = is_excel_file(doc_filename)
+        file_is_excel = is_excel_file(raw_original_filename) or is_excel_file(doc_filename)
+        file_is_markdown = raw_ext_lower in ('.md', '.txt')
 
         import queue
         import threading
@@ -2406,10 +2415,20 @@ def qa_consult_api():
                 if file_is_excel:
                     msg_queue.put({'type': 'progress', 'pct': 10, 'message': 'กำลังวิเคราะห์และแปลงข้อมูลจากเอกสาร Excel (Sheets & Test Cases)...' })
                     try:
-                        extracted_text, total_pages = extract_text_from_excel_bytes(file_bytes, filename=doc_filename)
+                        extracted_text, total_pages = extract_text_from_excel_bytes(file_bytes, filename=raw_original_filename)
                     except Exception as ex_err:
                         logger.error(f"Failed to parse Excel file: {ex_err}", exc_info=True)
                         msg_queue.put({'type': 'error', 'message': f'ไม่สามารถอ่านไฟล์ Excel ได้: {str(ex_err)}'})
+                        msg_queue.put(None)
+                        return
+                elif file_is_markdown:
+                    msg_queue.put({'type': 'progress', 'pct': 10, 'message': 'กำลังอ่านเนื้อหาเอกสาร Markdown / Text...' })
+                    try:
+                        extracted_text = file_bytes.decode('utf-8', errors='replace')
+                        total_pages = max(1, (len(extracted_text) // 3000) + 1)
+                    except Exception as md_err:
+                        logger.error(f"Failed to read Markdown/Text file: {md_err}", exc_info=True)
+                        msg_queue.put({'type': 'error', 'message': f'ไม่สามารถอ่านไฟล์ข้อความได้: {str(md_err)}'})
                         msg_queue.put(None)
                         return
                 else:
@@ -2437,34 +2456,96 @@ def qa_consult_api():
                     if any(kw in lower_text for kw in ["test id", "tc_", "test case", "test objective", "expected result", "test procedure", "วัตถุประสงค์การทดสอบ", "ขั้นตอนการทดสอบ"]):
                         doc_type = ["Test Case"]
                         is_explicit = True
-                        logger.info(f"Auto-classified Excel document '{doc_filename}' as 'Test Case'")
+                        logger.info(f"Auto-classified Excel document '{raw_original_filename}' as 'Test Case'")
 
                 doc_type_display = ', '.join(doc_type) if isinstance(doc_type, list) and doc_type else (doc_type if isinstance(doc_type, str) and doc_type else "")
 
-                # 2. Vector Search & Project MD Inventory
-                from db_ingestion import search_knowledge_base, get_latest_qa_transaction, save_qa_transaction, get_project_markdown_documents_summary
+                # 2. Multi-Source Vector Search, Structured Requirements & Project MD Inventory
+                from db_ingestion import (
+                    search_knowledge_base,
+                    get_latest_qa_transaction,
+                    save_qa_transaction,
+                    get_project_markdown_documents_summary,
+                    get_db_connection as _get_kb_conn
+                )
                 
                 available_md_docs = []
+                structured_reqs_context = ""
                 if project_id:
                     try:
                         available_md_docs = get_project_markdown_documents_summary(project_id)
                     except Exception as e:
                         logger.error(f"Failed to fetch available project MD docs: {e}")
+                    try:
+                        _rconn = _get_kb_conn()
+                        _rcur = _rconn.cursor()
+                        _rcur.execute("""
+                            SELECT req_code, title, module_name, priority, description, acceptance_criteria
+                            FROM structured_requirements
+                            WHERE project_id = %s::uuid
+                            ORDER BY req_code ASC
+                            LIMIT 60
+                        """, (project_id,))
+                        _rrows = _rcur.fetchall()
+                        if _rrows:
+                            structured_reqs_context = "=== รายการ Requirement มาตรฐานของโครงการ (Structured Requirements Baseline) ===\n"
+                            for rr in _rrows:
+                                r_code, r_title, r_mod, r_prio, r_desc, r_ac = rr
+                                ac_short = f" | AC: {str(r_ac)[:180]}" if r_ac else ""
+                                structured_reqs_context += f"- [{r_code}] ({r_mod or 'General'} | {r_prio or 'Medium'}) {r_title}: {str(r_desc or '')[:220]}{ac_short}\n"
+                            structured_reqs_context += "\n"
+                        _rcur.close()
+                        _rconn.close()
+                    except Exception as req_err:
+                        logger.warning(f"Failed to load structured_requirements for QA Consult: {req_err}")
+
+                # Sample multiple slices of the document (header/scope, middle core content, tail/appendix)
+                text_len = len(extracted_text)
+                mid_start = max(0, (text_len // 2) - 1000)
+                tail_start = max(0, text_len - 2000)
+                search_samples = [extracted_text[:2000]]
+                if text_len > 3500:
+                    search_samples.append(extracted_text[mid_start:mid_start + 2000])
+                if text_len > 7000:
+                    search_samples.append(extracted_text[tail_start:])
+                combined_query = "\n".join(search_samples)[:4500]
+
+                kb_results = []
+                seen_chunks = set()
+                def _add_kb_rows(rows):
+                    for r in (rows or []):
+                        key = (r.get('filename', ''), (r.get('chunk_text') or '')[:160])
+                        if key not in seen_chunks:
+                            seen_chunks.add(key)
+                            kb_results.append(r)
 
                 if is_explicit:
-                    msg_queue.put({'type': 'progress', 'pct': 40, 'message': f'กำลังสืบค้นฐานข้อมูลตามประเภทเอกสารที่ระบุ [{doc_type_display}] (Explicit Flow)...' })
-                    kb_results = search_knowledge_base(extracted_text[:2000], doc_type=doc_type, top_k=6, project_id=project_id if project_id else None)
+                    msg_queue.put({'type': 'progress', 'pct': 40, 'message': f'กำลังสืบค้นฐานข้อมูลตามประเภทเอกสาร [{doc_type_display}] พร้อม Baseline SRS/Requirement ของโครงการ...' })
+                    # 1) Search matching doc_type
+                    _add_kb_rows(search_knowledge_base(combined_query, doc_type=doc_type, top_k=5, project_id=project_id if project_id else None))
+                    # 2) Always include project baseline documents (SRS / Requirement / TOR / System Design) for cross-checking accuracy
+                    _add_kb_rows(search_knowledge_base(combined_query, doc_type=None, top_k=6, project_id=project_id if project_id else None))
                 else:
                     msg_queue.put({'type': 'progress', 'pct': 40, 'message': 'กำลังสำรวจเอกสาร Markdown ในโครงการและค้นหาข้อมูลอ้างอิงอัตโนมัติ...' })
-                    kb_results = search_knowledge_base(extracted_text[:2000], doc_type=None, top_k=8, project_id=project_id if project_id else None)
+                    _add_kb_rows(search_knowledge_base(combined_query, doc_type=None, top_k=10, project_id=project_id if project_id else None))
                 
-                kb_context = ''
-                for res in kb_results:
+                diagram_context = ""
+                if project_id:
+                    try:
+                        from agent_7_flow_analyzer import get_diagram_context_for_agents
+                        diagram_context = get_diagram_context_for_agents(project_id, include_mockups=True, include_matrix=True)
+                    except Exception as diag_err:
+                        logger.warning(f"Failed to load QA Analysis Diagram context for QA Consult: {diag_err}")
+
+                kb_context = structured_reqs_context
+                if diagram_context:
+                    kb_context += diagram_context + "\n"
+                for res in kb_results[:12]:
                     kb_context += f"[Source: {res['filename']} | Category: {res.get('doc_type', '')}]\n{res['chunk_text']}\n\n"
                 
                 # Fetch previous transaction if exists
                 prev_transaction = None
-                original_filename = getattr(file, 'filename', 'document.pdf') or 'document.pdf'
+                original_filename = raw_original_filename or 'document.pdf'
                 if project_id:
                     try:
                         prev_transaction = get_latest_qa_transaction(project_id, filename=original_filename, group_name=group_name)
@@ -2606,26 +2687,44 @@ def qa_consult_api():
                         qf_json = json.dumps(qa_findings) if qa_findings else '[]'
                         
                         has_crit_high = any((f.get('severity') or '').lower() in ['critical', 'high'] for f in (qa_findings or []))
-                        if has_crit_high:
+                        gate_eval_status = (exit_criteria_eval.get('status') if exit_criteria_eval else None)
+                        if has_crit_high or gate_eval_status == 'REJECTED':
                             eff_status = 'REJECTED'
-                        elif qf_count > 0:
+                        elif gate_eval_status == 'CONDITIONAL_PASSED' or qf_count > 0:
                             eff_status = 'CONDITIONAL_PASSED'
                         else:
-                            eff_status = (exit_criteria_eval.get('status') if exit_criteria_eval else 'PASSED')
+                            eff_status = gate_eval_status or 'PASSED'
 
                         score_v = (exit_criteria_eval.get('score_percentage') if exit_criteria_eval else 100)
 
-                        _cur.execute("""
-                            UPDATE qa_generated_documents
-                            SET qa_status = %s,
-                                qa_score = %s,
-                                qa_findings_count = %s,
-                                qa_findings = %s::jsonb,
-                                last_scanned_at = NOW(),
-                                last_transaction_id = %s
-                            WHERE project_id = %s::uuid 
-                              AND (doc_name = %s OR doc_name = %s OR %s ILIKE '%%' || doc_name || '%%')
-                        """, (eff_status, score_v, qf_count, qf_json, transaction_id, project_id, original_filename, clean_fbase, clean_fbase))
+                        if source_generated_doc_id:
+                            _cur.execute("""
+                                UPDATE qa_generated_documents
+                                SET qa_status = %s,
+                                    qa_score = %s,
+                                    qa_findings_count = %s,
+                                    qa_findings = %s::jsonb,
+                                    last_scanned_at = NOW(),
+                                    last_transaction_id = %s
+                                WHERE id = %s::uuid
+                            """, (eff_status, score_v, qf_count, qf_json, transaction_id, source_generated_doc_id))
+                        else:
+                            _cur.execute("""
+                                UPDATE qa_generated_documents
+                                SET qa_status = %s,
+                                    qa_score = %s,
+                                    qa_findings_count = %s,
+                                    qa_findings = %s::jsonb,
+                                    last_scanned_at = NOW(),
+                                    last_transaction_id = %s
+                                WHERE id = (
+                                    SELECT id FROM qa_generated_documents
+                                    WHERE project_id = %s::uuid
+                                      AND (doc_name = %s OR doc_name = %s)
+                                    ORDER BY created_at DESC
+                                    LIMIT 1
+                                )
+                            """, (eff_status, score_v, qf_count, qf_json, transaction_id, project_id, original_filename, clean_fbase))
                         _conn.commit()
                         _cur.close()
                         _conn.close()
@@ -2661,7 +2760,8 @@ def qa_consult_api():
                         group_name=group_name,
                         group_type=group_type,
                         transaction_id=transaction_id,
-                        exit_criteria_eval=exit_criteria_eval
+                        exit_criteria_eval=exit_criteria_eval,
+                        qa_findings=qa_findings
                     )
                     # Create download URL from filename
                     import os as _os
@@ -2923,7 +3023,8 @@ def download_qa_excel(filename):
                         group_name=row[4] or 'General',
                         group_type=row[5] or 'Project Plan',
                         transaction_id=str(row[0]),
-                        exit_criteria_eval=row[8]
+                        exit_criteria_eval=row[8],
+                        qa_findings=row[7] if isinstance(row[7], list) else None
                     )
                     if os.path.exists(gen_path):
                         target_path = Path(gen_path)
@@ -3163,10 +3264,66 @@ def sync_exit_criteria_to_agent_skills(template_id):
         return False
 
 
+def _normalize_doc_type_aliases(raw_doc_type: str, doc_text: str = '') -> list:
+    """
+    Normalize document type strings and aliases (e.g. 'TestCase' <-> 'Test Case',
+    'Usermanual' <-> 'User Manual', 'SRS, Test Case') into canonical candidate labels
+    so Exit Criteria templates and AI Skills match reliably.
+    """
+    ALIAS_MAP = {
+        'testcase': ['Test Case', 'TestCase'],
+        'test case': ['Test Case', 'TestCase'],
+        'test cases': ['Test Case', 'TestCase'],
+        'srs': ['SRS', 'Requirement', 'Requirements'],
+        'requirement': ['Requirement', 'Requirements', 'SRS'],
+        'requirements': ['Requirements', 'Requirement', 'SRS'],
+        'usermanual': ['User Manual', 'Usermanual'],
+        'user manual': ['User Manual', 'Usermanual'],
+        'adminmanual': ['Admin Manual', 'Adminmanual'],
+        'admin manual': ['Admin Manual', 'Adminmanual'],
+        'projectplan': ['Project Plan', 'ProjectPlan'],
+        'project plan': ['Project Plan', 'ProjectPlan'],
+        'system design': ['System Design', 'SDD', 'Architecture'],
+        'sdd': ['System Design', 'SDD'],
+        'uat': ['UAT', 'Test Case'],
+        'tor': ['TOR', 'Requirement', 'SRS']
+    }
+    raw_clean = (raw_doc_type or '').strip()
+    parts = [p.strip() for p in re.split(r'[,;/|]+', raw_clean) if p.strip()] if raw_clean else []
+    candidates = []
+    for p in parts:
+        pl = p.lower()
+        if pl in ('all', 'auto-detect', 'auto-detect (md cross-check)', 'ไม่ระบุ', 'general'):
+            continue
+        for mapped in ALIAS_MAP.get(pl, [p]):
+            if mapped not in candidates:
+                candidates.append(mapped)
+        if p not in candidates:
+            candidates.append(p)
+
+    # Auto-detect from document text if no explicit type was given
+    if not candidates and doc_text:
+        sample_low = doc_text[:12000].lower()
+        if any(k in sample_low for k in ['test case', 'tc_', 'test id', 'expected result', 'test step', 'ขั้นตอนการทดสอบ', 'ผลลัพธ์ที่คาดหวัง']):
+            candidates.extend(['Test Case', 'TestCase'])
+        elif any(k in sample_low for k in ['software requirements specification', 'srs', 'functional requirement', 'req-']):
+            candidates.extend(['SRS', 'Requirement', 'Requirements'])
+        elif any(k in sample_low for k in ['คู่มือผู้ใช้งาน', 'user manual', 'ขั้นตอนการใช้งานระบบ']):
+            candidates.extend(['User Manual', 'Usermanual'])
+        elif any(k in sample_low for k in ['คู่มือผู้ดูแลระบบ', 'admin manual', 'system administration']):
+            candidates.extend(['Admin Manual', 'Adminmanual'])
+        elif any(k in sample_low for k in ['project plan', 'แผนการดำเนินงาน', 'wbs', 'milestone']):
+            candidates.extend(['Project Plan', 'ProjectPlan'])
+        elif any(k in sample_low for k in ['system design', 'database schema', 'er diagram', 'สถาปัตยกรรมระบบ']):
+            candidates.extend(['System Design'])
+
+    return candidates
+
+
 def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', project_id = None, qa_findings: list = None):
     """
-    Evaluates document text against Exit Criteria items using Gemini AI.
-    Combines universal baseline criteria ('ALL') with specific criteria for doc_type (e.g. SRS, UAT, Project Plan).
+    Evaluates document text against Exit Criteria items using Gemini AI + Deterministic QA Findings Cross-Check.
+    Combines universal baseline criteria ('ALL') with specific criteria for doc_type (e.g. SRS, Test Case, Project Plan).
     Returns evaluation summary, status, and itemized results.
     """
     import os
@@ -3200,47 +3357,85 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
     template_id = None
     skill_context = ""
 
-    target_type_clean = (doc_type or '').strip()
+    candidate_types = _normalize_doc_type_aliases(doc_type, doc_text)
+    target_type_clean = candidate_types[0] if candidate_types else ((doc_type or '').strip() or 'ALL')
+    safe_p_id = project_id if (project_id and str(project_id).strip() and str(project_id).lower() != 'none') else None
 
     try:
         conn = get_db_connection()
         cur = conn.cursor()
+        seen_template_ids = set()
         
-        # 1. Fetch Universal ALL templates (Active)
-        cur.execute("""
-            SELECT template_id, title, doc_type, max_loops 
-            FROM exit_criteria_templates 
-            WHERE is_active = TRUE AND UPPER(TRIM(doc_type)) = 'ALL'
-            ORDER BY created_at DESC;
-        """)
-        for r in cur.fetchall():
-            templates_to_use.append({
-                'template_id': r[0],
-                'title': r[1],
-                'doc_type': 'ALL',
-                'max_loops': r[3] or 3
-            })
-            
-        # 2. Fetch Specific doc_type templates (Active)
-        if target_type_clean and target_type_clean.upper() != 'ALL':
+        # 1. Fetch Universal ALL templates (Active, prioritizing project-specific if present)
+        if safe_p_id:
             cur.execute("""
                 SELECT template_id, title, doc_type, max_loops 
                 FROM exit_criteria_templates 
-                WHERE is_active = TRUE AND (
-                    UPPER(TRIM(doc_type)) = UPPER(TRIM(%s))
-                    OR %s ILIKE '%%' || TRIM(doc_type) || '%%'
-                    OR TRIM(doc_type) ILIKE '%%' || %s || '%%'
-                )
+                WHERE is_active = TRUE AND UPPER(TRIM(doc_type)) = 'ALL'
+                  AND (project_id = %s::uuid OR project_id IS NULL)
+                ORDER BY (CASE WHEN project_id = %s::uuid THEN 0 ELSE 1 END), created_at DESC;
+            """, (safe_p_id, safe_p_id))
+        else:
+            cur.execute("""
+                SELECT template_id, title, doc_type, max_loops 
+                FROM exit_criteria_templates 
+                WHERE is_active = TRUE AND UPPER(TRIM(doc_type)) = 'ALL'
                 ORDER BY created_at DESC;
-            """, (target_type_clean, target_type_clean, target_type_clean))
-            for r in cur.fetchall():
-                specific_template_found = True
+            """)
+        for r in cur.fetchall():
+            if str(r[0]) not in seen_template_ids:
+                seen_template_ids.add(str(r[0]))
                 templates_to_use.append({
                     'template_id': r[0],
                     'title': r[1],
-                    'doc_type': r[2],
+                    'doc_type': 'ALL',
                     'max_loops': r[3] or 3
                 })
+            
+        # 2. Fetch Specific doc_type templates (Active, matching all normalized aliases)
+        for cand_type in candidate_types:
+            if not cand_type or cand_type.upper() == 'ALL':
+                continue
+            cand_compact = re.sub(r'\s+', '', cand_type).upper()
+            if safe_p_id:
+                cur.execute("""
+                    SELECT template_id, title, doc_type, max_loops 
+                    FROM exit_criteria_templates 
+                    WHERE is_active = TRUE
+                      AND UPPER(TRIM(doc_type)) != 'ALL'
+                      AND (project_id = %s::uuid OR project_id IS NULL)
+                      AND (
+                          UPPER(TRIM(doc_type)) = UPPER(TRIM(%s))
+                          OR UPPER(REPLACE(TRIM(doc_type), ' ', '')) = %s
+                          OR %s ILIKE '%%' || TRIM(doc_type) || '%%'
+                          OR TRIM(doc_type) ILIKE '%%' || %s || '%%'
+                      )
+                    ORDER BY (CASE WHEN project_id = %s::uuid THEN 0 ELSE 1 END), created_at DESC;
+                """, (safe_p_id, cand_type, cand_compact, cand_type, cand_type, safe_p_id))
+            else:
+                cur.execute("""
+                    SELECT template_id, title, doc_type, max_loops 
+                    FROM exit_criteria_templates 
+                    WHERE is_active = TRUE
+                      AND UPPER(TRIM(doc_type)) != 'ALL'
+                      AND (
+                          UPPER(TRIM(doc_type)) = UPPER(TRIM(%s))
+                          OR UPPER(REPLACE(TRIM(doc_type), ' ', '')) = %s
+                          OR %s ILIKE '%%' || TRIM(doc_type) || '%%'
+                          OR TRIM(doc_type) ILIKE '%%' || %s || '%%'
+                      )
+                    ORDER BY created_at DESC;
+                """, (cand_type, cand_compact, cand_type, cand_type))
+            for r in cur.fetchall():
+                if str(r[0]) not in seen_template_ids:
+                    seen_template_ids.add(str(r[0]))
+                    specific_template_found = True
+                    templates_to_use.append({
+                        'template_id': r[0],
+                        'title': r[1],
+                        'doc_type': r[2],
+                        'max_loops': r[3] or 3
+                    })
 
         # Collect items from matching templates
         seen_codes = set()
@@ -3250,19 +3445,31 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
                 FROM exit_criteria_items WHERE template_id = %s ORDER BY order_index ASC, item_code ASC;
             """, (t['template_id'],))
             t_items = cur.fetchall()
-            is_universal = (t['doc_type'] == 'ALL')
-            t_prefix = "เกณฑ์กลาง ALL" if is_universal else t['doc_type']
+            is_universal = (str(t['doc_type']).strip().upper() == 'ALL')
+            t_prefix = "เกณฑ์กลาง ALL" if is_universal else str(t['doc_type']).strip()
             for row in t_items:
                 i_id, i_code, i_cat, i_q, i_metric, i_sev, i_mand, i_idx = row
-                code_key = i_code
+                raw_code = str(i_code or '').strip()
+                code_key = raw_code
                 if code_key in seen_codes:
-                    code_key = f"{'ALL' if is_universal else target_type_clean}-{i_code}"
+                    prefix_tag = 'ALL' if is_universal else str(t['doc_type']).strip()
+                    code_key = f"{prefix_tag}-{raw_code}"
                 seen_codes.add(code_key)
                 cat_label = f"[{t_prefix}] {i_cat}" if specific_template_found else i_cat
-                item_rows.append((i_id, code_key, cat_label, i_q, i_metric, i_sev, i_mand, i_idx))
+                item_rows.append((i_id, code_key, cat_label, i_q, i_metric, i_sev, i_mand, i_idx, raw_code))
 
-        # Fetch active skills
-        cur.execute("SELECT skill_name, markdown_instructions FROM agent_skills WHERE is_active = TRUE AND (UPPER(TRIM(target_doc_type)) = UPPER(TRIM(%s)) OR target_doc_type = 'ALL') AND skill_name NOT ILIKE %s;", (doc_type, '%Exit Criteria%'))
+        # Fetch active skills matching any candidate type or ALL
+        skill_types_upper = list({c.upper() for c in candidate_types} | {re.sub(r'\s+', '', c).upper() for c in candidate_types} | {'ALL'})
+        cur.execute("""
+            SELECT skill_name, markdown_instructions
+            FROM agent_skills
+            WHERE is_active = TRUE
+              AND (
+                  UPPER(TRIM(target_doc_type)) = ANY(%s)
+                  OR UPPER(REPLACE(TRIM(target_doc_type), ' ', '')) = ANY(%s)
+              )
+              AND skill_name NOT ILIKE %s;
+        """, (skill_types_upper, skill_types_upper, '%Exit Criteria%'))
         active_skills = cur.fetchall()
         if active_skills:
             skill_context = "\n=== แนวทางวิเคราะห์เฉพาะด้าน (AI Skills & Knowledge) ===\n"
@@ -3270,10 +3477,12 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
                 skill_context += f"[{s_name}]:\n{s_inst}\n\n"
 
         if templates_to_use:
-            template_id = templates_to_use[0]['template_id']
+            # Prefer specific template ID as primary template_id if available
+            spec_templates = [t for t in templates_to_use if str(t['doc_type']).upper() != 'ALL']
+            template_id = (spec_templates[0]['template_id'] if spec_templates else templates_to_use[0]['template_id'])
             if specific_template_found:
-                spec_titles = [t['title'] for t in templates_to_use if t['doc_type'] != 'ALL']
-                all_titles = [t['title'] for t in templates_to_use if t['doc_type'] == 'ALL']
+                spec_titles = [t['title'] for t in templates_to_use if str(t['doc_type']).upper() != 'ALL']
+                all_titles = [t['title'] for t in templates_to_use if str(t['doc_type']).upper() == 'ALL']
                 if all_titles:
                     template_title = f"{' / '.join(spec_titles)} + เกณฑ์กลาง ({' / '.join(all_titles)})"
                 else:
@@ -3290,16 +3499,17 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
         template_title = "Universal Document Exit Criteria"
         template_id = str(uuid.uuid4())
         for code, cat, q, metric, sev, mand, idx in DEFAULT_UNIVERSAL_ITEMS:
-            item_rows.append((f"default-{code}", code, cat, q, metric, sev, mand, idx))
+            item_rows.append((f"default-{code}", code, cat, q, metric, sev, mand, idx, code))
 
     # Format checklist items
     checklist_formatted = ""
     items_dict = {}
     for row in item_rows:
-        i_id, item_code, category, question, metric, severity, mandatory, idx = row
+        i_id, item_code, category, question, metric, severity, mandatory, idx, raw_base_code = row
         items_dict[item_code] = {
             'item_id': str(i_id),
             'item_code': item_code,
+            'raw_code': raw_base_code,
             'category': category,
             'question_text': question,
             'target_metric': metric or '100% (ผ่านบริบูรณ์)',
@@ -3307,7 +3517,7 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
             'is_mandatory': mandatory
         }
         mand_txt = "บังคับผ่าน" if mandatory else "ข้ามได้หากไม่เกี่ยว"
-        checklist_formatted += f"- ข้อ [{item_code}] หมวด {category} (ตัวชี้วัด/KPI: {metric or '100%'}, ความรุนแรง: {severity}, {mand_txt}): {question}\n"
+        checklist_formatted += f"- item_code: \"{item_code}\" | หมวด: {category} | KPI: {metric or '100%'} | ความรุนแรง: {severity} ({mand_txt}) | คำถามเกณฑ์: {question}\n"
 
     # Build findings summary for prompt context
     findings_summary = ""
@@ -3344,9 +3554,11 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
                 findings_summary += f"  [Medium] {f.get('issue','')}\n"
         findings_summary += """
 **แนวทางการประเมินตามเนื้อหาเอกสารจริง (Exit Criteria Quality Gate Rules):**
-- ข้อ [2.1] (ข้อมูลทั่วไปของเอกสารและโครงการ / General Information): หากเอกสารมี Section 1 (ตารางข้อมูลควบคุมเอกสาร Document Control, Title, Version, Project Code, Scope, Business Objectives) และจัดรูปแบบด้วย Markdown ชัดเจน ให้ถือว่า **PASS**
-- ข้อ [1.1] (ข้อสั่งการ/Comment ระดับ Critical / High ในรอบก่อน ได้รับการแก้ไขแล้ว 100%): หากเอกสารมีตาราง 1.2 Revision History / Audit Resolution Log หรือเอกสารฉบับนี้ได้ปรับปรุงเนื้อหาครอบคลุมตามข้อสั่งการแล้ว ให้ถือว่า **PASS**
-- ข้อ [1.2] หรือข้อตรวจเรื่องความครบถ้วนของ Requirement: หากเอกสารมีระบุ Requirement IDs (เช่น REQ-xxx) พร้อม Main Path, Unhappy Path/Error Handling และตาราง Acceptance Criteria ให้ถือว่า **PASS**
+- ข้อตรวจเรื่อง Defect ระดับ Critical / High (เช่น ข้อ 1.1):
+  * หากผลการตรวจ QA Analysis รอบปัจจุบันยังมี Critical/High Findings > 0 รายการ และเป็นข้อบกพร่องจริงในเนื้อหาเอกสาร ให้ตัดสินสอดคล้องกับผล QA Findings (FAIL พร้อมระบุประเด็น Critical/High ที่พบ)
+  * หาก Critical/High Findings = 0 รายการ หรือเอกสารมีตาราง Revision History / Audit Resolution Log ที่แก้ไขประเด็นรอบก่อนครบถ้วนแล้ว 100% ให้ถือว่า **PASS**
+- ข้อ [2.1] (ข้อมูลทั่วไปของเอกสารและโครงการ / General Information / Scope): หากเอกสารมี Section 1 (ตารางข้อมูลควบคุมเอกสาร Document Control, Title, Version, Project Code, Scope, Business Objectives) และเนื้อหาครอบคลุมตาม Scope โดยไม่มี Critical Defect เรื่องขอบเขตขาดหาย ให้ถือว่า **PASS**
+- ข้อ [1.2] หรือข้อตรวจเรื่องความครบถ้วนของ Requirement: หากเอกสารมีระบุ Requirement IDs (เช่น REQ-xxx) พร้อม Main Path, Unhappy Path/Error Handling และตาราง Acceptance Criteria ครบถ้วนโดยไม่มี Critical Defect ให้ถือว่า **PASS**
 - ข้อ [3.1] Format & Consistency: หากเอกสารจัดรูปแบบด้วย Markdown (Headings, Tables, Bullets) เป็นระเบียบ ชัดเจน อ่านง่าย ไม่แตกขอบ ให้ถือว่า **PASS**
 - ข้อ [Test Case-1.1] และ [Test Case-1.2] หรือข้อตรวจ Requirement Coverage & Traceability:
   * วิเคราะห์ความครอบคลุม (Coverage) ตามขอบเขต Requirement และ Business Rules ใน SRS เป็นหลัก
@@ -3362,30 +3574,29 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
 """
 
     prompt = f"""คุณคือ System Auditor และ Quality Gate Evaluator
-กรุณาประเมินเนื้อหาเอกสารประเภท "{doc_type}" ต่อไปนี้เทียบกับรายการ Exit Criteria Checklist แต่ละข้อ:
+กรุณาประเมินเนื้อหาเอกสารประเภท "{target_type_clean}" ต่อไปนี้เทียบกับรายการ Exit Criteria Checklist แต่ละข้อให้ครบทุกข้อ:
 
 === รายการข้อตรวจ (Exit Criteria Checklist) ===
-{checklist_formatted}{findings_summary}
+{checklist_formatted}{findings_summary}{skill_context}
 
 === เนื้อหาเอกสารที่ตรวจ ===
 {doc_text[:250000]}
 
-=== หลักเกณฑ์การประเมินที่เป็นธรรม (Fair Evaluation Guidelines) ===
-1. ให้ประเมินจากเนื้อหาจริงในเอกสารเป็นหลัก ห้ามตัดสินจากความคาดหวังทางทฤษฎีที่เอกสารไม่ได้ระบุว่าจะครอบคลุม
-2. หากเอกสารมี Section หลัก ครอบคลุมตาม Scope ที่กำหนดไว้ใน Section 1 ให้ถือว่า PASS ข้อ Scope Coverage
-3. ข้อ Content Completeness (หมวด 2.x): หากเอกสารมีเนื้อหาครบถ้วนตาม Scope ที่ระบุใน Document Control (ไม่จำเป็นต้องมีทุกหัวข้อที่เป็นไปได้ในโลก แต่ครบตาม Scope ที่ตกลง) ให้ถือว่า PASS
-4. ข้อ Attachments / Appendix (2.4): หากเอกสารไม่ได้ระบุว่ามี Attachment แล้วไม่แนบ หรือเอกสารมี Inline Diagrams/Tables แทน Attachment แยก ให้ถือว่า PASS (NA ถ้าไม่เกี่ยวข้อง)
+=== หลักเกณฑ์การประเมินที่เป็นธรรมและแม่นยำ (Fair & Deterministic Evaluation Guidelines) ===
+1. ให้ประเมินจากเนื้อหาจริงในเอกสารควบคู่กับผล QA Analysis Findings ด้านบน ห้ามขัดแย้งกันเอง
+2. สำคัญมาก: ฟิลด์ "item_code" ใน JSON ที่ส่งกลับ ต้องตรงกับค่า item_code ในรายการข้อตรวจข้างต้นแบบตัวต่อตัว (เช่น "1.1" หรือ "Test Case-1.1" ห้ามใส่เครื่องหมายก้ามปู [] ครอบ)
+3. ข้อ Content Completeness (หมวด 2.x): หากเอกสารมีเนื้อหาครบถ้วนตาม Scope ที่ระบุใน Document Control และไม่มี Critical/High Finding เรื่องเนื้อหาขาดหาย ให้ถือว่า PASS
+4. ข้อ Attachments / Appendix (2.4): หากเอกสารไม่ได้ระบุว่ามี Attachment แล้วไม่แนบ หรือเอกสารมี Inline Diagrams/Tables แทน Attachment แยก ให้ถือว่า PASS (หรือ NA ถ้าไม่เกี่ยวข้อง)
 5. ข้อ Typo Rate (3.x): ให้ FAIL เฉพาะกรณีพบคำผิดจำนวนมาก (>5 จุด) ที่ชัดเจน หากพบเล็กน้อย 1-3 จุด หรือเป็นศัพท์เฉพาะทาง/ชื่อเฉพาะ ให้ถือว่า PASS
-6. ข้อ Governance & Control (4.1): หากเอกสารมี Document Title, Version, Date, Author ใน Section 1 Document Control ให้ถือว่า PASS โดยไม่ต้องสนใจ System Header/Footer ของแพลตฟอร์ม
-7. อย่าตัดสินเอกสารที่มีโครงสร้างดีและครบถ้วนตาม Scope ว่า FAIL เพียงเพราะไม่ได้ครอบคลุมทุก aspect ที่เป็นไปได้ ให้ตัดสินตามมาตรฐานวิศวกรรมที่สมเหตุสมผล
+6. ข้อ Governance & Control (4.1): หากเอกสารมี Document Title, Version, Date, Author ใน Section 1 Document Control ให้ถือว่า PASS
 
-กรุณาประเมินข้อตรวจทุกข้อ โดยส่งคืนผลลัพธ์เป็น JSON Array เท่านั้น ห้ามมีข้อความอื่น
+กรุณาประเมินข้อตรวจทุกข้อให้ครบถ้วน โดยส่งคืนผลลัพธ์เป็น JSON Array เท่านั้น ห้ามมีข้อความอื่น
 แต่ละ Object ใน JSON Array มีโครงสร้างดังนี้:
 [
   {{
-    "item_code": "1.1",
+    "item_code": "ต้องตรงกับ item_code ในรายการข้อตรวจทุกตัวอักษร",
     "status": "PASS" | "FAIL" | "NA",
-    "remarks": "เหตุผลสั้นๆ สรุปผลการตรวจหรือข้อสังเกต",
+    "remarks": "เหตุผลสรุปผลการตรวจที่ชัดเจน อ้างอิงข้อเท็จจริงในเอกสาร",
     "evidence_text": "ข้อความอ้างอิงจากเอกสาร หรือส่วนที่พบปัญหา (ถ้ามี)"
   }}
 ]
@@ -3394,7 +3605,10 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
     try:
         client = _get_gemini_client()
         gemini_model = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash')
-        fallback_models = [gemini_model, 'gemini-2.5-flash-lite', 'gemini-3.1-flash', 'gemini-3.1-pro']
+        fallback_models = []
+        for m in [gemini_model, 'gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash-lite']:
+            if m and m not in fallback_models:
+                fallback_models.append(m)
         
         for model_name in fallback_models:
             try:
@@ -3404,6 +3618,9 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
                     if clean_text.startswith("```"):
                         clean_text = re.sub(r'^```(?:json)?\s*', '', clean_text)
                         clean_text = re.sub(r'\s*```$', '', clean_text)
+                    json_match = re.search(r'\[[\s\S]*\]', clean_text)
+                    if json_match:
+                        clean_text = json_match.group(0)
                     eval_items_res = json.loads(clean_text)
                     
                     if hasattr(res, 'usage_metadata'):
@@ -3420,8 +3637,43 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
     except Exception as client_err:
         logger.error(f"Failed to initialize Gemini client for exit criteria: {client_err}")
 
-    # Map results and determine Final Gate Status
-    results_map = {item.get('item_code'): item for item in eval_items_res if isinstance(item, dict)}
+    # Build multi-key normalized lookup map so prefixed codes like "[Test Case-1.1]" or "TestCase-1.1" resolve cleanly
+    def _norm_code(c: str) -> str:
+        s = str(c or '').strip()
+        s = re.sub(r'^\[+|\]+$', '', s).strip()
+        return s
+
+    results_map = {}
+    results_map_compact = {}
+    ordered_ai_items = []
+    for idx_ai, item in enumerate(eval_items_res):
+        if not isinstance(item, dict):
+            continue
+        ordered_ai_items.append(item)
+        raw_c = _norm_code(item.get('item_code', ''))
+        if raw_c:
+            results_map[raw_c] = item
+            results_map[raw_c.upper()] = item
+            compact_c = re.sub(r'\s+', '', raw_c).upper()
+            results_map_compact[compact_c] = item
+
+    def _lookup_ai_eval(item_code: str, raw_base_code: str, item_idx: int) -> dict:
+        nc = _norm_code(item_code)
+        if nc in results_map:
+            return results_map[nc]
+        if nc.upper() in results_map:
+            return results_map[nc.upper()]
+        comp = re.sub(r'\s+', '', nc).upper()
+        if comp in results_map_compact:
+            return results_map_compact[comp]
+        # Try base code if unambiguous or when only 1 template was returned
+        nb = _norm_code(raw_base_code)
+        if nb and nb in results_map and len(items_dict) == len(ordered_ai_items):
+            return results_map[nb]
+        # Positional fallback when AI returned exact same number of items in order
+        if len(ordered_ai_items) == len(items_dict) and 0 <= item_idx < len(ordered_ai_items):
+            return ordered_ai_items[item_idx]
+        return {}
     
     evaluated_items = []
     passed_count = 0
@@ -3430,41 +3682,60 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
     
     has_cat1_2_fail = False
     
-    # Detect well-structured document for tolerance
+    # Detect well-structured document for tolerance (only when no Critical/High findings exist)
     doc_lower = doc_text.lower() if doc_text else ''
     has_document_control = any(term in doc_lower for term in ['document control', 'ข้อมูลควบคุมเอกสาร', 'document title', 'version'])
     has_requirement_ids = 'req-' in doc_lower or 'requirement' in doc_lower
     has_sections = doc_lower.count('## ') >= 3 or doc_lower.count('section') >= 3
-    is_well_structured = has_document_control and has_sections
+    is_well_structured = has_document_control and has_sections and (len(high_critical) == 0)
     
-    for item_code, item_info in items_dict.items():
-        ai_eval = results_map.get(item_code, {})
-        status = ai_eval.get('status', '').upper() if ai_eval else ''
-        remarks = ai_eval.get('remarks', '') if ai_eval else ''
-        evidence = ai_eval.get('evidence_text', '') if ai_eval else ''
+    for item_idx, (item_code, item_info) in enumerate(items_dict.items()):
+        raw_base_code = item_info.get('raw_code', item_code)
+        base_code_clean = re.sub(r'^.*-', '', str(raw_base_code or item_code)).strip()
+        q_lower = (item_info.get('question_text') or '').lower()
+        cat_text = item_info.get('category') or ''
+
+        ai_eval = _lookup_ai_eval(item_code, raw_base_code, item_idx)
+        status = (ai_eval.get('status') or '').strip().upper() if ai_eval else ''
+        remarks = (ai_eval.get('remarks') or '').strip() if ai_eval else ''
+        evidence = (ai_eval.get('evidence_text') or '').strip() if ai_eval else ''
+
+        # Deterministic Cross-Check 1: Item 1.1 ("ไม่มี Defect ระดับ Critical / High คงค้างในเอกสาร")
+        is_crit_defect_gate_item = (
+            base_code_clean == '1.1'
+            and any(k in q_lower for k in ['critical', 'high', 'defect', 'ข้อผิดพลาดร้ายแรง', 'ข้อสั่งการ'])
+        )
+        if is_crit_defect_gate_item:
+            if len(high_critical) > 0:
+                status = 'FAIL'
+                top_issues = "; ".join([f"[{f.get('severity','High')}] {f.get('issue','')}" for f in high_critical[:3]])
+                remarks = f"พบประเด็นความรุนแรงระดับ Critical/High คงค้างในเอกสารจำนวน {len(high_critical)} รายการ (ต้องแก้ไขให้เป็น 0 รายการก่อนผ่าน Gate)"
+                evidence = top_issues
+            elif status == 'FAIL' and len(high_critical) == 0:
+                status = 'PASS'
+                remarks = 'ผลการตรวจ QA Analysis ไม่พบ Defect ระดับ Critical หรือ High คงค้างในเอกสาร (0 Critical/High Findings)'
+                evidence = 'QA Audit Findings: 0 Critical / 0 High'
 
         # Smart guard for Item 4.1 Governance & Control
-        if ('4.1' in item_code or 'Governance' in item_info.get('category', '')) and status == 'FAIL':
+        if ('4.1' in base_code_clean or 'Governance' in cat_text) and status == 'FAIL':
             lower_ev = (evidence + " " + remarks).lower()
             if any(term in lower_ev for term in ['spectra', 'engine', 'top header', 'ส่วนหัว', 'ขัดแย้ง']) and ('document control' in doc_lower or 'ข้อมูลควบคุมเอกสาร' in doc_lower or 'ผู้จัดทำ' in doc_lower):
                 status = 'PASS'
                 remarks = 'ตรวจสอบแล้วพบ Document Title, Version Number, วันที่บังคับใช้ และผู้จัดทำ ครบถ้วนใน Section 1 Document Control ตรงตามมาตรฐาน Governance'
                 evidence = 'Section 1 Document Control ระบุ Title, Version, Date, และ Author ครบถ้วนสมบูรณ์'
 
-        # Smart guard for Content Coverage / Scope (2.1, 2.2) - if doc is well-structured
-        if status == 'FAIL' and is_well_structured and any(c in item_code for c in ['2.1', '2.2']):
+        # Smart guard for Content Coverage / Scope (2.1, 2.2) - ONLY if doc is well-structured AND has 0 Critical/High findings
+        if status == 'FAIL' and is_well_structured and base_code_clean in ('2.1', '2.2'):
             lower_ev = (evidence + " " + remarks).lower()
-            # If the "failure" is about not covering a theoretical aspect rather than missing declared scope
             if any(term in lower_ev for term in ['ไม่ครอบคลุม', 'ขาด', 'ไม่พบ', 'not found', 'missing']) and has_requirement_ids:
                 status = 'PASS'
-                remarks = 'เอกสารมีโครงสร้างครบถ้วนตาม Scope ที่กำหนดใน Document Control พร้อม Requirement IDs'
+                remarks = 'เอกสารมีโครงสร้างครบถ้วนตาม Scope ที่กำหนดใน Document Control พร้อม Requirement IDs และไม่พบ Critical/High Finding'
                 evidence = 'เอกสารมี Sections หลักครอบคลุมตาม Scope ที่ระบุ'
 
         # Smart guard for Attachments (2.4) - common false positive for Markdown docs
-        if status == 'FAIL' and ('2.4' in item_code) and is_well_structured:
+        if status == 'FAIL' and base_code_clean == '2.4' and is_well_structured:
             lower_ev = (evidence + " " + remarks).lower()
             if any(term in lower_ev for term in ['attachment', 'แนบ', 'appendix', 'ภาคผนวก', 'ไม่พบ', 'ไม่มี']):
-                # Check if doc has inline diagrams/tables instead of separate attachments
                 has_tables = '|' in doc_text and '---' in doc_text
                 has_diagrams = any(t in doc_lower for t in ['diagram', 'flowchart', 'erd', 'uml', 'แผนภาพ', 'mermaid'])
                 if has_tables or has_diagrams or 'acceptance criteria' in doc_lower:
@@ -3477,26 +3748,28 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
                     evidence = ''
 
         # Smart guard for Typo Rate (3.3, 3.1) - only fail if there are significant actual typos
-        if status == 'FAIL' and any(c in item_code for c in ['3.3', '3.1']):
+        if status == 'FAIL' and base_code_clean in ('3.1', '3.3'):
             lower_ev = (evidence + " " + remarks).lower()
-            # If evidence mentions just formatting/style/latex rather than actual typos
             if any(term in lower_ev for term in ['latex', '$', '\\le', '\\times', 'สูตร', 'formula', 'format']):
                 status = 'PASS'
                 remarks = 'สูตรคณิตศาสตร์และตัวแปรในเอกสารไม่ถือเป็นคำผิด (Typo)'
                 evidence = 'LaTeX/Math notation ไม่ใช่ Typo'
             elif not typos or len(typos) <= 3:
-                # Only fail if we actually found >3 verified typos from QA findings
                 status = 'PASS'
                 remarks = 'ไม่พบคำผิดที่มีนัยสำคัญในเอกสาร'
                 evidence = f'QA Findings พบคำผิด {len(typos)} รายการ (ไม่เกินเกณฑ์)' if typos else 'ไม่พบคำผิดจาก QA Analysis'
 
-        # Fallback reasoning from findings if AI evaluation didn't cover this item
+        # Fallback reasoning from findings if AI evaluation didn't return a valid status for this item
         if not status or status not in ['PASS', 'FAIL', 'NA']:
-            if item_code in ['1.1', 'Defect-1.1'] and high_critical:
+            if base_code_clean == '1.1' and high_critical:
                 status = 'FAIL'
                 remarks = f"พบประเด็นความรุนแรง Critical/High จำนวน {len(high_critical)} รายการ"
                 evidence = high_critical[0].get('issue', '')
-            elif item_code in ['3.1', 'Formatting-3.1'] and typos and len(typos) > 3:
+            elif base_code_clean in ('1.2', '2.1') and high_critical:
+                status = 'FAIL'
+                remarks = f"พบข้อบกพร่องสำคัญจากผลตรวจ QA Analysis: {high_critical[0].get('issue', '')}"
+                evidence = high_critical[0].get('found_incorrect', '') or high_critical[0].get('issue', '')
+            elif base_code_clean == '3.1' and typos and len(typos) > 3:
                 status = 'FAIL'
                 remarks = f"พบคำผิดหรือการสะกดคำไม่ถูกต้อง {len(typos)} รายการ"
                 evidence = typos[0].get('issue', '')
@@ -3508,8 +3781,21 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
             passed_count += 1
         elif status == 'FAIL':
             failed_count += 1
-            cat = item_info['category']
-            if 'Defect' in cat or 'Content' in cat or item_code.startswith('1.') or item_code.startswith('2.'):
+            cat = item_info['category'] or ''
+            sev_upper = (item_info.get('severity') or '').strip().upper()
+            is_mand = bool(item_info.get('is_mandatory', True))
+            is_cat3_formatting = (
+                base_code_clean.startswith('3.')
+                or ('Formatting' in cat and 'Defect' not in cat and 'Content' not in cat)
+            )
+            if (
+                'Defect' in cat
+                or 'Content' in cat
+                or base_code_clean.startswith('1.')
+                or base_code_clean.startswith('2.')
+                or sev_upper == 'CRITICAL'
+                or (is_mand and not is_cat3_formatting)
+            ):
                 has_cat1_2_fail = True
         else:
             na_count += 1
@@ -3531,21 +3817,20 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
     total_items = len(evaluated_items)
     score_pct = round((passed_count / (total_items - na_count)) * 100, 2) if (total_items - na_count) > 0 else 100.0
 
-    # Determine Final Gate Assessment Rule
-    if failed_count == 0:
+    # Determine Final Gate Assessment Rule (synchronized with Critical/High QA Findings)
+    if failed_count == 0 and len(high_critical) == 0:
         final_status = 'PASSED'
         summary_remarks = 'เอกสารผ่านเกณฑ์มาตรฐาน Exit Criteria ครบถ้วนบริบูรณ์ 100%'
-    elif not has_cat1_2_fail:
+    elif not has_cat1_2_fail and len(high_critical) == 0:
         final_status = 'CONDITIONAL_PASSED'
         summary_remarks = 'เอกสารผ่านเกณฑ์สาระสำคัญ (หมวด 1, 2, 4) พบข้อสังเกตเล็กน้อยในหมวดจัดหน้า/คำผิด (หมวด 3) สามารถแก้ไขและส่ง Final Copy ได้เลย'
     else:
         final_status = 'REJECTED'
-        summary_remarks = 'เอกสารไม่ผ่านเกณฑ์ Exit Criteria สาระสำคัญ (หมวด 1 หรือ 2) ต้องแก้ไขและส่งกลับมาตรวจใหม่'
+        summary_remarks = f'เอกสารไม่ผ่านเกณฑ์ Exit Criteria สาระสำคัญ (ไม่ผ่าน {failed_count} ข้อ / Critical-High Findings {len(high_critical)} รายการ) ต้องแก้ไขและส่งกลับมาตรวจใหม่'
 
     # Save evaluation log in DB if possible
     if conn:
         try:
-            safe_p_id = project_id if (project_id and str(project_id).strip()) else None
             # Check if template_id is valid UUID
             valid_t_id = None
             try:
@@ -3597,6 +3882,106 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
         'summary_remarks': summary_remarks,
         'items': evaluated_items
     }
+
+
+@app.route('/api/qa_consult/reevaluate_exit_criteria', methods=['POST'])
+def reevaluate_exit_criteria_api():
+    """
+    Re-evaluate an existing QA Consult transaction (or document text) against the latest Exit Criteria templates
+    and persist the updated exit_criteria_eval and Excel report without re-uploading the file.
+    """
+    try:
+        from db_ingestion import get_db_connection
+        data = request.json or {}
+        transaction_id = data.get('transaction_id')
+        doc_type_override = data.get('doc_type')
+        project_id = data.get('project_id')
+
+        extracted_text = data.get('extracted_text') or ''
+        qa_findings = data.get('qa_findings')
+        doc_type = doc_type_override or ''
+        filename = data.get('filename') or 'Document.pdf'
+        qa_report = data.get('report') or ''
+        group_name = data.get('group_name') or 'General'
+        group_type = data.get('group_type') or ''
+        project_code = ''
+
+        if transaction_id:
+            conn = get_db_connection()
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT t.project_id, t.filename, t.doc_type, t.extracted_text, t.qa_report,
+                       t.qa_findings, t.group_name, t.group_type, p.project_code
+                FROM qa_transactions t
+                LEFT JOIN projects p ON t.project_id = p.project_id
+                WHERE CAST(t.id AS TEXT) = %s
+                LIMIT 1;
+            """, (str(transaction_id),))
+            row = cur.fetchone()
+            cur.close()
+            conn.close()
+            if not row:
+                return jsonify({'error': 'ไม่พบข้อมูลประวัติการตรวจเอกสาร (Transaction Not Found)'}), 404
+            project_id = str(row[0]) if row[0] else project_id
+            filename = row[1] or filename
+            doc_type = doc_type_override or row[2] or row[7] or 'ALL'
+            extracted_text = row[3] or extracted_text or row[4] or ''
+            qa_report = row[4] or qa_report
+            qa_findings = row[5] if isinstance(row[5], list) else (qa_findings or [])
+            group_name = row[6] or group_name
+            group_type = row[7] or group_type
+            project_code = row[8] or ''
+
+        if not extracted_text.strip() and not qa_report.strip():
+            return jsonify({'error': 'ไม่พบเนื้อหาเอกสารสำหรับประเมิน Exit Criteria ใหม่'}), 400
+
+        eval_source_text = extracted_text if extracted_text.strip() else qa_report
+        exit_criteria_eval = evaluate_document_exit_criteria(
+            eval_source_text,
+            doc_type=doc_type or group_type or 'ALL',
+            project_id=project_id,
+            qa_findings=qa_findings
+        )
+
+        excel_download_url = ''
+        if transaction_id:
+            conn = get_db_connection()
+            cur = conn.cursor()
+            cur.execute("""
+                UPDATE qa_transactions
+                SET exit_criteria_eval = %s::jsonb
+                WHERE CAST(id AS TEXT) = %s;
+            """, (json.dumps(exit_criteria_eval), str(transaction_id)))
+            conn.commit()
+            cur.close()
+            conn.close()
+
+            try:
+                from excel_report import generate_qa_excel
+                excel_path = generate_qa_excel(
+                    report_text=qa_report,
+                    filename=filename,
+                    doc_type=doc_type,
+                    project_code=project_code,
+                    group_name=group_name,
+                    group_type=group_type,
+                    transaction_id=str(transaction_id),
+                    exit_criteria_eval=exit_criteria_eval,
+                    qa_findings=qa_findings
+                )
+                excel_basename = os.path.basename(excel_path)
+                excel_download_url = f"/api/qa_report/download/{excel_basename}"
+            except Exception as ex_err:
+                logger.warning(f"Failed to regenerate Excel after exit criteria re-eval: {ex_err}")
+
+        return jsonify({
+            'success': True,
+            'exit_criteria_eval': exit_criteria_eval,
+            'excel_url': excel_download_url
+        })
+    except Exception as e:
+        logger.error(f"Error in reevaluate_exit_criteria_api: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/exit-criteria/templates', methods=['GET', 'POST'])
 def handle_exit_criteria_templates():
@@ -3874,6 +4259,71 @@ def handle_ocr_history():
             return jsonify(result)
         return jsonify({'error': 'Failed to save'}), 500
 
+@app.route('/api/research/knowledge-overview', methods=['GET'])
+def research_knowledge_overview():
+    project_id = request.args.get('project_id')
+    if not project_id:
+        return jsonify({'error': 'Missing project_id'}), 400
+    conn = None
+    cursor = None
+    try:
+        from db_ingestion import get_db_connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # 1. Active Documents
+        cursor.execute("""
+            SELECT doc_id, original_filename, doc_category, doc_type, LENGTH(COALESCE(full_markdown_content, ''))
+            FROM documents
+            WHERE project_id = %s::uuid AND (status = 'Active' OR status IS NULL)
+            ORDER BY doc_id DESC;
+        """, (project_id,))
+        docs = [
+            {
+                "doc_id": str(r[0]),
+                "filename": r[1] or "Document",
+                "category": r[2] or "General",
+                "doc_type": r[3] or "Document",
+                "size_chars": int(r[4] or 0)
+            }
+            for r in cursor.fetchall()
+        ]
+
+        # 2. Counts across Agents
+        def safe_count(sql):
+            try:
+                cursor.execute(sql, (project_id,))
+                return int(cursor.fetchone()[0] or 0)
+            except Exception:
+                conn.rollback()
+                return 0
+
+        reqs_count = safe_count("SELECT COUNT(*) FROM structured_requirements WHERE project_id = %s::uuid;")
+        gen_docs_count = safe_count("SELECT COUNT(*) FROM qa_generated_documents WHERE project_id = %s::uuid AND UPPER(COALESCE(status, '')) = 'COMPLETED';")
+        audits_count = safe_count("SELECT COUNT(*) FROM qa_transactions WHERE project_id = %s::uuid;")
+        diagrams_count = safe_count("SELECT COUNT(*) FROM qa_analysis_diagrams WHERE project_id = %s::uuid;")
+        testcases_count = safe_count("SELECT COUNT(*) FROM qa_automation_testcases WHERE project_id = %s::uuid;")
+
+        return jsonify({
+            "success": True,
+            "documents": docs,
+            "stats": {
+                "docs_count": len(docs),
+                "reqs_count": reqs_count,
+                "generated_docs_count": gen_docs_count,
+                "audits_count": audits_count,
+                "has_diagram": diagrams_count > 0,
+                "testcases_count": testcases_count
+            }
+        })
+    except Exception as e:
+        logger.error(f"Error in research_knowledge_overview: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+
+
 @app.route('/api/research/chat', methods=['POST'])
 def research_chat():
     logger.info("Received request at /api/research/chat. Processing...")
@@ -3883,25 +4333,33 @@ def research_chat():
         
     project_id = data.get('project_id')
     message = data.get('message')
-    history = data.get('history', [])
+    history = (data.get('history') or [])[-10:]
+    doc_ids = data.get('doc_ids') or []
+    research_mode = data.get('research_mode') or 'deep_research'
     
     try:
-        # 1. Retrieve comprehensive multi-source grounded context from DB
-        logger.info(f"Querying comprehensive knowledge base for project {project_id}...")
+        # 1. Retrieve comprehensive multi-source grounded context from DB (optionally scoped by doc_ids)
+        logger.info(f"Querying comprehensive knowledge base for project {project_id} (mode={research_mode}, scoped_docs={len(doc_ids)})...")
         import db_ingestion
-        ctx_data = db_ingestion.retrieve_comprehensive_qa_context(project_id, message, history=history)
+        import base64
+        ctx_data = db_ingestion.retrieve_comprehensive_qa_context(
+            project_id, message, history=history, doc_ids=doc_ids if doc_ids else None
+        )
         
         context_str = ctx_data.get('context_str', '')
         project_name = ctx_data.get('project_name', '')
         project_code = ctx_data.get('project_code', '')
         
-        logger.info(f"Assembled comprehensive QA context ({len(context_str)} chars, {ctx_data.get('docs_count', 0)} docs, {ctx_data.get('reqs_count', 0)} reqs) for project '{project_name}' ({project_code}).")
+        logger.info(
+            f"Assembled comprehensive QA context ({len(context_str)} chars, {ctx_data.get('docs_count', 0)} docs, "
+            f"{ctx_data.get('reqs_count', 0)} reqs, {ctx_data.get('chunks_matched', 0)} chunks) for project '{project_name}' ({project_code})."
+        )
         
-        # 2. Serialize history into text format
+        # 2. Serialize recent history into text format
         history_text = ""
         for h in history:
             role = "User" if h.get("role") == "user" else "Assistant"
-            history_text += f"{role}: {h.get('content', '')}\n"
+            history_text += f"{role}: {(h.get('content') or '')[:1200]}\n"
         
         try:
             from orchestrator.state import QAState
@@ -3914,10 +4372,25 @@ def research_chat():
             project_id=project_id,
             project_name=project_name,
             project_code=project_code,
+            doc_type=research_mode,
             kb_context=context_str,
             instruction=message,
             original_text=history_text
         )
+
+        sources_payload = {
+            "mode": research_mode,
+            "docs_count": ctx_data.get("docs_count", 0),
+            "reqs_count": ctx_data.get("reqs_count", 0),
+            "generated_docs_count": ctx_data.get("generated_docs_count", 0),
+            "audits_count": ctx_data.get("audits_count", 0),
+            "has_diagram": ctx_data.get("has_diagram", False),
+            "chunks_matched": ctx_data.get("chunks_matched", 0),
+            "sources": ctx_data.get("sources_metadata", [])
+        }
+        encoded_sources = base64.b64encode(
+            json.dumps(sources_payload, ensure_ascii=False).encode("utf-8")
+        ).decode("ascii")
         
         from flask import Response, stream_with_context
         def generate():
@@ -3925,7 +4398,10 @@ def research_chat():
             for chunk in QAResearchAgent.generate_stream(qa_state):
                 yield chunk
                 
-        return Response(stream_with_context(generate()), mimetype='text/plain; charset=utf-8')
+        resp = Response(stream_with_context(generate()), mimetype='text/plain; charset=utf-8')
+        resp.headers['X-Research-Sources'] = encoded_sources
+        resp.headers['Access-Control-Expose-Headers'] = 'X-Research-Sources'
+        return resp
             
     except Exception as e:
         logger.error(f"Research chat error: {e}", exc_info=True)
@@ -4217,31 +4693,140 @@ def sync_requirements_from_project():
         return jsonify({'error': str(e)}), 500
 
 # ========================
-# Phase 2: Web Exploration API
 # ========================
-@app.route('/api/agent/explore', methods=['POST'])
-def explore_web():
-    data = request.json
+# Cross-Agent Ecosystem & Automation Strategy APIs
+# ========================
+@app.route('/api/agent/ecosystem-status', methods=['GET'])
+def get_agent_ecosystem_status():
+    project_id = request.args.get('project_id')
+    if not project_id:
+        return jsonify({'error': 'Missing project_id'}), 400
+    try:
+        from agent_playwright_automation import get_cross_agent_ecosystem_status
+        status = get_cross_agent_ecosystem_status(project_id)
+        return jsonify({'success': True, 'ecosystem': status})
+    except Exception as e:
+        logger.error(f"Error getting ecosystem status: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/agent/automation-strategy', methods=['GET', 'POST'])
+def handle_automation_strategy():
+    try:
+        from agent_playwright_automation import get_saved_automation_strategy, analyze_requirement_automation_strategy
+        if request.method == 'GET':
+            project_id = request.args.get('project_id')
+            if not project_id:
+                return jsonify({'error': 'Missing project_id'}), 400
+            saved = get_saved_automation_strategy(project_id)
+            return jsonify({'success': True, 'strategy': saved})
+
+        data = request.get_json() or {}
+        project_id = data.get('project_id')
+        custom_focus = data.get('custom_focus', '')
+        if not project_id:
+            return jsonify({'error': 'Missing project_id'}), 400
+
+        ok, result = analyze_requirement_automation_strategy(project_id, custom_focus=custom_focus)
+        if ok:
+            return jsonify({'success': True, 'strategy': result})
+        return jsonify({'error': result}), 500
+    except Exception as e:
+        logger.error(f"Error in automation strategy endpoint: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/agent/project-testcases', methods=['GET', 'POST'])
+def handle_project_testcases():
+    try:
+        from agent_playwright_automation import get_or_extract_project_test_cases
+        if request.method == 'GET':
+            project_id = request.args.get('project_id')
+            force = request.args.get('force_refresh', 'false').lower() == 'true'
+        else:
+            data = request.get_json() or {}
+            project_id = data.get('project_id')
+            force = bool(data.get('force_refresh', True))
+
+        if not project_id:
+            return jsonify({'error': 'Missing project_id'}), 400
+
+        ok, result = get_or_extract_project_test_cases(project_id, force_refresh=force)
+        if ok:
+            return jsonify({'success': True, **result})
+        return jsonify({'error': result}), 500
+    except Exception as e:
+        logger.error(f"Error in project testcases endpoint: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
+# Phase 2: Web Exploration & Playwright MCP Interactive Play API
+# ========================
+@app.route('/api/agent/mcp-play-web', methods=['POST'])
+def mcp_play_web():
+    data = request.get_json() or {}
     url = data.get('url')
     project_id = data.get('project_id')
-    username = data.get('username')
-    password = data.get('password')
+    username = data.get('username', '')
+    password = data.get('password', '')
+    play_instructions = data.get('play_instructions', '')
+    selected_test_cases = data.get('selected_test_cases', [])
+    browser_type = data.get('browser_type', 'chromium')
+
+    if not url:
+        return jsonify({'error': 'กรุณาระบุ Target URL'}), 400
+
+    try:
+        from agent_playwright_automation import playwright_mcp_interactive_play
+        success, result = playwright_mcp_interactive_play(
+            project_id=project_id,
+            url=url,
+            username=username,
+            password=password,
+            play_instructions=play_instructions,
+            selected_test_cases=selected_test_cases,
+            browser_type=browser_type
+        )
+        if success:
+            return jsonify({
+                'success': True,
+                'web_state': result['web_state'],
+                'file_saved': result['file_saved']
+            })
+        else:
+            return jsonify({'error': result}), 500
+    except Exception as e:
+        logger.error(f"Error in Playwright MCP web play: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/agent/explore', methods=['POST'])
+def explore_web():
+    data = request.json or {}
+    url = data.get('url')
+    project_id = data.get('project_id')
+    username = data.get('username', '')
+    password = data.get('password', '')
+    play_instructions = data.get('play_instructions', '')
+    selected_test_cases = data.get('selected_test_cases', [])
+    browser_type = data.get('browser_type', 'chromium')
     
     if not url:
         return jsonify({'error': 'Missing URL'}), 400
         
     try:
-        import asyncio
-        from agent_2_web_explorer import explore_and_capture
-        # Generate a unique file name
-        import uuid
-        output_file = f"web_state_{uuid.uuid4().hex[:8]}.json"
-        
-        # Run async playwright inside sync flask route
-        success, result = asyncio.run(explore_and_capture(url, project_id, username, password, output_file))
-        
+        from agent_playwright_automation import playwright_mcp_interactive_play
+        success, result = playwright_mcp_interactive_play(
+            project_id=project_id,
+            url=url,
+            username=username,
+            password=password,
+            play_instructions=play_instructions,
+            selected_test_cases=selected_test_cases,
+            browser_type=browser_type
+        )
         if success:
-            return jsonify({'success': True, 'web_state': result, 'file_saved': output_file})
+            return jsonify({'success': True, 'web_state': result['web_state'], 'file_saved': result['file_saved']})
         else:
             return jsonify({'error': result}), 500
             
@@ -4254,7 +4839,7 @@ def explore_web():
 # ========================
 @app.route('/api/agent/align', methods=['POST'])
 def align_requirements_and_web():
-    data = request.json
+    data = request.json or {}
     project_id = data.get('project_id')
     web_state_file = data.get('web_state_file')
     
@@ -4275,21 +4860,35 @@ def align_requirements_and_web():
         return jsonify({'error': str(e)}), 500
 
 # ========================
-# Phase 3.2: Agent 4 Test Generator API
+# Phase 4: Multi-Mode Playwright Script Generator API
 # ========================
 @app.route('/api/agent/generate-test', methods=['POST'])
 def generate_test_script():
-    data = request.json
+    data = request.json or {}
     project_id = data.get('project_id')
+    mode = data.get('mode', 'hybrid')
+    selected_test_cases = data.get('selected_test_cases', [])
+    selected_req_codes = data.get('selected_req_codes', [])
     web_state_file = data.get('web_state_file')
+    recorded_actions = data.get('recorded_actions', [])
     gap_analysis_data = data.get('gap_analysis', {})
+    target_url = data.get('target_url', '')
     
     if not project_id:
         return jsonify({'error': 'Missing project_id'}), 400
         
     try:
-        from agent_4_test_generator import generate_playwright_script
-        success, result = generate_playwright_script(project_id, gap_analysis_data, web_state_file)
+        from agent_playwright_automation import generate_accurate_playwright_scripts
+        success, result = generate_accurate_playwright_scripts(
+            project_id=project_id,
+            mode=mode,
+            selected_test_cases=selected_test_cases,
+            selected_req_codes=selected_req_codes,
+            web_state_file=web_state_file,
+            recorded_actions=recorded_actions,
+            gap_analysis_data=gap_analysis_data,
+            target_url=target_url
+        )
         
         if success:
             return jsonify({'success': True, 'test_script': result})
@@ -4300,28 +4899,107 @@ def generate_test_script():
         logger.error(f"Error in test generation: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
+
+@app.route('/api/agent/save-test-code', methods=['POST'])
+def save_test_code():
+    data = request.get_json() or {}
+    filename = data.get('file_name')
+    code = data.get('code', '')
+    if not filename:
+        return jsonify({'error': 'Missing file_name'}), 400
+    try:
+        from agent_5_test_runner import save_playwright_test_code
+        ok, msg = save_playwright_test_code(filename, code)
+        if ok:
+            return jsonify({'success': True, 'message': msg})
+        return jsonify({'error': msg}), 500
+    except Exception as e:
+        logger.error(f"Error saving test code: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
 # ========================
-# Phase 4: Test Execution & Self-Healing (Agent 5)
+# Phase 5: Test Execution, Self-Healing & Business/Flow Accuracy Evaluation
 # ========================
 @app.route('/api/agent/run-test', methods=['POST'])
 def run_test():
-    data = request.json
+    data = request.json or {}
     filename = data.get('file_name')
+    project_id = data.get('project_id')
+    code = data.get('code', '')
+    selected_test_cases = data.get('selected_test_cases', [])
+    recorded_actions = data.get('recorded_actions', [])
+    evaluate_accuracy = bool(data.get('evaluate_accuracy', True))
     
     if not filename:
         return jsonify({'error': 'Missing file_name'}), 400
         
     try:
-        from agent_5_test_runner import run_playwright_test
+        from agent_5_test_runner import run_playwright_test, save_playwright_test_code
+        if code and code.strip():
+            save_playwright_test_code(filename, code)
+
         success, output = run_playwright_test(filename)
+
+        accuracy_report = None
+        if evaluate_accuracy and project_id:
+            try:
+                from agent_playwright_automation import evaluate_automation_business_and_flow_accuracy
+                ok_acc, acc_res = evaluate_automation_business_and_flow_accuracy(
+                    project_id=project_id,
+                    file_name=filename,
+                    code=code,
+                    test_output=output,
+                    run_passed=success,
+                    selected_test_cases=selected_test_cases,
+                    recorded_actions=recorded_actions
+                )
+                if ok_acc:
+                    accuracy_report = acc_res
+            except Exception as acc_err:
+                logger.warning(f"Accuracy evaluation note: {acc_err}")
         
         return jsonify({
             'success': success,
-            'output': output
+            'output': output,
+            'accuracy_report': accuracy_report
         })
             
     except Exception as e:
         logger.error(f"Error executing test: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/agent/evaluate-automation-accuracy', methods=['POST'])
+def evaluate_automation_accuracy():
+    data = request.get_json() or {}
+    project_id = data.get('project_id')
+    filename = data.get('file_name', 'suite.spec.ts')
+    code = data.get('code', '')
+    test_output = data.get('test_output', '')
+    run_passed = data.get('run_passed')
+    selected_test_cases = data.get('selected_test_cases', [])
+    recorded_actions = data.get('recorded_actions', [])
+
+    if not project_id:
+        return jsonify({'error': 'Missing project_id'}), 400
+
+    try:
+        from agent_playwright_automation import evaluate_automation_business_and_flow_accuracy
+        ok, report = evaluate_automation_business_and_flow_accuracy(
+            project_id=project_id,
+            file_name=filename,
+            code=code,
+            test_output=test_output,
+            run_passed=run_passed,
+            selected_test_cases=selected_test_cases,
+            recorded_actions=recorded_actions
+        )
+        if ok:
+            return jsonify({'success': True, 'accuracy_report': report})
+        return jsonify({'error': report}), 500
+    except Exception as e:
+        logger.error(f"Error evaluating automation accuracy: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 # ========================
@@ -4337,6 +5015,7 @@ def create_document():
     reference_document_id = data.get('reference_document_id') # Single ID or list of IDs
     custom_prompt = data.get('custom_prompt', '')
     source_markdown = data.get('source_markdown', '')
+    source_doc_id = data.get('source_doc_id') or None
     group_name = data.get('group_name', '')
     group_type = data.get('group_type', '')
     
@@ -4391,7 +5070,7 @@ def create_document():
         thread = threading.Thread(
             target=create_qa_document_async, 
             args=(gen_id, project_id, doc_type, doc_name, skill_id, reference_document_id, custom_prompt, source_markdown),
-            kwargs={'username': req_user}
+            kwargs={'username': req_user, 'source_doc_id': source_doc_id}
         )
         thread.daemon = True
         thread.start()
@@ -4520,7 +5199,7 @@ def mark_document_scanning():
     if request.method == 'OPTIONS':
         return jsonify({}), 200
     data = request.json or {}
-    doc_id = data.get('doc_id')
+    doc_id = data.get('doc_id') or data.get('id')
     if not doc_id:
         return jsonify({'error': 'Missing doc_id'}), 400
     try:

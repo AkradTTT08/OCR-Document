@@ -950,6 +950,168 @@ def send_email_report(to_email: str, subject: str, report_body: str) -> str:
 
 
 # ==========================================
+# Tool 8: Playwright MCP Test Automation & Strategy Suite
+# ==========================================
+
+@mcp.tool()
+def analyze_automation_strategy(project_id: str, custom_focus: str = "") -> str:
+    """
+    Analyzes project requirements, documents, QA Consult audit findings, and QA Analysis Diagrams
+    to recommend which features should be automated (MUST_AUTOMATE), partially automated (SELECTIVE),
+    or kept manual (MANUAL_ONLY), including Pros & Cons, ROI scores, and a phased Automation Test Plan.
+
+    Args:
+        project_id: The UUID or Code of the project.
+        custom_focus: (Optional) Specific business focus or constraints for the automation strategy.
+    """
+    try:
+        from agent_playwright_automation import analyze_requirement_automation_strategy
+        resolved_pid, _, _ = _resolve_project(project_id)
+        if not resolved_pid:
+            return json.dumps({"status": "ERROR", "message": f"Project '{project_id}' not found."}, ensure_ascii=False)
+        ok, res = analyze_requirement_automation_strategy(resolved_pid, custom_focus=custom_focus)
+        return json.dumps({"status": "SUCCESS" if ok else "ERROR", "strategy": res}, indent=2, ensure_ascii=False)
+    except Exception as e:
+        logger.error(f"Error in analyze_automation_strategy MCP tool: {e}", exc_info=True)
+        return json.dumps({"status": "ERROR", "message": str(e)}, ensure_ascii=False)
+
+
+@mcp.tool()
+def get_project_test_cases(project_id: str, force_refresh: bool = False) -> str:
+    """
+    Extracts and retrieves structured Test Cases from the project's QA Document Creation documents,
+    Knowledge Base, QA Analysis Diagram Traceability Matrix, and Structured Requirements.
+
+    Args:
+        project_id: The UUID or Code of the project.
+        force_refresh: If True, re-extracts test cases from all connected agent documents.
+    """
+    try:
+        from agent_playwright_automation import get_or_extract_project_test_cases
+        resolved_pid, _, _ = _resolve_project(project_id)
+        if not resolved_pid:
+            return json.dumps({"status": "ERROR", "message": f"Project '{project_id}' not found."}, ensure_ascii=False)
+        ok, res = get_or_extract_project_test_cases(resolved_pid, force_refresh=force_refresh)
+        return json.dumps({"status": "SUCCESS" if ok else "ERROR", "data": res}, indent=2, ensure_ascii=False)
+    except Exception as e:
+        logger.error(f"Error in get_project_test_cases MCP tool: {e}", exc_info=True)
+        return json.dumps({"status": "ERROR", "message": str(e)}, ensure_ascii=False)
+
+
+@mcp.tool()
+def playwright_mcp_play_website(
+    project_id: str,
+    url: str,
+    username: str = "",
+    password: str = "",
+    play_instructions: str = "",
+    browser_type: str = "chromium"
+) -> str:
+    """
+    Connects Playwright MCP to a live website, plays and interacts with the web application,
+    captures the Accessibility Tree & resilient Playwright locators (getByRole, getByLabel, getByTestId),
+    records step-by-step actions, and takes proof screenshots for script generation.
+
+    Args:
+        project_id: The UUID or Code of the project.
+        url: Target URL of the web application to play and explore.
+        username: (Optional) Login username.
+        password: (Optional) Login password.
+        play_instructions: (Optional) Specific business flow or scenario to play on the web page.
+        browser_type: Browser engine ('chromium', 'firefox', 'webkit').
+    """
+    try:
+        from agent_playwright_automation import playwright_mcp_interactive_play
+        resolved_pid, _, _ = _resolve_project(project_id)
+        ok, res = playwright_mcp_interactive_play(
+            project_id=resolved_pid or project_id,
+            url=url,
+            username=username,
+            password=password,
+            play_instructions=play_instructions,
+            browser_type=browser_type
+        )
+        return json.dumps({"status": "SUCCESS" if ok else "ERROR", "result": res}, indent=2, ensure_ascii=False)
+    except Exception as e:
+        logger.error(f"Error in playwright_mcp_play_website MCP tool: {e}", exc_info=True)
+        return json.dumps({"status": "ERROR", "message": str(e)}, ensure_ascii=False)
+
+
+@mcp.tool()
+def generate_playwright_automation_script(
+    project_id: str,
+    mode: str = "hybrid",
+    target_url: str = "",
+    web_state_file: str = ""
+) -> str:
+    """
+    Generates Playwright TypeScript (.spec.ts) test scripts in Page Object Model (POM) pattern
+    from System Test Cases ('testcase'), Live Web Play ('web_play'), or both ('hybrid'),
+    and evaluates Flow & Business alignment accuracy.
+
+    Args:
+        project_id: The UUID or Code of the project.
+        mode: Generation mode ('testcase', 'web_play', or 'hybrid').
+        target_url: (Optional) Base URL for the generated test script.
+        web_state_file: (Optional) Path to saved web_state JSON from playwright_mcp_play_website.
+    """
+    try:
+        from agent_playwright_automation import generate_accurate_playwright_scripts
+        resolved_pid, _, _ = _resolve_project(project_id)
+        if not resolved_pid:
+            return json.dumps({"status": "ERROR", "message": f"Project '{project_id}' not found."}, ensure_ascii=False)
+        ok, res = generate_accurate_playwright_scripts(
+            project_id=resolved_pid,
+            mode=mode,
+            web_state_file=web_state_file,
+            target_url=target_url
+        )
+        return json.dumps({"status": "SUCCESS" if ok else "ERROR", "result": res}, indent=2, ensure_ascii=False)
+    except Exception as e:
+        logger.error(f"Error in generate_playwright_automation_script MCP tool: {e}", exc_info=True)
+        return json.dumps({"status": "ERROR", "message": str(e)}, ensure_ascii=False)
+
+
+@mcp.tool()
+def run_and_evaluate_playwright_script(project_id: str, file_name: str) -> str:
+    """
+    Executes a generated Playwright test script (.spec.ts) and evaluates its Business & Flow Accuracy
+    against the customer's requirements, test cases, and QA Analysis Diagram.
+
+    Args:
+        project_id: The UUID or Code of the project.
+        file_name: Relative test file path (e.g. '<project_id>/req001_business_flow.spec.ts').
+    """
+    try:
+        from agent_5_test_runner import run_playwright_test
+        from agent_playwright_automation import evaluate_automation_business_and_flow_accuracy
+        resolved_pid, _, _ = _resolve_project(project_id)
+        run_ok, output = run_playwright_test(file_name)
+        tests_dir = os.path.join(os.getcwd(), "tests")
+        code_path = os.path.join(tests_dir, file_name)
+        code_str = ""
+        if os.path.exists(code_path):
+            with open(code_path, "r", encoding="utf-8") as f:
+                code_str = f.read()
+        eval_ok, eval_report = evaluate_automation_business_and_flow_accuracy(
+            project_id=resolved_pid or project_id,
+            file_name=file_name,
+            code=code_str,
+            test_output=output,
+            run_passed=run_ok
+        )
+        return json.dumps({
+            "status": "SUCCESS",
+            "test_passed": run_ok,
+            "test_output": output,
+            "accuracy_evaluation": eval_report if eval_ok else {"error": eval_report}
+        }, indent=2, ensure_ascii=False)
+    except Exception as e:
+        logger.error(f"Error in run_and_evaluate_playwright_script MCP tool: {e}", exc_info=True)
+        return json.dumps({"status": "ERROR", "message": str(e)}, ensure_ascii=False)
+
+
+# ==========================================
 # Server Entrypoint
 # ==========================================
 

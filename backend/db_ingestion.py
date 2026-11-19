@@ -852,16 +852,17 @@ def reindex_project_documents(project_id: str):
         if conn: conn.close()
 
 
-def retrieve_comprehensive_qa_context(project_id: str, query: str, history: list = None) -> dict:
+def retrieve_comprehensive_qa_context(project_id: str, query: str, history: list = None, doc_ids: list = None) -> dict:
     """
     Assembles high-density, multi-layered knowledge context for QA Research:
     1. Project Metadata (Code, Name, Description)
-    2. Document Catalog & Summaries (all uploaded docs)
+    2. Document Catalog & Summaries (all uploaded docs, optionally scoped by doc_ids)
     3. Complete or targeted Document Markdown Texts
     4. Structured Requirements (Phase 1 extracted requirements)
     5. Semantic Vector Search Chunks (Top similar chunks)
-    6. Keyword / Exact Match Chunks (Full-text matching for technical terms/codes)
+    6. Keyword / Exact Match Chunks (Thai + English + Technical IDs like REQ-, TC-, endpoints)
     7. Generated QA Artifacts (SRS, Test Cases from QA Doc Creator)
+    8. Cross-Agent Intelligence: QA Consult Findings, QA Analysis Diagrams & Automation Strategy/Test Cases
     """
     import re
     conn = None
@@ -888,16 +889,26 @@ def retrieve_comprehensive_qa_context(project_id: str, query: str, history: list
                 logger.warning(f"Failed to fetch project info for {project_id}: {pe}")
                 if conn: conn.rollback()
                 
-        # 2. Uploaded Documents
+        # 2. Uploaded Documents (optionally filtered by doc_ids)
         doc_rows = []
+        scoped_doc_ids = [str(d) for d in (doc_ids or []) if d]
         if project_id:
             try:
-                cursor.execute("""
-                    SELECT doc_id, original_filename, doc_category, doc_type, full_markdown_content, created_at
-                    FROM documents
-                    WHERE project_id = %s::uuid AND (status = 'Active' OR status IS NULL)
-                    ORDER BY doc_id ASC;
-                """, (project_id,))
+                if scoped_doc_ids:
+                    cursor.execute("""
+                        SELECT doc_id, original_filename, doc_category, doc_type, full_markdown_content, created_at
+                        FROM documents
+                        WHERE project_id = %s::uuid AND (status = 'Active' OR status IS NULL)
+                          AND doc_id::text = ANY(%s)
+                        ORDER BY doc_id ASC;
+                    """, (project_id, scoped_doc_ids))
+                else:
+                    cursor.execute("""
+                        SELECT doc_id, original_filename, doc_category, doc_type, full_markdown_content, created_at
+                        FROM documents
+                        WHERE project_id = %s::uuid AND (status = 'Active' OR status IS NULL)
+                        ORDER BY doc_id ASC;
+                    """, (project_id,))
                 doc_rows = cursor.fetchall()
             except Exception as de:
                 logger.warning(f"Failed to fetch documents for {project_id}: {de}")
@@ -930,12 +941,20 @@ def retrieve_comprehensive_qa_context(project_id: str, query: str, history: list
         req_rows = []
         if project_id:
             try:
-                cursor.execute("""
-                    SELECT req_code, title, description, steps, expected_results
-                    FROM structured_requirements
-                    WHERE project_id = %s::uuid
-                    ORDER BY req_code ASC;
-                """, (project_id,))
+                if scoped_doc_ids:
+                    cursor.execute("""
+                        SELECT req_code, title, description, steps, expected_results
+                        FROM structured_requirements
+                        WHERE project_id = %s::uuid AND (doc_id::text = ANY(%s) OR doc_id IS NULL)
+                        ORDER BY req_code ASC;
+                    """, (project_id, scoped_doc_ids))
+                else:
+                    cursor.execute("""
+                        SELECT req_code, title, description, steps, expected_results
+                        FROM structured_requirements
+                        WHERE project_id = %s::uuid
+                        ORDER BY req_code ASC;
+                    """, (project_id,))
                 req_rows = cursor.fetchall()
             except Exception as re_err:
                 logger.warning(f"Failed to fetch structured requirements for {project_id}: {re_err}")
@@ -951,18 +970,19 @@ def retrieve_comprehensive_qa_context(project_id: str, query: str, history: list
                 "expected": r[4] or []
             })
             
-        # 4. QA Generated Documents (SRS, Test Cases, etc.)
+        # 4. QA Generated Documents (SRS, Test Cases, etc. from QA Document Creation)
         qa_doc_rows = []
         if project_id:
             try:
                 cursor.execute("""
                     SELECT doc_name, doc_type, markdown_content
                     FROM qa_generated_documents
-                    WHERE project_id = %s::uuid AND status = 'Completed'
-                    ORDER BY created_at DESC LIMIT 5;
+                    WHERE project_id = %s::uuid AND UPPER(COALESCE(status, '')) = 'COMPLETED'
+                    ORDER BY created_at DESC LIMIT 6;
                 """, (project_id,))
                 qa_doc_rows = cursor.fetchall()
-            except Exception:
+            except Exception as qgd_err:
+                logger.warning(f"Failed to fetch qa_generated_documents: {qgd_err}")
                 if conn: conn.rollback()
                 
         qa_generated = []
@@ -970,31 +990,118 @@ def retrieve_comprehensive_qa_context(project_id: str, query: str, history: list
             qa_generated.append({
                 "name": q[0],
                 "type": q[1],
-                "content": (q[2] or "")[:4000]
+                "content": (q[2] or "")[:4500]
             })
+
+        # 4B. Cross-Agent: QA Consult Audit Findings & Exit Criteria
+        qa_consult_audits = []
+        if project_id:
+            try:
+                cursor.execute("""
+                    SELECT filename, doc_type, group_name, qa_findings, exit_criteria_eval, created_at
+                    FROM qa_transactions
+                    WHERE project_id = %s::uuid
+                    ORDER BY created_at DESC LIMIT 5;
+                """, (project_id,))
+                for tx in cursor.fetchall():
+                    findings = tx[3] if isinstance(tx[3], list) else []
+                    ece = tx[4] if isinstance(tx[4], dict) else {}
+                    qa_consult_audits.append({
+                        "filename": tx[0],
+                        "doc_type": tx[1],
+                        "group_name": tx[2],
+                        "exit_status": ece.get("status", "N/A"),
+                        "findings_count": len(findings),
+                        "top_findings": [
+                            f"[{f.get('severity', 'Info')}] {f.get('issue', '')} (แนะนำ: {f.get('recommendation', '-')})"
+                            for f in findings[:6]
+                        ]
+                    })
+            except Exception as tx_err:
+                logger.warning(f"Failed to fetch qa_transactions for research: {tx_err}")
+                if conn: conn.rollback()
+
+        # 4C. Cross-Agent: QA Analysis Diagram (Sitemap, Flowchart, Traceability)
+        diagram_info = None
+        if project_id:
+            try:
+                cursor.execute("""
+                    SELECT sitemap_data, system_flowchart, traceability_matrix
+                    FROM qa_analysis_diagrams
+                    WHERE project_id = %s::uuid
+                    ORDER BY updated_at DESC LIMIT 1;
+                """, (project_id,))
+                d_row = cursor.fetchone()
+                if d_row:
+                    smap = d_row[0] if isinstance(d_row[0], list) else json.loads(d_row[0] or "[]")
+                    tmat = d_row[2] if isinstance(d_row[2], list) else json.loads(d_row[2] or "[]")
+                    diagram_info = {
+                        "sitemap_count": len(smap),
+                        "sitemap_summary": [{"title": s.get("title"), "path": s.get("path")} for s in smap[:15] if isinstance(s, dict)],
+                        "flowchart": (d_row[1] or "")[:2500],
+                        "traceability_sample": tmat[:12]
+                    }
+            except Exception as diag_err:
+                logger.warning(f"Failed to fetch qa_analysis_diagrams for research: {diag_err}")
+                if conn: conn.rollback()
+
+        # 4D. Cross-Agent: QA Automation Test Cases & Strategy
+        auto_testcases_sample = []
+        if project_id:
+            try:
+                cursor.execute("""
+                    SELECT tc_id, req_code, title, tc_type, expected_result, business_rule
+                    FROM qa_automation_testcases
+                    WHERE project_id = %s::uuid
+                    ORDER BY tc_id ASC LIMIT 15;
+                """, (project_id,))
+                for tc in cursor.fetchall():
+                    auto_testcases_sample.append({
+                        "tc_id": tc[0],
+                        "req_code": tc[1],
+                        "title": tc[2],
+                        "type": tc[3],
+                        "expected": tc[4],
+                        "business_rule": tc[5]
+                    })
+            except Exception:
+                if conn: conn.rollback()
             
-        # 5. Semantic Vector Search
+        # 5. Semantic Vector Search (use recent user context if query is short)
+        search_query = query
+        if history and len(query.strip()) < 25:
+            last_user = next((h.get("content", "") for h in reversed(history) if h.get("role") == "user"), "")
+            if last_user:
+                search_query = f"{last_user[:120]} {query}"
+
         vector_chunks = []
         try:
-            vector_chunks = search_knowledge_base(query, top_k=20, project_id=project_id)
+            vector_chunks = search_knowledge_base(search_query, top_k=22, project_id=project_id)
+            if scoped_doc_ids:
+                allowed_names = {d["filename"] for d in docs_catalog}
+                vector_chunks = [c for c in vector_chunks if c.get("filename") in allowed_names]
         except Exception as ve:
             logger.warning(f"Vector search failed in retrieve_comprehensive_qa_context: {ve}")
         
-        # 6. Keyword / Exact Matches on chunks (for technical IDs like REQ-, TC-, error codes, endpoints)
+        # 6. Keyword / Exact Matches on chunks (Thai + English + technical IDs like REQ-, TC-, endpoints)
         keyword_chunks = []
-        words = [w for w in re.findall(r'[\w\-\/]{3,}', query) if len(w) >= 3][:5]
+        raw_words = re.findall(r'[A-Za-z0-9_\-\/\.]{3,}|[\u0E00-\u0E7F]{3,}', query)
+        stop_words = {"คือ", "อะไร", "บ้าง", "หน่อย", "ครับ", "ค่ะ", "ช่วย", "สรุป", "เกี่ยวกับ", "ระบบ", "โครงการ", "ทั้งหมด", "the", "and", "for", "with"}
+        words = [w for w in dict.fromkeys(raw_words) if w.lower() not in stop_words][:6]
         if words and project_id:
             try:
                 like_clauses = " OR ".join(["dc.chunk_text ILIKE %s"] * len(words))
+                scope_clause = " AND d.doc_id::text = ANY(%s)" if scoped_doc_ids else ""
                 kw_sql = f"""
                     SELECT dc.chunk_text, d.doc_category, d.original_filename
                     FROM document_chunks dc
                     JOIN documents d ON dc.doc_id = d.doc_id
                     WHERE d.project_id = %s::uuid AND (d.status = 'Active' OR d.status IS NULL)
+                    {scope_clause}
                     AND ({like_clauses})
                     LIMIT 15;
                 """
-                kw_params = [project_id] + [f"%{w}%" for w in words]
+                kw_params = [project_id] + ([scoped_doc_ids] if scoped_doc_ids else []) + [f"%{w}%" for w in words]
                 cursor.execute(kw_sql, kw_params)
                 for kr in cursor.fetchall():
                     keyword_chunks.append({
@@ -1013,6 +1120,7 @@ def retrieve_comprehensive_qa_context(project_id: str, query: str, history: list
         
         # --- Build Unified Context String ---
         context_parts = []
+        sources_metadata = []
         
         # Section 1: Project Overview
         if project_info:
@@ -1021,7 +1129,8 @@ def retrieve_comprehensive_qa_context(project_id: str, query: str, history: list
                 f"- Project Code: {project_info.get('code')}\n"
                 f"- Project Name: {project_info.get('name')}\n"
                 f"- Description: {project_info.get('description') or 'None'}\n"
-                f"- Total Uploaded Documents: {len(docs_catalog)}\n"
+                f"- Base URL: {project_info.get('base_url') or 'N/A'}\n"
+                f"- Scoped Documents: {len(docs_catalog)} ({'Filtered by user' if scoped_doc_ids else 'All project documents'})\n"
             )
             
         # Section 2: Document Catalog
@@ -1029,6 +1138,11 @@ def retrieve_comprehensive_qa_context(project_id: str, query: str, history: list
             catalog_lines = ["### [PROJECT DOCUMENTS CATALOGUE]"]
             for dc in docs_catalog:
                 catalog_lines.append(f"- Document: {dc.get('filename', 'Doc')} | Category: {dc.get('category', 'General')} | Type: {dc.get('type', 'Document')} | Size: {dc.get('length', 0)} chars")
+                sources_metadata.append({
+                    "type": "document",
+                    "name": dc.get("filename", "Doc"),
+                    "category": dc.get("category", "General")
+                })
             context_parts.append("\n".join(catalog_lines))
             
         # Section 3: Structured Requirements
@@ -1037,8 +1151,7 @@ def retrieve_comprehensive_qa_context(project_id: str, query: str, history: list
             for req in structured_reqs:
                 code_str = req.get('code') or 'REQ'
                 title_str = req.get('title') or 'Requirement'
-                cat_str = f" (Category: {req.get('category')})" if req.get('category') else ""
-                req_lines.append(f"• **[{code_str}] {title_str}**{cat_str}")
+                req_lines.append(f"• **[{code_str}] {title_str}**")
                 if req.get('description'):
                     req_lines.append(f"  Description: {req['description']}")
                 if req.get('steps'):
@@ -1046,6 +1159,11 @@ def retrieve_comprehensive_qa_context(project_id: str, query: str, history: list
                 if req.get('expected'):
                     req_lines.append(f"  Expected Results: {req['expected']}")
             context_parts.append("\n".join(req_lines))
+            sources_metadata.append({
+                "type": "requirements",
+                "name": f"Structured Requirements ({len(structured_reqs)} ข้อ)",
+                "category": "Agent 1"
+            })
             
         # Section 4: Full Document Texts (if moderate total size < 80k chars) OR High-Priority Sections
         if 0 < total_markdown_len <= 80000:
@@ -1056,7 +1174,6 @@ def retrieve_comprehensive_qa_context(project_id: str, query: str, history: list
                 doc_text_lines.append(f"\n--- BEGIN DOCUMENT: {fname} (Category: {cat}) ---\n{cnt}\n--- END DOCUMENT: {fname} ---\n")
             context_parts.append("\n".join(doc_text_lines))
         elif total_markdown_len > 80000:
-            # Include comprehensive chunks & summaries
             doc_text_lines = ["### [KEY DOCUMENT EXCERPTS & SUMMARIES]"]
             for fname, dinfo in docs_content_map.items():
                 cnt = dinfo.get('content', '') if isinstance(dinfo, dict) else str(dinfo)
@@ -1080,19 +1197,70 @@ def retrieve_comprehensive_qa_context(project_id: str, query: str, history: list
                 chunk_lines.append(f"[Excerpt {idx+1} from {c.get('filename', 'Doc')} - Relevance: {c.get('similarity', 0):.2f}]:\n{c.get('chunk_text', '')}\n")
             context_parts.append("\n".join(chunk_lines))
             
-        # Section 6: QA Generated Artifacts
+        # Section 6: QA Generated Artifacts (Agent 6: QA Document Creation)
         if qa_generated:
-            qa_lines = ["### [GENERATED QA SPECIFICATIONS & TEST SUITES]"]
+            qa_lines = ["### [GENERATED QA SPECIFICATIONS & TEST SUITES (QA Document Creation)]"]
             for qa in qa_generated:
                 qa_lines.append(f"- **{qa['name']}** ({qa['type']}):\n{qa['content']}\n")
+                sources_metadata.append({
+                    "type": "generated_doc",
+                    "name": qa["name"],
+                    "category": qa["type"]
+                })
             context_parts.append("\n".join(qa_lines))
+
+        # Section 7: QA Consult Audit Findings & Exit Criteria
+        if qa_consult_audits:
+            audit_lines = ["### [QA CONSULT AUDIT FINDINGS & EXIT CRITERIA]"]
+            for au in qa_consult_audits:
+                audit_lines.append(f"- **{au['filename']}** (Group: {au['group_name']} | Exit Gate: {au['exit_status']} | Findings: {au['findings_count']})")
+                for tf in au['top_findings']:
+                    audit_lines.append(f"  * {tf}")
+            context_parts.append("\n".join(audit_lines))
+            sources_metadata.append({
+                "type": "qa_consult",
+                "name": f"QA Consult Audits ({len(qa_consult_audits)} รายการ)",
+                "category": "Audit Findings"
+            })
+
+        # Section 8: QA Analysis Diagram (Sitemap & Flowchart)
+        if diagram_info:
+            diag_lines = [
+                f"### [QA ANALYSIS DIAGRAM & SITEMAP ({diagram_info['sitemap_count']} Screens)]",
+                f"Sitemap Routes: {json.dumps(diagram_info['sitemap_summary'], ensure_ascii=False)}",
+            ]
+            if diagram_info.get("flowchart"):
+                diag_lines.append(f"System Flowchart:\n{diagram_info['flowchart']}")
+            context_parts.append("\n".join(diag_lines))
+            sources_metadata.append({
+                "type": "diagram",
+                "name": f"QA Analysis Diagram ({diagram_info['sitemap_count']} หน้าจอ)",
+                "category": "Flowchart & Sitemap"
+            })
+
+        # Section 9: Automation Test Cases
+        if auto_testcases_sample:
+            tc_lines = [f"### [EXTRACTED AUTOMATION TEST CASES ({len(auto_testcases_sample)} items)]"]
+            for tc in auto_testcases_sample:
+                tc_lines.append(f"- [{tc['tc_id']} | {tc['req_code']}] {tc['title']} ({tc['type']}) -> Expected: {tc['expected']} | Business Rule: {tc['business_rule']}")
+            context_parts.append("\n".join(tc_lines))
+            sources_metadata.append({
+                "type": "testcases",
+                "name": f"System Test Cases ({len(auto_testcases_sample)} ข้อ)",
+                "category": "QA Automation"
+            })
             
         return {
             "project_name": project_info.get('name', ''),
             "project_code": project_info.get('code', ''),
             "context_str": "\n\n".join(context_parts),
             "docs_count": len(docs_catalog),
-            "reqs_count": len(structured_reqs)
+            "reqs_count": len(structured_reqs),
+            "generated_docs_count": len(qa_generated),
+            "audits_count": len(qa_consult_audits),
+            "has_diagram": bool(diagram_info),
+            "chunks_matched": len(unique_chunks),
+            "sources_metadata": sources_metadata[:14]
         }
         
     except Exception as e:
@@ -1102,7 +1270,12 @@ def retrieve_comprehensive_qa_context(project_id: str, query: str, history: list
             "project_code": "",
             "context_str": f"Error retrieving context: {e}",
             "docs_count": 0,
-            "reqs_count": 0
+            "reqs_count": 0,
+            "generated_docs_count": 0,
+            "audits_count": 0,
+            "has_diagram": False,
+            "chunks_matched": 0,
+            "sources_metadata": []
         }
     finally:
         if cursor: cursor.close()

@@ -58,9 +58,9 @@ def parse_qa_report_with_ai(report_text: str, filename: str) -> list[dict]:
 
         from ocr_engine import get_all_api_keys, _get_gemini_client
         all_keys = get_all_api_keys()
-        raw_fallback_models = [gemini_model, 'gemini-3.1-pro', 'gemini-3.1-flash', 'gemini-2.5-flash', 'gemini-2.5-flash-lite']
+        raw_fallback_models = [gemini_model, 'gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash-lite']
         seen = set()
-        fallback_models = [m for m in raw_fallback_models if not (m in seen or seen.add(m))]
+        fallback_models = [m for m in raw_fallback_models if m not in ('gemini-3.1-pro', 'gemini-3.1-flash') and not (m in seen or seen.add(m))]
         gemini_res = None
         
         for k_idx in range(len(all_keys) if all_keys else 1):
@@ -186,14 +186,17 @@ def parse_qa_report_regex(report_text: str, filename: str) -> list[dict]:
     return rows
 
 
-def generate_qa_excel(report_text: str, filename: str, doc_type: str = "Requirement", project_code: str = "", group_name: str = "", group_type: str = "", transaction_id: str = None, exit_criteria_eval: dict = None) -> str:
+def generate_qa_excel(report_text: str, filename: str, doc_type: str = "Requirement", project_code: str = "", group_name: str = "", group_type: str = "", transaction_id: str = None, exit_criteria_eval: dict = None, qa_findings: list = None) -> str:
     """
-    Generate Excel QA Report from report text and optional Exit Criteria evaluation.
+    Generate Excel QA Report from report text, pre-parsed findings, and optional Exit Criteria evaluation.
     """
     if not HAS_OPENPYXL:
         raise ImportError("openpyxl is required to generate Excel reports.")
         
-    rows = parse_qa_report_with_ai(report_text, filename)
+    if isinstance(qa_findings, list) and len(qa_findings) > 0:
+        rows = qa_findings
+    else:
+        rows = parse_qa_report_with_ai(report_text, filename)
     
     wb = openpyxl.Workbook()
     

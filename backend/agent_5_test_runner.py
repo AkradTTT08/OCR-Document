@@ -127,9 +127,35 @@ Respond strictly in JSON format as follows:
             fixed_code = fixed_code[:-3].strip()
             
         healing_result['fixed_code'] = fixed_code
+
+        # Persist the healed code back to the test file on disk so subsequent runs execute the fixed script
+        try:
+            tests_dir = os.path.join(os.getcwd(), "tests")
+            target_file = os.path.join(tests_dir, filename)
+            if fixed_code and os.path.exists(tests_dir):
+                os.makedirs(os.path.dirname(target_file), exist_ok=True)
+                with open(target_file, 'w', encoding='utf-8') as f:
+                    f.write(fixed_code)
+                healing_result['saved_to_disk'] = True
+        except Exception as save_err:
+            logger.warning(f"Could not overwrite healed test file {filename}: {save_err}")
         
         return True, healing_result
         
     except Exception as e:
         logger.error(f"Error in Agent 5 Self-Healing: {e}", exc_info=True)
+        return False, str(e)
+
+
+def save_playwright_test_code(filename: str, code: str):
+    """Saves user-edited Playwright TypeScript code directly to disk in tests/<filename>."""
+    try:
+        tests_dir = os.path.join(os.getcwd(), "tests")
+        target_file = os.path.join(tests_dir, filename)
+        os.makedirs(os.path.dirname(target_file), exist_ok=True)
+        with open(target_file, 'w', encoding='utf-8') as f:
+            f.write(code or '')
+        return True, f"บันทึกสคริปต์ {filename} เรียบร้อยแล้ว"
+    except Exception as e:
+        logger.error(f"Error saving test code {filename}: {e}", exc_info=True)
         return False, str(e)

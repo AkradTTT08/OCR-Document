@@ -1,17 +1,26 @@
 <script>
   import { onMount, onDestroy, tick } from 'svelte';
-  import { fade, slide, scale } from 'svelte/transition';
+  import { fade, fly, slide, scale } from 'svelte/transition';
+  import { cubicOut } from 'svelte/easing';
   import { selectedProjectStore } from './qaHistoryStore.js';
   import { toast } from './toastStore.js';
   import ProjectSelection from './ProjectSelection.svelte';
   import SmartTestLauncherModal from './SmartTestLauncherModal.svelte';
+  import QAIcon from './QAIcon.svelte';
+  import TraceabilityMatrixPane from './TraceabilityMatrixPane.svelte';
+  import { sanitizeMermaidCode, mermaidThemeVariables } from './qaMermaid.js';
   import mermaid from 'mermaid';
 
   let projects = [];
   let isAnalyzing = false;
-  let activeTab = 'sitemap'; // 'sitemap' | 'usecase' | 'activity' | 'sequence' | 'matrix'
+  let activeTab = 'sitemap'; // 'sitemap' | 'flowchart' | 'usecase' | 'activity' | 'sequence' | 'matrix'
   let customInstructions = "";
   let showInstructions = false;
+
+  // Live Mermaid Code Editor state
+  let showMermaidEditor = false;
+  let editableMermaidCode = "";
+  let isSavingDiagram = false;
 
   let isTestModalOpen = false;
   let testTargetCard = null;
@@ -31,10 +40,6 @@
   let fileInputRef = null;
   let lightboxImage = null;
 
-  // Traceability Matrix Filters
-  let matrixSearchQuery = "";
-  let selectedDocFilter = "All";
-  let selectedStatusFilter = "All";
 
   // Diagram zoom/pan state
   let diagramContainer;
@@ -53,6 +58,7 @@
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
       window.removeEventListener('pointercancel', onPointerUp);
+      window.removeEventListener('blur', onPointerUp);
     }
   });
 
@@ -218,9 +224,20 @@
     }
   }
 
+  let lastLoadedProjectId = null;
+
   $: {
-    if ($selectedProjectStore) {
-      fetchAnalysis($selectedProjectStore.id || $selectedProjectStore.project_id);
+    const currentPId = $selectedProjectStore ? ($selectedProjectStore.id || $selectedProjectStore.project_id) : null;
+    if (currentPId && currentPId !== lastLoadedProjectId) {
+      lastLoadedProjectId = currentPId;
+      selectedScreenId = null;
+      selectedNodeId = null;
+      selectedSitemapNode = null;
+      flowData = null;
+      fetchAnalysis(currentPId);
+    } else if (!currentPId) {
+      lastLoadedProjectId = null;
+      flowData = null;
     }
   }
 
@@ -229,17 +246,8 @@
       startOnLoad: false,
       theme: 'dark',
       securityLevel: 'loose',
-      fontFamily: 'Segoe UI, Tahoma, sans-serif',
-      themeVariables: {
-        darkMode: true,
-        background: '#0f172a',
-        primaryColor: '#3b82f6',
-        primaryTextColor: '#f8fafc',
-        primaryBorderColor: '#60a5fa',
-        lineColor: '#94a3b8',
-        secondaryColor: '#8b5cf6',
-        tertiaryColor: '#1e293b'
-      }
+      fontFamily: "'Prompt', 'Outfit', 'Segoe UI', sans-serif",
+      themeVariables: mermaidThemeVariables
     });
     await fetchProjects();
   });
@@ -322,16 +330,160 @@
   let showDrawioGrid = true;
   let isFullscreenDiagram = false;
 
-  function copyCurrentMermaidCode() {
-    let code = "";
-    if (activeTab === 'flowchart') code = flowData?.system_flowchart || flowData?.activity_diagram || '';
-    else if (activeTab === 'usecase') code = flowData?.usecase_diagram || '';
-    else if (activeTab === 'activity') code = flowData?.activity_diagram || '';
-    else if (activeTab === 'sequence') code = flowData?.sequence_diagram || '';
+  function getActiveDiagramCode() {
+    if (activeTab === 'flowchart') return flowData?.system_flowchart || flowData?.activity_diagram || '';
+    if (activeTab === 'usecase') return flowData?.usecase_diagram || '';
+    if (activeTab === 'activity') return flowData?.activity_diagram || '';
+    if (activeTab === 'sequence') return flowData?.sequence_diagram || '';
+    return '';
+  }
 
+  function copyCurrentMermaidCode() {
+    const code = getActiveDiagramCode();
     if (!code) return;
     navigator.clipboard.writeText(code);
-    toast('คัดลอกโค้ด Mermaid Diagram เรียบร้อย!', 'success');
+    toast('คัดลอกโค้ด Mermaid Diagram เรียบร้อย', 'success');
+  }
+
+  function toggleMermaidEditor() {
+    if (!showMermaidEditor) {
+      editableMermaidCode = getActiveDiagramCode();
+      showMermaidEditor = true;
+    } else {
+      showMermaidEditor = false;
+    }
+  }
+
+  $: if (activeTab) {
+    showMermaidEditor = false;
+  }
+
+  function formatUpdatedAt(ts) {
+    if (!ts) return '';
+    try {
+      const d = new Date(ts);
+      if (isNaN(d.getTime())) return String(ts);
+      return d.toLocaleString('th-TH', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch {
+      return String(ts);
+    }
+  }
+
+  async function saveEditedDiagram() {
+    if (!flowData || !$selectedProjectStore || isSavingDiagram) return;
+    isSavingDiagram = true;
+    try {
+      const updated = { ...flowData };
+      if (activeTab === 'flowchart') updated.system_flowchart = editableMermaidCode;
+      else if (activeTab === 'usecase') updated.usecase_diagram = editableMermaidCode;
+      else if (activeTab === 'activity') updated.activity_diagram = editableMermaidCode;
+      else if (activeTab === 'sequence') updated.sequence_diagram = editableMermaidCode;
+
+      const pId = $selectedProjectStore.id || $selectedProjectStore.project_id;
+      const res = await fetch('/api/agent/save_flow_analysis', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_id: pId,
+          sitemap: updated.sitemap || [],
+          system_flowchart: updated.system_flowchart || '',
+          usecase_diagram: updated.usecase_diagram || '',
+          activity_diagram: updated.activity_diagram || '',
+          sequence_diagram: updated.sequence_diagram || '',
+          screen_mockups: updated.screen_mockups || [],
+          traceability_matrix: updated.traceability_matrix || [],
+          summary_stats: updated.summary_stats || {}
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        updated.updated_at = new Date().toISOString();
+        flowData = updated;
+        showMermaidEditor = false;
+        await renderCurrentDiagram();
+        toast('บันทึกการแก้ไข Diagram ลงฐานข้อมูลโครงการแล้ว (ซิงค์กับ Agent ทุกตัวอัตโนมัติ)', 'success', 4000);
+      } else {
+        throw new Error(data.error || 'ไม่สามารถบันทึก Diagram ได้');
+      }
+    } catch (err) {
+      console.error('Save diagram error:', err);
+      toast('เกิดข้อผิดพลาดในการบันทึก: ' + err.message, 'error');
+    } finally {
+      isSavingDiagram = false;
+    }
+  }
+
+  // Modal focus management: move focus into dialog on open, restore to trigger on close, trap Tab inside
+  function modalFocus(node) {
+    const previouslyFocused = typeof document !== 'undefined' ? document.activeElement : null;
+    const focusableSelector = 'button:not([disabled]), [href], input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+    tick().then(() => {
+      const first = node.querySelector(focusableSelector);
+      (first || node).focus?.();
+    });
+
+    function trapTab(e) {
+      if (e.key !== 'Tab') return;
+      const items = Array.from(node.querySelectorAll(focusableSelector));
+      if (items.length === 0) {
+        e.preventDefault();
+        return;
+      }
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+
+    node.addEventListener('keydown', trapTab);
+    return {
+      destroy() {
+        node.removeEventListener('keydown', trapTab);
+        if (previouslyFocused && previouslyFocused.focus) previouslyFocused.focus();
+      }
+    };
+  }
+
+  const TAB_ORDER = ['sitemap', 'flowchart', 'usecase', 'activity', 'sequence', 'matrix'];
+  async function handleTabsKeydown(e) {
+    const keys = ['ArrowRight', 'ArrowLeft', 'Home', 'End'];
+    if (!keys.includes(e.key)) return;
+    e.preventDefault();
+    let idx = TAB_ORDER.indexOf(activeTab);
+    if (e.key === 'ArrowRight') idx = (idx + 1) % TAB_ORDER.length;
+    else if (e.key === 'ArrowLeft') idx = (idx - 1 + TAB_ORDER.length) % TAB_ORDER.length;
+    else if (e.key === 'Home') idx = 0;
+    else if (e.key === 'End') idx = TAB_ORDER.length - 1;
+    activeTab = TAB_ORDER[idx];
+    await tick();
+    document.getElementById('qa-tab-' + activeTab)?.focus();
+  }
+
+  $: liveMessage = isAnalyzing
+    ? 'กำลังวิเคราะห์ Flow และ Diagram'
+    : isSavingDiagram
+      ? 'กำลังบันทึก Diagram'
+      : '';
+
+  function handleDiagramKeydown(e) {
+    if (e.key === 'Escape') {
+      if (lightboxImage) { lightboxImage = null; return; }
+      if (activePrototypeModal) { activePrototypeModal = null; return; }
+      if (showMermaidEditor) { showMermaidEditor = false; return; }
+      if (isFullscreenDiagram) { isFullscreenDiagram = false; setTimeout(fitView, 160); return; }
+    }
   }
 
   function exportDiagramSVG() {
@@ -371,210 +523,6 @@
 
   $: if (activeTab && flowData) {
     renderCurrentDiagram();
-  }
-
-  function sanitizeMermaidCode(raw) {
-    if (!raw) return "";
-    let text = raw.trim();
-
-    // 1. Remove markdown code fences if present (```mermaid ... ```)
-    text = text.replace(/^```(?:mermaid)?\s*/i, '').replace(/\s*```$/, '').trim();
-
-    // 2. If it's a sequence diagram, preserve sequence syntax
-    if (/^\s*sequenceDiagram/i.test(text)) {
-      return text;
-    }
-
-    // Ensure header starts with flowchart
-    if (!/^\s*(flowchart|graph)\b/i.test(text)) {
-      text = `flowchart TD\n${text}`;
-    }
-
-    const lines = text.split(/\r?\n/);
-    const resultLines = [];
-
-    // Helper: clean and wrap text safely
-    const cleanLabel = (s) => {
-      if (!s) return "";
-      let t = String(s).trim();
-      if ((t.startsWith('"') && t.endsWith('"')) || (t.startsWith("'") && t.endsWith("'"))) {
-        t = t.slice(1, -1).trim();
-      }
-      return t.replace(/"/g, "'");
-    };
-
-    for (let line of lines) {
-      let l = line.trimEnd();
-
-      // Skip empty lines
-      if (!l.trim()) {
-        resultLines.push("");
-        continue;
-      }
-
-      // Skip directives and comments
-      if (/^\s*(%%|classDef|class|click|style|linkStyle|accTitle|accDescr)\b/i.test(l)) {
-        resultLines.push(l);
-        continue;
-      }
-
-      const indent = l.match(/^\s*/)[0];
-
-      // A. Fix actor declaration in flowchart: `actor Customer as "ผู้ใช้งาน"` or `actor Customer`
-      if (/^\s*actor\b/i.test(l)) {
-        const actorMatch = l.match(/^\s*actor\s+([A-Za-z0-9_]+)(?:\s+(?:as\s+)?(.*))?$/i);
-        if (actorMatch) {
-          const id = actorMatch[1];
-          const label = cleanLabel(actorMatch[2]) || id;
-          resultLines.push(`${indent}${id}["👤 ${label}"]`);
-          continue;
-        }
-      }
-
-      // B. Fix Subgraph: `subgraph ID [Title]` or `subgraph ID ["Title"]` or `subgraph [Title]`
-      const subgraphMatch = l.match(/^(\s*subgraph\s+[A-Za-z0-9_]+)\s*\[\s*([^\]]+?)\s*\]\s*$/i);
-      if (subgraphMatch) {
-        const title = cleanLabel(subgraphMatch[2]);
-        resultLines.push(`${subgraphMatch[1]} ["${title}"]`);
-        continue;
-      }
-
-      // C. Fix PlantUML / dotted arrows with colons:
-      l = l.replace(/([A-Za-z0-9_]+)\s*<\.\.\s*([A-Za-z0-9_]+)\s*:\s*<?<?([^>\r\n]+)>?>?/g, (m, left, right, label) => {
-        return `${right} -.->|"${cleanLabel(label)}"| ${left}`;
-      });
-      l = l.replace(/([A-Za-z0-9_]+)\s*\.\.>\s*([A-Za-z0-9_]+)\s*:\s*<?<?([^>\r\n]+)>?>?/g, (m, left, right, label) => {
-        return `${left} -.->|"${cleanLabel(label)}"| ${right}`;
-      });
-      l = l.replace(/([A-Za-z0-9_]+)\s*<\.\.\s*([A-Za-z0-9_]+)/g, '$2 -.-> $1');
-      l = l.replace(/([A-Za-z0-9_]+)\s*\.\.>\s*([A-Za-z0-9_]+)/g, '$1 -.-> $2');
-
-      // D. Fix arrow with colon label: `A --> B : text`
-      l = l.replace(/([A-Za-z0-9_]+)\s*(-->|-\.->|==>)\s*([A-Za-z0-9_]+)\s*:\s*([^\r\n]+)/g, (m, left, arrow, right, label) => {
-        return `${left} ${arrow}|"${cleanLabel(label)}"| ${right}`;
-      });
-
-      // E. Fix inline arrow labels:
-      // `-- (label) -->` or `-- label -->`
-      l = l.replace(/--\s*(?:\(([^()\r\n]+)\)|([^->\r\n|]+?))\s*-->/g, (m, p1, p2) => {
-        return `-->|"${cleanLabel(p1 || p2)}"|`;
-      });
-      l = l.replace(/--\s*(?:\(([^()\r\n]+)\)|([^->\r\n|]+?))\s*--\s*>/g, (m, p1, p2) => {
-        return `-->|"${cleanLabel(p1 || p2)}"|`;
-      });
-      // `== (label) ==>` or `== label ==>`
-      l = l.replace(/==\s*(?:\(([^()\r\n]+)\)|([^=>\r\n|]+?))\s*==>/g, (m, p1, p2) => {
-        return `==>|"${cleanLabel(p1 || p2)}"|`;
-      });
-      // `-. (label) .->` or `-. label .->`
-      l = l.replace(/-\.\s*(?:\(([^()\r\n]+)\)|([^->\r\n|]+?))\s*\.->/g, (m, p1, p2) => {
-        return `-.->|"${cleanLabel(p1 || p2)}"|`;
-      });
-
-      // F. Rename reserved node ID `End` or `end` to `EndNode` if not a standalone `end` line
-      if (!/^\s*end\s*$/i.test(l)) {
-        l = l.replace(/\bEnd\s*\(\[\s*(.*?)\s*\]\)/g, 'EndNode(["$1"])');
-        l = l.replace(/\bEnd\s*\[\s*(.*?)\s*\]/g, 'EndNode["$1"]');
-        l = l.replace(/\bEnd\s*\(\s*(.*?)\s*\)/g, 'EndNode("$1")');
-        l = l.replace(/(-->|-\.->|==>)\s*End\b/g, '$1 EndNode');
-        l = l.replace(/\bEnd\s*(-->|-\.->|==>)/g, 'EndNode $1');
-      }
-
-      // Step G: TOKENIZE & SAFELY QUOTE ALL NODES ON THIS LINE
-      const nodeTokens = [];
-      const addToken = (id, formattedNode) => {
-        const idx = nodeTokens.length;
-        nodeTokens.push({ id, formattedNode });
-        return `__NODE_TOKEN_${idx}__`;
-      };
-
-      // 1. Stadium / Pill: `ID([ ... ])`
-      l = l.replace(/([A-Za-z0-9_]+)\s*\(\[\s*([\s\S]*?)\s*\]\)/g, (m, id, inner) => {
-        return addToken(id, `${id}(["${cleanLabel(inner)}"])`);
-      });
-
-      // 2. Circle: `ID(( ... ))`
-      l = l.replace(/([A-Za-z0-9_]+)\s*\(\(\s*([\s\S]*?)\s*\)\)/g, (m, id, inner) => {
-        return addToken(id, `${id}(("${cleanLabel(inner)}"))`);
-      });
-
-      // 3. Database Cylinder: `ID[( ... )]` or `ID[(" ... ")]`
-      l = l.replace(/([A-Za-z0-9_]+)\s*\[\(\s*([\s\S]*?)\s*\)\]/g, (m, id, inner) => {
-        return addToken(id, `${id}[("${cleanLabel(inner)}")]`);
-      });
-
-      // 4. Hexagon: `ID{{ ... }}`
-      l = l.replace(/([A-Za-z0-9_]+)\s*\{\{\s*([\s\S]*?)\s*\}\}/g, (m, id, inner) => {
-        return addToken(id, `${id}{{"${cleanLabel(inner)}"}}`);
-      });
-
-      // 5. Rhombus / Decision: `ID{ ... }`
-      l = l.replace(/([A-Za-z0-9_]+)\s*\{\s*([\s\S]*?)\s*\}/g, (m, id, inner) => {
-        return addToken(id, `${id}{"${cleanLabel(inner)}"}`);
-      });
-
-      // 6. Standard Box: `ID[ ... ]` (ignore subgraph lines)
-      if (!/^\s*subgraph\b/i.test(l)) {
-        l = l.replace(/([A-Za-z0-9_]+)\s*\[\s*([\s\S]*?)\s*\]/g, (m, id, inner) => {
-          return addToken(id, `${id}["${cleanLabel(inner)}"]`);
-        });
-      }
-
-      // 7. Rounded Box: `ID( ... )`
-      l = l.replace(/([A-Za-z0-9_]+)\s*\(\s*([\s\S]*?)\s*\)/g, (m, id, inner) => {
-        return addToken(id, `${id}("${cleanLabel(inner)}")`);
-      });
-
-      // H. Clean pipe labels |...|
-      l = l.replace(/\|([^|]+)\|/g, (m, rawPipe) => {
-        return `|"${cleanLabel(rawPipe)}"|`;
-      });
-
-      // I. Handle chained edges like `A -->|label| __NODE_TOKEN_0__ --> B`
-      // Split into two lines: `A -->|label| __NODE_TOKEN_0__` and `TARGET_ID --> B`
-      const chainMatch = l.match(/^(\s*)(.*?(?:-->|-\.->|==>).*?\s+)(__NODE_TOKEN_(\d+)__)\s*(-->|-\.->|==>)\s*(.+)$/);
-      if (chainMatch) {
-        const lineIndent = chainMatch[1];
-        const tokenIdx = parseInt(chainMatch[4], 10);
-        const middleNodeId = nodeTokens[tokenIdx] ? nodeTokens[tokenIdx].id : chainMatch[3];
-        const firstPart = `${lineIndent}${chainMatch[2]}${chainMatch[3]}`;
-        const secondPart = `${lineIndent}${middleNodeId} ${chainMatch[5]} ${chainMatch[6].trim()}`;
-
-        // Restore tokens for firstPart
-        let resFirst = firstPart.replace(/__NODE_TOKEN_(\d+)__/g, (tm, tIdx) => {
-          return nodeTokens[parseInt(tIdx, 10)]?.formattedNode || tm;
-        });
-        // Restore tokens for secondPart
-        let resSecond = secondPart.replace(/__NODE_TOKEN_(\d+)__/g, (tm, tIdx) => {
-          return nodeTokens[parseInt(tIdx, 10)]?.formattedNode || tm;
-        });
-
-        resultLines.push(resFirst);
-        resultLines.push(resSecond);
-        continue;
-      }
-
-      // J. Restore all node tokens
-      l = l.replace(/__NODE_TOKEN_(\d+)__/g, (tm, tIdx) => {
-        return nodeTokens[parseInt(tIdx, 10)]?.formattedNode || tm;
-      });
-
-      resultLines.push(l);
-    }
-
-    // Auto-close any unclosed subgraphs
-    let subgraphCount = 0;
-    let endCount = 0;
-    for (const line of resultLines) {
-      if (/^\s*subgraph\b/i.test(line)) subgraphCount++;
-      if (/^\s*end\s*$/i.test(line.trim())) endCount++;
-    }
-    while (subgraphCount > endCount) {
-      resultLines.push('  end');
-      endCount++;
-    }
-
-    return resultLines.join('\n');
   }
 
   async function renderCurrentDiagram() {
@@ -621,6 +569,7 @@
       window.addEventListener('pointermove', onPointerMove);
       window.addEventListener('pointerup', onPointerUp);
       window.addEventListener('pointercancel', onPointerUp);
+      window.addEventListener('blur', onPointerUp);
     }
   }
 
@@ -637,6 +586,7 @@
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
       window.removeEventListener('pointercancel', onPointerUp);
+      window.removeEventListener('blur', onPointerUp);
     }
   }
 
@@ -754,712 +704,69 @@
     const title = node.title || 'Screen';
     const path = node.path || '/';
     const sid = node.screen_id || ('SCR-' + String(nid).toUpperCase().replace(/[^A-Z0-9]/g, '_').slice(0, 24));
-    const desc = node.description || `หน้าจอ ${title}`;
-    const category = node.category || 'Module';
+    const desc = node.description || `หน้าจอสำหรับโมดูล ${title} ในระบบโครงการ`;
+    const category = node.category || 'Core Module';
+    const projName = $selectedProjectStore?.name || $selectedProjectStore?.project_name || 'System Workspace';
+    const projCode = $selectedProjectStore?.project_code || 'PROJ';
+    const useCases = Array.isArray(node.use_case_ids) && node.use_case_ids.length > 0
+      ? node.use_case_ids
+      : [`UC-${sid.replace(/^SCR-/, '').slice(0, 12)}`];
+    const reqCodes = Array.isArray(node.req_codes) && node.req_codes.length > 0
+      ? node.req_codes
+      : [`REQ-${projCode}-001`];
 
-    const lowerTitle = title.toLowerCase();
     const lowerPath = path.toLowerCase();
-    const lowerSid = sid.toLowerCase();
+    const lowerTitle = title.toLowerCase();
+    const isFormLayout = /login|auth|register|create|new|edit|setting|config|profile|consent|form/.test(lowerPath + ' ' + lowerTitle);
 
-    // 1. Login / Register
-    if (lowerPath.includes('login') || lowerTitle.includes('login') || lowerSid.includes('auth-login')) {
-      return {
-        screen_id: "SCR-AUTH-LOGIN",
-        screen_name: "Login / Register",
-        route: path !== '/' ? path : "/auth/login",
-        layout_type: "form",
-        description: "เข้าสู่ระบบสำหรับผู้ใช้งานทั่วไปและร้านค้า พร้อมช่องทางสมัครสมาชิกใหม่และ Social Login",
-        header: {
-          title: "เข้าสู่ระบบ / สมัครสมาชิก (Login & Register)",
-          badge: "Security & Auth",
-          badge_color: "blue",
-          actions: ["🚀 เข้าสู่ระบบ", "🔑 ลืมรหัสผ่าน", "📝 สมัครสมาชิกใหม่"]
-        },
-        stats: [
-          { label: "ระบบความปลอดภัย", value: "TLS 1.3 / OAuth 2.0", sub: "มาตรฐานความปลอดภัยระดับสูง", color: "emerald" },
-          { label: "ช่องทางเข้าสู่ระบบ", value: "3 รูปแบบ", sub: "Email, Google, LINE", color: "blue" },
-          { label: "การยืนยันตัวตน 2FA", value: "เปิดใช้งาน (OTP SMS)", sub: "ป้องกันการเข้าถึงมิชอบ", color: "purple" },
-          { label: "SLA เวลาตอบสนอง", value: "< 180 ms", sub: "Fast Auth API", color: "amber" }
-        ],
-        tabs: ["เข้าสู่ระบบ (Sign In)", "สมัครสมาชิกใหม่ (Register)", "ลืมรหัสผ่าน (Forgot Password)", "นโยบายความปลอดภัย & SSO"],
-        sections: [
-          {
-            section_name: "แบบฟอร์มเข้าสู่ระบบ (User Authentication)",
-            type: "form",
-            fields: [
-              { label: "อีเมล หรือ หมายเลขโทรศัพท์ (Email / Phone)", type: "text", default_value: "user@foodsmile.app", required: true },
-              { label: "รหัสผ่าน (Password)", type: "password", default_value: "••••••••••••", required: true },
-              { label: "จดจำการเข้าสู่ระบบบนอุปกรณ์นี้ (Remember Me)", type: "toggle", default_value: true }
-            ],
-            buttons: [
-              { label: "🚀 เข้าสู่ระบบทันที (Sign In)", variant: "primary", icon: "🚀" },
-              { label: "🔑 เข้าสู่ระบบด้วย Google", variant: "secondary", icon: "🔑" },
-              { label: "💬 เข้าสู่ระบบด้วย LINE", variant: "accent", icon: "💬" }
-            ]
-          },
-          {
-            section_name: "สถานะการตรวจสอบความปลอดภัยของเซสชัน (Active Session & Security)",
-            type: "table",
-            table_headers: ["อุปกรณ์ที่ใช้งาน", "ระบบปฏิบัติการ", "พิกัด IP / ที่ตั้ง", "สถานะเซสชัน", "การจัดการ"],
-            table_rows: [
-              ["Chrome Browser", "Windows 11 (เครื่องนี้)", "192.168.1.155 (กทม.)", "🟢 กำลังออนไลน์", "เซสชันปัจจุบัน"],
-              ["FoodSmile Mobile App", "iOS 18 (iPhone 16 Pro)", "Cellular 5G (กทม.)", "🟢 ใช้งานเมื่อ 10 นาทีที่แล้ว", "ออกจากระบบ"],
-              ["Safari Mobile", "iPadOS 17.5", "Wi-Fi (นนทบุรี)", "⚪ ออกจากระบบแล้ว", "ลบประวัติ"]
-            ]
-          }
-        ],
-        connected_use_cases: ["UC-001: เข้าสู่ระบบ", "UC-002: ยืนยันตัวตน 2FA"],
-        connected_req_codes: ["REQ-AUTH-001", "REQ-SEC-002"]
-      };
-    }
-
-    // 2. PDPA Consent
-    if (lowerPath.includes('pdpa') || lowerTitle.includes('pdpa') || lowerSid.includes('pdpa')) {
-      return {
-        screen_id: "SCR-AUTH-PDPA",
-        screen_name: "PDPA Consent",
-        route: path !== '/' ? path : "/auth/pdpa-consent",
-        layout_type: "form",
-        description: "แบบฟอร์มขอความยินยอมในการประมวลผลข้อมูลส่วนบุคคลตาม พ.ร.บ. คุ้มครองข้อมูลส่วนบุคคล พ.ศ. 2562",
-        header: {
-          title: "หนังสือขอความยินยอมคุ้มครองข้อมูลส่วนบุคคล (PDPA Consent)",
-          badge: "Privacy Compliance",
-          badge_color: "emerald",
-          actions: ["✅ ยินยอมทั้งหมด", "❌ ปฏิเสธ", "📥 ดาวน์โหลดนโยบาย PDF"]
-        },
-        stats: [
-          { label: "มาตรฐานกฎหมาย", value: "พ.ร.บ. PDPA 2562", sub: "มาตรฐาน ISO/IEC 27701", color: "emerald" },
-          { label: "สถานะความยินยอม", value: "รอดำเนินการ (Pending)", sub: "ต้องยินยอมก่อนใช้งาน", color: "amber" },
-          { label: "เวอร์ชันนโยบาย", value: "v2.1 (อัปเดต 2026)", sub: "ปรับปรุงเงื่อนไข Delivery", color: "blue" },
-          { label: "สิทธิถอนความยินยอม", value: "ถอนได้ 100%", sub: "ผ่านหน้า Account Settings", color: "purple" }
-        ],
-        tabs: ["ข้อกำหนดและเงื่อนไขหลัก", "ความยินยอมด้านการตลาด", "การแบ่งปันข้อมูลกับพันธมิตร"],
-        sections: [
-          {
-            section_name: "รายการความยินยอมในการประมวลผลข้อมูลส่วนบุคคล (Consent Preferences)",
-            type: "form",
-            fields: [
-              { label: "ยินยอมให้เก็บรวบรวมข้อมูลเพื่อการสั่งอาหารและการจัดส่ง (จำเป็น)", type: "toggle", default_value: true, required: true },
-              { label: "ยินยอมให้ประมวลผลพิกัด GPS เพื่อค้นหาร้านอาหารและคำนวณระยะทาง", type: "toggle", default_value: true },
-              { label: "ยินยอมรับข่าวสาร สิทธิพิเศษ ส่วนลด และโปรโมชั่นจาก FoodSmile", type: "toggle", default_value: false },
-              { label: "ยินยอมให้ใช้คุกกี้เพื่อวิเคราะห์และปรับปรุงประสบการณ์การใช้งาน", type: "toggle", default_value: true }
-            ],
-            buttons: [
-              { label: "✅ ยินยอมและดำเนินการต่อ (Accept & Continue)", variant: "primary", icon: "✅" },
-              { label: "❌ ปฏิเสธและออกจากระบบ", variant: "outline", icon: "❌" }
-            ]
-          },
-          {
-            section_name: "สรุปสิทธิของเจ้าของข้อมูลส่วนบุคคล (Data Subject Rights Summary)",
-            type: "table",
-            table_headers: ["สิทธิตามกฎหมาย PDPA", "รายละเอียดการใช้สิทธิ", "ช่องทางดำเนินการ", "ระยะเวลา SLA"],
-            table_rows: [
-              ["สิทธิในการเข้าถึงและขอรับสำเนา (Right to Access)", "ขอรับไฟล์ข้อมูลประวัติการสั่งซื้อและบัญชี", "เมนู Account Settings", "ภายใน 24 ชม."],
-              ["สิทธิในการขอให้ลบหรือทำลาย (Right to Erasure)", "ลบบัญชีและทำลายข้อมูลถาวร", "เมนูขอลบบัญชี", "ภายใน 7 วัน"],
-              ["สิทธิในการถอนความยินยอม (Right to Withdraw)", "ยกเลิกการรับ SMS/Email การตลาด", "สลับ Toggle ในหน้านี้", "มีผลทันที"]
-            ]
-          }
-        ],
-        connected_use_cases: ["UC-AUTH-003: บันทึกความยินยอม PDPA"],
-        connected_req_codes: ["REQ-PDPA-001", "REQ-PDPA-002"]
-      };
-    }
-
-    // 3. Account Settings & Deletion
-    if (lowerPath.includes('account') || lowerTitle.includes('account') || lowerPath.includes('setting')) {
-      return {
-        screen_id: "SCR-AUTH-ACCOUNT",
-        screen_name: "Account Settings & Deletion",
-        route: path !== '/' ? path : "/auth/account",
-        layout_type: "form",
-        description: "จัดการข้อมูลโปรไฟล์ผู้ใช้งาน ตั้งค่าความปลอดภัย 2FA การแจ้งเตือน และขอลบบัญชีถาวร",
-        header: {
-          title: "การตั้งค่าบัญชีและความปลอดภัย (Account & Security Settings)",
-          badge: "User Profile",
-          badge_color: "purple",
-          actions: ["💾 บันทึกข้อมูล", "🔒 เปลี่ยนรหัสผ่าน", "⚠️ ขอลบบัญชีถาวร"]
-        },
-        stats: [
-          { label: "สถานะบัญชี", value: "ยืนยันแล้ว (Verified)", sub: "ระดับ FoodSmile Gold", color: "emerald" },
-          { label: "ความปลอดภัย 2FA", value: "เปิดใช้งาน (OTP)", sub: "SMS เบอร์ 089-xxx-4567", color: "blue" },
-          { label: "แต้มสะสมปัจจุบัน", value: "1,240 แต้ม", sub: "แลกส่วนลดได้ ฿120", color: "amber" },
-          { label: "การเชื่อมต่อ Social", value: "Google & LINE", sub: "Linked Accounts", color: "purple" }
-        ],
-        tabs: ["ข้อมูลโปรไฟล์", "ความปลอดภัย & รหัสผ่าน", "การแจ้งเตือน", "ขอลบบัญชีถาวร (Danger Zone)"],
-        sections: [
-          {
-            section_name: "ข้อมูลผู้ใช้งาน (Profile Information)",
-            type: "form",
-            fields: [
-              { label: "ชื่อ - นามสกุล (Full Name)", type: "text", default_value: "เอกรัฐ พัฒนาพาณิชย์", required: true },
-              { label: "อีเมลติดต่อ (Email Address)", type: "text", default_value: "ekkarat.p@example.com", required: true },
-              { label: "หมายเลขโทรศัพท์มือถือ", type: "text", default_value: "089-123-4567", required: true },
-              { label: "ที่อยู่จัดส่งอาหารหลัก (Default Address)", type: "textarea", default_value: "คอนโดเลต ซอยสุขุมวิท 71 แขวงพระโขนงเหนือ เขตวัฒนา กรุงเทพฯ 10110", required: true },
-              { label: "เปิดใช้งานการยืนยันตัวตน 2FA ทุกครั้งที่เข้าสู่ระบบ", type: "toggle", default_value: true }
-            ],
-            buttons: [
-              { label: "💾 บันทึกการเปลี่ยนแปลง (Save Profile)", variant: "primary", icon: "💾" },
-              { label: "🔄 คืนค่าเดิม", variant: "outline", icon: "🔄" }
-            ]
-          },
-          {
-            section_name: "ประวัติการใช้งานและการเข้าสู่ระบบล่าสุด (Login Audit Log)",
-            type: "table",
-            table_headers: ["เวลาเข้าสู่ระบบ", "อุปกรณ์ / บราวเซอร์", "ที่อยู่ IP", "ช่องทาง", "ผลลัพธ์"],
-            table_rows: [
-              ["14 ต.ค. 2026, 13:45", "Chrome 129 / Windows 11", "192.168.1.155", "Email + Password", "✅ สำเร็จ"],
-              ["14 ต.ค. 2026, 11:20", "FoodSmile App / iOS 18", "171.96.120.4", "Google OAuth 2.0", "✅ สำเร็จ"],
-              ["13 ต.ค. 2026, 19:30", "Chrome 129 / Windows 11", "192.168.1.155", "LINE SSO", "✅ สำเร็จ"]
-            ]
-          }
-        ],
-        connected_use_cases: ["UC-AUTH-004: แก้ไขข้อมูลบัญชี", "UC-AUTH-005: ขอลบบัญชี"],
-        connected_req_codes: ["REQ-AUTH-004", "REQ-SEC-005"]
-      };
-    }
-
-    // 4. Review & Rating Submission
-    if (lowerPath.includes('review') || lowerTitle.includes('review') || lowerSid.includes('review-submit')) {
-      return {
-        screen_id: "SCR-REVIEW-SUBMIT",
-        screen_name: "Review & Rating Submission",
-        route: path !== '/' ? path : "/app/restaurant/:id/review",
-        layout_type: "form",
-        description: "แบบฟอร์มให้คะแนนดาว เขียนรีวิวความคิดเห็น แนบรูปภาพอาหาร และแชร์ประสบการณ์",
-        header: {
-          title: "เขียนรีวิวและให้คะแนนร้านอาหาร (Review & Rating)",
-          badge: "Customer Feedback",
-          badge_color: "amber",
-          actions: ["⭐ โพสต์รีวิว", "📷 แนบรูปภาพ", "ย้อนกลับ"]
-        },
-        stats: [
-          { label: "คะแนนเฉลี่ยร้าน", value: "4.85 ★", sub: "จาก 342 รีวิว", color: "amber" },
-          { label: "แต้มสะสมที่จะได้รับ", value: "+50 Points", sub: "เมื่อรีวิวพร้อมรูปถ่าย", color: "emerald" },
-          { label: "สถานะรีวิว", value: "แบบร่าง (Draft)", sub: "ยังไม่ได้เผยแพร่", color: "blue" },
-          { label: "ระดับผู้รีวิว", value: "FoodSmile Foodie", sub: "รีวิวแล้ว 14 ครั้ง", color: "purple" }
-        ],
-        tabs: ["เขียนรีวิวใหม่", "รีวิวของฉันในอดีต", "เงื่อนไขการรับแต้ม"],
-        sections: [
-          {
-            section_name: "แบบฟอร์มให้คะแนนและเขียนรีวิว (Rating & Feedback Form)",
-            type: "form",
-            fields: [
-              { label: "คะแนนความพึงพอใจ (1-5 ดาว)", type: "select", options: ["⭐⭐⭐⭐⭐ (5 ดาว - ประทับใจมาก)", "⭐⭐⭐⭐ (4 ดาว - ดีมาก)", "⭐⭐⭐ (3 ดาว - ปานกลาง)", "⭐⭐ (2 ดาว - พอใช้)", "⭐ (1 ดาว - ต้องปรับปรุง)"], default_value: "⭐⭐⭐⭐⭐ (5 ดาว - ประทับใจมาก)", required: true },
-              { label: "หัวข้อรีวิวสรุปสั้นๆ", type: "text", default_value: "อาหารรสเด็ด วัตถุดิบสดใหม่ บริการประทับใจมาก!", required: true },
-              { label: "รายละเอียดความคิดเห็น", type: "textarea", default_value: "สั่งส้มตำแซ่บเวอร์และไก่ย่างมารับประทาน รสชาติจัดจ้านกำลังดี วัตถุดิบสดใหม่ สะอาด พนักงานบริการดีมากครับ จะกลับมาอุดหนุนอีกแน่นอน", required: true },
-              { label: "ยินยอมให้แสดงชื่อและรูปโปรไฟล์บนรีวิวสาธารณะ", type: "toggle", default_value: true }
-            ],
-            buttons: [
-              { label: "🚀 โพสต์รีวิวทันที (Submit Review)", variant: "accent", icon: "⭐" },
-              { label: "💾 บันทึกแบบร่าง", variant: "outline", icon: "💾" }
-            ]
-          }
-        ],
-        connected_use_cases: ["UC-C04: เขียนรีวิวร้านอาหาร"],
-        connected_req_codes: ["REQ-REV-001"]
-      };
-    }
-
-    // 5. Favorite Restaurants
-    if (lowerPath.includes('favorite') || lowerTitle.includes('favorite') || lowerSid.includes('favorites')) {
-      return {
-        screen_id: "SCR-FAVORITES",
-        screen_name: "Favorite Restaurants",
-        route: path !== '/' ? path : "/app/favorites",
-        layout_type: "table",
-        description: "รายการร้านอาหารโปรดที่บันทึกไว้ จัดการหมวดหมู่ และสั่งอาหารด่วนในคลิกเดียว",
-        header: {
-          title: "ร้านอาหารโปรดของฉัน (My Favorite Restaurants)",
-          badge: "Saved Places",
-          badge_color: "amber",
-          actions: ["🔍 ค้นหาร้านโปรด", "🗺️ ดูบนแผนที่"]
-        },
-        stats: [
-          { label: "ร้านอาหารโปรดทั้งหมด", value: "12 ร้าน", sub: "บันทึกใน 3 หมวดหมู่", color: "amber" },
-          { label: "เปิดบริการตอนนี้", value: "8 ร้าน", sub: "พร้อมสั่งทันที", color: "emerald" },
-          { label: "ร้านที่มีโปรโมชั่น", value: "5 ร้าน", sub: "ส่วนลดสูงสุด 30%", color: "blue" },
-          { label: "ร้านที่ใกล้ที่สุด", value: "450 ม.", sub: "Zaap Ver พระโขนง", color: "purple" }
-        ],
-        tabs: ["ร้านโปรดทั้งหมด (12)", "ร้านเปิดบริการอยู่ (8)", "โปรโมชั่นพิเศษ (5)"],
-        sections: [
-          {
-            section_name: "รายการร้านอาหารที่บันทึกไว้ (Favorite Bookmarks)",
-            type: "table",
-            table_headers: ["ชื่อร้านอาหาร", "หมวดหมู่อาหาร", "คะแนนรีวิว", "ระยะทาง", "สถานะ", "การสั่งซื้อ"],
-            table_rows: [
-              ["Zaap Ver ส้มตำพระโขนง", "อาหารอีสานรสเด็ด", "4.90 ★", "450 ม.", "🟢 เปิดบริการ", "สั่งอาหารทันที"],
-              ["FoodSmile Gourmet Cafe", "อาหารไทยฟิวชั่น", "4.85 ★", "1.2 กม.", "🟢 เปิดบริการ", "สั่งอาหารทันที"],
-              ["Tokyo Shokudo ราเมน", "อาหารญี่ปุ่น", "4.75 ★", "2.1 กม.", "🟢 เปิดบริการ", "สั่งอาหารทันที"],
-              ["Sweet Treats Cafe & Bakery", "ของหวานและเครื่องดื่ม", "4.60 ★", "3.4 กม.", "🔴 ปิดบริการ", "ดูเมนู"]
-            ]
-          }
-        ],
-        connected_use_cases: ["UC-C05: จัดการร้านอาหารโปรด"],
-        connected_req_codes: ["REQ-FAV-001"]
-      };
-    }
-
-    // 6. Home & Map Search
-    if (lowerPath.includes('home') || lowerTitle.includes('home') || lowerPath.includes('map') || lowerSid.includes('home-map') || (lowerPath === '/app')) {
-      return {
-        screen_id: "SCR-HOME-MAP",
-        screen_name: "Home & Map Search",
-        route: path !== '/' ? path : "/app/home",
-        layout_type: "dashboard",
-        description: "หน้าแรกค้นหาร้านอาหารบนแผนที่แบบเรียลไทม์ ตัวกรองอาหาร หมวดหมู่ยอดนิยม และร้านใกล้ฉัน",
-        header: {
-          title: "ค้นหาร้านอาหารและแผนที่ใกล้ฉัน (Home & Map Discovery)",
-          badge: "Discovery & Map",
-          badge_color: "blue",
-          actions: ["📍 ปักหมุดพิกัดปัจจุบัน", "🔍 ค้นหาขั้นสูง", "🏷️ ดูโปรโมชั่น"]
-        },
-        stats: [
-          { label: "ร้านอาหารในพื้นที่", value: "142 ร้าน", sub: "เปิดบริการอยู่ 118 ร้าน", color: "emerald" },
-          { label: "พิกัดปัจจุบัน", value: "สุขุมวิท 71, กทม.", sub: "ความแม่นยำ GPS ±5 ม.", color: "blue" },
-          { label: "รัศมีการค้นหา", value: "5.0 กม.", sub: "ปรับเพิ่มได้สูงสุด 15 กม.", color: "purple" },
-          { label: "โปรโมชั่นวันนี้", value: "38 ดีลพิเศษ", sub: "ลดสูงสุด 50%", color: "amber" }
-        ],
-        tabs: ["ร้านอาหารแนะนำใกล้คุณ", "หมวดหมู่อาหารยอดนิยม", "ดีลและส่วนลดพิเศษ", "มุมมองแผนที่แบบเต็มจอ"],
-        sections: [
-          {
-            section_name: "ตัวกรองและค้นหาร้านอาหาร (Restaurant Search & Filters)",
-            type: "form",
-            fields: [
-              { label: "คำค้นหา (ชื่อร้านอาหาร, เมนูเด็ด, หรือสถานที่)", type: "text", default_value: "ส้มตำแซ่บเวอร์ พระโขนง", required: true },
-              { label: "หมวดหมู่อาหาร", type: "select", options: ["ทั้งหมด", "อาหารไทยฟิวชั่น", "อาหารอีสานรสเด็ด", "อาหารญี่ปุ่น", "คาเฟ่ & เบเกอรี่", "เครื่องดื่ม"], default_value: "อาหารอีสานรสเด็ด" },
-              { label: "รัศมีการค้นหา", type: "select", options: ["1.0 กม. (เดินถึง)", "3.0 กม. (ใกล้เคียง)", "5.0 กม. (พื้นที่จัดส่ง)", "10.0 กม. (ทั้งเขต)"], default_value: "5.0 กม. (พื้นที่จัดส่ง)" },
-              { label: "แสดงเฉพาะร้านที่เปิดบริการอยู่ตอนนี้ (Open Now)", type: "toggle", default_value: true }
-            ],
-            buttons: [
-              { label: "🔍 ค้นหาร้านอาหารทันที", variant: "primary", icon: "🔍" },
-              { label: "🗺️ สลับดูบนแผนที่ Live Map", variant: "secondary", icon: "🗺️" }
-            ]
-          },
-          {
-            section_name: "ผลการค้นหาร้านอาหารยอดนิยม (Nearby Restaurant Results)",
-            type: "table",
-            table_headers: ["ชื่อร้านอาหาร", "หมวดหมู่", "คะแนนรีวิว", "ระยะทาง", "สถานะ", "การสั่งอาหาร"],
-            table_rows: [
-              ["Zaap Ver ส้มตำพระโขนง", "อาหารอีสานรสเด็ด", "4.90 ★ (420 รีวิว)", "450 ม.", "🟢 เปิดบริการ", "สั่งอาหารทันที"],
-              ["FoodSmile Gourmet Cafe", "อาหารไทยฟิวชั่น", "4.85 ★ (342 รีวิว)", "1.2 กม.", "🟢 เปิดบริการ", "สั่งอาหารทันที"],
-              ["Tokyo Shokudo ราเมน", "อาหารญี่ปุ่น", "4.75 ★ (188 รีวิว)", "2.1 กม.", "🟢 เปิดบริการ", "สั่งอาหารทันที"],
-              ["Sweet Treats Cafe & Bakery", "ของหวานและเครื่องดื่ม", "4.60 ★ (95 รีวิว)", "3.4 กม.", "🔴 ปิดบริการ", "ดูรายละเอียด"]
-            ]
-          }
-        ],
-        connected_use_cases: ["UC-C01: ค้นหาร้านอาหาร", "UC-C02: ดูพิกัดบนแผนที่"],
-        connected_req_codes: ["REQ-CUST-001", "REQ-MAP-002"]
-      };
-    }
-
-    // 7. Admin KYC Approval
-    if (lowerPath.includes('kyc') || lowerTitle.includes('kyc') || lowerSid.includes('admin-kyc')) {
-      return {
-        screen_id: "SCR-ADMIN-KYC",
-        screen_name: "Merchant KYC Approval",
-        route: path !== '/' ? path : "/admin/kyc",
-        layout_type: "table",
-        description: "ระบบตรวจสอบและอนุมัติการเปิดร้านค้าของ Admin ตรวจสอบเอกสาร ภพ.20 บัตร ปชช. และผลประเมิน AI Fraud Score",
-        header: {
-          title: "คิวตรวจสอบและอนุมัติร้านค้า (Merchant KYC Approval Queue)",
-          badge: "Compliance Gate",
-          badge_color: "emerald",
-          actions: ["✅ อนุมัติรายการที่เลือก", "⛔ ปฏิเสธ / ขอเอกสารเพิ่ม", "🔄 รีเฟรช"]
-        },
-        stats: [
-          { label: "รายการรอดำเนินการ", value: "14 ร้าน", sub: "SLA อนุมัติใน 24 ชม.", color: "amber" },
-          { label: "อนุมัติแล้ววันนี้", value: "42 ร้าน", sub: "ผ่านเกณฑ์ 100%", color: "emerald" },
-          { label: "ถูกปฏิเสธ / ส่งกลับ", value: "3 ร้าน", sub: "เอกสารไม่ชัดเจน", color: "blue" },
-          { label: "AI Pre-screen แม่นยำ", value: "98.4%", sub: "ระบบตรวจจับเอกสารปลอม", color: "purple" }
-        ],
-        tabs: ["รอดำเนินการ (14)", "อนุมัติแล้ว (42)", "ถูกปฏิเสธ (3)", "บันทึกประวัติการตรวจสอบ"],
-        sections: [
-          {
-            section_name: "คิวคำขอลงทะเบียนเปิดร้านค้า (Merchant Onboarding Applications)",
-            type: "table",
-            table_headers: ["รหัสคำขอ", "ชื่อร้านค้า", "ผู้ยื่นคำขอ", "เอกสารที่แนบ", "คะแนนความเสี่ยง AI", "สถานะ", "การตัดสินใจ"],
-            table_rows: [
-              ["#KYC-801", "ส้มตำแซ่บเวอร์ พระโขนง", "คุณเอกรัฐ พัฒนาพาณิชย์", "ภพ.20, บัตร ปชช., สมุดบัญชี", "🟢 ต่ำ (0.02)", "⏳ รอ Admin ยืนยัน", "กดอนุมัติ"],
-              ["#KYC-802", "Cafe De Bangkok สุขุมวิท", "คุณศิริพร บุญเสริม", "บัตร ปชช., หน้าร้าน", "🟢 ต่ำ (0.01)", "⏳ รอ Admin ยืนยัน", "กดอนุมัติ"],
-              ["#KYC-803", "ก๋วยเตี๋ยวเรืออยุธยา ลาดพร้าว", "คุณสมชาย สุขเกษม", "บัตร ปชช. (ภาพเบลอ)", "🟡 ปานกลาง (0.35)", "⚠️ ขอเอกสารเพิ่ม", "ส่งข้อความเตือน"]
-            ]
-          }
-        ],
-        connected_use_cases: ["UC-A01: ตรวจสอบและอนุมัติร้านค้า"],
-        connected_req_codes: ["REQ-ADMIN-001", "REQ-KYC-001"]
-      };
-    }
-
-    // 8. Content Moderation
-    if (lowerPath.includes('moderation') || lowerTitle.includes('moderation') || lowerSid.includes('admin-moderation')) {
-      return {
-        screen_id: "SCR-ADMIN-MODERATION",
-        screen_name: "Content Moderation",
-        route: path !== '/' ? path : "/admin/moderation",
-        layout_type: "table",
-        description: "ระบบคัดกรองเนื้อหา ตรวจสอบรีวิวที่ถูกแจ้งรายงาน ข้อความไม่สุภาพ และรูปภาพอาหารที่ไม่เหมาะสม",
-        header: {
-          title: "ระบบคัดกรองเนื้อหาและรีวิว (Content Moderation Queue)",
-          badge: "Content Safety",
-          badge_color: "amber",
-          actions: ["🛡️ ลบและตักเตือน", "✅ ปลดระงับ (ผ่านเกณฑ์)", "🔄 รีเฟรช"]
-        },
-        stats: [
-          { label: "รีวิวรอดำเนินการ", value: "9 รายการ", sub: "ระบบ AI ตรวจจับคำหยาบ", color: "amber" },
-          { label: "ตรวจสอบแล้ววันนี้", value: "128 รายการ", sub: "SLA 100% ภายใน 1 ชม.", color: "emerald" },
-          { label: "สแปมที่ถูกบล็อก", value: "24 รายการ", sub: "Bot Traffic ป้องกันสำเร็จ", color: "blue" },
-          { label: "ความแม่นยำ AI Safety", value: "99.2%", sub: "Gemini Content Guard", color: "purple" }
-        ],
-        tabs: ["ข้อความถูกรายงาน (9)", "ภาพถ่ายต้องสงสัย (4)", "ประวัติการจัดการย้อนหลัง"],
-        sections: [
-          {
-            section_name: "รายการรีวิวที่ถูกรายงาน (Flagged Content Queue)",
-            type: "table",
-            table_headers: ["รหัสรีวิว", "ร้านอาหารเป้าหมาย", "ผู้เขียนรีวิว", "ข้อความที่ถูก Flag", "คะแนน Toxicity", "สถานะ", "การดำเนินการ"],
-            table_rows: [
-              ["#REV-991", "FoodSmile Gourmet", "User #9812", "อาหารรสชาติแย่มาก พนักงาน...", "🟡 0.42 (ถ้อยคำรุนแรง)", "⚠️ รอตัดสิน", "ตรวจสอบ"],
-              ["#REV-992", "ส้มตำแซ่บเวอร์", "User #4412", "คลิกลิงก์นี้รับเงินฟรี www.spam.xyz", "🔴 0.98 (Spam/Phishing)", "🚫 บล็อกแล้ว", "ลบถาวร"],
-              ["#REV-993", "Tokyo Shokudo", "User #1120", "อาหารอร่อยมาก แต่รอนานนิดหน่อย", "🟢 0.05 (Normal)", "✅ ปกติ", "ปลด Flag"]
-            ]
-          }
-        ],
-        connected_use_cases: ["UC-A02: จัดการเนื้อหาไม่เหมาะสม"],
-        connected_req_codes: ["REQ-ADMIN-002", "REQ-SAFE-001"]
-      };
-    }
-
-    // 9. Master Data Management
-    if (lowerPath.includes('masterdata') || lowerTitle.includes('masterdata') || lowerSid.includes('admin-masterdata')) {
-      return {
-        screen_id: "SCR-ADMIN-MASTERDATA",
-        screen_name: "Master Data Management",
-        route: path !== '/' ? path : "/admin/masterdata",
-        layout_type: "table",
-        description: "จัดการข้อมูลหลักของระบบ หมวดหมู่อาหาร อัตราค่า GP ส่วนแบ่ง และพื้นที่การจัดส่ง",
-        header: {
-          title: "การจัดการข้อมูลหลักของระบบ (Master Data Management)",
-          badge: "System Master Data",
-          badge_color: "blue",
-          actions: ["➕ สร้างหมวดหมู่ใหม่", "💾 บันทึก Master Data", "📥 Export CSV"]
-        },
-        stats: [
-          { label: "หมวดหมู่อาหารทั้งหมด", value: "24 หมวดหมู่", sub: "เปิดใช้งาน 22 | ปิด 2", color: "emerald" },
-          { label: "พื้นที่ให้บริการ", value: "50 เขต", sub: "กรุงเทพฯ และปริมณฑล", color: "blue" },
-          { label: "อัตรา GP มาตรฐาน", value: "15.0 - 20.0%", sub: "ตามสัญญาความร่วมมือ", color: "purple" },
-          { label: "อัปเดตล่าสุด", value: "วันนี้ 11:30 น.", sub: "โดย Admin System", color: "amber" }
-        ],
-        tabs: ["หมวดหมู่อาหาร (Categories)", "อัตราค่าบริการและ GP", "พื้นที่ให้บริการ (Delivery Zones)"],
-        sections: [
-          {
-            section_name: "ตารางหมวดหมู่อาหารหลัก (Food Categories Catalog)",
-            type: "table",
-            table_headers: ["รหัสหมวดหมู่", "ชื่อหมวดหมู่ (ภาษาไทย)", "ชื่อภาษาอังกฤษ", "จำนวนร้านค้า", "ลำดับการแสดงผล", "สถานะ", "จัดการ"],
-            table_rows: [
-              ["#CAT-01", "อาหารไทยฟิวชั่น", "Thai Fusion Cuisine", "48 ร้าน", "1", "🟢 เปิดใช้งาน", "แก้ไข"],
-              ["#CAT-02", "อาหารอีสานรสเด็ด", "Isan Traditional Food", "64 ร้าน", "2", "🟢 เปิดใช้งาน", "แก้ไข"],
-              ["#CAT-03", "อาหารญี่ปุ่น", "Japanese Cuisine", "35 ร้าน", "3", "🟢 เปิดใช้งาน", "แก้ไข"],
-              ["#CAT-04", "คาเฟ่ & เบเกอรี่", "Cafe & Bakery", "52 ร้าน", "4", "🟢 เปิดใช้งาน", "แก้ไข"]
-            ]
-          }
-        ],
-        connected_use_cases: ["UC-A03: จัดการ Master Data"],
-        connected_req_codes: ["REQ-ADMIN-003"]
-      };
-    }
-
-    // 10. Analytics Dashboard
-    if (lowerPath.includes('analytics') || lowerTitle.includes('analytics') || lowerSid.includes('admin-analytics')) {
-      return {
-        screen_id: "SCR-ADMIN-ANALYTICS",
-        screen_name: "Analytics Dashboard",
-        route: path !== '/' ? path : "/admin/analytics",
-        layout_type: "dashboard",
-        description: "แดชบอร์ดสรุปสถิติภาพรวม แพลตฟอร์ม ยอดรวม GMV จำนวนผู้ใช้งาน และอัตราการเติบโต",
-        header: {
-          title: "แดชบอร์ดภาพรวมและสถิติแพลตฟอร์ม (Platform Analytics Dashboard)",
-          badge: "Business Intelligence",
-          badge_color: "blue",
-          actions: ["📥 ส่งออกรายงาน PDF/Excel", "🔄 รีเฟรชข้อมูลเรียลไทม์", "⚙️ ตั้งค่า KPI Alerts"]
-        },
-        stats: [
-          { label: "ยอดใช้จ่ายรวมวันนี้ (GMV)", value: "฿2,845,000", sub: "+14.8% จากสัปดาห์ก่อน", color: "emerald" },
-          { label: "ผู้ใช้งาน Active รายวัน (DAU)", value: "18,450 คน", sub: "สมาชิกใหม่ +420 คน", color: "blue" },
-          { label: "ออเดอร์จัดส่งสำเร็จ", value: "12,380 รายการ", sub: "SLA จัดส่งสำเร็จ 99.4%", color: "purple" },
-          { label: "คะแนนความพึงพอใจเฉลี่ย", value: "4.88 ★", sub: "จาก 1,850 รีวิวสัปดาห์นี้", color: "amber" }
-        ],
-        tabs: ["ภาพรวมยอดขาย & GMV", "พฤติกรรมผู้ใช้งาน (DAU/MAU)", "ประสิทธิภาพการจัดส่ง (Delivery SLA)", "ร้านอาหารยอดนิยม"],
-        sections: [
-          {
-            section_name: "สรุปสถิติการดำเนินงานรายชั่วโมง (Hourly Operations Breakdown)",
-            type: "table",
-            table_headers: ["ช่วงเวลา", "จำนวนออเดอร์", "ยอดขายรวม (GMV)", "เวลาจัดส่งเฉลี่ย", "สถานะไรเดอร์", "สถานะระบบ"],
-            table_rows: [
-              ["11:00 - 12:00 (Peak Lunch)", "2,450 รายการ", "฿560,000", "26 นาที", "🟢 เพียงพอ (94%)", "🟢 ปกติ"],
-              ["12:00 - 13:00 (Peak Lunch)", "3,120 รายการ", "฿715,000", "28 นาที", "🟢 เพียงพอ (98%)", "🟢 ปกติ"],
-              ["13:00 - 14:00 (After Lunch)", "1,240 รายการ", "฿280,000", "22 นาที", "🟢 พร้อมให้บริการ", "🟢 ปกติ"],
-              ["17:00 - 18:00 (Peak Dinner)", "2,890 รายการ", "฿680,000", "25 นาที", "🟢 เพียงพอ (96%)", "🟢 ปกติ"]
-            ]
-          }
-        ],
-        connected_use_cases: ["UC-A04: ดูสถิติและรายงานแพลตฟอร์ม"],
-        connected_req_codes: ["REQ-ADMIN-004", "REQ-RPT-001"]
-      };
-    }
-
-    // 11. Store Onboarding / Claim
-    if (lowerPath.includes('onboard') || lowerTitle.includes('claim') || lowerTitle.includes('onboarding') || lowerSid.includes('merch-onboard')) {
-      return {
-        screen_id: "SCR-MERCH-ONBOARD",
-        screen_name: "Store Onboarding / Claim",
-        route: path !== '/' ? path : "/merchant/onboarding",
-        layout_type: "form",
-        description: "พอร์ทัลลงทะเบียนร้านค้าใหม่ เคลมสิทธิ์เจ้าของร้าน และอัปโหลดเอกสารยืนยันตัวตน KYC",
-        header: {
-          title: "ลงทะเบียนร้านค้าและยืนยันสิทธิ์ (Merchant Onboarding & Claim)",
-          badge: "Merchant Verification",
-          badge_color: "emerald",
-          actions: ["💾 บันทึกแบบร่าง", "▶️ ส่งเอกสาร KYC", "📞 ช่วยเหลือ"]
-        },
-        stats: [
-          { label: "สถานะการตรวจสอบ", value: "รอส่งเอกสาร (Step 2/4)", sub: "SLA: อนุมัติใน 24 ชม.", color: "blue" },
-          { label: "เอกสารที่จำเป็น", value: "4 รายการ", sub: "บัตร ปชช., ภพ.20, สมุดบัญชี", color: "amber" },
-          { label: "ค่าธรรมเนียมแรกเข้า", value: "ฟรี 0 บาท", sub: "ไม่มีค่าธรรมเนียมรายปี", color: "emerald" },
-          { label: "ความสมบูรณ์ข้อมูล", value: "65%", sub: "กรอกข้อมูลร้านแล้ว", color: "purple" }
-        ],
-        tabs: ["1. ข้อมูลร้านค้า", "2. ข้อมูลเจ้าของ & นิติบุคคล", "3. อัปโหลดเอกสาร KYC", "4. สรุปและยืนยัน"],
-        sections: [
-          {
-            section_name: "ข้อมูลและรายละเอียดร้านค้า (Merchant Profile)",
-            type: "form",
-            fields: [
-              { label: "ชื่อร้านอาหาร (ภาษาไทย)", type: "text", default_value: "ส้มตำแซ่บเวอร์ สาขาพระโขนง", required: true },
-              { label: "ชื่อร้านอาหาร (English)", type: "text", default_value: "Zaap Ver FoodSmile Cafe" },
-              { label: "เลขทะเบียนพาณิชย์ / เลขประจำตัวผู้เสียภาษี", type: "text", default_value: "0105563012345", required: true },
-              { label: "ประเภทธุรกิจ", type: "select", options: ["บุคคลธรรมดา", "นิติบุคคล (บริษัทจำกัด/ห้างหุ้นส่วน)"], default_value: "นิติบุคคล (บริษัทจำกัด/ห้างหุ้นส่วน)" },
-              { label: "เบอร์โทรศัพท์เจ้าของร้าน", type: "text", default_value: "081-234-5678", required: true },
-              { label: "อีเมลสำหรับรับใบเสร็จและแจ้งเตือน", type: "text", default_value: "merchant.contact@foodsmile.app" },
-              { label: "ที่อยู่ตั้งร้านค้า", type: "textarea", default_value: "เลขที่ 88/1 ถนนสุขุมวิท แขวงพระโขนง เขตคลองเตย กรุงเทพฯ 10110", required: true },
-              { label: "ยินยอมให้ทีมงานลงพื้นที่ตรวจสอบร้านจริง", type: "toggle", default_value: true }
-            ],
-            buttons: [
-              { label: "💾 บันทึกแบบร่าง", variant: "outline", icon: "💾" },
-              { label: "ถัดไป: อัปโหลดเอกสาร KYC", variant: "primary", icon: "📄" }
-            ]
-          },
-          {
-            section_name: "รายการเอกสารประกอบการเคลมและยืนยันสิทธิ์ (KYC Checklist)",
-            type: "table",
-            table_headers: ["ลำดับ", "รายการเอกสาร", "สถานะ", "ไฟล์ที่แนบ", "การดำเนินการ"],
-            table_rows: [
-              ["1", "สำเนาบัตรประชาชนผู้มีอำนาจลงนาม", "✅ อัปโหลดแล้ว", "id_card_owner.jpg", "ดูไฟล์"],
-              ["2", "หนังสือรับรองบริษัท / ภพ.20", "✅ อัปโหลดแล้ว", "vat20_certificate.pdf", "ดูไฟล์"],
-              ["3", "หน้าสมุดบัญชีธนาคารสำหรับรับเงินโอน", "⏳ รอเอกสาร", "-", "อัปโหลด"],
-              ["4", "ภาพถ่ายหน้าร้านพร้อมป้ายชื่อร้านที่มองเห็นชัดเจน", "✅ อัปโหลดแล้ว", "storefront_photo.png", "ดูไฟล์"]
-            ]
-          }
-        ],
-        connected_use_cases: ["UC-M01: สมัครเปิดร้านและเคลมสิทธิ์"],
-        connected_req_codes: ["REQ-MERCH-001", "REQ-KYC-002"]
-      };
-    }
-
-    // 12. Store Management
-    if (lowerPath.includes('manage') || lowerTitle.includes('store management') || lowerSid.includes('merch-manage')) {
-      return {
-        screen_id: "SCR-MERCH-MANAGE",
-        screen_name: "Store Management",
-        route: path !== '/' ? path : "/merchant/manage/:id",
-        layout_type: "form",
-        description: "จัดการร้านค้า เมนูอาหาร ราคา เวลาเปิด-ปิด และสลับสถานะเปิดรับออเดอร์ Delivery",
-        header: {
-          title: "ระบบจัดการร้านค้าและเมนูอาหาร (Store Management Portal)",
-          badge: "Merchant Admin",
-          badge_color: "emerald",
-          actions: ["💾 บันทึกการตั้งค่าร้าน", "➕ เพิ่มเมนูใหม่", "📊 สรุปยอดขาย"]
-        },
-        stats: [
-          { label: "สถานะเปิดร้าน", value: "🟢 เปิดรับออเดอร์", sub: "ปิดรับ 22:00 น.", color: "emerald" },
-          { label: "ยอดขายวันนี้", value: "฿14,250", sub: "48 ออเดอร์สำเร็จ", color: "blue" },
-          { label: "เมนูอาหารทั้งหมด", value: "32 รายการ", sub: "พร้อมขาย 28 | หมด 4", color: "purple" },
-          { label: "คะแนนเฉลี่ยร้าน", value: "4.85 ★", sub: "จาก 342 รีวิว", color: "amber" }
-        ],
-        tabs: ["ข้อมูลร้านและการเปิด-ปิด", "จัดการรายการเมนูอาหาร", "จัดการโปรโมชั่น", "รีวิวจากลูกค้า"],
-        sections: [
-          {
-            section_name: "การตั้งค่าการเปิดบริการ (Operating Status & Timing)",
-            type: "form",
-            fields: [
-              { label: "เปิดรับออเดอร์ Delivery ตอนนี้", type: "toggle", default_value: true },
-              { label: "เวลาทำการประจำวัน", type: "text", default_value: "จันทร์ - อาทิตย์ 10:00 - 22:00 น.", required: true },
-              { label: "ระยะทางจัดส่งสูงสุด (กม.)", type: "text", default_value: "12 กม." },
-              { label: "ข้อความแจ้งเตือนลูกค้าหน้าร้าน", type: "textarea", default_value: "ส้มตำแซ่บเวอร์ ยินดีต้อนรับ! วันนี้มีเมนูพิเศษ ส้มตำถาดทะเลเดือด" }
-            ],
-            buttons: [
-              { label: "💾 บันทึกสถานะร้าน", variant: "primary", icon: "💾" }
-            ]
-          },
-          {
-            section_name: "รายการเมนูอาหารของร้าน (Store Menu Catalog)",
-            type: "table",
-            table_headers: ["รหัสเมนู", "ชื่อเมนูอาหาร", "หมวดหมู่", "ราคา (บาท)", "สถานะพร้อมขาย", "การจัดการ"],
-            table_rows: [
-              ["#MN-001", "ส้มตำไทยแซ่บ + ไข่เค็ม", "อาหารอีสาน", "85.-", "🟢 พร้อมขาย", "แก้ไข"],
-              ["#MN-002", "ไก่ย่างสมุนไพรเขาสวนกวาง (ครึ่งตัว)", "จานหลัก", "140.-", "🟢 พร้อมขาย", "แก้ไข"],
-              ["#MN-003", "ต้มแซ่บกระดูกหมูอ่อน", "ต้ม/แกง", "150.-", "🟢 พร้อมขาย", "แก้ไข"],
-              ["#MN-004", "คอหมูย่างคลุกฝุ่น", "อาหารทานเล่น", "120.-", "🔴 สินค้าหมด", "เปิดขาย"]
-            ]
-          }
-        ],
-        connected_use_cases: ["UC-M02: จัดการสถานะร้านและเมนู"],
-        connected_req_codes: ["REQ-MERCH-002", "REQ-MENU-001"]
-      };
-    }
-
-    // 13. Merchant Web Portal (Overview)
-    if (lowerPath.includes('merchant') || lowerTitle.includes('merchant') || lowerSid.includes('merch-dash') || (lowerPath === '/merchant')) {
-      return {
-        screen_id: "SCR-MERCH-DASH",
-        screen_name: "Merchant Web Portal",
-        route: path !== '/' ? path : "/merchant",
-        layout_type: "dashboard",
-        description: "ศูนย์ควบคุมร้านค้าสำหรับผู้ประกอบการ สรุปยอดขาย ออเดอร์เรียลไทม์ และคำขอเปิดร้าน",
-        header: {
-          title: "ศูนย์รวมร้านค้าและพอร์ทัลร้านอาหาร (Merchant Web Portal)",
-          badge: "Merchant Hub",
-          badge_color: "blue",
-          actions: ["🏪 จัดการร้านของฉัน", "📝 ยื่นคำขอเปิดร้าน (Claim)", "🔄 รีเฟรช"]
-        },
-        stats: [
-          { label: "ร้านค้าที่คุณดูแล", value: "1 ร้าน", sub: "ส้มตำแซ่บเวอร์ พระโขนง", color: "emerald" },
-          { label: "สถานะการตรวจสอบ KYC", value: "✅ ผ่านการตรวจสอบ", sub: "ยืนยันเมื่อ 1 ต.ค. 2026", color: "blue" },
-          { label: "รายได้รอบจ่ายถัดไป", value: "฿38,420", sub: "โอนเข้าบัญชี 18 ต.ค.", color: "purple" },
-          { label: "การแจ้งเตือนร้านค้า", value: "3 ข้อความใหม่", sub: "ออเดอร์ใหม่ & รีวิว", color: "amber" }
-        ],
-        tabs: ["ภาพรวมร้านค้าของฉัน", "คำขอ Onboarding & Claim", "รอบบัญชีและการรับเงิน"],
-        sections: [
-          {
-            section_name: "รายชื่อร้านอาหารที่คุณเป็นเจ้าของ (My Managed Stores)",
-            type: "table",
-            table_headers: ["ชื่อร้านอาหาร", "สาขา", "สถานะการเปิดร้าน", "ยอดขายสัปดาห์นี้", "คะแนนรีวิว", "การเข้าจัดการ"],
-            table_rows: [
-              ["ส้มตำแซ่บเวอร์", "สาขาพระโขนง", "🟢 เปิดบริการอยู่", "฿62,100", "4.90 ★ (420)", "เข้าสู่ระบบร้าน"]
-            ]
-          }
-        ],
-        connected_use_cases: ["UC-M01: Dashboard ร้านค้า"],
-        connected_req_codes: ["REQ-MERCH-001"]
-      };
-    }
-
-    // 14. Admin Dashboard (Overview)
-    if (lowerPath.includes('admin') || lowerTitle.includes('admin') || lowerSid.includes('admin-dash') || (lowerPath === '/admin')) {
-      return {
-        screen_id: "SCR-ADMIN-DASH",
-        screen_name: "Admin Dashboard",
-        route: path !== '/' ? path : "/admin",
-        layout_type: "dashboard",
-        description: "ศูนย์ควบคุมและบริหารระบบสำหรับผู้ดูแลระบบ (Admin) ควบคุมการทำงาน ภาพรวมเซิร์ฟเวอร์ และการแจ้งเตือนฉุกเฉิน",
-        header: {
-          title: "ศูนย์ควบคุมและบริหารระบบ (Admin Master Control Center)",
-          badge: "Super Admin",
-          badge_color: "blue",
-          actions: ["⚡ ตรวจสอบสุขภาพระบบ (Healthcheck)", "📥 ดู System Logs", "🔄 รีเฟรชสถานะ"]
-        },
-        stats: [
-          { label: "สถานะระบบเซิร์ฟเวอร์", value: "🟢 Healthy (99.98%)", sub: "Cluster 4 Nodes Active", color: "emerald" },
-          { label: "เวลารอตอบสนอง API (P95)", value: "128 ms", sub: "เกณฑ์มาตรฐาน < 300 ms", color: "blue" },
-          { label: "คำขอ KYC รออนุมัติ", value: "14 รายการ", sub: "ต้องดำเนินการวันนี้", color: "amber" },
-          { label: "การรักษาความปลอดภัย", value: "TLS 1.3 / Zero Alerts", sub: "ไม่มีการละเมิดข้อมูล", color: "purple" }
-        ],
-        tabs: ["ภาพรวมระบบ (Overview)", "จัดการผู้ใช้งาน & สิทธิ์", "บันทึกการทำงานของระบบ (Audit Logs)"],
-        sections: [
-          {
-            section_name: "บันทึกกิจกรรมระบบที่สำคัญล่าสุด (Recent System Audit Trails)",
-            type: "table",
-            table_headers: ["เวลา", "ผู้ดำเนินการ", "ประเภทกิจกรรม", "เป้าหมาย", "สถานะ", "รายละเอียด"],
-            table_rows: [
-              ["14 ต.ค. 2026, 14:15", "admin@domain.com", "KYC Approval", "ส้มตำแซ่บเวอร์ พระโขนง", "✅ สำเร็จ", "อนุมัติเปิดร้าน"],
-              ["14 ต.ค. 2026, 13:50", "system-auto", "Daily Database Backup", "PostgreSQL Primary", "✅ สำเร็จ", "ขนาด Snapshot 4.2 GB"],
-              ["14 ต.ค. 2026, 12:30", "moderator@domain.com", "Content Review", "Review #REV-992", "✅ สำเร็จ", "ลบข้อความสแปม"]
-            ]
-          }
-        ],
-        connected_use_cases: ["UC-A01: ภาพรวม Admin"],
-        connected_req_codes: ["REQ-ADMIN-001"]
-      };
-    }
-
-    // 15. Default Detail (Restaurant Details)
     return {
-      screen_id: "SCR-REST-DETAIL",
-      screen_name: "Restaurant Details",
-      route: path !== '/' ? path : "/app/restaurant/:id",
-      layout_type: "detail",
-      description: "หน้ารายละเอียดร้านอาหาร เมนูแนะนำ รีวิวคะแนน แผนที่ และสั่งอาหาร Delivery",
+      screen_id: sid,
+      screen_name: title,
+      route: path,
+      layout_type: isFormLayout ? 'form' : 'dashboard',
+      description: desc,
       header: {
-        title: "ร้านอาหารอร่อยเลิศ (FoodSmile Gourmet Cafe)",
-        badge: "Verified Merchant",
-        badge_color: "emerald",
-        actions: ["แชร์หน้าร้าน", "บันทึกร้านโปรด", "ย้อนกลับ"]
+        title: title,
+        badge: category,
+        badge_color: 'indigo',
+        actions: ['บันทึกข้อมูล', 'รีเฟรชสถานะ', 'ส่งออกรายงาน']
       },
       stats: [
-        { label: "คะแนนเฉลี่ย", value: "4.85 ★", sub: "จาก 342 รีวิว", color: "amber" },
-        { label: "สถานะปัจจุบัน", value: "เปิดบริการอยู่", sub: "ปิด 22:00 น.", color: "emerald" },
-        { label: "เวลาจัดส่งเฉลี่ย", value: "25-35 นาที", sub: "ระยะทาง 1.8 กม.", color: "blue" },
-        { label: "ระดับราคา", value: "฿฿ (100-250 บาท)", sub: "รับชำระ PromptPay/บัตร", color: "purple" }
+        { label: 'รหัสหน้าจอ', value: sid, sub: projName, color: 'blue' },
+        { label: 'หมวดหมู่โมดูล', value: category, sub: path, color: 'purple' },
+        { label: 'Use Cases ที่เชื่อมโยง', value: `${useCases.length} รายการ`, sub: useCases[0] || '-', color: 'emerald' },
+        { label: 'สถานะการออกแบบ', value: 'Synthesized Preview', sub: 'อัปโหลดรูปหรือเชื่อม Figma ได้', color: 'amber' }
       ],
-      tabs: ["ข้อมูลทั่วไป", "รายการเมนูยอดนิยม", "รีวิว & คะแนน", "แผนที่และการเดินทาง"],
+      tabs: ['ภาพรวมหน้าจอ (Overview)', 'ข้อมูลและฟอร์ม (Fields & Actions)', 'ความเชื่อมโยง QA (Traceability)'],
       sections: [
         {
-          section_name: "Image Gallery & Highlights",
-          type: "gallery",
-          banner_tag: "🔥 เมนูแนะนำประจำสัปดาห์: สเต๊กแซลมอนย่างเกลือหิมาลายัน",
-          images: [
-            { title: "บรรยากาศหน้าร้าน", desc: "ตกแต่งสไตล์ Modern Cozy มีที่จอดรถสะดวกสบาย" },
-            { title: "โซน Dining Room", desc: "รองรับจัดเลี้ยงกลุ่ม 10-30 ท่าน มีห้อง VIP" },
-            { title: "ครัวเปิด Open Kitchen", desc: "ได้มาตรฐานความสะอาด SHA Plus+ และ HACCP" }
-          ]
-        },
-        {
-          section_name: "ข้อมูลและรายละเอียดร้าน (Basic Info)",
-          type: "form",
+          section_name: `ข้อมูลหลักและการดำเนินการ — ${title}`,
+          type: 'form',
           fields: [
-            { label: "ชื่อร้านอาหาร", type: "text", default_value: "FoodSmile Gourmet Cafe", required: true },
-            { label: "ประเภทอาหาร", type: "select", options: ["อาหารไทยฟิวชั่น", "อาหารญี่ปุ่น", "คาเฟ่ & เบเกอรี่", "เครื่องดื่ม"], default_value: "อาหารไทยฟิวชั่น" },
-            { label: "เวลาทำการ", type: "text", default_value: "จันทร์ - อาทิตย์: 10:00 - 22:00 น.", required: true },
-            { label: "เบอร์โทรศัพท์ติดต่อ", type: "text", default_value: "02-123-4567, 089-987-6543" },
-            { label: "ที่อยู่ / สถานที่ตั้ง", type: "textarea", default_value: "123/45 ถนนสุขุมวิท 71 แขวงพระโขนงเหนือ เขตวัฒนา กรุงเทพฯ 10110", required: true },
-            { label: "เปิดรับออเดอร์ Delivery", type: "toggle", default_value: true }
+            { label: 'ชื่อหน้าจอ / โมดูล (Screen Name)', type: 'text', default_value: title, required: true },
+            { label: 'เส้นทาง Route / Endpoint', type: 'text', default_value: path, required: true },
+            { label: 'คำอธิบายขอบเขตการทำงาน (Scope Description)', type: 'textarea', default_value: desc, required: false },
+            { label: 'เปิดใช้งานการตรวจสอบสิทธิ์ (Role & Permission Guard)', type: 'toggle', default_value: true }
           ],
           buttons: [
-            { label: "โทรออกหาร้าน", variant: "outline", icon: "📞" },
-            { label: "นำทาง (Google Maps)", variant: "secondary", icon: "🧭" },
-            { label: "สั่งอาหาร Delivery", variant: "primary", icon: "🛵" },
-            { label: "เขียนรีวิวให้คะแนน", variant: "accent", icon: "⭐" }
+            { label: 'บันทึกการเปลี่ยนแปลง', variant: 'primary', icon: '✓' },
+            { label: 'ตรวจสอบ Validation', variant: 'secondary', icon: '⚡' },
+            { label: 'รีเซ็ตค่าเริ่มต้น', variant: 'outline', icon: '↺' }
           ]
         },
         {
-          section_name: "รายการเมนูอาหารยอดนิยม (Popular Menu Items)",
-          type: "table",
-          table_headers: ["รหัสเมนู", "ชื่อเมนูอาหาร", "หมวดหมู่", "ราคา (บาท)", "สถานะพร้อมเสิร์ฟ", "การสั่งซื้อ"],
+          section_name: `รายการตรวจสอบความเชื่อมโยง (Linked Requirements & Test Scope)`,
+          type: 'table',
+          table_headers: ['รหัสอ้างอิง', 'ประเภท', 'ขอบเขตที่ครอบคลุม', 'สถานะ QA'],
           table_rows: [
-            ["#MN-001", "สเต๊กแซลมอนนอร์เวย์ซอสเลมอนเนยสด", "จานหลัก (Main Course)", "320.-", "พร้อมเสิร์ฟ", "สั่งซื้อเลย"],
-            ["#MN-002", "สปาเก็ตตี้คาโบนาร่าทรัฟเฟิล", "พาสต้า (Pasta)", "260.-", "พร้อมเสิร์ฟ", "สั่งซื้อเลย"],
-            ["#MN-003", "ยำแซลมอนแซ่บพริกสด", "อาหารทานเล่น (Appetizer)", "195.-", "พร้อมเสิร์ฟ", "สั่งซื้อเลย"],
-            ["#MN-004", "มัทฉะลาเต้เย็นเกรดพิธีการ", "เครื่องดื่ม (Beverage)", "110.-", "พร้อมเสิร์ฟ", "สั่งซื้อเลย"]
-          ]
-        },
-        {
-          section_name: "รีวิวจากลูกค้าล่าสุด (Customer Reviews)",
-          type: "reviews",
-          reviews: [
-            { user: "นันทนา กุลสวัสดิ์", rating: 5, comment: "อาหารอร่อยมาก โดยเฉพาะสเต๊กแซลมอน บริการดี บรรยากาศน่านั่ง แนะนำเลยค่ะ!", time: "1 ชั่วโมงที่แล้ว" },
-            { user: "เอกรัฐ พัฒนา", rating: 5, comment: "ที่จอดรถสะดวก อาหารเสิร์ฟไว พนักงานสุภาพมากครับ จะกลับมาอุดหนุนอีกแน่นอน", time: "เมื่อวานนี้" }
+            [sid, 'Screen UI', `ตรวจสอบ Layout, Validation และ Navigation ของ ${title}`, 'Ready for QA'],
+            [useCases[0] || 'UC-001', 'Use Case', desc.slice(0, 72), 'Mapped'],
+            [reqCodes[0] || 'REQ-001', 'Requirement', `รองรับการทำงานบน Route ${path}`, 'Tracked']
           ]
         }
       ],
-      connected_use_cases: ["UC-C01: ดูข้อมูลร้าน"],
-      connected_req_codes: ["REQ-001"]
+      connected_use_cases: useCases,
+      connected_req_codes: reqCodes
     };
   }
 
@@ -1579,7 +886,7 @@
       });
     }
     currentFormValues = { ...formValues[mockId] };
-    toast('⚡ เติมข้อมูลจำลองสำหรับทดสอบ Prototype เรียบร้อย', 'success');
+    toast('เติมข้อมูลจำลองสำหรับทดสอบ Prototype เรียบร้อย', 'success');
   }
 
   function resetPrototype() {
@@ -1588,7 +895,7 @@
     formValues[mockId] = {};
     currentFormValues = {};
     isFavorite = false;
-    toast('🔄 รีเซ็ตค่าฟอร์ม Prototype สำเร็จ', 'info');
+    toast('รีเซ็ตค่าฟอร์ม Prototype สำเร็จ', 'info');
   }
 
   function handlePrototypeButtonAction(btn) {
@@ -1598,7 +905,7 @@
       setTimeout(() => {
         isSimulatingSubmit = false;
         activePrototypeModal = {
-          title: '🎉 ดำเนินการสำเร็จ (Simulation Success)',
+          title: 'ดำเนินการสำเร็จ (Simulation Success)',
           content: `ระบบทำการประมวลผลคำขอ "${btn.label || 'Submit'}" และบันทึกข้อมูลเข้าสู่ฐานข้อมูลเรียบร้อยแล้ว`,
           type: 'success'
         };
@@ -1606,21 +913,21 @@
     } else if (label.includes('นำทาง') || label.includes('map') || label.includes('แผนที่')) {
       const addr = formValues[currentScreenMockup.screen_id]?.['ที่อยู่ / สถานที่ตั้ง'] || formValues[currentScreenMockup.screen_id]?.['ที่อยู่'] || 'จุดหมายปลายทาง';
       activePrototypeModal = {
-        title: '🧭 จำลองระบบ GPS นำทาง (Route Simulator)',
+        title: 'จำลองระบบ GPS นำทาง (Route Simulator)',
         content: `กำลังเชื่อมต่อไปยัง: ${addr} (ระยะทาง 1.8 กม. ใช้เวลาเดินทางโดยรถยนต์ประมาณ 7 นาที)`,
         type: 'map'
       };
     } else if (label.includes('โทร') || label.includes('call') || label.includes('phone')) {
       const phone = formValues[currentScreenMockup.screen_id]?.['เบอร์โทรศัพท์ติดต่อ'] || formValues[currentScreenMockup.screen_id]?.['เบอร์โทร'] || '02-123-4567';
-      toast(`📞 กำลังจำลองการโทรออกไปยังเบอร์: ${phone}`, 'info');
+      toast(`กำลังจำลองการโทรออกไปยังเบอร์: ${phone}`, 'info');
     } else if (label.includes('รีวิว') || label.includes('review')) {
       activePrototypeModal = {
-        title: '⭐ ฟอร์มส่งรีวิวและความประทับใจ',
+        title: 'ฟอร์มส่งรีวิวและความประทับใจ',
         content: 'คุณกำลังเขียนรีวิวและให้คะแนน 5 ดาวสำหรับ ' + (currentScreenMockup.header?.title || currentScreenMockup.screen_name),
         type: 'review'
       };
     } else {
-      toast(`✨ คลิกปุ่ม Prototype: "${btn.label || btn}" สำเร็จ`, 'info');
+      toast(`คลิกปุ่ม Prototype: "${btn.label || btn}" สำเร็จ`, 'info');
     }
   }
 
@@ -1630,111 +937,34 @@
       if (typeof navigator !== 'undefined' && navigator.clipboard) {
         navigator.clipboard.writeText(window.location.href);
       }
-      toast('🔗 คัดลอกลิงก์หน้าจอ Prototype แล้ว!', 'success');
-    } else if (s.includes('โปรด') || s.includes('favorite') || s.includes('like') || s.includes('บันทึกร้าน')) {
+      toast('คัดลอกลิงก์หน้าจอ Prototype แล้ว!', 'success');
+    } else if (s.includes('โปรด') || s.includes('favorite') || s.includes('like') || s.includes('บันทึกรายการ')) {
       isFavorite = !isFavorite;
-      toast(isFavorite ? '❤️ เพิ่มในรายการโปรดแล้ว' : '🤍 นำออกจากรายการโปรดแล้ว', 'info');
+      toast(isFavorite ? 'เพิ่มในรายการโปรดแล้ว' : 'นำออกจากรายการโปรดแล้ว', 'info');
     } else if (s.includes('ย้อนกลับ') || s.includes('back')) {
       if (flowData?.screen_mockups && flowData.screen_mockups.length > 1) {
         const currIdx = flowData.screen_mockups.findIndex(s => s.screen_id === selectedScreenId);
         const prevIdx = currIdx > 0 ? currIdx - 1 : flowData.screen_mockups.length - 1;
         selectedScreenId = flowData.screen_mockups[prevIdx].screen_id;
-        toast(`◀ ย้อนกลับไปยังหน้า: ${flowData.screen_mockups[prevIdx].screen_name}`, 'info');
+        toast(`ย้อนกลับไปยังหน้า: ${flowData.screen_mockups[prevIdx].screen_name}`, 'info');
       } else {
-        toast('◀ ย้อนกลับ', 'info');
+        toast('ย้อนกลับ', 'info');
       }
     } else {
-      toast(`✨ คลิก: ${act}`, 'info');
+      toast(`คลิก: ${act}`, 'info');
     }
   }
 
   function handleTableActionClick(cellText, row) {
-    toast(`⚡ ดำเนินการ Action: "${cellText}" สำหรับรายการ "${row[1] || row[0]}" สำเร็จ`, 'success');
+    toast(`ดำเนินการ Action: "${cellText}" สำหรับรายการ "${row[1] || row[0]}" สำเร็จ`, 'success');
   }
 
-  function getUatStatusClass(val) {
-    if (!val) return 'pending';
-    const s = String(val).toLowerCase();
-    if (s.includes('pass') || s.includes('approved') || s.includes('sign-off') || s.includes('success')) return 'passed';
-    if (s.includes('ready') || s.includes('tested') || s.includes('active')) return 'ready';
-    if (s.includes('fail') || s.includes('reject') || s.includes('block')) return 'failed';
-    return 'pending';
-  }
-
-  function getUatItems(row) {
-    if (!row) return [];
-    if (Array.isArray(row.uat_item) && row.uat_item.length > 0) return row.uat_item;
-    if (Array.isArray(row.uat_items) && row.uat_items.length > 0) return row.uat_items;
-    if (Array.isArray(row.uat_clause) && row.uat_clause.length > 0) return row.uat_clause;
-    if (row.uat_item && typeof row.uat_item === 'string' && row.uat_item.trim() && row.uat_item !== '-') return [row.uat_item];
-    if (row.uat_clause && typeof row.uat_clause === 'string' && row.uat_clause.trim() && row.uat_clause !== '-') return [row.uat_clause];
-    if (row.uat_ref && typeof row.uat_ref === 'string' && row.uat_ref.trim() && row.uat_ref !== '-') return [row.uat_ref];
-    
-    // Fallback: derive linked UAT item code from req_code and req_title
-    const cleanCode = (row.req_code || 'REQ').replace(/^REQ-?/i, '');
-    const titleSummary = row.req_title || row.sitemap_node_title || 'Acceptance Criteria';
-    return [`UAT-${cleanCode}: ${titleSummary}`];
-  }
-
-  // Filtered Matrix
-  $: uniqueDocs = flowData && flowData.traceability_matrix 
-    ? ['All', ...new Set(flowData.traceability_matrix.map(m => m.doc_name).filter(Boolean))]
-    : ['All'];
-
-  $: filteredMatrix = (flowData && flowData.traceability_matrix) ? flowData.traceability_matrix.filter(item => {
-    const uatMatches = getUatItems(item).join(' ').toLowerCase();
-    const matchQuery = !matrixSearchQuery || 
-      (item.req_code && item.req_code.toLowerCase().includes(matrixSearchQuery.toLowerCase())) ||
-      (item.req_title && item.req_title.toLowerCase().includes(matrixSearchQuery.toLowerCase())) ||
-      (item.use_case_id && item.use_case_id.toLowerCase().includes(matrixSearchQuery.toLowerCase())) ||
-      (item.screen_name && item.screen_name.toLowerCase().includes(matrixSearchQuery.toLowerCase())) ||
-      (item.defect_log && String(item.defect_log).toLowerCase().includes(matrixSearchQuery.toLowerCase())) ||
-      (item.defects && String(item.defects).toLowerCase().includes(matrixSearchQuery.toLowerCase())) ||
-      uatMatches.includes(matrixSearchQuery.toLowerCase()) ||
-      (item.uat_status && String(item.uat_status).toLowerCase().includes(matrixSearchQuery.toLowerCase())) ||
-      (item.uat && String(item.uat).toLowerCase().includes(matrixSearchQuery.toLowerCase()));
-    
-    const matchDoc = selectedDocFilter === 'All' || item.doc_name === selectedDocFilter;
-    const matchStatus = selectedStatusFilter === 'All' || item.status === selectedStatusFilter;
-
-    return matchQuery && matchDoc && matchStatus;
-  }) : [];
-
-  function exportMatrixCSV() {
-    if (!filteredMatrix.length) return;
-    const headers = ["Req Code", "Requirement Title", "Document", "Doc Type", "Sitemap Node", "Use Case", "Screen", "Test Cases", "Defect Log", "UAT Reference (ข้อเอกสาร UAT)", "UAT Status", "Status"];
-    const rows = filteredMatrix.map(m => {
-      const uatList = getUatItems(m).join('; ');
-      return [
-        `"${m.req_code || ''}"`,
-        `"${(m.req_title || '').replace(/"/g, '""')}"`,
-        `"${m.doc_name || ''}"`,
-        `"${m.doc_type || ''}"`,
-        `"${m.sitemap_node_title || ''}"`,
-        `"${(m.use_case_id || '').replace(/"/g, '""')}"`,
-        `"${m.screen_name || m.screen_id || ''}"`,
-        `"${(Array.isArray(m.test_cases) ? m.test_cases.join('; ') : m.test_cases || '').replace(/"/g, '""')}"`,
-        `"${(Array.isArray(m.defect_log) ? m.defect_log.join('; ') : (m.defect_log || m.defects || 'No Defects')).replace(/"/g, '""')}"`,
-        `"${uatList.replace(/"/g, '""')}"`,
-        `"${(m.uat_status || m.uat || (m.status === 'Covered' ? 'Ready for UAT' : 'Pending')).replace(/"/g, '""')}"`,
-        `"${m.status || ''}"`
-      ];
-    });
-
-    const csvContent = "\uFEFF" + [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.setAttribute('href', url);
-    link.setAttribute('download', `Traceability_Matrix_${$selectedProjectStore?.project_code || 'Project'}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    toast('ดาวน์โหลดตาราง Traceability Matrix (CSV) เรียบร้อย', 'success');
-  }
 </script>
 
-<div class="panel-container" in:fade>
+<svelte:window on:keydown={handleDiagramKeydown} />
+
+<div class="panel-container" in:fade={{ duration: 220 }}>
+  <div class="sr-only" role="status" aria-live="polite" aria-atomic="true">{liveMessage}</div>
   {#if !$selectedProjectStore}
     <ProjectSelection 
       {projects} 
@@ -1746,28 +976,36 @@
     <!-- Top Nav & Breadcrumb -->
     <div class="top-nav">
       <button class="btn-back" on:click={() => selectedProjectStore.set(null)}>
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true">
           <path fill-rule="evenodd" d="M11.354 1.646a.5.5 0 0 1 0 .708L5.707 8l5.647 5.646a.5.5 0 0 1-.708.708l-6-6a.5.5 0 0 1 0-.708l6-6a.5.5 0 0 1 .708 0z"/>
         </svg>
         ย้อนกลับไปหน้าเลือกโครงการ
       </button>
 
-      <div class="project-pill">
-        <span class="p-badge">{$selectedProjectStore.project_code || 'PROJ'}</span>
-        <span class="p-title">{$selectedProjectStore.name || $selectedProjectStore.project_name}</span>
+      <div class="top-nav-right">
+        {#if flowData?.updated_at}
+          <div class="sync-timestamp" title="อัปเดตฐานข้อมูล Flow ล่าสุด">
+            <span class="sync-pulse-dot" aria-hidden="true"></span>
+            <span>ซิงค์ล่าสุด {formatUpdatedAt(flowData.updated_at)}</span>
+          </div>
+        {/if}
+        <div class="project-pill">
+          <span class="p-badge">{$selectedProjectStore.project_code || 'PROJ'}</span>
+          <span class="p-title">{$selectedProjectStore.name || $selectedProjectStore.project_name}</span>
+        </div>
       </div>
     </div>
 
     <!-- Header & AI Control Banner -->
     <div class="glass-panel banner-panel">
       <div class="banner-header">
-        <div>
+        <div class="banner-title-block">
           <div class="title-with-badge">
             <h2>QA Analysis Diagram & Flow Modeler</h2>
-            <span class="badge-ai">Agent 7: Flow Architect</span>
+            <span class="badge-ai">Agent 7 · Flow Architect</span>
           </div>
           <p class="desc-text">
-            ประมวลผลและสร้างผัง Flow ระบบ, Sitemap โครงสร้างเมนู, UML Diagrams, Wireframe Mockups, และตาราง Traceability Matrix เชื่อมโยงทุก Markdown ในโครงการ
+            ประมวลผลและสร้างผัง Flow ระบบ, Sitemap โครงสร้างเมนู, UML Diagrams, Wireframe Mockups และตาราง Traceability Matrix โดยเชื่อมโยงเอกสารจากคลังและซิงค์บริบทให้ Agent ทุกตัวในโครงการ
           </p>
         </div>
 
@@ -1776,20 +1014,55 @@
             {#if isAnalyzing}
               <div class="spinner-small"></div> กำลังวิเคราะห์ Flow & Diagrams...
             {:else}
-              ⚡ วิเคราะห์และสร้าง Diagram ใหม่ (AI Synthesizer)
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+              </svg>
+              วิเคราะห์และสร้าง Diagram ใหม่ (AI Synthesizer)
             {/if}
           </button>
         </div>
       </div>
 
+      <!-- Executive Architecture Summary + Cross-Agent Sync Strip -->
+      {#if flowData}
+        <div class="executive-summary-bar" in:fly={{ y: 8, duration: 240, easing: cubicOut }}>
+          <div class="exec-summary-main">
+            <span class="exec-label">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="16" x2="12" y2="12"></line>
+                <line x1="12" y1="8" x2="12.01" y2="8"></line>
+              </svg>
+              Architecture Context
+            </span>
+            <p class="exec-text">
+              {flowData.summary_stats?.executive_summary || 'โครงสร้าง Flow, Sitemap, UML Diagrams และ Traceability Matrix พร้อมใช้งานและซิงค์เป็นแหล่งอ้างอิงกลางให้ Agent อื่นในโครงการแล้ว'}
+            </p>
+          </div>
+          <div class="cross-agent-sync" aria-label="Agent ที่เชื่อมต่อข้อมูลนี้">
+            <span class="cross-sync-label">Shared with</span>
+            <div class="cross-agent-pills">
+              <span class="agent-sync-pill">QA Doc Creation</span>
+              <span class="agent-sync-pill">QA Consult</span>
+              <span class="agent-sync-pill">QA Research</span>
+              <span class="agent-sync-pill">Playwright Auto</span>
+            </div>
+          </div>
+        </div>
+      {/if}
+
       <!-- Optional Instruction Dropdown -->
       <div class="instructions-accordion">
-        <button class="accordion-toggle" on:click={() => showInstructions = !showInstructions}>
-          <span>{showInstructions ? '▼' : '▶'} คำสั่งเพิ่มเติม / Specific Focus Instructions (Optional)</span>
+        <button class="accordion-toggle" on:click={() => showInstructions = !showInstructions} aria-expanded={showInstructions}>
+          <svg class="accordion-chevron" class:rotated={showInstructions} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline points="9 18 15 12 9 6"></polyline>
+          </svg>
+          <span>คำสั่งเพิ่มเติม / Specific Focus Instructions (Optional)</span>
         </button>
         {#if showInstructions}
-          <div class="accordion-content" transition:slide>
+          <div class="accordion-content" transition:slide={{ duration: 200 }}>
             <textarea 
+              aria-label="คำสั่งเพิ่มเติมสำหรับ AI"
               bind:value={customInstructions} 
               placeholder="ระบุสิ่งที่ต้องการให้ AI เน้นเป็นพิเศษ เช่น 'เน้น Flow การชำระเงินและ Payment Gateway', 'แจกแจง Use Case ให้ละเอียดสำหรับ Admin', หรือ 'สร้าง Mockup เฉพาะหน้าจัดการสมาชิก'..."
               rows="2"
@@ -1801,37 +1074,69 @@
 
       <!-- Summary Stats Counter -->
       {#if flowData && flowData.summary_stats}
-        <div class="stats-grid" transition:fade>
-          <div class="stat-card">
-            <div class="stat-icon">📑</div>
+        <div class="stats-grid" in:fade={{ duration: 220 }}>
+          <div class="stat-card" style="--stagger: 0;">
+            <div class="stat-icon-box indigo" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="3" width="7" height="7" rx="1"></rect>
+                <rect x="14" y="3" width="7" height="7" rx="1"></rect>
+                <rect x="14" y="14" width="7" height="7" rx="1"></rect>
+                <rect x="3" y="14" width="7" height="7" rx="1"></rect>
+              </svg>
+            </div>
             <div class="stat-info">
               <div class="stat-val">{flowData.summary_stats.total_modules || (flowData.sitemap ? flowData.sitemap.length : 0)}</div>
               <div class="stat-label">Modules / Menus</div>
             </div>
           </div>
-          <div class="stat-card">
-            <div class="stat-icon">💻</div>
+          <div class="stat-card" style="--stagger: 1;">
+            <div class="stat-icon-box violet" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="2" y="3" width="20" height="14" rx="2"></rect>
+                <line x1="8" y1="21" x2="16" y2="21"></line>
+                <line x1="12" y1="17" x2="12" y2="21"></line>
+              </svg>
+            </div>
             <div class="stat-info">
               <div class="stat-val">{flowData.summary_stats.total_screens || (flowData.screen_mockups ? flowData.screen_mockups.length : 0)}</div>
               <div class="stat-label">Screen Mockups</div>
             </div>
           </div>
-          <div class="stat-card">
-            <div class="stat-icon">👥</div>
+          <div class="stat-card" style="--stagger: 2;">
+            <div class="stat-icon-box sky" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                <circle cx="9" cy="7" r="4"></circle>
+                <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+              </svg>
+            </div>
             <div class="stat-info">
               <div class="stat-val">{flowData.summary_stats.total_use_cases || 0}</div>
               <div class="stat-label">Use Cases</div>
             </div>
           </div>
-          <div class="stat-card">
-            <div class="stat-icon">📋</div>
+          <div class="stat-card" style="--stagger: 3;">
+            <div class="stat-icon-box amber" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                <polyline points="14 2 14 8 20 8"></polyline>
+                <line x1="16" y1="13" x2="8" y2="13"></line>
+                <line x1="16" y1="17" x2="8" y2="17"></line>
+              </svg>
+            </div>
             <div class="stat-info">
               <div class="stat-val">{flowData.summary_stats.total_requirements || (flowData.traceability_matrix ? flowData.traceability_matrix.length : 0)}</div>
               <div class="stat-label">Requirements</div>
             </div>
           </div>
-          <div class="stat-card highlight">
-            <div class="stat-icon">🎯</div>
+          <div class="stat-card highlight" style="--stagger: 4;">
+            <div class="stat-icon-box emerald" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                <polyline points="22 4 12 14.01 9 11.01"></polyline>
+              </svg>
+            </div>
             <div class="stat-info">
               <div class="stat-val">{flowData.summary_stats.coverage_percentage || 100}%</div>
               <div class="stat-label">QA Traceability Coverage</div>
@@ -1842,42 +1147,79 @@
     </div>
 
     <!-- Main Navigation Tabs -->
-    <div class="tabs-header">
-      <button class="nav-tab" class:active={activeTab === 'sitemap'} on:click={() => activeTab = 'sitemap'}>
-        🌐 Flow Sitemap & Wireframes
+    <div class="tabs-header" role="tablist" aria-label="หมวดหมู่ผัง Flow และ Diagram" on:keydown={handleTabsKeydown}>
+      <button class="nav-tab" role="tab" id="qa-tab-sitemap" aria-controls="qa-tabpanel" tabindex={activeTab === 'sitemap' ? 0 : -1} aria-selected={activeTab === 'sitemap'} class:active={activeTab === 'sitemap'} on:click={() => activeTab = 'sitemap'}>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="3" y="3" width="18" height="18" rx="2"></rect>
+          <line x1="3" y1="9" x2="21" y2="9"></line>
+          <line x1="9" y1="21" x2="9" y2="9"></line>
+        </svg>
+        <span>Flow Sitemap & Wireframes</span>
       </button>
-      <button class="nav-tab" class:active={activeTab === 'flowchart'} on:click={() => activeTab = 'flowchart'}>
-        🔀 System Flowchart
+      <button class="nav-tab" role="tab" id="qa-tab-flowchart" aria-controls="qa-tabpanel" tabindex={activeTab === 'flowchart' ? 0 : -1} aria-selected={activeTab === 'flowchart'} class:active={activeTab === 'flowchart'} on:click={() => activeTab = 'flowchart'}>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="3" y="3" width="6" height="6" rx="1"></rect>
+          <rect x="15" y="15" width="6" height="6" rx="1"></rect>
+          <path d="M9 6h4a2 2 0 0 1 2 2v7"></path>
+          <path d="M6 9v6a2 2 0 0 0 2 2h7"></path>
+        </svg>
+        <span>System Flowchart</span>
       </button>
-      <button class="nav-tab" class:active={activeTab === 'usecase'} on:click={() => activeTab = 'usecase'}>
-        👥 Use Case Diagram
+      <button class="nav-tab" role="tab" id="qa-tab-usecase" aria-controls="qa-tabpanel" tabindex={activeTab === 'usecase' ? 0 : -1} aria-selected={activeTab === 'usecase'} class:active={activeTab === 'usecase'} on:click={() => activeTab = 'usecase'}>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+          <circle cx="9" cy="7" r="4"></circle>
+          <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+          <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+        </svg>
+        <span>Use Case Diagram</span>
       </button>
-      <button class="nav-tab" class:active={activeTab === 'activity'} on:click={() => activeTab = 'activity'}>
-        ⚡ Activity & Process Flow
+      <button class="nav-tab" role="tab" id="qa-tab-activity" aria-controls="qa-tabpanel" tabindex={activeTab === 'activity' ? 0 : -1} aria-selected={activeTab === 'activity'} class:active={activeTab === 'activity'} on:click={() => activeTab = 'activity'}>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+        </svg>
+        <span>Activity & Process Flow</span>
       </button>
-      <button class="nav-tab" class:active={activeTab === 'sequence'} on:click={() => activeTab = 'sequence'}>
-        🔄 Sequence & Architecture
+      <button class="nav-tab" role="tab" id="qa-tab-sequence" aria-controls="qa-tabpanel" tabindex={activeTab === 'sequence' ? 0 : -1} aria-selected={activeTab === 'sequence'} class:active={activeTab === 'sequence'} on:click={() => activeTab = 'sequence'}>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <polyline points="17 1 21 5 17 9"></polyline>
+          <path d="M3 11V9a4 4 0 0 1 4-4h14"></path>
+          <polyline points="7 23 3 19 7 15"></polyline>
+          <path d="M21 13v2a4 4 0 0 1-4 4H3"></path>
+        </svg>
+        <span>Sequence & Architecture</span>
       </button>
-      <button class="nav-tab" class:active={activeTab === 'matrix'} on:click={() => activeTab = 'matrix'}>
-        📋 Traceability Matrix
+      <button class="nav-tab" role="tab" id="qa-tab-matrix" aria-controls="qa-tabpanel" tabindex={activeTab === 'matrix' ? 0 : -1} aria-selected={activeTab === 'matrix'} class:active={activeTab === 'matrix'} on:click={() => activeTab = 'matrix'}>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M9 11l3 3L22 4"></path>
+          <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
+        </svg>
+        <span>Traceability Matrix</span>
       </button>
     </div>
 
     <!-- Tab Contents -->
     {#if !flowData}
-      <div class="glass-panel empty-analysis-card">
-        <div class="empty-icon">📊</div>
+      <div class="glass-panel empty-analysis-card" in:fly={{ y: 12, duration: 260, easing: cubicOut }}>
+        <div class="empty-icon-ring" aria-hidden="true">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="6" height="6" rx="1"></rect>
+            <rect x="15" y="15" width="6" height="6" rx="1"></rect>
+            <path d="M9 6h4a2 2 0 0 1 2 2v7"></path>
+            <path d="M6 9v6a2 2 0 0 0 2 2h7"></path>
+          </svg>
+        </div>
         <h3>ยังไม่มีข้อมูล Flow Analysis สำหรับโครงการนี้</h3>
-        <p>กดปุ่ม <b>"⚡ วิเคราะห์และสร้าง Diagram ใหม่"</b> ด้านบน เพื่อให้ AI Agent ประมวลผลเอกสาร Markdown และสร้างผังระบบ</p>
+        <p>กดปุ่ม <b>"วิเคราะห์และสร้าง Diagram ใหม่ (AI Synthesizer)"</b> ด้านบน เพื่อให้ Agent 7 ประมวลผลเอกสารคลังข้อมูล, API Collection และสร้างผังสถาปัตยกรรมครบชุด</p>
       </div>
     {:else}
       <!-- TAB 1: SITEMAP & WIREFRAMES -->
       {#if activeTab === 'sitemap'}
-        <div class="sitemap-workspace" transition:fade>
+        <div class="sitemap-workspace" role="tabpanel" id="qa-tabpanel" aria-labelledby="qa-tab-sitemap" in:fly={{ y: 12, duration: 240, easing: cubicOut }}>
           <!-- Left: Sitemap Tree Navigation -->
           <div class="glass-panel sitemap-panel">
             <div class="panel-title-row">
-              <h3>🗺️ Flow Sitemap (เมนูและโครงสร้างหน้า)</h3>
+              <h3><QAIcon name="map" /> Flow Sitemap (เมนูและโครงสร้างหน้า)</h3>
               <span class="count-badge">{flowData.sitemap ? flowData.sitemap.length : 0} Modules</span>
             </div>
             <p class="sub-hint">คลิกที่โหนดเมนูเพื่อดู Mockup จำลองหน้าจอ UI ที่เชื่อมโยง</p>
@@ -1887,9 +1229,16 @@
                 <div class="empty-hint">ไม่พบข้อมูล Sitemap</div>
               {:else}
                 {#each flowData.sitemap as node}
-                  <div class="sitemap-node-card" class:active={selectedNodeId ? selectedNodeId === (node.id || node.screen_id || node.path || node.title) : (selectedScreenId && selectedScreenId === node.screen_id)} on:click={() => handleSelectSitemapNode(node)}>
+                  <div
+                    class="sitemap-node-card"
+                    role="button"
+                    tabindex="0"
+                    class:active={selectedNodeId ? selectedNodeId === (node.id || node.screen_id || node.path || node.title) : (selectedScreenId && selectedScreenId === node.screen_id)}
+                    on:click={() => handleSelectSitemapNode(node)}
+                    on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleSelectSitemapNode(node); } }}
+                  >
                     <div class="node-main">
-                      <span class="node-icon">{node.icon || '📁'}</span>
+                      <span class="node-icon" aria-hidden="true">{#if node.icon}{node.icon}{:else}<QAIcon name="folder" size={16} />{/if}</span>
                       <div class="node-text">
                         <div class="node-title">{node.title}</div>
                         <div class="node-path">{node.path}</div>
@@ -1898,9 +1247,9 @@
                         <span class="node-category">{node.category}</span>
                       {/if}
                       {#if flowData.screen_mockups?.find(s => s.screen_id === node.screen_id)?.figma_url}
-                        <span class="node-source-badge figma" title="เชื่อมต่อ Figma Frame แล้ว">🎨 Figma</span>
+                        <span class="node-source-badge figma" title="เชื่อมต่อ Figma Frame แล้ว">Figma</span>
                       {:else if flowData.screen_mockups?.find(s => s.screen_id === node.screen_id)?.image_url}
-                        <span class="node-source-badge img" title="มีรูปภาพ Mockup แล้ว">🖼️ Image</span>
+                        <span class="node-source-badge img" title="มีรูปภาพ Mockup แล้ว">Image</span>
                       {/if}
                     </div>
                     {#if node.description}
@@ -1911,16 +1260,23 @@
                     {#if node.children && node.children.length > 0}
                       <div class="node-children">
                         {#each node.children as child}
-                          <div class="sitemap-child-card" class:active={selectedNodeId ? selectedNodeId === (child.id || child.screen_id || child.path || child.title) : (selectedScreenId && selectedScreenId === child.screen_id)} on:click|stopPropagation={() => handleSelectSitemapNode(child)}>
-                            <span class="child-icon">{child.icon || '📄'}</span>
+                          <div
+                            class="sitemap-child-card"
+                            role="button"
+                            tabindex="0"
+                            class:active={selectedNodeId ? selectedNodeId === (child.id || child.screen_id || child.path || child.title) : (selectedScreenId && selectedScreenId === child.screen_id)}
+                            on:click|stopPropagation={() => handleSelectSitemapNode(child)}
+                            on:keydown|stopPropagation={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleSelectSitemapNode(child); } }}
+                          >
+                            <span class="child-icon" aria-hidden="true">{#if child.icon}{child.icon}{:else}<QAIcon name="file" size={14} />{/if}</span>
                             <div class="child-info">
                               <span class="child-title">{child.title}</span>
                               <span class="child-path">{child.path}</span>
                             </div>
                             {#if flowData.screen_mockups?.find(s => s.screen_id === child.screen_id)?.figma_url}
-                              <span class="node-source-badge figma-sm">🎨</span>
+                              <span class="node-source-badge figma-sm" title="Figma">Figma</span>
                             {:else if flowData.screen_mockups?.find(s => s.screen_id === child.screen_id)?.image_url}
-                              <span class="node-source-badge img-sm">🖼️</span>
+                              <span class="node-source-badge img-sm" title="Image">Img</span>
                             {/if}
                           </div>
                         {/each}
@@ -1936,7 +1292,7 @@
           <div class="glass-panel mockup-panel">
             <div class="panel-title-row">
               <div class="panel-title-group">
-                <h3>💻 Screen Mockup & UI Wireframe</h3>
+                <h3><QAIcon name="monitor" /> Screen Mockup & UI Wireframe</h3>
                 {#if currentScreenMockup}
                   <span class="screen-id-badge">{currentScreenMockup.screen_id}</span>
                 {/if}
@@ -1949,13 +1305,13 @@
                     class="wf-mode-tab-btn" 
                     class:active={activeWireframeTab === 'ai'} 
                     on:click={() => handleSwitchWireframeTab('ai')}>
-                    🤖 AI Wireframe
+                    <QAIcon name="sparkles" /> AI Wireframe
                   </button>
                   <button 
                     class="wf-mode-tab-btn" 
                     class:active={activeWireframeTab === 'figma'} 
                     on:click={() => handleSwitchWireframeTab('figma')}>
-                    🎨 Figma MCP & Embed
+                    <QAIcon name="palette" /> Figma MCP & Embed
                     {#if currentScreenMockup.figma_url}
                       <span class="dot-live green"></span>
                     {/if}
@@ -1964,7 +1320,7 @@
                     class="wf-mode-tab-btn" 
                     class:active={activeWireframeTab === 'image'} 
                     on:click={() => handleSwitchWireframeTab('image')}>
-                    🖼️ Upload Image
+                    <QAIcon name="image" /> Upload Image
                     {#if currentScreenMockup.image_url}
                       <span class="dot-live blue"></span>
                     {/if}
@@ -1975,7 +1331,7 @@
 
             {#if !currentScreenMockup}
               <div class="empty-mockup">
-                <div style="font-size: 36px; margin-bottom: 12px;">🖥️</div>
+                <div class="empty-mockup-icon" aria-hidden="true"><QAIcon name="monitor" size={40} strokeWidth={1.5} /></div>
                 <div style="font-weight: 600; color: #f8fafc; font-size: 15px;">เลือกเมนูทางซ้ายเพื่อแสดง UI Prototype</div>
                 <div style="font-size: 12px; color: #94a3b8; margin-top: 4px;">ระบบจะจำลองหน้าจอและส่วนประกอบ UI เสมือนจริงที่พร้อมโต้ตอบได้ทันที</div>
               </div>
@@ -1988,30 +1344,30 @@
                     class:active={prototypeDevice === 'desktop'} 
                     on:click={() => prototypeDevice = 'desktop'}
                     title="มุมมองหน้าจอ Desktop (100% Wide)">
-                    🖥️ Desktop
+                    <QAIcon name="monitor" /> Desktop
                   </button>
                   <button 
                     class="btn-device-switch" 
                     class:active={prototypeDevice === 'tablet'} 
                     on:click={() => prototypeDevice = 'tablet'}
                     title="มุมมองหน้าจอ Tablet (768px)">
-                    📱 Tablet
+                    <QAIcon name="tablet" /> Tablet
                   </button>
                   <button 
                     class="btn-device-switch" 
                     class:active={prototypeDevice === 'mobile'} 
                     on:click={() => prototypeDevice = 'mobile'}
                     title="มุมมองหน้าจอ Mobile Smartphone (375px)">
-                    📲 Mobile
+                    <QAIcon name="smartphone" /> Mobile
                   </button>
                 </div>
 
                 <div class="prototype-quick-actions">
                   <button class="btn-proto-action fill" on:click={fillSampleData} title="เติมข้อมูลจำลองอัตโนมัติลงในทุกช่องเพื่อทดสอบ">
-                    ⚡ เติมข้อมูลตัวอย่าง (Sample Data)
+                    <QAIcon name="zap" /> เติมข้อมูลตัวอย่าง (Sample Data)
                   </button>
                   <button class="btn-proto-action reset" on:click={resetPrototype} title="ล้างค่าฟอร์มกลับเป็นค่าเริ่มต้น">
-                    🔄 รีเซ็ต
+                    <QAIcon name="refresh" /> รีเซ็ต
                   </button>
                   <div class="prototype-badge-live">
                     <span class="live-dot pulse"></span>
@@ -2029,40 +1385,41 @@
                     <div class="mobile-phone-notch-bar">
                       <span class="phone-time">9:41</span>
                       <div class="phone-dynamic-island"></div>
-                      <div class="phone-icons">5G 📶 🔋</div>
+                      <div class="phone-icons">5G</div>
                     </div>
                   {/if}
 
                   <!-- Mockup Browser Bar -->
                   <div class="mockup-browser-bar">
-                    <div class="browser-dots">
-                      <span class="dot red" on:click={resetPrototype} title="รีเซ็ต"></span>
+                    <div class="browser-dots" aria-hidden="true">
+                      <span class="dot red"></span>
                       <span class="dot yellow"></span>
                       <span class="dot green"></span>
                     </div>
                     <div class="browser-nav-arrows">
-                      <button class="btn-nav-arrow" on:click={() => handlePrototypeHeaderAction('ย้อนกลับ')} title="ย้อนกลับ">◀</button>
-                      <button class="btn-nav-arrow" on:click={fillSampleData} title="รีเฟรช">🔄</button>
+                      <button type="button" class="btn-nav-arrow" on:click={() => handlePrototypeHeaderAction('ย้อนกลับ')} title="ย้อนกลับ" aria-label="ย้อนกลับ"><QAIcon name="back" size={14} /></button>
+                      <button type="button" class="btn-nav-arrow" on:click={resetPrototype} title="รีเซ็ตค่า Prototype" aria-label="รีเซ็ตค่า Prototype"><QAIcon name="undo" size={14} /></button>
+                      <button type="button" class="btn-nav-arrow" on:click={fillSampleData} title="เติมข้อมูลตัวอย่าง" aria-label="เติมข้อมูลตัวอย่าง"><QAIcon name="refresh" size={14} /></button>
                     </div>
                     <div class="browser-url-input">
-                      <span class="lock-icon">🔒</span>
+                      <span class="lock-icon" aria-hidden="true"><QAIcon name="lock" size={12} /></span>
                       {#if activeWireframeTab === 'figma' && currentScreenMockup.figma_url}
                         {currentScreenMockup.figma_url}
                       {:else}
-                        https://{($selectedProjectStore.project_code || 'foodsmile').toLowerCase()}.app{currentScreenMockup.route || '/'}
+                        https://{($selectedProjectStore.project_code || 'project').toLowerCase()}.app{currentScreenMockup.route || '/'}
                       {/if}
                     </div>
                     <div class="browser-right-actions">
                       <button class="btn-run-agent-screen" on:click={() => handleTestScreenWithAgent(currentScreenMockup)} title="เปิดระบบ AI Test Agent เพื่อทดสอบหน้าจอนี้">
-                        🚀 ทดสอบด้วย AI
+                        <QAIcon name="play" /> ทดสอบด้วย AI
                       </button>
                       {#if activeWireframeTab === 'figma' && currentScreenMockup.figma_url}
                         <a href={currentScreenMockup.figma_url} target="_blank" rel="noreferrer" class="browser-ext-link" title="เปิดใน Figma">
-                          ↗️ Figma
+                          <QAIcon name="external" /> Figma
                         </a>
                       {:else if activeWireframeTab === 'image' && currentScreenMockup.image_url}
                         <button class="browser-ext-link" on:click={() => lightboxImage = currentScreenMockup.image_url}>
-                          🔍 Fullscreen
+                          <QAIcon name="search" /> Fullscreen
                         </button>
                       {/if}
                     </div>
@@ -2073,37 +1430,37 @@
                     <div class="figma-container">
                       <div class="figma-config-panel">
                         <div class="figma-input-row">
-                          <span class="figma-icon-tag">🎨 Figma Link:</span>
+                          <span class="figma-icon-tag"><QAIcon name="palette" /> Figma Link:</span>
                           <input 
                             type="text" 
                             bind:value={figmaUrlInput} 
                             placeholder="https://www.figma.com/design/.../...?node-id=..." 
-                            class="figma-text-input" 
+                            class="figma-text-input" aria-label="Figma Frame URL" 
                           />
                           <button class="btn-figma-action connect" on:click={handleSaveFigmaUrl}>
-                            🔗 Connect & Save
+                            <QAIcon name="link" /> Connect & Save
                           </button>
                           <button class="btn-figma-action sync" on:click={handleSyncFigmaImage} disabled={isSyncingFigma}>
                             {#if isSyncingFigma}
                               <span class="spinner-small"></span> Syncing...
                             {:else}
-                              🔄 Sync MCP / API
+                              <QAIcon name="refresh" /> Sync MCP / API
                             {/if}
                           </button>
                           <button class="btn-figma-action token" on:click={() => showFigmaTokenInput = !showFigmaTokenInput} title="Figma Personal Access Token">
-                            ⚙️ Token
+                            <QAIcon name="settings" /> Token
                           </button>
                         </div>
 
                         {#if showFigmaTokenInput}
                           <div class="figma-token-box" transition:slide>
-                            <div class="token-title">🔑 Figma Access Token (สำหรับดึงภาพอัตโนมัติผ่าน Figma MCP/REST API):</div>
+                            <div class="token-title"><QAIcon name="key" /> Figma Access Token (สำหรับดึงภาพอัตโนมัติผ่าน Figma MCP/REST API):</div>
                             <div class="token-form-row">
                               <input 
                                 type="password" 
                                 bind:value={figmaTokenInput} 
                                 placeholder="figd_xxxxxxxxx" 
-                                class="figma-token-field"
+                                class="figma-token-field" aria-label="Figma Personal Access Token"
                               />
                               <button class="btn-save-token" on:click={() => { localStorage.setItem('figma_token', figmaTokenInput.trim()); toast('บันทึก Figma Token แล้ว', 'success'); showFigmaTokenInput = false; }}>
                                 บันทึก
@@ -2124,7 +1481,7 @@
                         </div>
                       {:else}
                         <div class="figma-empty-guide">
-                          <div class="figma-watermark-icon">🎨</div>
+                          <div class="figma-watermark-icon"><QAIcon name="palette" /></div>
                           <h4>เชื่อมต่อกับ Figma MCP & Live Frame Embed</h4>
                           <p>คัดลอก URL ของ Frame ใน Figma (คลิกขวาที่ Frame ใน Figma &gt; Copy Link) แล้ววางในช่องด้านบน</p>
                         </div>
@@ -2145,35 +1502,46 @@
                       {#if currentScreenMockup.image_url}
                         <div class="image-viewport-box">
                           <div class="image-action-toolbar">
-                            <span class="img-name-tag">📷 {currentScreenMockup.image_filename || 'Mockup Screenshot'}</span>
+                            <span class="img-name-tag"><QAIcon name="camera" /> {currentScreenMockup.image_filename || 'Mockup Screenshot'}</span>
                             <div class="img-btn-group">
                               <button class="btn-img-ctrl zoom" on:click={() => lightboxImage = currentScreenMockup.image_url}>
-                                🔍 ขยายเต็มจอ
+                                <QAIcon name="search" /> ขยายเต็มจอ
                               </button>
                               <button class="btn-img-ctrl replace" on:click={() => fileInputRef?.click()} disabled={isUploadingImage}>
-                                🔄 เปลี่ยนภาพ
+                                <QAIcon name="refresh" /> เปลี่ยนภาพ
                               </button>
                               <button class="btn-img-ctrl delete" on:click={handleRemoveImage}>
-                                🗑️ ลบภาพ
+                                <QAIcon name="trash" /> ลบภาพ
                               </button>
                             </div>
                           </div>
-                          <div class="image-display-area" on:click={() => lightboxImage = currentScreenMockup.image_url}>
-                            <img src={`${currentScreenMockup.image_url}`} alt="Screen Wireframe Mockup" class="wireframe-img-render" />
+                          <div
+                            class="image-display-area"
+                            role="button"
+                            tabindex="0"
+                            aria-label="เปิดดูรูป Wireframe ขนาดเต็ม"
+                            on:click={() => lightboxImage = currentScreenMockup.image_url}
+                            on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); lightboxImage = currentScreenMockup.image_url; } }}
+                          >
+                            <img src={`${currentScreenMockup.image_url}`} alt="Screen Wireframe Mockup" class="wireframe-img-render" loading="lazy" decoding="async" />
                           </div>
                         </div>
                       {:else}
                         <div 
                           class="image-upload-dropzone" 
                           class:uploading={isUploadingImage}
+                          role="button"
+                          tabindex="0"
+                          aria-label="อัปโหลดรูปภาพ Screen Mockup"
                           on:click={() => fileInputRef?.click()}
+                          on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInputRef?.click(); } }}
                           on:dragover|preventDefault
                           on:drop|preventDefault={(e) => {
                             const file = e.dataTransfer?.files?.[0];
                             if (file) handleFileUpload({ target: { files: [file] } });
                           }}
                         >
-                          <div class="drop-icon">🖼️</div>
+                          <div class="drop-icon"><QAIcon name="image" /></div>
                           <h4>อัปโหลดรูปภาพ Screen Mockup / Wireframe</h4>
                           <p>ลากรูปภาพมาวางที่นี่ หรือคลิกเพื่อเลือกไฟล์ (รองรับ PNG, JPG, WebP, SVG)</p>
                           {#if isUploadingImage}
@@ -2181,7 +1549,7 @@
                               <span class="spinner-small"></span> กำลังอัปโหลดภาพ...
                             </div>
                           {:else}
-                            <button class="btn-upload-browse">📁 เลือกไฟล์ภาพจากเครื่อง</button>
+                            <button class="btn-upload-browse"><QAIcon name="folder" /> เลือกไฟล์ภาพจากเครื่อง</button>
                           {/if}
                         </div>
                       {/if}
@@ -2202,11 +1570,11 @@
                           </h3>
                           {#if currentScreenMockup.header?.badge}
                             <span class="proto-verified-badge {currentScreenMockup.header.badge_color || 'emerald'}">
-                              ✨ {currentScreenMockup.header.badge}
+                              <QAIcon name="sparkles" /> {currentScreenMockup.header.badge}
                             </span>
                           {:else}
                             <span class="proto-verified-badge emerald">
-                              ✨ Production Ready
+                              <QAIcon name="sparkles" /> Production Ready
                             </span>
                           {/if}
                         </div>
@@ -2223,25 +1591,25 @@
                               class:favorited={isFavorite && (act.includes('โปรด') || act.includes('favorite') || act.includes('like'))}
                               on:click={() => handlePrototypeHeaderAction(act)}>
                               {#if act.includes('แชร์') || act.includes('share')}
-                                🔗 {act}
+                                <QAIcon name="link" /> {act}
                               {:else if act.includes('โปรด') || act.includes('favorite') || act.includes('like')}
-                                {isFavorite ? '❤️ เป็นร้านโปรดแล้ว' : '🤍 ' + act}
+                                <QAIcon name="star" size={14} filled={isFavorite} /> {isFavorite ? 'บันทึกเป็นรายการโปรดแล้ว' : act}
                               {:else if act.includes('ย้อน') || act.includes('back')}
-                                ◀ {act}
+                                <QAIcon name="back" /> {act}
                               {:else if act.includes('เข้าสู่ระบบ') || act.includes('login') || act.includes('sign in')}
-                                🚀 {act}
+                                <QAIcon name="play" /> {act}
                               {:else if act.includes('ค้นหา') || act.includes('search')}
-                                🔍 {act}
+                                <QAIcon name="search" /> {act}
                               {:else if act.includes('บันทึก') || act.includes('save')}
-                                💾 {act}
+                                <QAIcon name="save" /> {act}
                               {:else}
-                                ⚙️ {act}
+                                <QAIcon name="settings" /> {act}
                               {/if}
                             </button>
                           {/each}
                         {:else}
                           <button class="btn-proto-header-action" on:click={() => handlePrototypeHeaderAction('รีเฟรช')}>
-                            🔄 รีเฟรช
+                            <QAIcon name="refresh" /> รีเฟรช
                           </button>
                         {/if}
                       </div>
@@ -2285,16 +1653,22 @@
                           {#if (sec.type === 'gallery' || sec.images) && sec.images && sec.images.length > 0}
                             <div class="proto-section-card gallery">
                               <div class="proto-sec-header">
-                                <div class="mock-sec-title">🖼️ {sec.section_name || 'Image Gallery & Highlights'}</div>
+                                <div class="mock-sec-title"><QAIcon name="image" /> {sec.section_name || 'Image Gallery & Highlights'}</div>
                                 {#if sec.banner_tag}
                                   <span class="proto-tag-highlight">{sec.banner_tag}</span>
                                 {/if}
                               </div>
                               <div class="proto-gallery-grid">
                                 {#each sec.images as img, idx}
-                                  <div class="gallery-photo-card" on:click={() => toast(`🔍 ดูภาพขยาย: ${img.title}`, 'info')}>
+                                  <div
+                                    class="gallery-photo-card"
+                                    role="button"
+                                    tabindex="0"
+                                    on:click={() => toast(`ดูภาพขยาย: ${img.title}`, 'info')}
+                                    on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toast(`ดูภาพขยาย: ${img.title}`, 'info'); } }}
+                                  >
                                     <div class="photo-visual-placeholder grad-{idx % 4}">
-                                      <span class="photo-cam-icon">📷</span>
+                                      <span class="photo-cam-icon"><QAIcon name="camera" /></span>
                                       <span class="photo-badge">HD View</span>
                                     </div>
                                     <div class="photo-card-info">
@@ -2310,14 +1684,14 @@
                           {:else if sec.type === 'form' || sec.fields}
                             <div class="proto-section-card form">
                               <div class="proto-sec-header">
-                                <div class="mock-sec-title">📝 {sec.section_name || 'Interactive Form Details'}</div>
-                                <span class="proto-interactive-tag">⚡ Live Editable</span>
+                                <div class="mock-sec-title"><QAIcon name="edit" /> {sec.section_name || 'Interactive Form Details'}</div>
+                                <span class="proto-interactive-tag"><QAIcon name="zap" /> Live Editable</span>
                               </div>
 
                               <div class="mock-form-grid">
-                                {#each (sec.fields || []) as f}
+                                {#each (sec.fields || []) as f, fIdx}
                                   <div class="mock-form-item" class:full-width={f.type === 'textarea' || (f.label && f.label.includes('ที่อยู่'))}>
-                                    <label class="mock-label" for="fld-{secIdx}-{f.label}">
+                                    <label class="mock-label" for="fld-{secIdx}-{fIdx}">
                                       {f.label} {#if f.required}<span class="req-star">*</span>{/if}
                                     </label>
 
@@ -2331,14 +1705,14 @@
                                           <span class="switch-slider"></span>
                                         </label>
                                         <span class="toggle-status-text">
-                                          {currentFormValues[f.label] ? '🟢 เปิดใช้งาน (Active)' : '⚪ ปิดใช้งาน (Disabled)'}
+                                          {currentFormValues[f.label] ? 'เปิดใช้งาน (Active)' : 'ปิดใช้งาน (Disabled)'}
                                         </span>
                                       </div>
 
                                     {:else if f.type === 'select' || f.options}
                                       <div class="proto-input-wrapper">
                                         <select 
-                                          id="fld-{secIdx}-{f.label}"
+                                          id="fld-{secIdx}-{fIdx}"
                                           class="proto-real-select"
                                           bind:value={currentFormValues[f.label]}
                                         >
@@ -2351,7 +1725,7 @@
 
                                     {:else if f.type === 'textarea' || (f.label && f.label.includes('ที่อยู่'))}
                                       <textarea 
-                                        id="fld-{secIdx}-{f.label}"
+                                        id="fld-{secIdx}-{fIdx}"
                                         class="proto-real-textarea"
                                         rows="3"
                                         placeholder={f.placeholder || f.label}
@@ -2371,7 +1745,7 @@
                                       <div class="proto-input-wrapper">
                                         <input 
                                           type={f.type === 'password' ? 'password' : 'text'}
-                                          id="fld-{secIdx}-{f.label}"
+                                          id="fld-{secIdx}-{fIdx}"
                                           class="proto-real-input"
                                           placeholder={f.placeholder || f.label}
                                           bind:value={currentFormValues[f.label]}
@@ -2380,7 +1754,7 @@
                                           <button 
                                             class="btn-input-clear" 
                                             on:click={() => currentFormValues[f.label] = ''} 
-                                            title="ล้างข้อมูล">✕</button>
+                                            title="ล้างข้อมูล" aria-label="ล้างข้อมูล"><QAIcon name="close" size={12} /></button>
                                         {/if}
                                       </div>
                                     {/if}
@@ -2412,7 +1786,7 @@
                           {:else if sec.type === 'table' || sec.table_headers}
                             <div class="proto-section-card table">
                               <div class="proto-sec-header">
-                                <div class="mock-sec-title">📊 {sec.section_name || 'Data Table Overview'}</div>
+                                <div class="mock-sec-title"><QAIcon name="chart" /> {sec.section_name || 'Data Table Overview'}</div>
                                 <span class="proto-count-badge">{(sec.table_rows || []).length} รายการ</span>
                               </div>
 
@@ -2431,14 +1805,14 @@
                                         {#each row as cell, cellIdx}
                                           <td>
                                             {#if String(cell).includes('พร้อม') || String(cell).includes('Active') || String(cell).includes('สำเร็จ')}
-                                              <span class="table-pill success">🟢 {cell}</span>
+                                              <span class="table-pill success"><QAIcon name="dot" size={10} /> {cell}</span>
                                             {:else if String(cell).includes('รอ') || String(cell).includes('Pending')}
-                                              <span class="table-pill warning">⏳ {cell}</span>
+                                              <span class="table-pill warning"><QAIcon name="clock" size={12} /> {cell}</span>
                                             {:else if String(cell).startsWith('#')}
                                               <span class="table-code-badge">{cell}</span>
                                             {:else if cellIdx === row.length - 1}
                                               <button class="btn-table-action" on:click={() => handleTableActionClick(cell, row)}>
-                                                ⚡ {cell}
+                                                <QAIcon name="zap" /> {cell}
                                               </button>
                                             {:else}
                                               <span class="table-cell-text">{cell}</span>
@@ -2456,23 +1830,23 @@
                           {:else if sec.type === 'reviews' || sec.reviews}
                             <div class="proto-section-card reviews">
                               <div class="proto-sec-header">
-                                <div class="mock-sec-title">💬 {sec.section_name || 'Customer Reviews & Feedback'}</div>
-                                <button class="btn-write-review-sm" on:click={() => handlePrototypeButtonAction({ label: 'เขียนรีวิว' })}>
-                                  ✍️ เขียนรีวิว
+                                <div class="mock-sec-title">{sec.section_name || 'User Feedback & Notes'}</div>
+                                <button type="button" class="btn-write-review-sm" on:click={() => handlePrototypeButtonAction({ label: 'เพิ่มความคิดเห็น' })}>
+                                  + เพิ่มความคิดเห็น
                                 </button>
                               </div>
 
                               <div class="proto-reviews-list">
-                                {#each (sec.reviews || [{ user: 'นันทนา กุลสวัสดิ์', rating: 5, comment: 'อาหารอร่อยมาก บรรยากาศดี พนักงานบริการสุภาพ แนะนำเลยค่ะ!', time: '1 ชม. ที่แล้ว' }, { user: 'เอกรัฐ พัฒนา', rating: 5, comment: 'ที่จอดรถสะดวก อาหารเสิร์ฟรวดเร็ว คุ้มราคามากครับ', time: 'เมื่อวานนี้' }]) as rev}
+                                {#each (sec.reviews || [{ user: 'QA Reviewer', rating: 5, comment: 'ตรวจสอบการแสดงผลและ Flow การทำงานของหน้าจอนี้เรียบร้อย', time: '1 ชม. ที่แล้ว' }, { user: 'Product Owner', rating: 5, comment: 'โครงสร้างข้อมูลและ Validation สอดคล้องกับ Requirement ของโครงการ', time: 'เมื่อวานนี้' }]) as rev}
                                   <div class="review-comment-card">
                                     <div class="rev-user-header">
-                                      <div class="rev-avatar">👤</div>
+                                      <div class="rev-avatar" aria-hidden="true"><QAIcon name="user" size={16} /></div>
                                       <div class="rev-user-meta">
                                         <div class="rev-name">{rev.user}</div>
                                         <div class="rev-time">{rev.time || 'เมื่อสักครู่'}</div>
                                       </div>
                                       <div class="rev-stars">
-                                        {'⭐'.repeat(rev.rating || 5)}
+                                        {#each Array(Math.max(0, Math.min(5, Number(rev.rating) || 5))) as _}<QAIcon name="star" size={12} filled />{/each}
                                       </div>
                                     </div>
                                     <p class="rev-comment-text">{rev.comment}</p>
@@ -2485,7 +1859,7 @@
                           {:else}
                             <div class="proto-section-card generic">
                               {#if sec.section_name}
-                                <div class="mock-sec-title">📦 {sec.section_name}</div>
+                                <div class="mock-sec-title"><QAIcon name="package" /> {sec.section_name}</div>
                               {/if}
                               <div class="proto-generic-content">
                                 <p style="color: #cbd5e1; font-size: 12px; margin: 0 0 10px 0;">{sec.description || 'Interactive section component with dynamic controls.'}</p>
@@ -2500,7 +1874,7 @@
                     <!-- Connected Entities Footbar -->
                     <div class="mockup-footbar">
                       <div class="conn-item">
-                        <b>🔗 Connected Use Cases:</b> 
+                        <b><QAIcon name="link" /> Connected Use Cases:</b> 
                         {#if currentScreenMockup.connected_use_cases}
                           {#each currentScreenMockup.connected_use_cases as uc}
                             <span class="tag-pill">{uc}</span>
@@ -2510,7 +1884,7 @@
                         {/if}
                       </div>
                       <div class="conn-item">
-                        <b>📋 Requirements:</b> 
+                        <b><QAIcon name="clipboard" /> Requirements:</b> 
                         {#if currentScreenMockup.connected_req_codes}
                           {#each currentScreenMockup.connected_req_codes as req}
                             <span class="tag-pill req">{req}</span>
@@ -2530,37 +1904,37 @@
 
         <!-- Prototype Simulation Dialog Modal -->
         {#if activePrototypeModal}
-          <div class="lightbox-backdrop" transition:fade on:click={() => activePrototypeModal = null}>
-            <div class="prototype-dialog-modal" on:click|stopPropagation>
+          <div class="lightbox-backdrop" transition:fade={{ duration: 160 }} role="presentation" on:click={() => activePrototypeModal = null}>
+            <div class="prototype-dialog-modal" role="dialog" aria-modal="true" aria-labelledby="proto-dialog-title" tabindex="-1" use:modalFocus on:click|stopPropagation>
               <div class="proto-dialog-header {activePrototypeModal.type}">
-                <div class="proto-dialog-title">{activePrototypeModal.title}</div>
-                <button class="lightbox-close" on:click={() => activePrototypeModal = null}>✕</button>
+                <div class="proto-dialog-title" id="proto-dialog-title">{activePrototypeModal.title}</div>
+                <button type="button" class="lightbox-close" aria-label="ปิดหน้าต่าง" on:click={() => activePrototypeModal = null}><QAIcon name="close" size={14} /></button>
               </div>
               <div class="proto-dialog-body">
                 {#if activePrototypeModal.type === 'success'}
-                  <div class="dialog-icon-huge">🎉</div>
+                  <div class="dialog-icon-huge" aria-hidden="true"><QAIcon name="check" size={40} strokeWidth={2.4} /></div>
                   <p class="dialog-body-text">{activePrototypeModal.content}</p>
                   <div class="dialog-success-badge">HTTP 200 OK • State Updated</div>
                 {:else if activePrototypeModal.type === 'map'}
                   <div class="dialog-map-preview">
                     <div class="simulated-map-box">
                       <div class="map-route-line"></div>
-                      <div class="map-pin start">📍 จุดเริ่มต้นของคุณ</div>
-                      <div class="map-pin end">🏁 ร้านอาหารเป้าหมาย</div>
+                      <div class="map-pin start">จุดเริ่มต้นของคุณ</div>
+                      <div class="map-pin end">จุดหมายปลายทาง</div>
                     </div>
                   </div>
                   <p class="dialog-body-text">{activePrototypeModal.content}</p>
                 {:else if activePrototypeModal.type === 'review'}
                   <div class="dialog-review-form">
-                    <div class="star-rating-selector">
-                      <span class="star-sel active">⭐</span>
-                      <span class="star-sel active">⭐</span>
-                      <span class="star-sel active">⭐</span>
-                      <span class="star-sel active">⭐</span>
-                      <span class="star-sel active">⭐</span>
+                    <div class="star-rating-selector" aria-label="คะแนน 5 จาก 5">
+                      <span class="star-sel active" aria-hidden="true"><QAIcon name="star" size={22} filled /></span>
+                      <span class="star-sel active" aria-hidden="true"><QAIcon name="star" size={22} filled /></span>
+                      <span class="star-sel active" aria-hidden="true"><QAIcon name="star" size={22} filled /></span>
+                      <span class="star-sel active" aria-hidden="true"><QAIcon name="star" size={22} filled /></span>
+                      <span class="star-sel active" aria-hidden="true"><QAIcon name="star" size={22} filled /></span>
                       <span class="star-score-tag">5.0 (ยอดเยี่ยม)</span>
                     </div>
-                    <textarea class="proto-real-textarea" rows="3" placeholder="พิมพ์ความคิดเห็นของคุณที่นี่..."></textarea>
+                    <textarea class="proto-real-textarea" rows="3" aria-label="ความคิดเห็น" placeholder="พิมพ์ความคิดเห็นของคุณที่นี่..."></textarea>
                   </div>
                 {/if}
               </div>
@@ -2575,19 +1949,19 @@
 
       <!-- TAB 2, 3, 4, 5: SYSTEM FLOWCHART & UML DIAGRAMS -->
       {:else if activeTab === 'flowchart' || activeTab === 'usecase' || activeTab === 'activity' || activeTab === 'sequence'}
-        <div class="diagram-workspace" class:fullscreen-diagram={isFullscreenDiagram} transition:fade>
+        <div class="diagram-workspace" role="tabpanel" id="qa-tabpanel" aria-labelledby="qa-tab-{activeTab}" class:fullscreen-diagram={isFullscreenDiagram} in:fly={{ y: 12, duration: 240, easing: cubicOut }}>
           <!-- Controls bar -->
           <div class="diagram-toolbar" class:drawio-toolbar={activeTab === 'flowchart'}>
             <div class="diagram-title">
               {#if activeTab === 'flowchart'}
-                <span class="drawio-tag-badge">📐 Draw.io Style</span>
-                <span>🔀 System Workflow Flowchart (ผังการทำงานทั้งระบบ)</span>
+                <span class="drawio-tag-badge">Draw.io Canvas</span>
+                <span>System Workflow Flowchart (ผังการทำงานทั้งระบบ)</span>
               {:else if activeTab === 'usecase'}
-                <span>👥 Use Case Diagram (Actors & Functional Boundaries)</span>
+                <span>Use Case Diagram (Actors & Functional Boundaries)</span>
               {:else if activeTab === 'activity'}
-                <span>⚡ Activity & Decision Flow Diagram</span>
+                <span>Activity & Decision Flow Diagram</span>
               {:else if activeTab === 'sequence'}
-                <span>🔄 Sequence & Component Architecture Flow</span>
+                <span>Sequence & Component Architecture Flow</span>
               {/if}
             </div>
 
@@ -2598,30 +1972,73 @@
                   class:active={showDrawioGrid} 
                   on:click={() => showDrawioGrid = !showDrawioGrid} 
                   title="เปิด/ปิดเส้นตาราง Grid แบบ Draw.io">
-                  ▦ Grid {showDrawioGrid ? 'ON' : 'OFF'}
+                  Grid {showDrawioGrid ? 'ON' : 'OFF'}
                 </button>
               {/if}
 
+              <button 
+                class="btn-ctrl-action edit-code" 
+                class:active={showMermaidEditor} 
+                on:click={toggleMermaidEditor} 
+                title="เปิดแก้ไขโค้ด Mermaid และบันทึกลงฐานข้อมูลโครงการ">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <polyline points="16 18 22 12 16 6"></polyline>
+                  <polyline points="8 6 2 12 8 18"></polyline>
+                </svg>
+                {showMermaidEditor ? 'ปิดตัวแก้ไข' : 'แก้ไขโค้ด Mermaid'}
+              </button>
+
               <button class="btn-ctrl-action copy" on:click={copyCurrentMermaidCode} title="คัดลอกโค้ด Mermaid">
-                📋 Copy Code
+                Copy Code
               </button>
 
               <button class="btn-ctrl-action svg" on:click={exportDiagramSVG} title="บันทึกรูปภาพ SVG">
-                💾 Export SVG
+                Export SVG
               </button>
 
               <div class="zoom-controls">
-                <button class="btn-ctrl" on:click={zoomIn} title="ขยาย (Zoom In)">🔍+</button>
-                <button class="btn-ctrl" on:click={zoomOut} title="ย่อ (Zoom Out)">🔍-</button>
-                <button class="btn-ctrl" on:click={fitView} title="ปรับขนาดให้พอดีหน้าจอ (Fit to Screen)">🎯 Fit</button>
+                <button class="btn-ctrl" on:click={zoomIn} title="ขยาย (Zoom In)">+</button>
+                <button class="btn-ctrl" on:click={zoomOut} title="ย่อ (Zoom Out)">−</button>
+                <button class="btn-ctrl" on:click={fitView} title="ปรับขนาดให้พอดีหน้าจอ (Fit to Screen)">Fit</button>
                 <button class="btn-ctrl" on:click={zoomReset} title="ขนาด 100%">{Math.round(zoomLevel * 100)}%</button>
               </div>
 
-              <button class="btn-ctrl-action fs" on:click={() => { isFullscreenDiagram = !isFullscreenDiagram; setTimeout(fitView, 200); }} title="ขยายเต็มหน้าจอ">
-                {isFullscreenDiagram ? '✕ ย่อจอ' : '⛶ เต็มจอ'}
+              <button class="btn-ctrl-action fs" on:click={() => { isFullscreenDiagram = !isFullscreenDiagram; setTimeout(fitView, 200); }} title="ขยายเต็มหน้าจอ (กด Esc เพื่อออก)">
+                <QAIcon name={isFullscreenDiagram ? 'close' : 'maximize'} size={13} /> {isFullscreenDiagram ? 'ย่อจอ' : 'เต็มจอ'}
               </button>
             </div>
           </div>
+
+          <!-- Live Mermaid Code Editor Drawer -->
+          {#if showMermaidEditor}
+            <div class="glass-panel mermaid-editor-drawer" transition:slide={{ duration: 220 }}>
+              <div class="editor-drawer-head">
+                <div class="editor-drawer-title">
+                  <span class="editor-badge">LIVE MERMAID EDITOR</span>
+                  <span class="editor-hint">แก้ไขโค้ด Mermaid แล้วกดบันทึกเพื่อ Render ใหม่และซิงค์ลงฐานข้อมูลโครงการให้ Agent ทุกตัวใช้งานร่วมกัน</span>
+                </div>
+                <div class="editor-drawer-actions">
+                  <button class="btn-editor-cancel" on:click={() => showMermaidEditor = false} disabled={isSavingDiagram}>
+                    ยกเลิก
+                  </button>
+                  <button class="btn-editor-save" on:click={saveEditedDiagram} disabled={isSavingDiagram}>
+                    {#if isSavingDiagram}
+                      <span class="spinner-small"></span> กำลังบันทึก...
+                    {:else}
+                      บันทึกและซิงค์ Agent
+                    {/if}
+                  </button>
+                </div>
+              </div>
+              <textarea
+                class="mermaid-code-textarea" aria-label="โค้ด Mermaid Diagram"
+                bind:value={editableMermaidCode}
+                rows="10"
+                spellcheck="false"
+                placeholder="flowchart TD&#10;  Start([เริ่มต้น]) --> Step1[ขั้นตอนที่ 1]"
+              ></textarea>
+            </div>
+          {/if}
 
           <!-- Mermaid Canvas Box with Draw.io style Grid -->
           <div 
@@ -2633,9 +2050,13 @@
             on:wheel={handleWheel}
           >
             <div class="canvas-help-badge">
-              <span>🖱️ คลิกลากเมาส์เพื่อเลื่อนผัง (Pan)</span>
+              <span>คลิกลากเมาส์เพื่อเลื่อนผัง (Pan)</span>
               <span class="sep">•</span>
-              <span>🔄 สกอลล์เมาส์เพื่อซูม (Zoom)</span>
+              <span>สกอลล์เมาส์เพื่อซูม (Zoom)</span>
+              {#if isFullscreenDiagram}
+                <span class="sep">•</span>
+                <span>กด Esc เพื่อออกจากเต็มจอ</span>
+              {/if}
             </div>
 
             <div 
@@ -2649,162 +2070,27 @@
 
           <!-- Draw.io Flowchart Legend -->
           {#if activeTab === 'flowchart'}
-            <div class="drawio-legend-bar" transition:slide>
-              <div class="legend-header">📐 สัญลักษณ์ผัง Flowchart (Draw.io Notation):</div>
+            <div class="drawio-legend-bar" transition:slide={{ duration: 200 }}>
+              <div class="legend-header">สัญลักษณ์ผัง Flowchart (Draw.io Notation):</div>
               <div class="legend-items">
-                <div class="legend-item"><span class="shape-sample pill"></span> 🏁 Start / Terminal Gate</div>
-                <div class="legend-item"><span class="shape-sample rect"></span> ⚙️ Process Step / Action</div>
-                <div class="legend-item"><span class="shape-sample diamond"></span> 🔀 Decision / Condition Gate</div>
-                <div class="legend-item"><span class="shape-sample cylinder"></span> 💾 Database & Vector Store</div>
-                <div class="legend-item"><span class="shape-sample group"></span> 🔲 Subgraph / Tier Swimlane</div>
+                <div class="legend-item"><span class="shape-sample pill"></span> Start / Terminal Gate</div>
+                <div class="legend-item"><span class="shape-sample rect"></span> Process Step / Action</div>
+                <div class="legend-item"><span class="shape-sample diamond"></span> Decision / Condition Gate</div>
+                <div class="legend-item"><span class="shape-sample cylinder"></span> Database & Vector Store</div>
+                <div class="legend-item"><span class="shape-sample group"></span> Subgraph / Tier Swimlane</div>
               </div>
             </div>
           {/if}
         </div>
 
-      <!-- TAB 5: TRACEABILITY MATRIX -->
+      <!-- TAB 5: TRACEABILITY MATRIX (extracted component) -->
       {:else if activeTab === 'matrix'}
-        <div class="matrix-workspace" transition:fade>
-          <!-- Filter Controls -->
-          <div class="glass-panel matrix-controls-panel">
-            <div class="matrix-filter-row">
-              <div class="search-box">
-                <span class="search-icon">🔍</span>
-                <input 
-                  type="text" 
-                  bind:value={matrixSearchQuery} 
-                  placeholder="ค้นหา Requirement Code, Use Case, หรือ หน้าจอ..." 
-                  class="matrix-search-input"
-                />
-              </div>
-
-              <div class="filter-select-group">
-                <label>เอกสารต้นทาง:</label>
-                <select bind:value={selectedDocFilter} class="filter-select">
-                  {#each uniqueDocs as doc}
-                    <option value={doc}>{doc}</option>
-                  {/each}
-                </select>
-              </div>
-
-              <div class="filter-select-group">
-                <label>สถานะ Coverage:</label>
-                <select bind:value={selectedStatusFilter} class="filter-select">
-                  <option value="All">ทั้งหมด (All Status)</option>
-                  <option value="Covered">✅ Covered</option>
-                  <option value="Partially Covered">⚠️ Partially Covered</option>
-                  <option value="Pending">⏳ Pending</option>
-                </select>
-              </div>
-
-              <button class="btn-export-csv" on:click={exportMatrixCSV}>
-                📥 Export CSV
-              </button>
-            </div>
-          </div>
-
-          <!-- Matrix Table -->
-          <div class="glass-panel matrix-table-panel">
-            <div class="table-container">
-              <table class="matrix-table">
-                <thead>
-                  <tr>
-                    <th style="width: 7%;">Req Code</th>
-                    <th style="width: 15%;">Requirement Title</th>
-                    <th style="width: 11%;">Source Document</th>
-                    <th style="width: 10%;">Sitemap / Menu</th>
-                    <th style="width: 10%;">Use Case</th>
-                    <th style="width: 10%;">Screen Mockup</th>
-                    <th style="width: 10%;">Test Scenarios</th>
-                    <th style="width: 10%;">Defect Log</th>
-                    <th style="width: 13%;">ข้อเอกสาร UAT (UAT Reference)</th>
-                    <th style="width: 8%; text-align: center;">Coverage</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {#if filteredMatrix.length === 0}
-                    <tr>
-                      <td colspan="10" style="text-align: center; color: #94a3b8; padding: 30px;">
-                        ไม่พบข้อมูล Traceability Matrix ที่ตรงกับเงื่อนไข
-                      </td>
-                    </tr>
-                  {:else}
-                    {#each filteredMatrix as row}
-                      <tr>
-                        <td><span class="code-badge">{row.req_code}</span></td>
-                        <td style="font-weight: 500; color: #f8fafc;">{row.req_title}</td>
-                        <td>
-                          <div class="doc-cell">
-                            <span class="doc-icon">📄</span>
-                            <span class="doc-name" title={row.doc_name}>{row.doc_name}</span>
-                          </div>
-                        </td>
-                        <td><span class="sitemap-pill">{row.sitemap_node_title || '-'}</span></td>
-                        <td><span class="usecase-pill">{row.use_case_id || '-'}</span></td>
-                        <td>
-                          <button class="screen-link-btn" on:click={() => { activeTab = 'sitemap'; selectedScreenId = row.screen_id; selectedNodeId = row.screen_id; }}>
-                            💻 {row.screen_name || row.screen_id || '-'}
-                          </button>
-                        </td>
-                        <td>
-                          {#if Array.isArray(row.test_cases)}
-                            <div class="testcases-list">
-                              {#each row.test_cases as tc}
-                                <span class="tc-item">{tc}</span>
-                              {/each}
-                            </div>
-                          {:else}
-                            <span>{row.test_cases || '-'}</span>
-                          {/if}
-                        </td>
-                        <td>
-                          {#if Array.isArray(row.defect_log) && row.defect_log.length > 0}
-                            <div class="defect-list">
-                              {#each row.defect_log as d}
-                                <span class="defect-pill open" title={d}>🐛 {d}</span>
-                              {/each}
-                            </div>
-                          {:else if row.defect_log && String(row.defect_log).trim() && row.defect_log !== '-'}
-                            <span class="defect-pill open" title={row.defect_log}>🐛 {row.defect_log}</span>
-                          {:else if Array.isArray(row.defects) && row.defects.length > 0}
-                            <div class="defect-list">
-                              {#each row.defects as d}
-                                <span class="defect-pill open" title={d}>🐛 {d}</span>
-                              {/each}
-                            </div>
-                          {:else if row.defects && String(row.defects).trim() && row.defects !== '-'}
-                            <span class="defect-pill open" title={row.defects}>🐛 {row.defects}</span>
-                          {:else}
-                            <span class="defect-pill clean" title="ไม่มี Defect ค้าง">✨ No Defects</span>
-                          {/if}
-                        </td>
-                        <td>
-                          <div class="uat-list">
-                            {#each getUatItems(row) as uatItem}
-                              <div class="uat-item-row" title={uatItem}>
-                                <span class="uat-code-tag">📋 {uatItem.includes(':') ? uatItem.split(':')[0] : 'UAT'}</span>
-                                <span class="uat-title-text">{uatItem.includes(':') ? uatItem.split(':').slice(1).join(':').trim() : uatItem}</span>
-                              </div>
-                            {/each}
-                            <div class="uat-status-sub">
-                              <span class="uat-pill {getUatStatusClass(row.uat_status || row.uat || (row.status === 'Covered' ? 'Ready for UAT' : 'Pending'))}">
-                                {row.uat_status || row.uat || (row.status === 'Covered' ? 'Ready for UAT' : '⏳ UAT Pending')}
-                              </span>
-                            </div>
-                          </div>
-                        </td>
-                        <td style="text-align: center;">
-                          <span class="status-badge {String(row.status || '').toLowerCase().replace(' ', '-')}">
-                            {row.status || 'Covered'}
-                          </span>
-                        </td>
-                      </tr>
-                    {/each}
-                  {/if}
-                </tbody>
-              </table>
-            </div>
-          </div>
+        <div class="matrix-pane-host" role="tabpanel" id="qa-tabpanel" aria-labelledby="qa-tab-matrix" in:fly={{ y: 12, duration: 240, easing: cubicOut }}>
+          <TraceabilityMatrixPane
+            rows={flowData.traceability_matrix || []}
+            projectCode={$selectedProjectStore?.project_code || 'Project'}
+            on:openscreen={(e) => { activeTab = 'sitemap'; selectedScreenId = e.detail.screen_id; selectedNodeId = e.detail.screen_id; }}
+          />
         </div>
       {/if}
     {/if}
@@ -2813,14 +2099,14 @@
 
   <!-- Fullscreen Image Lightbox Modal -->
   {#if lightboxImage}
-    <div class="lightbox-backdrop" transition:fade on:click={() => lightboxImage = null}>
-      <div class="lightbox-modal" on:click|stopPropagation>
+    <div class="lightbox-backdrop" transition:fade={{ duration: 160 }} role="presentation" on:click={() => lightboxImage = null}>
+      <div class="lightbox-modal" role="dialog" aria-modal="true" aria-labelledby="lightbox-dialog-title" tabindex="-1" use:modalFocus on:click|stopPropagation>
         <div class="lightbox-header">
-          <div class="lightbox-title">🖼️ Screen Mockup (Full Resolution)</div>
-          <button class="lightbox-close" on:click={() => lightboxImage = null}>✕ ปิดหน้าต่าง</button>
+          <div class="lightbox-title" id="lightbox-dialog-title">Screen Mockup (Full Resolution)</div>
+          <button type="button" class="lightbox-close" on:click={() => lightboxImage = null}><QAIcon name="close" size={12} /> ปิดหน้าต่าง</button>
         </div>
         <div class="lightbox-body">
-          <img src={`${lightboxImage}`} alt="Full Resolution Mockup" class="lightbox-img" />
+          <img src={`${lightboxImage}`} alt="Full Resolution Mockup" class="lightbox-img" decoding="async" />
         </div>
       </div>
     </div>
@@ -2841,91 +2127,165 @@
 
 <style>
   .btn-run-agent-screen {
-    background: linear-gradient(135deg, #7c3aed, #4f46e5);
+    background: linear-gradient(135deg, #8b5cf6, #6366f1);
     border: none;
     color: white;
-    font-size: 11px;
+    font-size: 11.5px;
     font-weight: 700;
-    padding: 3px 10px;
-    border-radius: 4px;
+    padding: 5px 12px;
+    min-height: 28px;
+    border-radius: 8px;
     cursor: pointer;
-    box-shadow: 0 2px 8px rgba(124, 58, 237, 0.4);
+    box-shadow: 0 2px 8px rgba(99, 102, 241, 0.4);
     display: flex;
     align-items: center;
     gap: 4px;
-    transition: all 0.15s;
+    transition: background-color 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s;
     white-space: nowrap;
   }
+
   .btn-run-agent-screen:hover {
     background: linear-gradient(135deg, #6d28d9, #4338ca);
     box-shadow: 0 4px 12px rgba(124, 58, 237, 0.6);
   }
+
   .panel-container {
+    --qa-iris: #6366f1;
+    --qa-iris-soft: #818cf8;
+    --qa-iris-text: #c7d2fe;
+    --qa-violet: #a855f7;
+    --qa-surface-deep: #0b0d15;
+    --qa-surface-raised: #161926;
+    --qa-text-muted: #94a3b8;
+    --qa-text-strong: #f8fafc;
+    --qa-text: #e2e8f0;
+    --qa-text-soft: #cbd5e1;
+    --qa-border-strong: #334155;
+    --qa-focus-ring: #a5b4fc;
     display: flex;
     flex-direction: column;
     gap: 18px;
     height: 100%;
     overflow-y: auto;
-    padding: 20px 24px;
+    padding: 20px 24px 32px;
     max-width: 100%;
     box-sizing: border-box;
-    color: #f8fafc;
+    color: var(--qa-text-strong);
+    font-family: 'Prompt', 'Outfit', sans-serif;
   }
 
   .top-nav {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+    flex-shrink: 0;
+  }
+
+  .top-nav-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .sync-timestamp {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 5px 12px;
+    border-radius: 999px;
+    background: rgba(16, 185, 129, 0.08);
+    border: 1px solid rgba(16, 185, 129, 0.25);
+    color: #6ee7b7;
+    font-size: 12px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .sync-pulse-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #10b981;
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.6);
+    animation: syncPulse 2.4s ease-out infinite;
+  }
+
+  @keyframes syncPulse {
+    0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.55); }
+    70% { box-shadow: 0 0 0 7px rgba(16, 185, 129, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
   }
 
   .btn-back {
-    background: none;
-    border: none;
-    color: #94a3b8;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: var(--qa-text-muted);
     cursor: pointer;
-    display: flex;
+    display: inline-flex;
     align-items: center;
     gap: 8px;
-    font-size: 14px;
-    transition: color 0.2s;
+    padding: 7px 14px;
+    border-radius: 999px;
+    font-size: 13px;
+    font-weight: 500;
+    font-family: inherit;
+    transition: color 0.18s ease, background 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
   }
 
-  .btn-back:hover { color: #f8fafc; }
+  .btn-back:hover {
+    color: var(--qa-text-strong);
+    background: rgba(99, 102, 241, 0.12);
+    border-color: rgba(99, 102, 241, 0.32);
+    transform: translateX(-2px);
+  }
 
   .project-pill {
     display: flex;
     align-items: center;
     gap: 8px;
-    background: rgba(30, 41, 59, 0.8);
+    background: rgba(18, 20, 28, 0.78);
     border: 1px solid rgba(255, 255, 255, 0.1);
-    padding: 4px 12px;
-    border-radius: 20px;
+    padding: 5px 14px 5px 8px;
+    border-radius: 999px;
     font-size: 13px;
+    backdrop-filter: blur(12px);
   }
 
   .p-badge {
-    background: #3b82f6;
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
     color: white;
     font-weight: 700;
     font-size: 11px;
-    padding: 2px 6px;
-    border-radius: 4px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-family: 'Outfit', sans-serif;
+    letter-spacing: 0.04em;
   }
 
-  .p-title { font-weight: 500; color: #e2e8f0; }
+  .p-title { font-weight: 500; color: var(--qa-text); }
 
   .glass-panel {
-    background: rgba(30, 41, 59, 0.7);
-    backdrop-filter: blur(12px);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 12px;
-    padding: 20px;
+    background: rgba(18, 20, 28, 0.64);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 20px;
+    padding: 22px;
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.28);
   }
 
   .banner-panel {
     display: flex;
     flex-direction: column;
-    gap: 14px;
+    gap: 16px;
+    flex-shrink: 0;
+    background:
+      radial-gradient(circle at top right, rgba(99, 102, 241, 0.14), transparent 42%),
+      radial-gradient(circle at bottom left, rgba(168, 85, 247, 0.08), transparent 40%),
+      rgba(18, 20, 28, 0.7);
   }
 
   .banner-header {
@@ -2933,65 +2293,158 @@
     justify-content: space-between;
     align-items: flex-start;
     gap: 20px;
+    flex-wrap: wrap;
+  }
+
+  .banner-title-block {
+    flex: 1;
+    min-width: 280px;
   }
 
   .title-with-badge {
     display: flex;
     align-items: center;
     gap: 12px;
+    flex-wrap: wrap;
     margin-bottom: 6px;
   }
 
   .title-with-badge h2 {
     margin: 0;
-    font-size: 1.45rem;
+    font-family: 'Outfit', 'Prompt', sans-serif;
+    font-size: 1.5rem;
     font-weight: 700;
-    color: #f8fafc;
+    letter-spacing: -0.02em;
+    color: var(--qa-text-strong);
   }
 
   .badge-ai {
-    background: linear-gradient(135deg, #8b5cf6, #ec4899);
-    color: white;
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.24), rgba(168, 85, 247, 0.28));
+    border: 1px solid rgba(165, 180, 252, 0.35);
+    color: #e0e7ff;
     font-size: 11px;
-    font-weight: 700;
-    padding: 3px 8px;
-    border-radius: 6px;
-    letter-spacing: 0.5px;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: 999px;
+    letter-spacing: 0.04em;
+    font-family: 'Outfit', sans-serif;
   }
 
   .desc-text {
     margin: 0;
-    color: #94a3b8;
-    font-size: 0.92rem;
-    line-height: 1.5;
+    color: var(--qa-text-muted);
+    font-size: 0.9rem;
+    line-height: 1.55;
+    max-width: 78ch;
   }
 
   .btn-generate-ai {
-    background: linear-gradient(135deg, #3b82f6, #6366f1);
-    border: none;
+    background: linear-gradient(135deg, #6366f1, #a855f7);
+    border: 1px solid rgba(255, 255, 255, 0.14);
     color: white;
-    padding: 10px 20px;
-    border-radius: 8px;
+    padding: 11px 22px;
+    border-radius: 12px;
     font-weight: 600;
     font-size: 13.5px;
+    font-family: inherit;
     cursor: pointer;
-    display: flex;
+    display: inline-flex;
     align-items: center;
-    gap: 8px;
-    box-shadow: 0 4px 15px rgba(59, 130, 246, 0.35);
-    transition: all 0.2s ease;
+    gap: 9px;
+    box-shadow: 0 8px 24px rgba(99, 102, 241, 0.35);
+    transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.2s ease, filter 0.2s ease;
     white-space: nowrap;
   }
 
   .btn-generate-ai:hover:not(:disabled) {
-    box-shadow: 0 6px 20px rgba(59, 130, 246, 0.55);
-    transform: translateY(-1px);
+    box-shadow: 0 10px 28px rgba(139, 92, 246, 0.48);
+    transform: translateY(-2px);
+    filter: brightness(1.06);
+  }
+
+  .btn-generate-ai:active:not(:disabled) {
+    transform: translateY(0);
   }
 
   .btn-generate-ai:disabled { opacity: 0.6; cursor: not-allowed; }
 
+  .executive-summary-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+    padding: 12px 16px;
+    border-radius: 14px;
+    background: rgba(11, 13, 21, 0.56);
+    border: 1px solid rgba(99, 102, 241, 0.22);
+  }
+
+  .exec-summary-main {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    flex: 1;
+    min-width: 260px;
+    flex-wrap: wrap;
+  }
+
+  .exec-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: #a5b4fc;
+    font-size: 11.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-family: 'Outfit', sans-serif;
+    white-space: nowrap;
+  }
+
+  .exec-text {
+    margin: 0;
+    color: var(--qa-text-soft);
+    font-size: 12.8px;
+    line-height: 1.5;
+  }
+
+  .cross-agent-sync {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .cross-sync-label {
+    font-size: 11px;
+    color: var(--qa-text-muted);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-family: 'Outfit', sans-serif;
+  }
+
+  .cross-agent-pills {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .agent-sync-pill {
+    font-size: 11px;
+    font-weight: 500;
+    color: #c7d2fe;
+    background: rgba(99, 102, 241, 0.14);
+    border: 1px solid rgba(99, 102, 241, 0.28);
+    padding: 3px 9px;
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+
   .instructions-accordion {
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
     padding-top: 10px;
   }
 
@@ -3000,73 +2453,160 @@
     border: none;
     color: #a5b4fc;
     font-size: 13px;
+    font-family: inherit;
     cursor: pointer;
-    padding: 0;
+    padding: 2px 0;
     font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: color 0.18s ease;
+  }
+
+  .accordion-toggle:hover { color: #c7d2fe; }
+
+  .accordion-chevron {
+    transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .accordion-chevron.rotated {
+    transform: rotate(90deg);
   }
 
   .instructions-textarea {
     width: 100%;
     margin-top: 8px;
-    background: rgba(15, 23, 42, 0.8);
-    border: 1px solid #334155;
-    color: white;
-    padding: 8px 12px;
-    border-radius: 6px;
+    background: rgba(11, 13, 21, 0.82);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: var(--qa-text-strong);
+    padding: 10px 14px;
+    border-radius: 12px;
     font-size: 13px;
+    font-family: inherit;
     box-sizing: border-box;
     outline: none;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  .instructions-textarea:focus {
+    border-color: rgba(99, 102, 241, 0.65);
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
   }
 
   .stats-grid {
     display: grid;
-    grid-template-columns: repeat(5, 1fr);
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 12px;
-    margin-top: 6px;
+    margin-top: 2px;
+  }
+
+  @keyframes statRise {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
   }
 
   .stat-card {
-    background: rgba(15, 23, 42, 0.6);
+    background: rgba(11, 13, 21, 0.56);
     border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 8px;
-    padding: 12px 14px;
+    border-radius: 14px;
+    padding: 13px 15px;
     display: flex;
     align-items: center;
     gap: 12px;
+    animation: statRise 0.36s cubic-bezier(0.22, 1, 0.36, 1) both;
+    animation-delay: calc(var(--stagger, 0) * 55ms);
+    transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.2s ease, background 0.2s ease;
+  }
+
+  .stat-card:hover {
+    transform: translateY(-2px);
+    border-color: rgba(99, 102, 241, 0.35);
+    background: rgba(18, 22, 34, 0.8);
   }
 
   .stat-card.highlight {
-    border-color: rgba(34, 197, 94, 0.4);
-    background: rgba(34, 197, 94, 0.08);
+    border-color: rgba(16, 185, 129, 0.36);
+    background: rgba(16, 185, 129, 0.08);
   }
 
-  .stat-icon { font-size: 24px; }
-  .stat-val { font-size: 1.25rem; font-weight: 700; color: #f8fafc; }
-  .stat-label { font-size: 11px; color: #94a3b8; font-weight: 500; }
+  .stat-icon-box {
+    width: 38px;
+    height: 38px;
+    border-radius: 11px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .stat-icon-box.indigo { background: rgba(99, 102, 241, 0.16); color: #a5b4fc; border: 1px solid rgba(99, 102, 241, 0.28); }
+
+  .stat-icon-box.violet { background: rgba(168, 85, 247, 0.16); color: #d8b4fe; border: 1px solid rgba(168, 85, 247, 0.28); }
+
+  .stat-icon-box.sky { background: rgba(56, 189, 248, 0.14); color: #7dd3fc; border: 1px solid rgba(56, 189, 248, 0.26); }
+
+  .stat-icon-box.amber { background: rgba(245, 158, 11, 0.14); color: #fcd34d; border: 1px solid rgba(245, 158, 11, 0.26); }
+
+  .stat-icon-box.emerald { background: rgba(16, 185, 129, 0.16); color: #6ee7b7; border: 1px solid rgba(16, 185, 129, 0.3); }
+
+  .stat-val {
+    font-family: 'Outfit', sans-serif;
+    font-size: 1.32rem;
+    font-weight: 700;
+    color: var(--qa-text-strong);
+    font-variant-numeric: tabular-nums;
+    line-height: 1.15;
+  }
+
+  .stat-label { font-size: 11.5px; color: var(--qa-text-muted); font-weight: 500; margin-top: 2px; }
 
   .tabs-header {
     display: flex;
-    gap: 8px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-    padding-bottom: 2px;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    padding: 6px;
+    flex-shrink: 0;
+    background: rgba(18, 20, 28, 0.62);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 14px;
+    overflow: visible;
   }
 
   .nav-tab {
-    background: none;
-    border: none;
-    border-bottom: 2px solid transparent;
-    color: #94a3b8;
-    padding: 8px 16px;
-    font-size: 14px;
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--qa-text-muted);
+    padding: 9px 15px;
+    border-radius: 10px;
+    font-size: 13px;
     font-weight: 600;
+    font-family: inherit;
     cursor: pointer;
-    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    white-space: nowrap;
+    flex-shrink: 0;
+    transition: color 0.18s ease, background 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
   }
 
-  .nav-tab:hover { color: #f8fafc; }
+  .nav-tab:hover {
+    color: var(--qa-text-strong);
+    background: rgba(255, 255, 255, 0.04);
+  }
+
   .nav-tab.active {
-    color: #60a5fa;
-    border-bottom-color: #3b82f6;
+    color: #ffffff;
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.28), rgba(168, 85, 247, 0.24));
+    border-color: rgba(129, 140, 248, 0.45);
+    box-shadow: 0 4px 14px rgba(99, 102, 241, 0.22);
   }
 
   /* ── SITEMAP & WIREFRAME LAYOUT ── */
@@ -3092,19 +2632,20 @@
     align-items: center;
   }
 
-  .panel-title-row h3 { margin: 0; font-size: 1.1rem; color: #f8fafc; }
+  .panel-title-row h3 { margin: 0; font-size: 1.05rem; color: var(--qa-text-strong); font-weight: 600; }
 
   .count-badge, .screen-id-badge {
-    background: rgba(59, 130, 246, 0.2);
-    border: 1px solid rgba(59, 130, 246, 0.4);
-    color: #93c5fd;
-    padding: 2px 8px;
-    border-radius: 6px;
+    background: rgba(99, 102, 241, 0.18);
+    border: 1px solid rgba(129, 140, 248, 0.35);
+    color: #c7d2fe;
+    padding: 3px 9px;
+    border-radius: 999px;
     font-size: 11px;
     font-weight: 600;
+    font-family: 'Outfit', monospace;
   }
 
-  .sub-hint { margin: 0; font-size: 12px; color: #94a3b8; }
+  .sub-hint { margin: 0; font-size: 12px; color: var(--qa-text-muted); }
 
   .sitemap-tree {
     display: flex;
@@ -3113,23 +2654,24 @@
   }
 
   .sitemap-node-card {
-    background: rgba(15, 23, 42, 0.6);
+    background: rgba(11, 13, 21, 0.56);
     border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 8px;
+    border-radius: 12px;
     padding: 12px;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
   }
 
   .sitemap-node-card:hover {
-    border-color: rgba(96, 165, 250, 0.5);
-    background: rgba(30, 41, 59, 0.8);
+    border-color: rgba(129, 140, 248, 0.45);
+    background: rgba(24, 28, 42, 0.85);
+    transform: translateY(-1px);
   }
 
   .sitemap-node-card.active {
-    border-color: #3b82f6;
-    background: rgba(59, 130, 246, 0.15);
-    box-shadow: 0 0 12px rgba(59, 130, 246, 0.25);
+    border-color: rgba(129, 140, 248, 0.72);
+    background: rgba(99, 102, 241, 0.16);
+    box-shadow: 0 0 16px rgba(99, 102, 241, 0.22);
   }
 
   .node-main {
@@ -3139,29 +2681,32 @@
   }
 
   .node-icon { font-size: 20px; }
+
   .node-text { flex: 1; min-width: 0; }
-  .node-title { font-weight: 600; font-size: 13.5px; color: #f8fafc; }
-  .node-path { font-size: 11px; color: #60a5fa; font-family: monospace; }
+
+  .node-title { font-weight: 600; font-size: 13.5px; color: var(--qa-text-strong); }
+
+  .node-path { font-size: 11px; color: #a5b4fc; font-family: monospace; }
 
   .node-category {
-    font-size: 10px;
-    background: rgba(255, 255, 255, 0.1);
-    padding: 2px 6px;
-    border-radius: 4px;
-    color: #cbd5e1;
+    font-size: 11px;
+    background: rgba(255, 255, 255, 0.08);
+    padding: 2px 7px;
+    border-radius: 999px;
+    color: var(--qa-text-soft);
   }
 
   .node-desc {
     margin-top: 6px;
     font-size: 11.5px;
-    color: #94a3b8;
-    line-height: 1.4;
+    color: var(--qa-text-muted);
+    line-height: 1.45;
   }
 
   .node-children {
     margin-top: 10px;
     padding-left: 14px;
-    border-left: 2px solid rgba(255, 255, 255, 0.1);
+    border-left: 1px solid rgba(255, 255, 255, 0.1);
     display: flex;
     flex-direction: column;
     gap: 6px;
@@ -3171,17 +2716,28 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 6px 8px;
-    border-radius: 6px;
-    background: rgba(0, 0, 0, 0.2);
+    padding: 7px 10px;
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.24);
+    border: 1px solid transparent;
     font-size: 12px;
-    transition: background 0.15s;
+    transition: background 0.15s ease, border-color 0.15s ease;
   }
 
-  .sitemap-child-card:hover { background: rgba(59, 130, 246, 0.2); }
-  .sitemap-child-card.active { background: rgba(59, 130, 246, 0.3); border-left: 3px solid #60a5fa; }
-  .child-title { font-weight: 500; color: #e2e8f0; }
-  .child-path { font-size: 10px; color: #93c5fd; margin-left: 6px; font-family: monospace; }
+  .sitemap-child-card:hover {
+    background: rgba(99, 102, 241, 0.16);
+    border-color: rgba(129, 140, 248, 0.28);
+  }
+
+  .sitemap-child-card.active {
+    background: rgba(99, 102, 241, 0.26);
+    border: 1px solid rgba(129, 140, 248, 0.65);
+    box-shadow: 0 2px 10px rgba(99, 102, 241, 0.2);
+  }
+
+  .child-title { font-weight: 500; color: var(--qa-text); }
+
+  .child-path { font-size: 11px; color: #a5b4fc; margin-left: 6px; font-family: monospace; }
 
   /* ── MOCKUP WIREFRAME ── */
   .mockup-panel {
@@ -3196,12 +2752,12 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    color: #94a3b8;
+    color: var(--qa-text-muted);
   }
 
   .mockup-viewport {
-    background: #090d16;
-    border: 1px solid #1e293b;
+    background: var(--qa-surface-deep);
+    border: 1px solid var(--qa-surface-raised);
     border-radius: 10px;
     overflow: hidden;
     display: flex;
@@ -3210,7 +2766,7 @@
   }
 
   .mockup-browser-bar {
-    background: #1e293b;
+    background: var(--qa-surface-raised);
     padding: 8px 14px;
     display: flex;
     align-items: center;
@@ -3219,18 +2775,22 @@
   }
 
   .browser-dots { display: flex; gap: 6px; }
+
   .dot { width: 10px; height: 10px; border-radius: 50%; }
+
   .dot.red { background: #ef4444; }
+
   .dot.yellow { background: #f59e0b; }
+
   .dot.green { background: #10b981; }
 
   .browser-url-input {
     flex: 1;
-    background: #0f172a;
+    background: var(--qa-surface-deep);
     border-radius: 6px;
     padding: 4px 10px;
     font-size: 11px;
-    color: #94a3b8;
+    color: var(--qa-text-muted);
     font-family: monospace;
     display: flex;
     align-items: center;
@@ -3242,7 +2802,7 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    background: linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(30, 41, 59, 0.9));
+    background: linear-gradient(135deg, rgba(11, 13, 21, 0.95), rgba(22, 25, 38, 0.9));
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
     padding: 8px 16px;
     flex-wrap: wrap;
@@ -3261,7 +2821,7 @@
   .btn-device-switch {
     background: transparent;
     border: none;
-    color: #94a3b8;
+    color: var(--qa-text-muted);
     padding: 5px 12px;
     border-radius: 6px;
     font-size: 11.5px;
@@ -3270,13 +2830,15 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    transition: all 0.2s;
+    transition: background-color 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s, transform 0.2s, opacity 0.2s;
   }
-  .btn-device-switch:hover { color: #f8fafc; }
+
+  .btn-device-switch:hover { color: var(--qa-text-strong); }
+
   .btn-device-switch.active {
-    background: linear-gradient(135deg, #3b82f6, #6366f1);
+    background: linear-gradient(135deg, var(--qa-iris), #6366f1);
     color: white;
-    box-shadow: 0 2px 8px rgba(59, 130, 246, 0.4);
+    box-shadow: 0 2px 8px rgba(99, 102, 241, 0.4);
   }
 
   .proto-actions-group {
@@ -3295,22 +2857,26 @@
     display: flex;
     align-items: center;
     gap: 5px;
-    transition: all 0.2s;
+    transition: background-color 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s, transform 0.2s, opacity 0.2s;
   }
+
   .btn-proto-action.fill-data {
     background: rgba(234, 179, 8, 0.15);
     border-color: rgba(234, 179, 8, 0.4);
     color: #fde047;
   }
+
   .btn-proto-action.fill-data:hover {
     background: rgba(234, 179, 8, 0.3);
     box-shadow: 0 0 10px rgba(234, 179, 8, 0.3);
   }
+
   .btn-proto-action.reset {
     background: rgba(255, 255, 255, 0.06);
-    color: #94a3b8;
+    color: var(--qa-text-muted);
   }
-  .btn-proto-action.reset:hover { background: rgba(255, 255, 255, 0.12); color: #f8fafc; }
+
+  .btn-proto-action.reset:hover { background: rgba(255, 255, 255, 0.12); color: var(--qa-text-strong); }
 
   .prototype-badge-live {
     background: rgba(34, 197, 94, 0.15);
@@ -3325,6 +2891,7 @@
     align-items: center;
     gap: 6px;
   }
+
   .prototype-badge-live .pulse-dot {
     width: 6px;
     height: 6px;
@@ -3347,13 +2914,14 @@
     align-items: flex-start;
     min-height: 520px;
     background: radial-gradient(circle at 50% 0%, #172554 0%, #0b0f19 75%);
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    transition: background-color 0.3s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.3s cubic-bezier(0.4, 0, 0.2, 1), color 0.3s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1), transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     overflow-x: auto;
   }
 
   .prototype-outer-canvas.desktop {
     padding: 16px;
   }
+
   .prototype-outer-canvas.desktop .mockup-screen-content {
     width: 100%;
     max-width: 100%;
@@ -3363,6 +2931,7 @@
   .prototype-outer-canvas.tablet {
     padding: 24px 16px;
   }
+
   .prototype-outer-canvas.tablet .mockup-screen-content {
     width: 768px;
     max-width: 100%;
@@ -3374,11 +2943,12 @@
   .prototype-outer-canvas.mobile {
     padding: 24px 12px;
   }
+
   .prototype-outer-canvas.mobile .mockup-screen-content {
     width: 390px;
     max-width: 100%;
     border-radius: 36px;
-    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.8), 0 0 0 8px #1e293b;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.8), 0 0 0 8px var(--qa-surface-raised);
     border: 2px solid rgba(255, 255, 255, 0.18);
     overflow: hidden;
   }
@@ -3389,10 +2959,11 @@
     align-items: center;
     padding: 8px 18px 4px 18px;
     font-size: 11px;
-    color: #94a3b8;
-    background: rgba(15, 23, 42, 0.95);
+    color: var(--qa-text-muted);
+    background: rgba(11, 13, 21, 0.95);
     border-bottom: 1px solid rgba(255, 255, 255, 0.05);
   }
+
   .phone-dynamic-island {
     width: 80px;
     height: 18px;
@@ -3400,10 +2971,11 @@
     border-radius: 12px;
     margin: 0 auto;
   }
-  .phone-status-icons { font-size: 10px; font-weight: 600; color: #cbd5e1; }
+
+  .phone-status-icons { font-size: 11px; font-weight: 600; color: var(--qa-text-soft); }
 
   .mockup-screen-content {
-    background: #0f172a;
+    background: var(--qa-surface-deep);
     display: flex;
     flex-direction: column;
     gap: 16px;
@@ -3414,8 +2986,8 @@
 
   /* ── HERO BANNER CARD ── */
   .proto-hero-card {
-    background: linear-gradient(135deg, rgba(30, 58, 138, 0.35), rgba(15, 23, 42, 0.8));
-    border: 1px solid rgba(96, 165, 250, 0.25);
+    background: linear-gradient(135deg, rgba(67, 56, 202, 0.35), rgba(11, 13, 21, 0.8));
+    border: 1px solid rgba(129, 140, 248, 0.25);
     border-radius: 12px;
     padding: 16px 18px;
     display: flex;
@@ -3442,13 +3014,13 @@
     margin: 0;
     font-size: 1.35rem;
     font-weight: 700;
-    color: #f8fafc;
+    color: var(--qa-text-strong);
   }
 
   .proto-verified-badge {
     background: linear-gradient(135deg, #059669, #10b981);
     color: white;
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 700;
     padding: 2px 7px;
     border-radius: 20px;
@@ -3464,21 +3036,23 @@
   .btn-proto-header-action {
     background: rgba(255, 255, 255, 0.08);
     border: 1px solid rgba(255, 255, 255, 0.12);
-    color: #cbd5e1;
+    color: var(--qa-text-soft);
     padding: 5px 10px;
     border-radius: 6px;
     font-size: 11px;
     font-weight: 600;
     cursor: pointer;
-    transition: all 0.15s;
+    transition: background-color 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s;
     display: flex;
     align-items: center;
     gap: 4px;
   }
+
   .btn-proto-header-action:hover {
     background: rgba(255, 255, 255, 0.18);
     color: #ffffff;
   }
+
   .btn-proto-header-action.fav.active {
     background: rgba(239, 68, 68, 0.2);
     border-color: rgba(239, 68, 68, 0.5);
@@ -3488,7 +3062,7 @@
   .mockup-desc {
     margin: 0;
     font-size: 12.5px;
-    color: #94a3b8;
+    color: var(--qa-text-muted);
     line-height: 1.5;
   }
 
@@ -3500,7 +3074,7 @@
   }
 
   .proto-stat-card {
-    background: rgba(15, 23, 42, 0.7);
+    background: rgba(11, 13, 21, 0.7);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 8px;
     padding: 10px 12px;
@@ -3509,15 +3083,19 @@
     gap: 10px;
     transition: transform 0.15s;
   }
+
   .proto-stat-card:hover {
     transform: translateY(-2px);
-    border-color: rgba(96, 165, 250, 0.3);
+    border-color: rgba(129, 140, 248, 0.3);
   }
 
   .proto-stat-icon-wrap { font-size: 20px; }
+
   .proto-stat-body { display: flex; flex-direction: column; }
-  .proto-stat-num { font-size: 1.15rem; font-weight: 700; color: #f8fafc; }
-  .proto-stat-lbl { font-size: 10.5px; color: #94a3b8; font-weight: 500; }
+
+  .proto-stat-num { font-size: 1.15rem; font-weight: 700; color: var(--qa-text-strong); }
+
+  .proto-stat-lbl { font-size: 11px; color: var(--qa-text-muted); font-weight: 500; }
 
   /* ── NAVIGATION TABS ── */
   .proto-tabs-navbar {
@@ -3532,18 +3110,20 @@
     background: transparent;
     border: none;
     border-bottom: 2px solid transparent;
-    color: #94a3b8;
+    color: var(--qa-text-muted);
     padding: 6px 14px;
     font-size: 12.5px;
     font-weight: 600;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: background-color 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s, transform 0.2s, opacity 0.2s;
     white-space: nowrap;
   }
-  .proto-nav-tab-btn:hover { color: #f8fafc; }
+
+  .proto-nav-tab-btn:hover { color: var(--qa-text-strong); }
+
   .proto-nav-tab-btn.active {
-    color: #60a5fa;
-    border-bottom-color: #3b82f6;
+    color: var(--qa-iris-soft);
+    border-bottom-color: var(--qa-iris);
   }
 
   /* ── SECTION STACK ── */
@@ -3554,7 +3134,7 @@
   }
 
   .proto-section-card {
-    background: rgba(30, 41, 59, 0.65);
+    background: rgba(22, 25, 38, 0.65);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 10px;
     padding: 16px;
@@ -3572,16 +3152,16 @@
   .mock-sec-title {
     font-size: 12.5px;
     font-weight: 700;
-    color: #93c5fd;
+    color: var(--qa-iris-text);
     text-transform: uppercase;
     letter-spacing: 0.5px;
   }
 
   .proto-interactive-tag {
-    background: rgba(59, 130, 246, 0.18);
-    border: 1px solid rgba(59, 130, 246, 0.4);
-    color: #93c5fd;
-    font-size: 10px;
+    background: rgba(99, 102, 241, 0.18);
+    border: 1px solid rgba(99, 102, 241, 0.4);
+    color: var(--qa-iris-text);
+    font-size: 11px;
     font-weight: 700;
     padding: 2px 7px;
     border-radius: 12px;
@@ -3591,7 +3171,7 @@
     background: rgba(234, 179, 8, 0.15);
     border: 1px solid rgba(234, 179, 8, 0.4);
     color: #fde047;
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 700;
     padding: 2px 7px;
     border-radius: 12px;
@@ -3599,8 +3179,8 @@
 
   .proto-count-badge {
     background: rgba(255, 255, 255, 0.08);
-    color: #cbd5e1;
-    font-size: 10.5px;
+    color: var(--qa-text-soft);
+    font-size: 11px;
     padding: 2px 8px;
     border-radius: 10px;
   }
@@ -3613,16 +3193,17 @@
   }
 
   .gallery-photo-card {
-    background: #090d16;
+    background: var(--qa-surface-deep);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 8px;
     overflow: hidden;
     cursor: pointer;
     transition: transform 0.2s, border-color 0.2s;
   }
+
   .gallery-photo-card:hover {
     transform: translateY(-2px);
-    border-color: rgba(96, 165, 250, 0.5);
+    border-color: rgba(129, 140, 248, 0.5);
   }
 
   .photo-visual-placeholder {
@@ -3633,27 +3214,34 @@
     justify-content: center;
     position: relative;
   }
+
   .photo-visual-placeholder.grad-0 { background: linear-gradient(135deg, #1e3a8a, #0284c7); }
+
   .photo-visual-placeholder.grad-1 { background: linear-gradient(135deg, #4c1d95, #9333ea); }
+
   .photo-visual-placeholder.grad-2 { background: linear-gradient(135deg, #065f46, #059669); }
+
   .photo-visual-placeholder.grad-3 { background: linear-gradient(135deg, #9a3412, #ea580c); }
 
   .photo-cam-icon { font-size: 26px; }
+
   .photo-badge {
     position: absolute;
     bottom: 6px;
     right: 8px;
     background: rgba(0, 0, 0, 0.6);
     color: #ffffff;
-    font-size: 9px;
+    font-size: 11px;
     font-weight: 700;
     padding: 1px 5px;
     border-radius: 4px;
   }
 
   .photo-card-info { padding: 8px 10px; }
-  .photo-title { font-size: 11.5px; font-weight: 600; color: #f8fafc; margin-bottom: 2px; }
-  .photo-desc { font-size: 10.5px; color: #94a3b8; line-height: 1.3; }
+
+  .photo-title { font-size: 11.5px; font-weight: 600; color: var(--qa-text-strong); margin-bottom: 2px; }
+
+  .photo-desc { font-size: 11px; color: var(--qa-text-muted); line-height: 1.3; }
 
   /* ── FORM INPUTS & INTERACTION ── */
   .mock-form-grid {
@@ -3667,13 +3255,15 @@
     flex-direction: column;
     gap: 4px;
   }
+
   .mock-form-item.full-width { grid-column: 1 / -1; }
 
   .mock-label {
     font-size: 11.5px;
-    color: #cbd5e1;
+    color: var(--qa-text-soft);
     font-weight: 600;
   }
+
   .req-star { color: #f87171; }
 
   .proto-input-wrapper {
@@ -3686,7 +3276,7 @@
     width: 100%;
     background: #030712;
     border: 1px solid #374151;
-    color: #f8fafc;
+    color: var(--qa-text-strong);
     padding: 7px 10px;
     border-radius: 6px;
     font-size: 12.5px;
@@ -3694,9 +3284,10 @@
     outline: none;
     transition: border-color 0.2s, box-shadow 0.2s;
   }
+
   .proto-real-input:focus, .proto-real-select:focus, .proto-real-textarea:focus {
-    border-color: #3b82f6;
-    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25);
+    border-color: var(--qa-iris);
+    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.25);
   }
 
   .proto-real-select {
@@ -3704,11 +3295,12 @@
     cursor: pointer;
     padding-right: 28px;
   }
+
   .select-chevron {
     position: absolute;
     right: 10px;
-    font-size: 9px;
-    color: #94a3b8;
+    font-size: 11px;
+    color: var(--qa-text-muted);
     pointer-events: none;
   }
 
@@ -3717,12 +3309,13 @@
     right: 8px;
     background: none;
     border: none;
-    color: #94a3b8;
+    color: var(--qa-text-muted);
     font-size: 11px;
     cursor: pointer;
     padding: 2px 4px;
   }
-  .btn-input-clear:hover { color: #f8fafc; }
+
+  .btn-input-clear:hover { color: var(--qa-text-strong); }
 
   /* iOS Switch Toggle */
   .proto-toggle-wrap {
@@ -3738,16 +3331,18 @@
     width: 38px;
     height: 20px;
   }
+
   .proto-switch input { opacity: 0; width: 0; height: 0; }
 
   .switch-slider {
     position: absolute;
     cursor: pointer;
     top: 0; left: 0; right: 0; bottom: 0;
-    background-color: #334155;
+    background-color: var(--qa-border-strong);
     transition: 0.3s;
     border-radius: 20px;
   }
+
   .switch-slider:before {
     position: absolute;
     content: "";
@@ -3759,17 +3354,19 @@
     transition: 0.3s;
     border-radius: 50%;
   }
+
   .proto-switch input:checked + .switch-slider { background-color: #10b981; }
+
   .proto-switch input:checked + .switch-slider:before { transform: translateX(18px); }
 
-  .toggle-status-text { font-size: 11.5px; color: #cbd5e1; font-weight: 500; }
+  .toggle-status-text { font-size: 11.5px; color: var(--qa-text-soft); font-weight: 500; }
 
   .proto-real-checkbox {
     display: flex;
     align-items: center;
     gap: 8px;
     font-size: 12px;
-    color: #e2e8f0;
+    color: var(--qa-text);
     cursor: pointer;
     margin-top: 4px;
   }
@@ -3792,27 +3389,33 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    transition: all 0.2s;
+    transition: background-color 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s, transform 0.2s, opacity 0.2s;
   }
+
   .proto-action-btn.primary {
-    background: linear-gradient(135deg, #3b82f6, #6366f1);
+    background: linear-gradient(135deg, var(--qa-iris), #6366f1);
     color: white;
-    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.35);
+    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.35);
   }
+
   .proto-action-btn.primary:hover:not(:disabled) {
-    box-shadow: 0 6px 18px rgba(59, 130, 246, 0.55);
+    box-shadow: 0 6px 18px rgba(99, 102, 241, 0.55);
     transform: translateY(-1px);
   }
+
   .proto-action-btn.secondary {
     background: rgba(255, 255, 255, 0.08);
-    color: #cbd5e1;
+    color: var(--qa-text-soft);
     border: 1px solid rgba(255, 255, 255, 0.12);
   }
+
   .proto-action-btn.secondary:hover { background: rgba(255, 255, 255, 0.15); color: white; }
+
   .proto-action-btn.map {
     background: linear-gradient(135deg, #059669, #10b981);
     color: white;
   }
+
   .proto-action-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 
   .spinner-small {
@@ -3826,41 +3429,47 @@
 
   /* ── TABLE IN PROTOTYPE ── */
   .mock-table-wrap { overflow-x: auto; }
+
   .proto-table {
     width: 100%;
     border-collapse: collapse;
     font-size: 12px;
   }
+
   .proto-table th {
     background: #030712;
-    color: #94a3b8;
+    color: var(--qa-text-muted);
     padding: 8px 10px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.1);
     font-weight: 600;
   }
+
   .proto-table td {
     padding: 8px 10px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.05);
     color: #f1f5f9;
   }
+
   .proto-table-row:hover { background: rgba(255, 255, 255, 0.03); }
 
   .table-pill {
-    font-size: 10.5px;
+    font-size: 11px;
     font-weight: 700;
     padding: 2px 7px;
     border-radius: 4px;
     display: inline-block;
   }
+
   .table-pill.success { background: rgba(16, 185, 129, 0.2); color: #6ee7b7; }
+
   .table-pill.warning { background: rgba(245, 158, 11, 0.2); color: #fcd34d; }
 
   .table-code-badge {
-    background: rgba(59, 130, 246, 0.15);
-    color: #93c5fd;
+    background: rgba(99, 102, 241, 0.15);
+    color: var(--qa-iris-text);
     font-family: monospace;
     font-weight: 700;
-    font-size: 10.5px;
+    font-size: 11px;
     padding: 1px 5px;
     border-radius: 3px;
   }
@@ -3874,8 +3483,9 @@
     font-size: 11px;
     font-weight: 600;
     cursor: pointer;
-    transition: all 0.15s;
+    transition: background-color 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s;
   }
+
   .btn-table-action:hover {
     background: rgba(139, 92, 246, 0.4);
     color: white;
@@ -3885,13 +3495,14 @@
   .btn-write-review-sm {
     background: rgba(255, 255, 255, 0.08);
     border: 1px solid rgba(255, 255, 255, 0.15);
-    color: #cbd5e1;
+    color: var(--qa-text-soft);
     font-size: 11px;
     font-weight: 600;
     padding: 3px 8px;
     border-radius: 4px;
     cursor: pointer;
   }
+
   .btn-write-review-sm:hover { background: rgba(255, 255, 255, 0.18); color: white; }
 
   .proto-reviews-list {
@@ -3901,7 +3512,7 @@
   }
 
   .review-comment-card {
-    background: rgba(15, 23, 42, 0.7);
+    background: rgba(11, 13, 21, 0.7);
     border: 1px solid rgba(255, 255, 255, 0.06);
     border-radius: 6px;
     padding: 10px 12px;
@@ -3913,21 +3524,27 @@
     gap: 8px;
     margin-bottom: 6px;
   }
+
   .rev-avatar {
     width: 24px;
     height: 24px;
     border-radius: 50%;
-    background: #334155;
+    background: var(--qa-border-strong);
     display: flex;
     align-items: center;
     justify-content: center;
     font-size: 12px;
   }
+
   .rev-user-meta { flex: 1; display: flex; flex-direction: column; }
-  .rev-name { font-size: 11.5px; font-weight: 600; color: #f8fafc; }
-  .rev-time { font-size: 9.5px; color: #64748b; }
+
+  .rev-name { font-size: 11.5px; font-weight: 600; color: var(--qa-text-strong); }
+
+  .rev-time { font-size: 11px; color: var(--qa-text-muted); }
+
   .rev-stars { font-size: 11px; letter-spacing: 1px; }
-  .rev-comment-text { margin: 0; font-size: 11.5px; color: #cbd5e1; line-height: 1.4; }
+
+  .rev-comment-text { margin: 0; font-size: 11.5px; color: var(--qa-text-soft); line-height: 1.4; }
 
   /* ── FOOTBAR ── */
   .mockup-footbar {
@@ -3938,16 +3555,19 @@
     gap: 6px;
     font-size: 11.5px;
   }
+
   .conn-item { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
   .tag-pill {
     background: rgba(139, 92, 246, 0.2);
     border: 1px solid rgba(139, 92, 246, 0.4);
     color: #c4b5fd;
     padding: 1px 6px;
     border-radius: 4px;
-    font-size: 10.5px;
+    font-size: 11px;
     font-family: monospace;
   }
+
   .tag-pill.req {
     background: rgba(16, 185, 129, 0.2);
     border-color: rgba(16, 185, 129, 0.4);
@@ -3956,7 +3576,7 @@
 
   /* ── SIMULATION DIALOG MODAL ── */
   .prototype-dialog-modal {
-    background: #0f172a;
+    background: var(--qa-surface-deep);
     border: 1px solid rgba(255, 255, 255, 0.15);
     border-radius: 12px;
     width: 440px;
@@ -3974,11 +3594,14 @@
     align-items: center;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   }
-  .proto-dialog-header.success { background: linear-gradient(135deg, rgba(16, 185, 129, 0.2), #0f172a); }
-  .proto-dialog-header.map { background: linear-gradient(135deg, rgba(59, 130, 246, 0.2), #0f172a); }
-  .proto-dialog-header.review { background: linear-gradient(135deg, rgba(234, 179, 8, 0.2), #0f172a); }
 
-  .proto-dialog-title { font-size: 13.5px; font-weight: 700; color: #f8fafc; }
+  .proto-dialog-header.success { background: linear-gradient(135deg, rgba(16, 185, 129, 0.2), var(--qa-surface-deep)); }
+
+  .proto-dialog-header.map { background: linear-gradient(135deg, rgba(99, 102, 241, 0.2), var(--qa-surface-deep)); }
+
+  .proto-dialog-header.review { background: linear-gradient(135deg, rgba(234, 179, 8, 0.2), var(--qa-surface-deep)); }
+
+  .proto-dialog-title { font-size: 13.5px; font-weight: 700; color: var(--qa-text-strong); }
 
   .proto-dialog-body {
     padding: 20px;
@@ -3990,7 +3613,8 @@
   }
 
   .dialog-icon-huge { font-size: 42px; }
-  .dialog-body-text { font-size: 13px; color: #cbd5e1; margin: 0; line-height: 1.5; }
+
+  .dialog-body-text { font-size: 13px; color: var(--qa-text-soft); margin: 0; line-height: 1.5; }
 
   .dialog-success-badge {
     background: rgba(16, 185, 129, 0.15);
@@ -4005,8 +3629,8 @@
   .simulated-map-box {
     width: 100%;
     height: 140px;
-    background: #020617;
-    border: 1px solid #1e293b;
+    background: var(--qa-surface-deep);
+    border: 1px solid var(--qa-surface-raised);
     border-radius: 8px;
     position: relative;
     display: flex;
@@ -4015,16 +3639,20 @@
     padding: 12px;
     box-sizing: border-box;
   }
+
   .map-pin { font-size: 12px; font-weight: 600; text-align: left; }
-  .map-pin.start { color: #60a5fa; }
+
+  .map-pin.start { color: var(--qa-iris-soft); }
+
   .map-pin.end { color: #34d399; }
+
   .map-route-line {
     position: absolute;
     left: 20px;
     top: 30px;
     bottom: 30px;
     width: 2px;
-    border-left: 2px dashed #3b82f6;
+    border-left: 2px dashed var(--qa-iris);
   }
 
   .dialog-review-form {
@@ -4033,6 +3661,7 @@
     flex-direction: column;
     gap: 12px;
   }
+
   .star-rating-selector {
     display: flex;
     align-items: center;
@@ -4041,6 +3670,7 @@
     font-size: 22px;
     cursor: pointer;
   }
+
   .star-score-tag {
     font-size: 12px;
     font-weight: 700;
@@ -4050,14 +3680,14 @@
 
   .proto-dialog-footer {
     padding: 12px 16px;
-    background: #111827;
+    background: var(--qa-surface-raised);
     border-top: 1px solid rgba(255, 255, 255, 0.08);
     display: flex;
     justify-content: flex-end;
   }
 
   .proto-btn-dialog-close {
-    background: #3b82f6;
+    background: var(--qa-iris);
     border: none;
     color: white;
     padding: 6px 16px;
@@ -4065,9 +3695,10 @@
     font-size: 12.5px;
     font-weight: 600;
     cursor: pointer;
-    box-shadow: 0 2px 8px rgba(59, 130, 246, 0.4);
+    box-shadow: 0 2px 8px rgba(99, 102, 241, 0.4);
   }
-  .proto-btn-dialog-close:hover { background: #2563eb; }
+
+  .proto-btn-dialog-close:hover { background: var(--qa-iris); }
 
   /* ── DIAGRAMS (MERMAID & DRAW.IO STYLE) ── */
   .diagram-workspace {
@@ -4075,7 +3706,7 @@
     flex-direction: column;
     gap: 12px;
     flex: 1;
-    transition: all 0.3s ease;
+    transition: background-color 0.3s ease, border-color 0.3s ease, color 0.3s ease, box-shadow 0.3s ease, transform 0.3s ease, opacity 0.3s ease;
   }
 
   .diagram-workspace.fullscreen-diagram {
@@ -4085,7 +3716,7 @@
     right: 0;
     bottom: 0;
     z-index: 9999;
-    background: #090d16;
+    background: var(--qa-surface-deep);
     padding: 18px 24px;
     gap: 12px;
     height: 100vh;
@@ -4100,22 +3731,24 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    background: rgba(15, 23, 42, 0.7);
+    flex-wrap: wrap;
+    gap: 10px 16px;
+    background: rgba(11, 13, 21, 0.7);
     backdrop-filter: blur(8px);
     padding: 10px 18px;
-    border-radius: 8px;
+    border-radius: 12px;
     border: 1px solid rgba(255, 255, 255, 0.08);
   }
 
   .diagram-toolbar.drawio-toolbar {
-    background: linear-gradient(90deg, rgba(30, 58, 138, 0.25), rgba(15, 23, 42, 0.8));
-    border-color: rgba(96, 165, 250, 0.25);
+    background: linear-gradient(90deg, rgba(67, 56, 202, 0.25), rgba(11, 13, 21, 0.8));
+    border-color: rgba(129, 140, 248, 0.25);
   }
 
   .diagram-title { 
     font-weight: 600; 
     font-size: 13.5px; 
-    color: #60a5fa; 
+    color: var(--qa-iris-soft); 
     display: flex; 
     align-items: center; 
     gap: 10px; 
@@ -4135,22 +3768,24 @@
   .diagram-toolbar-actions {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 8px;
   }
 
   .btn-ctrl-action {
-    padding: 5px 12px;
-    border-radius: 6px;
+    padding: 6px 12px;
+    min-height: 32px;
+    border-radius: 8px;
     font-size: 12px;
     font-weight: 600;
     cursor: pointer;
     border: 1px solid rgba(255, 255, 255, 0.12);
-    background: rgba(30, 41, 59, 0.7);
-    color: #cbd5e1;
+    background: rgba(22, 25, 38, 0.7);
+    color: var(--qa-text-soft);
     display: flex;
     align-items: center;
     gap: 5px;
-    transition: all 0.15s ease;
+    transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease, opacity 0.15s ease;
   }
 
   .btn-ctrl-action:hover {
@@ -4160,9 +3795,9 @@
   }
 
   .btn-ctrl-action.grid.active {
-    background: rgba(59, 130, 246, 0.25);
-    border-color: #3b82f6;
-    color: #93c5fd;
+    background: rgba(99, 102, 241, 0.25);
+    border-color: var(--qa-iris);
+    color: var(--qa-iris-text);
   }
 
   .btn-ctrl-action.copy:hover {
@@ -4184,7 +3819,7 @@
   .zoom-controls { 
     display: flex; 
     gap: 4px; 
-    background: rgba(15, 23, 42, 0.6);
+    background: rgba(11, 13, 21, 0.6);
     padding: 2px;
     border-radius: 6px;
     border: 1px solid rgba(255, 255, 255, 0.08);
@@ -4193,15 +3828,18 @@
   .btn-ctrl {
     background: transparent;
     border: none;
-    color: #94a3b8;
-    padding: 4px 8px;
-    border-radius: 4px;
-    font-size: 11px;
+    color: var(--qa-text-muted);
+    padding: 4px 10px;
+    min-width: 32px;
+    min-height: 28px;
+    border-radius: 6px;
+    font-size: 12px;
     cursor: pointer;
     font-weight: 600;
-    transition: all 0.15s;
+    transition: background-color 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s;
   }
-  .btn-ctrl:hover { background: #334155; color: white; }
+
+  .btn-ctrl:hover { background: var(--qa-surface-raised); color: white; }
 
   .diagram-canvas-panel {
     min-height: 580px;
@@ -4210,7 +3848,7 @@
     overflow: hidden;
     position: relative;
     padding: 0;
-    background: #090d16;
+    background: var(--qa-surface-deep);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 8px;
     cursor: grab;
@@ -4226,10 +3864,10 @@
     position: absolute;
     bottom: 12px;
     right: 14px;
-    background: rgba(15, 23, 42, 0.85);
+    background: rgba(11, 13, 21, 0.85);
     backdrop-filter: blur(8px);
     border: 1px solid rgba(255, 255, 255, 0.12);
-    color: #94a3b8;
+    color: var(--qa-text-muted);
     font-size: 11px;
     padding: 5px 12px;
     border-radius: 20px;
@@ -4240,8 +3878,9 @@
     z-index: 10;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
   }
+
   .canvas-help-badge .sep {
-    color: #475569;
+    color: var(--qa-text-muted);
   }
 
   /* Draw.io Dot Grid Simulation */
@@ -4249,7 +3888,7 @@
     background-color: #0b0f19;
     background-image: 
       radial-gradient(circle, rgba(255, 255, 255, 0.12) 1px, transparent 1px),
-      radial-gradient(circle, rgba(96, 165, 250, 0.08) 1.5px, transparent 1.5px);
+      radial-gradient(circle, rgba(129, 140, 248, 0.08) 1.5px, transparent 1.5px);
     background-size: 20px 20px, 100px 100px;
     background-position: 0 0, 0 0;
   }
@@ -4271,7 +3910,7 @@
   }
 
   .diagram-loading, .diagram-empty, .diagram-error {
-    color: #94a3b8; 
+    color: var(--qa-text-muted); 
     font-size: 13px; 
     padding: 40px; 
     display: flex;
@@ -4282,7 +3921,7 @@
 
   /* ── DRAW.IO NOTATION LEGEND BAR ── */
   .drawio-legend-bar {
-    background: rgba(15, 23, 42, 0.7);
+    background: rgba(11, 13, 21, 0.7);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 8px;
     padding: 10px 16px;
@@ -4291,7 +3930,7 @@
     gap: 16px;
     flex-wrap: wrap;
     font-size: 11.5px;
-    color: #94a3b8;
+    color: var(--qa-text-muted);
   }
 
   .legend-header {
@@ -4310,275 +3949,40 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    color: #cbd5e1;
+    color: var(--qa-text-soft);
   }
 
   .shape-sample {
     display: inline-block;
     width: 14px;
     height: 14px;
-    border: 1.5px solid #60a5fa;
-    background: rgba(59, 130, 246, 0.15);
+    border: 1.5px solid var(--qa-iris-soft);
+    background: rgba(99, 102, 241, 0.15);
   }
 
   .shape-sample.pill { border-radius: 10px; border-color: #10b981; background: rgba(16, 185, 129, 0.2); }
-  .shape-sample.rect { border-radius: 2px; border-color: #3b82f6; background: rgba(59, 130, 246, 0.2); }
+
+  .shape-sample.rect { border-radius: 2px; border-color: var(--qa-iris); background: rgba(99, 102, 241, 0.2); }
+
   .shape-sample.diamond { transform: rotate(45deg); width: 10px; height: 10px; margin: 2px; border-color: #f59e0b; background: rgba(245, 158, 11, 0.2); }
+
   .shape-sample.cylinder { border-radius: 4px; border-color: #ec4899; background: rgba(236, 72, 153, 0.2); }
+
   .shape-sample.group { border: 1.5px dashed #a855f7; background: rgba(168, 85, 247, 0.1); border-radius: 3px; }
 
   /* ── TRACEABILITY MATRIX ── */
-  .matrix-workspace {
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-    flex: 1;
-  }
 
-  .matrix-controls-panel { padding: 12px 16px; }
 
-  .matrix-filter-row {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    flex-wrap: wrap;
-  }
-
-  .search-box {
-    position: relative;
-    flex: 1;
-    min-width: 250px;
-  }
-
-  .search-icon {
-    position: absolute;
-    left: 10px;
-    top: 50%;
-    transform: translateY(-50%);
-    font-size: 12px;
-    opacity: 0.6;
-  }
-
-  .matrix-search-input {
-    width: 100%;
-    background: rgba(15, 23, 42, 0.8);
-    border: 1px solid #334155;
-    color: white;
-    padding: 7px 10px 7px 30px;
-    border-radius: 6px;
-    font-size: 13px;
-    outline: none;
-    box-sizing: border-box;
-  }
-
-  .filter-select-group {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 12.5px;
-    color: #cbd5e1;
-  }
-
-  .filter-select {
-    background: rgba(15, 23, 42, 0.8);
-    border: 1px solid #334155;
-    color: white;
-    padding: 6px 10px;
-    border-radius: 6px;
-    font-size: 12.5px;
-    outline: none;
-  }
-
-  .btn-export-csv {
-    background: rgba(16, 185, 129, 0.2);
-    border: 1px solid rgba(16, 185, 129, 0.4);
-    color: #6ee7b7;
-    padding: 6px 14px;
-    border-radius: 6px;
-    font-size: 12.5px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  .btn-export-csv:hover {
-    background: rgba(16, 185, 129, 0.35);
-    box-shadow: 0 0 10px rgba(16, 185, 129, 0.3);
-  }
-
-  .matrix-table-panel {
-    padding: 0;
-    overflow: hidden;
-  }
-
-  .table-container {
-    overflow-x: auto;
-    max-height: 600px;
-  }
-
-  .matrix-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 12.5px;
-  }
-
-  .matrix-table th {
-    background: #1e293b;
-    padding: 12px 14px;
-    color: #94a3b8;
-    font-weight: 600;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-    position: sticky;
-    top: 0;
-    text-align: left;
-    white-space: nowrap;
-  }
-
-  .matrix-table td {
-    padding: 10px 14px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-    vertical-align: middle;
-  }
-
-  .matrix-table tr:hover { background: rgba(255, 255, 255, 0.03); }
-
-  .code-badge {
-    background: rgba(59, 130, 246, 0.2);
-    border: 1px solid rgba(59, 130, 246, 0.4);
-    color: #93c5fd;
-    padding: 2px 6px;
-    border-radius: 4px;
-    font-family: monospace;
-    font-weight: 700;
-    font-size: 11px;
-  }
-
-  .doc-cell { display: flex; align-items: center; gap: 6px; }
-  .doc-name { font-size: 12px; color: #cbd5e1; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-  .sitemap-pill, .usecase-pill {
-    font-size: 11.5px;
-    color: #e2e8f0;
-  }
-
-  .screen-link-btn {
-    background: rgba(139, 92, 246, 0.15);
-    border: 1px solid rgba(139, 92, 246, 0.35);
-    color: #c4b5fd;
-    padding: 3px 8px;
-    border-radius: 5px;
-    font-size: 11.5px;
-    cursor: pointer;
-    transition: all 0.15s;
-    text-align: left;
-  }
-  .screen-link-btn:hover { background: rgba(139, 92, 246, 0.3); color: white; }
-
-  .testcases-list { display: flex; flex-direction: column; gap: 2px; }
-  .tc-item { font-size: 11px; color: #94a3b8; }
-
-  .status-badge {
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: 4px;
-    font-size: 10.5px;
-    font-weight: 700;
-  }
-
-  /* Defect & UAT Badges in Matrix */
-  .defect-list { display: flex; flex-direction: column; gap: 3px; }
-  .defect-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 2px 7px;
-    border-radius: 4px;
-    font-size: 11px;
-    font-weight: 600;
-    max-width: 170px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
   .defect-pill.open {
     background: rgba(239, 68, 68, 0.15);
     border: 1px solid rgba(239, 68, 68, 0.4);
     color: #fca5a5;
   }
-  .defect-pill.clean {
-    background: rgba(16, 185, 129, 0.1);
-    border: 1px solid rgba(16, 185, 129, 0.25);
-    color: #86efac;
-    font-weight: 500;
-    font-size: 10.5px;
-  }
 
-  .uat-list {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-  .uat-item-row {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    background: rgba(30, 41, 59, 0.7);
-    border: 1px solid rgba(59, 130, 246, 0.3);
-    border-radius: 4px;
-    padding: 2px 6px;
-    max-width: 220px;
-  }
-  .uat-code-tag {
-    font-size: 10.5px;
-    font-weight: 700;
-    color: #60a5fa;
-    white-space: nowrap;
-    background: rgba(59, 130, 246, 0.18);
-    padding: 1px 4px;
-    border-radius: 3px;
-    flex-shrink: 0;
-  }
-  .uat-title-text {
-    font-size: 11px;
-    color: #e2e8f0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .uat-status-sub {
-    margin-top: 2px;
-  }
 
-  .uat-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 2px 8px;
-    border-radius: 4px;
-    font-size: 10.5px;
-    font-weight: 700;
-    white-space: nowrap;
-  }
-  .uat-pill.passed {
-    background: rgba(16, 185, 129, 0.2);
-    border: 1px solid rgba(16, 185, 129, 0.5);
-    color: #6ee7b7;
-  }
-  .uat-pill.ready {
-    background: rgba(59, 130, 246, 0.2);
-    border: 1px solid rgba(59, 130, 246, 0.5);
-    color: #93c5fd;
-  }
-  .uat-pill.pending {
-    background: rgba(245, 158, 11, 0.15);
-    border: 1px solid rgba(245, 158, 11, 0.4);
-    color: #fcd34d;
-  }
-  .uat-pill.failed {
-    background: rgba(239, 68, 68, 0.2);
-    border: 1px solid rgba(239, 68, 68, 0.5);
-    color: #fca5a5;
-  }
+
+
+
 
   /* ── Figma & Image Wireframe Extension Styles ── */
   .panel-title-group {
@@ -4588,22 +3992,25 @@
   }
 
   .node-source-badge {
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 700;
     padding: 2px 6px;
     border-radius: 4px;
     margin-left: auto;
   }
+
   .node-source-badge.figma {
     background: rgba(168, 85, 247, 0.2);
     border: 1px solid rgba(168, 85, 247, 0.5);
     color: #d8b4fe;
   }
+
   .node-source-badge.img {
-    background: rgba(59, 130, 246, 0.2);
-    border: 1px solid rgba(59, 130, 246, 0.5);
-    color: #93c5fd;
+    background: rgba(99, 102, 241, 0.2);
+    border: 1px solid rgba(99, 102, 241, 0.5);
+    color: var(--qa-iris-text);
   }
+
   .node-source-badge.figma-sm, .node-source-badge.img-sm {
     margin-left: auto;
     font-size: 11px;
@@ -4611,7 +4018,7 @@
 
   .wf-mode-tabs-header {
     display: flex;
-    background: rgba(15, 23, 42, 0.8);
+    background: rgba(11, 13, 21, 0.8);
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 8px;
     padding: 3px;
@@ -4621,7 +4028,7 @@
   .wf-mode-tab-btn {
     background: none;
     border: none;
-    color: #94a3b8;
+    color: var(--qa-text-muted);
     padding: 5px 12px;
     border-radius: 6px;
     font-size: 12px;
@@ -4630,13 +4037,15 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    transition: all 0.2s;
+    transition: background-color 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s, transform 0.2s, opacity 0.2s;
   }
-  .wf-mode-tab-btn:hover { color: #f8fafc; background: rgba(255, 255, 255, 0.05); }
+
+  .wf-mode-tab-btn:hover { color: var(--qa-text-strong); background: rgba(255, 255, 255, 0.05); }
+
   .wf-mode-tab-btn.active {
-    background: #3b82f6;
+    background: var(--qa-iris);
     color: white;
-    box-shadow: 0 2px 8px rgba(59, 130, 246, 0.4);
+    box-shadow: 0 2px 8px rgba(99, 102, 241, 0.4);
   }
 
   .dot-live {
@@ -4644,8 +4053,10 @@
     height: 7px;
     border-radius: 50%;
   }
+
   .dot-live.green { background: #22c55e; box-shadow: 0 0 6px #22c55e; }
-  .dot-live.blue { background: #60a5fa; box-shadow: 0 0 6px #60a5fa; }
+
+  .dot-live.blue { background: var(--qa-iris-soft); box-shadow: 0 0 6px var(--qa-iris-soft); }
 
   .browser-right-actions {
     display: flex;
@@ -4656,16 +4067,17 @@
   .browser-ext-link {
     background: rgba(255, 255, 255, 0.1);
     border: 1px solid rgba(255, 255, 255, 0.15);
-    color: #cbd5e1;
+    color: var(--qa-text-soft);
     font-size: 11px;
     font-weight: 600;
     padding: 3px 8px;
     border-radius: 4px;
     text-decoration: none;
     cursor: pointer;
-    transition: all 0.15s;
+    transition: background-color 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s;
     white-space: nowrap;
   }
+
   .browser-ext-link:hover {
     background: rgba(255, 255, 255, 0.2);
     color: white;
@@ -4680,7 +4092,7 @@
   }
 
   .figma-config-panel {
-    background: #111827;
+    background: var(--qa-surface-raised);
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
     padding: 10px 14px;
     display: flex;
@@ -4711,6 +4123,7 @@
     font-size: 12px;
     outline: none;
   }
+
   .figma-text-input:focus { border-color: #8b5cf6; }
 
   .btn-figma-action {
@@ -4724,13 +4137,19 @@
     align-items: center;
     gap: 4px;
     white-space: nowrap;
-    transition: all 0.15s;
+    transition: background-color 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s;
   }
-  .btn-figma-action.connect { background: #7c3aed; color: white; }
+
+  .btn-figma-action.connect { background: #8b5cf6; color: white; }
+
   .btn-figma-action.connect:hover { background: #6d28d9; }
-  .btn-figma-action.sync { background: rgba(59, 130, 246, 0.2); border: 1px solid rgba(59, 130, 246, 0.4); color: #93c5fd; }
-  .btn-figma-action.sync:hover:not(:disabled) { background: rgba(59, 130, 246, 0.35); }
-  .btn-figma-action.token { background: rgba(255, 255, 255, 0.08); color: #cbd5e1; }
+
+  .btn-figma-action.sync { background: rgba(99, 102, 241, 0.2); border: 1px solid rgba(99, 102, 241, 0.4); color: var(--qa-iris-text); }
+
+  .btn-figma-action.sync:hover:not(:disabled) { background: rgba(99, 102, 241, 0.35); }
+
+  .btn-figma-action.token { background: rgba(255, 255, 255, 0.08); color: var(--qa-text-soft); }
+
   .btn-figma-action.token:hover { background: rgba(255, 255, 255, 0.15); }
 
   .figma-token-box {
@@ -4742,8 +4161,11 @@
     flex-direction: column;
     gap: 6px;
   }
+
   .token-title { font-size: 11px; color: #d8b4fe; font-weight: 500; }
+
   .token-form-row { display: flex; gap: 8px; }
+
   .figma-token-field {
     flex: 1;
     background: #030712;
@@ -4753,8 +4175,9 @@
     border-radius: 4px;
     font-size: 11.5px;
   }
+
   .btn-save-token {
-    background: #3b82f6;
+    background: var(--qa-iris);
     color: white;
     border: none;
     padding: 5px 12px;
@@ -4770,6 +4193,7 @@
     position: relative;
     background: #1e1e1e;
   }
+
   .figma-embed-frame {
     width: 100%;
     height: 100%;
@@ -4784,10 +4208,13 @@
     justify-content: center;
     padding: 60px 20px;
     text-align: center;
-    color: #94a3b8;
+    color: var(--qa-text-muted);
   }
+
   .figma-watermark-icon { font-size: 48px; margin-bottom: 12px; }
-  .figma-empty-guide h4 { color: #f8fafc; margin: 0 0 8px 0; }
+
+  .figma-empty-guide h4 { color: var(--qa-text-strong); margin: 0 0 8px 0; }
+
   .figma-empty-guide p { max-width: 450px; font-size: 12.5px; line-height: 1.5; margin: 0; }
 
   /* ── IMAGE MOCKUP CONTAINER ── */
@@ -4806,15 +4233,18 @@
   }
 
   .image-action-toolbar {
-    background: #111827;
+    background: var(--qa-surface-raised);
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
     padding: 8px 14px;
     display: flex;
     justify-content: space-between;
     align-items: center;
   }
-  .img-name-tag { font-size: 12px; color: #cbd5e1; font-weight: 500; }
+
+  .img-name-tag { font-size: 12px; color: var(--qa-text-soft); font-weight: 500; }
+
   .img-btn-group { display: flex; gap: 8px; }
+
   .btn-img-ctrl {
     padding: 4px 10px;
     border-radius: 5px;
@@ -4822,13 +4252,19 @@
     font-weight: 600;
     cursor: pointer;
     border: none;
-    transition: all 0.15s;
+    transition: background-color 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s;
   }
-  .btn-img-ctrl.zoom { background: rgba(59, 130, 246, 0.2); color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.4); }
-  .btn-img-ctrl.zoom:hover { background: rgba(59, 130, 246, 0.4); }
-  .btn-img-ctrl.replace { background: rgba(255, 255, 255, 0.08); color: #f8fafc; }
+
+  .btn-img-ctrl.zoom { background: rgba(99, 102, 241, 0.2); color: var(--qa-iris-text); border: 1px solid rgba(99, 102, 241, 0.4); }
+
+  .btn-img-ctrl.zoom:hover { background: rgba(99, 102, 241, 0.4); }
+
+  .btn-img-ctrl.replace { background: rgba(255, 255, 255, 0.08); color: var(--qa-text-strong); }
+
   .btn-img-ctrl.replace:hover { background: rgba(255, 255, 255, 0.15); }
+
   .btn-img-ctrl.delete { background: rgba(239, 68, 68, 0.15); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.3); }
+
   .btn-img-ctrl.delete:hover { background: rgba(239, 68, 68, 0.3); }
 
   .image-display-area {
@@ -4838,7 +4274,7 @@
     justify-content: center;
     overflow: auto;
     cursor: zoom-in;
-    background: radial-gradient(circle, #1e293b 10%, #090d16 90%);
+    background: radial-gradient(circle, var(--qa-surface-raised) 10%, var(--qa-surface-deep) 90%);
   }
 
   .wireframe-img-render {
@@ -4853,7 +4289,7 @@
   .image-upload-dropzone {
     flex: 1;
     margin: 20px;
-    border: 2px dashed rgba(59, 130, 246, 0.4);
+    border: 2px dashed rgba(99, 102, 241, 0.4);
     border-radius: 10px;
     padding: 40px 20px;
     display: flex;
@@ -4862,18 +4298,23 @@
     justify-content: center;
     text-align: center;
     cursor: pointer;
-    background: rgba(15, 23, 42, 0.5);
-    transition: all 0.2s;
+    background: rgba(11, 13, 21, 0.5);
+    transition: background-color 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s, transform 0.2s, opacity 0.2s;
   }
+
   .image-upload-dropzone:hover {
-    border-color: #60a5fa;
-    background: rgba(59, 130, 246, 0.08);
+    border-color: var(--qa-iris-soft);
+    background: rgba(99, 102, 241, 0.08);
   }
+
   .drop-icon { font-size: 42px; margin-bottom: 10px; }
-  .image-upload-dropzone h4 { color: #f8fafc; margin: 0 0 6px 0; }
-  .image-upload-dropzone p { font-size: 12px; color: #94a3b8; margin: 0 0 16px 0; }
+
+  .image-upload-dropzone h4 { color: var(--qa-text-strong); margin: 0 0 6px 0; }
+
+  .image-upload-dropzone p { font-size: 12px; color: var(--qa-text-muted); margin: 0 0 16px 0; }
+
   .btn-upload-browse {
-    background: #3b82f6;
+    background: var(--qa-iris);
     color: white;
     border: none;
     padding: 8px 18px;
@@ -4881,13 +4322,14 @@
     font-size: 13px;
     font-weight: 600;
     cursor: pointer;
-    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.35);
+    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.35);
   }
+
   .uploading-spinner {
     display: flex;
     align-items: center;
     gap: 8px;
-    color: #60a5fa;
+    color: var(--qa-iris-soft);
     font-size: 13px;
     font-weight: 600;
   }
@@ -4909,7 +4351,7 @@
   }
 
   .lightbox-modal {
-    background: #0f172a;
+    background: var(--qa-surface-deep);
     border: 1px solid rgba(255, 255, 255, 0.15);
     border-radius: 12px;
     max-width: 92vw;
@@ -4921,14 +4363,16 @@
   }
 
   .lightbox-header {
-    background: #1e293b;
+    background: var(--qa-surface-raised);
     padding: 12px 18px;
     display: flex;
     justify-content: space-between;
     align-items: center;
     border-bottom: 1px solid rgba(255, 255, 255, 0.1);
   }
-  .lightbox-title { font-weight: 600; color: #f8fafc; font-size: 14px; }
+
+  .lightbox-title { font-weight: 600; color: var(--qa-text-strong); font-size: 14px; }
+
   .lightbox-close {
     background: rgba(239, 68, 68, 0.15);
     border: 1px solid rgba(239, 68, 68, 0.3);
@@ -4939,6 +4383,7 @@
     font-size: 12px;
     font-weight: 600;
   }
+
   .lightbox-close:hover { background: rgba(239, 68, 68, 0.3); color: white; }
 
   .lightbox-body {
@@ -4948,10 +4393,258 @@
     align-items: center;
     justify-content: center;
   }
+
   .lightbox-img {
     max-width: 100%;
     max-height: 80vh;
     object-fit: contain;
     border-radius: 8px;
+  }
+
+  /* ── EMPTY STATE ICON RING ── */
+  .empty-icon-ring {
+    width: 68px;
+    height: 68px;
+    margin: 0 auto 14px;
+    border-radius: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #a5b4fc;
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.18), rgba(168, 85, 247, 0.14));
+    border: 1px solid rgba(129, 140, 248, 0.35);
+    box-shadow: 0 8px 24px rgba(99, 102, 241, 0.16);
+  }
+
+  /* ── LIVE MERMAID CODE EDITOR DRAWER ── */
+  .btn-ctrl-action.edit-code {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border-color: rgba(129, 140, 248, 0.36);
+    color: #c7d2fe;
+    background: rgba(99, 102, 241, 0.12);
+  }
+
+  .btn-ctrl-action.edit-code:hover,
+  .btn-ctrl-action.edit-code.active {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.35), rgba(168, 85, 247, 0.3));
+    border-color: rgba(165, 180, 252, 0.7);
+    color: #ffffff;
+  }
+
+  .mermaid-editor-drawer {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 16px 18px;
+    border-radius: 16px;
+    border-color: rgba(99, 102, 241, 0.35);
+    background: rgba(11, 13, 21, 0.88);
+  }
+
+  .editor-drawer-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .editor-drawer-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .editor-badge {
+    font-family: 'Outfit', monospace;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: #e0e7ff;
+    background: rgba(99, 102, 241, 0.28);
+    border: 1px solid rgba(129, 140, 248, 0.45);
+    padding: 3px 9px;
+    border-radius: 999px;
+  }
+
+  .editor-hint {
+    font-size: 12px;
+    color: var(--qa-text-muted);
+  }
+
+  .editor-drawer-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .btn-editor-cancel {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: var(--qa-text-soft);
+    padding: 7px 14px;
+    border-radius: 10px;
+    font-size: 12.5px;
+    font-weight: 500;
+    font-family: inherit;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+
+  .btn-editor-cancel:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.1);
+    color: #ffffff;
+  }
+
+  .btn-editor-save {
+    background: linear-gradient(135deg, #6366f1, #a855f7);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    color: #ffffff;
+    padding: 7px 16px;
+    border-radius: 10px;
+    font-size: 12.5px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    box-shadow: 0 4px 14px rgba(99, 102, 241, 0.35);
+    transition: transform 0.15s ease, filter 0.15s ease;
+  }
+
+  .btn-editor-save:hover:not(:disabled) {
+    transform: translateY(-1px);
+    filter: brightness(1.08);
+  }
+
+  .btn-editor-save:disabled { opacity: 0.6; cursor: not-allowed; }
+
+  .mermaid-code-textarea {
+    width: 100%;
+    box-sizing: border-box;
+    background: rgba(6, 8, 14, 0.9);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 12px;
+    color: var(--qa-text);
+    padding: 12px 14px;
+    font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+    font-size: 12.5px;
+    line-height: 1.55;
+    resize: vertical;
+    outline: none;
+  }
+
+  .mermaid-code-textarea:focus {
+    border-color: rgba(129, 140, 248, 0.65);
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.16);
+  }
+
+  /* ── RESPONSIVE LAYOUT ── */
+  @media (max-width: 1180px) {
+    .stats-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+  }
+
+  @media (max-width: 960px) {
+    .panel-container {
+      padding: 14px 14px 28px;
+    }
+    .stats-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .sitemap-workspace {
+      grid-template-columns: 1fr;
+    }
+    .sitemap-panel {
+      max-height: 380px;
+    }
+    .executive-summary-bar {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .empty-mockup-icon {
+    color: var(--qa-text-muted);
+    margin-bottom: 12px;
+    display: flex;
+    justify-content: center;
+  }
+
+  .rev-stars {
+    display: inline-flex;
+    gap: 2px;
+    color: #fbbf24;
+  }
+
+  /* ── KEYBOARD FOCUS & TOUCH TARGETS (a11y) ── */
+  .panel-container :is(button, [role="button"], a, input, textarea, select, [tabindex="0"]):focus-visible,
+  .lightbox-modal:focus-visible,
+  .prototype-dialog-modal:focus-visible {
+    outline: 2px solid var(--qa-focus-ring);
+    outline-offset: 2px;
+    border-radius: 8px;
+  }
+
+  .sitemap-node-card[role="button"],
+  .sitemap-child-card[role="button"],
+  .image-display-area[role="button"],
+  .image-upload-dropzone[role="button"],
+  .gallery-photo-card[role="button"] {
+    cursor: pointer;
+  }
+
+  .btn-nav-arrow {
+    min-width: 28px;
+    min-height: 28px;
+  }
+
+  @media (pointer: coarse) {
+    .btn-ctrl,
+    .btn-ctrl-action,
+    .btn-nav-arrow,
+    .btn-run-agent-screen,
+    .btn-editor-save,
+    .btn-editor-cancel,
+    .nav-tab {
+      min-height: 44px;
+      min-width: 44px;
+    }
+  }
+
+  /* ── REDUCED MOTION ── */
+  @media (prefers-reduced-motion: reduce) {
+    .stat-card,
+    .sync-pulse-dot,
+    .btn-generate-ai,
+    .btn-back,
+    .sitemap-node-card,
+    .accordion-chevron {
+      animation: none !important;
+      transition: none !important;
+    }
+  }
+
+  .matrix-pane-host {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
   }
 </style>

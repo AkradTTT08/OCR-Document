@@ -955,14 +955,107 @@ def extract_srs_menu_outline(markdown_text: str) -> str:
     return "\n".join(result)
 
 
-def fetch_comprehensive_project_context(cursor, project_id: str, reference_document_id=None):
+def fetch_active_exit_criteria_checklist(cursor, project_id: str = None, doc_type: str = "General") -> str:
     """
-    Retrieves ALL available project knowledge:
+    Fetches active Exit Criteria templates (Universal 'ALL' + specific doc_type aliases)
+    so Agent 6 generates documents that inherently satisfy every Quality Gate item on the first pass.
+    """
+    try:
+        ALIAS_MAP = {
+            'testcase': ['Test Case', 'TestCase'],
+            'test case': ['Test Case', 'TestCase'],
+            'srs': ['SRS', 'Requirement', 'Requirements'],
+            'requirement': ['Requirement', 'Requirements', 'SRS'],
+            'requirements': ['Requirements', 'Requirement', 'SRS'],
+            'usermanual': ['User Manual', 'Usermanual'],
+            'user manual': ['User Manual', 'Usermanual'],
+            'adminmanual': ['Admin Manual', 'Adminmanual'],
+            'admin manual': ['Admin Manual', 'Adminmanual'],
+            'projectplan': ['Project Plan', 'ProjectPlan'],
+            'project plan': ['Project Plan', 'ProjectPlan'],
+            'sdd': ['System Design', 'SDD'],
+            'system design': ['System Design', 'SDD'],
+            'uat': ['UAT', 'Test Case'],
+            'tor/sow': ['TOR/SOW', 'TOR', 'Requirement', 'SRS'],
+        }
+        dt_clean = (doc_type or '').strip()
+        candidates = ALIAS_MAP.get(dt_clean.lower(), [dt_clean] if dt_clean else [])
+        cand_upper = list({c.upper() for c in candidates if c} | {re.sub(r'\s+', '', c).upper() for c in candidates if c} | {'ALL'})
+
+        safe_p_id = project_id if (project_id and str(project_id).strip() and str(project_id).lower() != 'none') else None
+        if safe_p_id:
+            cursor.execute("""
+                SELECT template_id, title, doc_type
+                FROM exit_criteria_templates
+                WHERE is_active = TRUE
+                  AND (project_id = %s::uuid OR project_id IS NULL)
+                  AND (
+                      UPPER(TRIM(doc_type)) = ANY(%s)
+                      OR UPPER(REPLACE(TRIM(doc_type), ' ', '')) = ANY(%s)
+                  )
+                ORDER BY (CASE WHEN project_id = %s::uuid THEN 0 ELSE 1 END), created_at DESC
+                LIMIT 4
+            """, (safe_p_id, cand_upper, cand_upper, safe_p_id))
+        else:
+            cursor.execute("""
+                SELECT template_id, title, doc_type
+                FROM exit_criteria_templates
+                WHERE is_active = TRUE
+                  AND (
+                      UPPER(TRIM(doc_type)) = ANY(%s)
+                      OR UPPER(REPLACE(TRIM(doc_type), ' ', '')) = ANY(%s)
+                  )
+                ORDER BY created_at DESC
+                LIMIT 4
+            """, (cand_upper, cand_upper))
+        templates = cursor.fetchall()
+        if not templates:
+            return ""
+
+        lines = [
+            "# ==============================================================================",
+            "# TARGET EXIT CRITERIA QUALITY GATE CHECKLIST (MUST PASS 100% ON QA CONSULT)",
+            "# ==============================================================================",
+            "When this document is submitted to QA Consult, it will be graded strictly against the following active Exit Criteria items.",
+            "You MUST proactively ensure every mandatory item below is clearly satisfied with verifiable evidence in the document:\n"
+        ]
+        for t_id, t_title, t_dtype in templates:
+            cursor.execute("""
+                SELECT item_code, category, question_text, target_metric, severity, is_mandatory
+                FROM exit_criteria_items
+                WHERE template_id = %s
+                ORDER BY order_index ASC, item_code ASC
+            """, (t_id,))
+            items = cursor.fetchall()
+            if not items:
+                continue
+            lines.append(f"### Exit Criteria Template: {t_title} (Doc Type: {t_dtype})")
+            for code, cat, q_txt, metric, sev, mand in items:
+                m_tag = "MANDATORY" if mand else "Optional"
+                lines.append(f"- [{code}] ({sev} | {m_tag} | KPI: {metric or '100%'}) {cat}: {q_txt}")
+            lines.append("")
+        return "\n".join(lines)
+    except Exception as ec_err:
+        logger.warning(f"Could not fetch active exit criteria checklist for Agent 6: {ec_err}")
+        try:
+            if hasattr(cursor, 'connection') and cursor.connection:
+                cursor.connection.rollback()
+        except Exception:
+            pass
+        return ""
+
+
+def fetch_comprehensive_project_context(cursor, project_id: str, reference_document_id=None, doc_type: str = None):
+    """
+    Retrieves ALL available project knowledge automatically across all menus:
     1. Project info (code, name, description)
     2. Primary reference document(s) (if specified, supports multiple)
-    3. ALL other project documents in Knowledge Base (TOR/SOW, SRS, SDD, Test Cases, Manuals, etc.)
-    4. Structured requirements (if available)
-    5. Detected SRS Menus & Module outlines (for test case sheet separation by menu)
+    3. ALL other project documents in Knowledge Base (prioritizing Golden Data, SRS, TOR/SOW, SDD, Manuals, etc.)
+    4. Structured requirements (from Requirement/KB extraction)
+    5. System Analysis Diagrams / Workflows (from QA Analysis Diagram menu)
+    6. Recent QA Consult Audit Summary (from QA Consult menu)
+    7. Active Exit Criteria Checklist (from Exit Criteria menu)
+    8. Detected SRS Menus & Module outlines (for test case sheet separation by menu)
     """
     # 1. Project Info
     cursor.execute("SELECT project_code, project_name, description FROM projects WHERE project_id = %s::uuid", (project_id,))
@@ -974,12 +1067,13 @@ def fetch_comprehensive_project_context(cursor, project_id: str, reference_docum
     # Parse target reference document IDs (support multiple)
     target_ref_ids = set(parse_id_list(reference_document_id))
 
-    # 2. Fetch ALL Active Documents in this Project
+    # 2. Fetch ALL Active Documents in this Project (Golden Data & SRS prioritized first)
     cursor.execute("""
-        SELECT doc_id, original_filename, doc_category, doc_type, full_markdown_content
+        SELECT doc_id, original_filename, doc_category, doc_type, full_markdown_content,
+               COALESCE(is_golden_data, FALSE) AS is_golden
         FROM documents
         WHERE project_id = %s::uuid AND (status = 'Active' OR status IS NULL)
-        ORDER BY created_at ASC
+        ORDER BY COALESCE(is_golden_data, FALSE) DESC, created_at ASC
     """, (project_id,))
     doc_rows = cursor.fetchall()
 
@@ -993,27 +1087,29 @@ def fetch_comprehensive_project_context(cursor, project_id: str, reference_docum
         d_category = d[2] or "General"
         d_doctype = d[3] or "Document"
         d_content = (d[4] or "").strip()
+        d_golden = bool(d[5]) if len(d) > 5 else False
+        golden_tag = " [GOLDEN BASELINE]" if d_golden else ""
 
-        is_srs = (d_category and d_category.upper() == 'SRS') or ('srs' in d_filename.lower()) or (d_doctype and 'srs' in d_doctype.lower())
+        is_srs = (d_category and d_category.upper() in ('SRS', 'REQUIREMENT', 'REQUIREMENTS')) or ('srs' in d_filename.lower()) or (d_doctype and 'srs' in d_doctype.lower())
         if is_srs:
             outline = extract_srs_menu_outline(d_content)
             if outline:
-                srs_menu_outlines.append(f"### SRS Document: {d_filename}\n{outline}")
+                srs_menu_outlines.append(f"### SRS Document: {d_filename}{golden_tag}\n{outline}")
 
         if target_ref_ids and d_id in target_ref_ids:
             primary_ref_context_list.append(f"""
-### Selected Reference Document: {d_filename} [Category: {d_category} | Type: {d_doctype}]
+### Selected Reference Document: {d_filename}{golden_tag} [Category: {d_category} | Type: {d_doctype}]
 --- Content Start ---
 {d_content}
 --- Content End ---
 """)
         else:
-            # If it's an SRS document, give it up to 60,000 characters so no menus are truncated!
-            limit = 60000 if is_srs else 15000
+            # Give SRS & Golden Baseline documents generous budget so no menus/requirements are truncated
+            limit = 65000 if (is_srs or d_golden) else 18000
             snippet = d_content[:limit] if len(d_content) > limit else d_content
             if snippet:
                 all_docs_context_list.append(f"""
-### Project Document: {d_filename} [Category: {d_category} | Type: {d_doctype}]
+### Project Document: {d_filename}{golden_tag} [Category: {d_category} | Type: {d_doctype}]
 {snippet}
 """)
 
@@ -1029,7 +1125,7 @@ The user has specifically designated the following {len(primary_ref_context_list
     if all_docs_context_list:
         all_docs_section = f"""
 # Comprehensive Project Knowledge Base ({len(all_docs_context_list)} Documents in Project: {project_code})
-The following documents contain additional project domain knowledge, specifications, architecture, and requirements. You MUST analyze and synthesize across ALL of them to generate the most accurate, thorough, and complete document:
+The following documents contain project domain knowledge, specifications, architecture, and requirements. You MUST analyze and synthesize across ALL of them to generate the most accurate, thorough, and complete document:
 {''.join(all_docs_context_list)}
 """
 
@@ -1048,13 +1144,14 @@ The following documents contain additional project domain knowledge, specificati
 ==============================================================================
 """
 
-    # 3. Fetch Structured Requirements (if available)
+    # 3. Fetch Structured Requirements (from KB / Requirement Registry)
     formatted_reqs = []
     try:
         cursor.execute("""
             SELECT req_code, title, description, steps, expected_results
             FROM structured_requirements
             WHERE project_id = %s::uuid
+            ORDER BY req_code ASC
         """, (project_id,))
         reqs = cursor.fetchall()
         for req in reqs:
@@ -1076,9 +1173,53 @@ The following documents contain additional project domain knowledge, specificati
     structured_reqs_section = ""
     if formatted_reqs:
         structured_reqs_section = f"""
-# Structured Requirements & Test Scenarios
+# Structured Requirements & Test Scenarios ({len(formatted_reqs)} Requirements)
 {json.dumps(formatted_reqs, ensure_ascii=False, indent=2)}
 """
+
+    # 4. Fetch System Diagrams / Workflows / Sitemap / Traceability Matrix from QA Analysis Diagram (qa_analysis_diagrams)
+    diagram_context_section = ""
+    try:
+        from agent_7_flow_analyzer import get_diagram_context_for_agents
+        diagram_context_section = get_diagram_context_for_agents(project_id, include_mockups=True, include_matrix=True)
+    except Exception as diag_err:
+        logger.warning(f"Failed to load qa_analysis_diagrams context for Agent 6: {diag_err}")
+
+    # 5. Fetch Recent QA Consult Audit Context (to avoid repeating past project defects)
+    recent_audit_section = ""
+    try:
+        cursor.execute("""
+            SELECT filename, doc_type, qa_findings
+            FROM qa_transactions
+            WHERE project_id = %s::uuid AND qa_findings IS NOT NULL
+            ORDER BY created_at DESC
+            LIMIT 3
+        """, (project_id,))
+        tx_rows = cursor.fetchall()
+        audit_bullets = []
+        for tx_file, tx_dtype, tx_findings in tx_rows:
+            f_list = tx_findings if isinstance(tx_findings, list) else []
+            for f in f_list[:4]:
+                sev = f.get('severity', 'Medium')
+                iss = f.get('issue', '')
+                rec = f.get('recommendation', '')
+                if iss:
+                    audit_bullets.append(f"- [{tx_file} | {sev}] {iss} -> แนวทางที่ถูกต้อง: {rec}")
+        if audit_bullets:
+            recent_audit_section = (
+                "# Recent QA Consult Audit Insights for This Project\n"
+                "Avoid repeating these recently audited issues in this project:\n"
+                + "\n".join(audit_bullets[:10]) + "\n"
+            )
+    except Exception:
+        try:
+            if hasattr(cursor, 'connection') and cursor.connection:
+                cursor.connection.rollback()
+        except Exception:
+            pass
+
+    # 6. Fetch Active Exit Criteria Checklist for target doc_type
+    exit_criteria_section = fetch_active_exit_criteria_checklist(cursor, project_id, doc_type or "General")
 
     return {
         "project_code": project_code,
@@ -1087,6 +1228,9 @@ The following documents contain additional project domain knowledge, specificati
         "primary_ref_context": primary_ref_context,
         "all_docs_section": all_docs_section,
         "structured_reqs_section": structured_reqs_section,
+        "diagram_context_section": diagram_context_section,
+        "recent_audit_section": recent_audit_section,
+        "exit_criteria_section": exit_criteria_section,
         "srs_menus_section": srs_menus_section,
         "total_docs_count": len(doc_rows)
     }
@@ -1393,8 +1537,8 @@ Please follow these structure and formatting instructions strictly:
 5. Output the complete document directly in clean, structured Markdown.
 """
 
-        # 3. Call Gemini with Gemini 3.1 Pro
-        model_to_use = os.environ.get("GEMINI_DOC_MODEL", "gemini-3.1-pro")
+        # 3. Call Gemini (default to gemini-2.5-pro with automatic fallback)
+        model_to_use = os.environ.get("GEMINI_DOC_MODEL", "gemini-2.5-pro")
         doc_content, usage_metadata = call_gemini(prompt, model_name=model_to_use, max_output_tokens=32768)
         
         if usage_metadata:
@@ -1421,28 +1565,43 @@ Please follow these structure and formatting instructions strictly:
         return False, str(e)
 
 
-def create_qa_document_async(gen_id: str, project_id: str, doc_type: str, doc_name: str, skill_id, reference_document_id=None, custom_prompt: str = "", source_markdown: str = "", username: str = None):
+def create_qa_document_async(gen_id: str, project_id: str, doc_type: str, doc_name: str, skill_id, reference_document_id=None, custom_prompt: str = "", source_markdown: str = "", username: str = None, source_doc_id: str = None):
     """
     Async background version of QA Document Creator that generates Excel, PDF, and Markdown.
-    Supports surgical refinement mode if source_markdown is provided.
-    Delivers in-app notification directly to the requesting user upon completion.
+    Automatically synthesizes knowledge across ALL project menus (KB, Requirements, Diagrams, QA Consult, Exit Criteria),
+    optionally aligns headings/templates to selected AI Skill(s), and supports Surgical Refinement Mode.
     """
     conn = None
     cursor = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
+
+        # 0. If refining from an existing generated document ID and source_markdown was not sent inline, load it directly from DB
+        if (not source_markdown or not source_markdown.strip()) and source_doc_id:
+            try:
+                cursor.execute("SELECT markdown_content FROM qa_generated_documents WHERE id = %s::uuid LIMIT 1", (str(source_doc_id),))
+                s_row = cursor.fetchone()
+                if s_row and s_row[0]:
+                    source_markdown = s_row[0]
+                    logger.info(f"Loaded baseline markdown ({len(source_markdown)} chars) from source_doc_id={source_doc_id}")
+            except Exception as sm_err:
+                conn.rollback()
+                logger.warning(f"Could not load source_markdown for source_doc_id={source_doc_id}: {sm_err}")
         
-        # 1. Fetch comprehensive multi-doc project context
-        ctx = fetch_comprehensive_project_context(cursor, project_id, reference_document_id)
+        # 1. Fetch comprehensive multi-menu project context (KB + Requirements + Diagrams + Recent QA Audits + Active Exit Criteria)
+        ctx = fetch_comprehensive_project_context(cursor, project_id, reference_document_id, doc_type=doc_type)
         project_code = ctx["project_code"]
         project_name = ctx["project_name"]
         primary_ref_context = ctx["primary_ref_context"]
         all_docs_section = ctx["all_docs_section"]
         structured_reqs_section = ctx["structured_reqs_section"]
+        diagram_context_section = ctx.get("diagram_context_section", "")
+        recent_audit_section = ctx.get("recent_audit_section", "")
+        exit_criteria_section = ctx.get("exit_criteria_section", "")
         srs_menus_section = ctx.get("srs_menus_section", "")
             
-        # 2. Fetch Skill (supporting multiple skills by ID or Name)
+        # 2. Fetch Optional AI Skill(s) (supporting multiple skills by ID or Name in BOTH normal & refinement modes)
         target_skill_ids = parse_id_list(skill_id)
         skill_rows = []
         if target_skill_ids:
@@ -1467,7 +1626,7 @@ def create_qa_document_async(gen_id: str, project_id: str, doc_type: str, doc_na
         else:
             skill_name = " + ".join([r[0] for r in skill_rows if r[0]])
             target_doc_type = skill_rows[0][1] or doc_type
-            instructions = "\n\n".join([f"### Skill / Framework Guideline: {r[0]} ({r[1] or 'General'})\n{r[2]}" for r in skill_rows if r[2]])
+            instructions = "\n\n".join([f"### Skill / Template Guideline: {r[0]} ({r[1] or 'General'})\n{r[2]}" for r in skill_rows if r[2]])
 
         custom_prompt_section = ""
         if custom_prompt and custom_prompt.strip():
@@ -1478,17 +1637,22 @@ The user has provided the following specific guidelines, scenarios, or custom in
 """
 
         refinement_section = ""
-        if source_markdown and source_markdown.strip():
+        is_refinement = bool(source_markdown and source_markdown.strip())
+        if is_refinement:
             refinement_section = f"""
 # ==============================================================================
-# REFINEMENT & SURGICAL CORRECTION MODE (TARGETED AUDIT FIXES)
+# REFINEMENT & SURGICAL CORRECTION MODE (TARGETED AUDIT FIXES FOR 100% PASS)
 # ==============================================================================
-You are performing a SURGICAL REFINEMENT of an existing baseline document that underwent QA audit.
+You are performing a SURGICAL REFINEMENT of an existing baseline document that underwent QA Consult audit.
 Your primary directives:
-1. PRESERVE 100% of all existing valid sections, architecture, and requirements from the baseline document below. DO NOT discard, summarize, or dilute existing functional requirements.
-2. CORRECT all defects, missing items, and comments specified in the "Additional User Prompt & Specific Requirements" section above.
-3. MANDATORY SECTION 1 (GENERAL INFORMATION) & SECTION 1.2 (REVISION HISTORY):
-   You MUST include Section 1 & Section 1.2 with the Document Control and Revision History tables as detailed in the guidelines, stating explicitly that all Critical/High issues from the previous audit round have been resolved 100%.
+1. PRESERVE 100% of all existing valid sections, architecture, test cases, and requirements from the baseline document below. DO NOT discard, summarize, or dilute valid content.
+2. RESOLVE EVERY SINGLE finding and failed Exit Criteria item listed in "Additional User Prompt & Specific Requirements" above with concrete, verifiable fixes directly inside the relevant sections.
+3. MANDATORY SECTION 1 (DOCUMENT CONTROL) & SECTION 1.2 (REVISION HISTORY & AUDIT RESOLUTION LOG):
+   - Increment the version number (e.g., 1.1.0 or next version) and document EVERY resolved finding in the Audit Resolution Log table mapping Finding -> Section Fixed -> Status: Closed (100%).
+4. SELF-VERIFICATION BEFORE OUTPUT:
+   - Verify ZERO Critical/High findings remain.
+   - Verify EVERY mandatory item in the Active Exit Criteria Checklist below is satisfied.
+   - Verify ZERO placeholders (`[TBD]`, `[Insert]`, `...`) and ZERO LaTeX `$` symbols.
 
 ### ORIGINAL BASELINE DOCUMENT TO REFINE:
 {source_markdown.strip()[:65000]}
@@ -1497,17 +1661,26 @@ Your primary directives:
         # 3. Call Gemini
         today_str = datetime.datetime.now().strftime("%d/%m/%Y")
         
-        # Framework Header & Guidelines
-        if source_markdown and source_markdown.strip():
-            framework_header = "# Direct Surgical Refinement Mode (Zero Skill Distortion)\nNo external audit checking skill is applied. The original baseline document must be preserved and directly corrected based on the reported QA audit findings to eliminate distortion."
+        # Framework Header & Guidelines — respect optional AI Skill in BOTH Normal and Refinement modes
+        if is_refinement and skill_rows:
+            framework_header = f"""# Surgical Refinement + Selected AI Skill Template Alignment (Skill: {skill_name})
+You are refining an existing baseline document AND aligning its structure, headings, and level of detail with the user-selected AI Skill template(s) below.
+Preserve all valid domain content while ensuring every required heading/section/detail from the Skill is present and all QA Audit findings are fixed 100%:
+{instructions}"""
+        elif is_refinement:
+            framework_header = "# Direct Surgical Refinement Mode\nNo external AI Skill was selected. Preserve the existing baseline document structure and directly correct every reported QA Consult finding and failed Exit Criteria item so the re-audit achieves PASS."
+        elif skill_rows:
+            framework_header = f"""# Selected AI Skill Template & Detail Blueprint (Skill: {skill_name} — HIGH PRIORITY)
+The user explicitly selected the following AI Skill(s) so that the document's section headings, table columns, and depth of detail match this template accurately. Follow these instructions strictly:
+{instructions}"""
         else:
-            framework_header = f"# Framework & Guidelines (Skill: {skill_name})\nPlease follow these structure and formatting instructions strictly:\n{instructions}"
+            framework_header = f"# Framework & Guidelines (Universal QA Standard)\nNo specific AI Skill was selected. Produce a thorough, enterprise-grade {doc_type} following standard engineering best practices and satisfying all active Exit Criteria items."
 
         if doc_type in ["Test Case", "TestCase"]:
             prompt = f"""
 You are an expert Principal QA Architect, Lead Automation Engineer, and Senior Business Analyst.
 Your task is to generate a comprehensive, production-grade System Testing Specification (Excel Workbook Template) for Project '{project_name}' ({project_code}) named '{doc_name}'.
-You MUST analyze, cross-reference, and synthesize ALL provided Project Knowledge Base documents (TOR, PO Briefing, SRS, SDD, previous tests, specs) to design exhaustive test cases matching the standard 69A Excel Template (11 columns per test sheet, multi-sheet workbook separated by SRS Menu).
+You MUST analyze, cross-reference, and synthesize ALL provided Project Knowledge Base documents (TOR, PO Briefing, SRS, SDD, System Diagrams, Structured Requirements, and Active Exit Criteria) to design exhaustive, domain-accurate test cases separated by each SRS Menu/Module.
 
 # Target Document Information
 - Document Name: {doc_name}
@@ -1518,42 +1691,34 @@ You MUST analyze, cross-reference, and synthesize ALL provided Project Knowledge
 {framework_header}
 
 # ==============================================================================
-# 🔴 MANDATORY WORKBOOK ARCHITECTURE RULES (แยก SHEET ตามเมนูในเอกสาร SRS)
+# 🔴 MANDATORY WORKBOOK ARCHITECTURE RULES (แยก SHEET ตามเมนูในเอกสาร SRS ของโครงการนี้เท่านั้น)
 # ==============================================================================
 1. การแยก Sheet ตามเมนูในเอกสาร SRS อย่างเคร่งครัด (SEPARATE SHEET PER SRS MENU):
-   - คุณต้องอ่านและวิเคราะห์เอกสาร SRS ของโครงการ (ดูสารบัญ Table of Contents, Product Functions, หน้าจอ และเมนูต่างๆ เช่น ขอใบอนุญาตสินค้า, ขอใบอนุญาตหน้า MGT, EzySuite API, Modify Invoice, Modify Declaration, NSW Profile ฯลฯ)
-   - สร้าง Sheet ใน "test_case_sheets" แยก 1 Sheet ต่อ 1 เมนู/หน้าจอ อย่างเคร่งครัด
-   - ตั้งชื่อ Sheet แต่ละเมนูตามรูปแบบ: "Test Case [ชื่อเมนู]" เช่น:
-     * "Test Case Permit" (เมนูขอใบอนุญาตสินค้า)
-     * "Test Case Permit MGT" (เมนูขอใบอนุญาตสินค้า หน้า MGT)
-     * "Test Case EzySuite API" (เมนู EzySuite Open API / API Document List & Management)
-     * "Test Case Modify Invoice" (เมนู Modify Invoice)
-     * "Test Case Modify Declaration" (เมนู Modify Declaration)
-     * "Test Case Modify TIFFA ID" (เมนู Modify TIFFA ID / NSW ID Profile)
-     * "Test Case Modify Client Info" (เมนู Modify Client Information Center)
-     * "Test Case Modify Customer Mgmt" (เมนู Modify Customer Management)
-     (คำเตือน: ต้องสร้างแยก Sheet ให้ครบทุกเมนูที่ระบุใน SRS ของโครงการ ห้ามรวบเป็น Sheet เดียวเด็ดขาด)
+   - อ่านและวิเคราะห์เอกสาร SRS / Knowledge Base ของโครงการ '{project_name}' ({project_code}) เท่านั้น
+   - สร้าง Sheet ใน "test_case_sheets" แยก 1 Sheet ต่อ 1 เมนู/โมดูล ที่พบจริงในเอกสารของโครงการนี้
+   - ตั้งชื่อ Sheet แต่ละเมนูตามรูปแบบ: "Test Case [ชื่อเมนูสั้นๆ ไม่เกิน 31 ตัวอักษร]"
+   - ห้ามนำชื่อเมนูหรือฟังก์ชันของโครงการอื่นที่ไม่ปรากฏใน Knowledge Base ของโครงการนี้มาใส่โดยเด็ดขาด!
 2. โครงสร้างสมุดงาน (Multi-Sheet Workbook Structure):
-   - มี Sheet บทนำ (Introduction), ประวัติการแก้ไข (Change History), คำศัพท์เฉพาะทาง (Glossary), ขอบเขตเบื้องต้น (Basic Test)
-   - หน้าสรุป (Execute Test): ต้องแจกแจงรายการแยกเป็นรายบรรทัดสำหรับ "ทุกเมนูข้างต้น" ในตาราง System Test Summary พร้อมระบุจำนวน TC ของแต่ละเมนู และเวลาประมาณการทดสอบ (0.25 ชม./เคส) พร้อมแถว รวม (Total)
+   - มี Sheet บทนำ (Introduction), ประวัติการแก้ไข (Document Change History), คำศัพท์เฉพาะทาง (Glossary), ขอบเขตเบื้องต้น (Basic Test)
+   - หน้าสรุป (Execute Test): แจกแจงรายการแยกเป็นรายบรรทัดสำหรับทุกเมนูใน `test_case_sheets` พร้อมจำนวน TC และเวลาประมาณการทดสอบ (0.25 ชม./เคส)
 3. โครงสร้างตารางกรณีทดสอบ 13 คอลัมน์มาตรฐาน (Standard 13 Columns ในทุก Sheet ของเมนู):
-   ทุก Sheet ของ Test Case ต้องมี 13 คอลัมน์ดังต่อไปนี้อย่างครบถ้วน:
-   1) "Test Case ID": รหัสเคส เช่น 69AA1001, 69AA2001
+   1) "Test Case ID": รหัสเคสที่มีรูปแบบชัดเจนตามรหัสโครงการ เช่น TC-M1-001
    2) "Test Case Objective": วัตถุประสงค์การทดสอบเป็นภาษาไทย ชัดเจน กระชับ
-   3) "Test Step": ขั้นตอนการทดสอบเป็นข้อๆ 1. ..., 2. ..., 3. ... ละเอียด ชัดเจน ปฏิบัติตามได้จริง
-   4) "Test Data": ข้อมูลตัวอย่างที่ใช้ทดสอบที่สมจริงและตรงตามโดเมนระบบ
-   5) "Test Type": ประเภทการทดสอบ ระบุเป็น "Positive" หรือ "Negative"
+   3) "Test Step": ขั้นตอนการทดสอบเป็นข้อๆ 1. ..., 2. ..., 3. ... ละเอียด ปฏิบัติตามได้จริง
+   4) "Test Data": ข้อมูลตัวอย่างที่ใช้ทดสอบที่สมจริงและตรงตามโดเมนของโครงการนี้
+   5) "Test Type": ระบุเป็น "Positive" หรือ "Negative"
    6) "Expected Result": ผลลัพธ์ที่คาดหวังที่วัดผลได้จริงเป็นภาษาไทย
-   7) "Actual Result": ผลการทดสอบจริง (เว้นว่างไว้ "" หรือ "-" เพื่อให้ Tester นำไปกรอกผลการทดสอบจริง)
-   8) "Status": สถานะผลการทดสอบ (เว้นว่างไว้ "" หรือ "Pass" / "Fail" เพื่อให้ Tester บันทึกผล)
-   9) "Remark": หมายเหตุเพิ่มเติม (เช่น Priority, Risk Level, หรือว่างไว้)
+   7) "Actual Result": เว้นว่างไว้ "" เพื่อให้ Tester บันทึกผลจริง
+   8) "Status": เว้นว่างไว้ "" เพื่อให้ Tester บันทึกผล Pass/Fail
+   9) "Remark": หมายเหตุเพิ่มเติม (เช่น Priority / Risk Level / เงื่อนไขพิเศษ)
    10) "Automate": "TRUE" หรือ "FALSE"
-   11) "Req No.": รหัส Requirement ที่อ้างอิง เช่น REQ0001
-   12) "Platforms": แพลตฟอร์มที่ทดสอบ เช่น "Web Application", "API", "Mobile App"
+   11) "Req No.": รหัส Requirement จริงจาก SRS/Structured Requirements ของโครงการนี้
+   12) "Platforms": แพลตฟอร์มที่ทดสอบตามบริบทโครงการ เช่น "Web Application", "API", "Mobile App"
    13) "Updated By": ชื่อผู้จัดทำ/ผู้ทดสอบ
-4. ภาษาไทย 100%: คำอธิบาย Objective, Test Step, Test Data, Expected Result ต้องเขียนเป็นภาษาไทยทั้งหมด (คำศัพท์เทคนิคมาตรฐานสามารถใส่วงเล็บภาษาอังกฤษได้)
-5. ครอบคลุมการทดสอบครบถ้วน: Positive (Happy Path), Negative (Validation & Error Handling), Boundary & Edge Cases, และ Authorization/Security ในแต่ละเมนู
-6. การแบ่งแยกโดเมนอย่างเคร่งครัด: ห้ามนำฟังก์ชันหรือเนื้อหาของโครงการอื่นที่ไม่เกี่ยวข้องมาใส่ในเอกสารเด็ดขาด
+4. ภาษาไทย 100%: คำอธิบาย Objective, Test Step, Test Data, Expected Result ต้องเขียนเป็นภาษาไทยที่ถูกต้อง (คำศัพท์เทคนิคมาตรฐานสามารถใส่วงเล็บภาษาอังกฤษได้)
+5. ครอบคลุมการทดสอบครบถ้วน: Positive (Happy Path), Negative (Validation & Error Handling), Boundary & Edge Cases, และ Authorization/Security สำหรับทุก Requirement หลักของโครงการ
+
+{exit_criteria_section}
 
 {srs_menus_section}
 
@@ -1561,16 +1726,20 @@ You MUST analyze, cross-reference, and synthesize ALL provided Project Knowledge
 
 {learned_rules_section}
 
+{recent_audit_section}
+
 {custom_prompt_section}
 
 {primary_ref_context}
 
 {all_docs_section}
 
+{diagram_context_section}
+
 {structured_reqs_section}
 
 # Output Format MUST BE JSON
-You MUST generate the entire workbook as a strict JSON object following this exact schema:
+You MUST generate the entire workbook as a strict JSON object following this exact schema (replace all placeholder values with real data from Project '{project_name}'):
 {{
   "workbook_info": {{
     "project_name": "{project_name}",
@@ -1579,114 +1748,52 @@ You MUST generate the entire workbook as a strict JSON object following this exa
     "author": "QA Team",
     "version": "1.0",
     "last_updated_date": "{today_str}",
-    "description": "เอกสารชุดนี้เรียกว่า System Testing Template มีวัตถุประสงค์เพื่อจัดทำขึ้นสำหรับทดสอบระบบตาม Requirement ของโครงการ {project_name}"
+    "description": "เอกสารชุดนี้คือ System Testing Specification สำหรับทดสอบระบบตาม Requirement ของโครงการ {project_name}"
   }},
   "change_history": [
     {{
       "date": "{today_str}",
       "version": "v.1",
       "prepared_by": "QA Team",
-      "detail": "สร้าง Test Case แยกตามแต่ละเมนูของระบบตามเอกสาร SRS"
+      "detail": "จัดทำ Test Case แยกตามแต่ละเมนู/โมดูลจากเอกสาร SRS และ Knowledge Base ของโครงการ"
     }}
   ],
   "glossary": [
     {{
-      "term": "ชื่อคำศัพท์/ตัวย่อสำคัญของระบบ",
+      "term": "คำศัพท์หรือตัวย่อสำคัญของโครงการนี้",
       "definition": "คำอธิบายความหมายและบริบทการใช้งานในระบบ"
     }}
   ],
   "execute_test_summary": [
     {{
       "ref_no": "1",
-      "module": "Restricted Good Permit",
-      "function": "ขอใบอนุญาตสินค้า (Permit)",
-      "pass_criteria": "ผ่านเกณฑ์การทดสอบตาม Requirement",
+      "module": "<ชื่อ Module จาก SRS ของโครงการนี้>",
+      "function": "<ชื่อ Function/หน้าจอ จาก SRS ของโครงการนี้>",
+      "pass_criteria": "ผ่านเกณฑ์การทดสอบตาม Requirement 100%",
       "remark": "-",
       "tc_count": 8,
       "est_hours": 2.0
-    }},
-    {{
-      "ref_no": "2",
-      "module": "Restricted Good Permit",
-      "function": "ขอใบอนุญาตสินค้า หน้า MGT (Permit MGT)",
-      "pass_criteria": "ผ่านเกณฑ์การทดสอบตาม Requirement",
-      "remark": "-",
-      "tc_count": 6,
-      "est_hours": 1.5
-    }},
-    {{
-      "ref_no": "3",
-      "module": "EzySuite Open API",
-      "function": "API Document List & Management",
-      "pass_criteria": "ผ่านเกณฑ์การทดสอบตาม Requirement",
-      "remark": "-",
-      "tc_count": 5,
-      "est_hours": 1.25
     }}
   ],
   "test_case_sheets": [
     {{
-      "sheet_name": "Test Case Permit",
-      "module_name": "Restricted Good Permit",
-      "function_name": "ขอใบอนุญาตสินค้า (Permit)",
-      "req_range": "REQ0001-REQ0015",
+      "sheet_name": "Test Case <ชื่อเมนูจาก SRS>",
+      "module_name": "<ชื่อ Module จาก SRS>",
+      "function_name": "<ชื่อ Function จาก SRS>",
+      "req_range": "<ช่วงรหัส REQ ของเมนูนี้>",
       "test_cases": [
         {{
-          "Test Case ID": "69AA1001",
-          "Test Case Objective": "ตรวจสอบการสร้างคำขอใบอนุญาตสินค้าด้วยข้อมูลที่ถูกต้องครบถ้วน",
-          "Test Step": "1. เข้าสู่เมนูขอใบอนุญาตสินค้า\\n2. กรอกข้อมูลใบอนุญาตและรายการสินค้าควบคุม\\n3. กดปุ่มบันทึกและส่งข้อมูล",
-          "Test Data": "เลขที่คำขอ: PM-2026-001, พิกัดสินค้าควบคุม: 2903.11.00",
+          "Test Case ID": "TC-001",
+          "Test Case Objective": "ตรวจสอบการทำงานหลักของฟังก์ชันตามข้อกำหนดโครงการ",
+          "Test Step": "1. เข้าสู่หน้าจอของเมนู\\n2. กรอกข้อมูลตามเงื่อนไขที่ถูกต้อง\\n3. กดปุ่มบันทึก",
+          "Test Data": "<ข้อมูลทดสอบจริงที่สอดคล้องกับโดเมนโครงการ>",
           "Test Type": "Positive",
-          "Expected Result": "ระบบบันทึกคำขอใบอนุญาตสำเร็จและเปลี่ยนสถานะเป็น Submitted",
+          "Expected Result": "ระบบบันทึกข้อมูลสำเร็จและแสดงข้อความยืนยันถูกต้อง",
           "Actual Result": "",
           "Status": "",
-          "Remark": "",
+          "Remark": "Priority: High",
           "Automate": "TRUE",
-          "Req No.": "REQ0001",
-          "Platforms": "Web Application",
-          "Updated By": "QA Team"
-        }}
-      ]
-    }},
-    {{
-      "sheet_name": "Test Case Permit MGT",
-      "module_name": "Restricted Good Permit",
-      "function_name": "ขอใบอนุญาตสินค้า (หน้า MGT)",
-      "req_range": "REQ0016-REQ0030",
-      "test_cases": [
-        {{
-          "Test Case ID": "69AA2001",
-          "Test Case Objective": "ตรวจสอบการค้นหาและกรองรายการใบอนุญาตในหน้า MGT",
-          "Test Step": "1. เข้าสู่เมนูขอใบอนุญาตสินค้า (หน้า MGT)\\n2. ระบุเงื่อนไขการค้นหาตามช่วงวันที่และสถานะ\\n3. กดปุ่มค้นหา",
-          "Test Data": "ช่วงวันที่: 01/01/2026 - 31/01/2026, สถานะ: Approve",
-          "Test Type": "Positive",
-          "Expected Result": "ตารางแสดงรายการใบอนุญาตที่ตรงตามเงื่อนไขได้อย่างถูกต้องครบถ้วน",
-          "Actual Result": "",
-          "Status": "",
-          "Remark": "",
-          "Automate": "TRUE",
-          "Req No.": "REQ0016",
-          "Platforms": "Web Application",
-          "Updated By": "QA Team"
-        }}
-      ]
-    }},
-    {{
-      "sheet_name": "Test Case EzySuite API",
-      "module_name": "EzySuite Open API",
-      "function_name": "API Document List & Management",
-      "req_range": "REQ0031-REQ0045",
-      "test_cases": [
-        {{
-          "Test Case ID": "69AA3001",
-          "Test Case Objective": "ตรวจสอบการดูรายการเอกสาร OPEN API ของระบบ",
-          "Test Step": "1. เข้าสู่เมนู API Document List\\n2. คลิกเลือกดู API Endpoint ที่ต้องการทดสอบ Integrate\\n3. ตรวจสอบข้อมูล Request/Response Schema",
-          "Test Data": "API: /api/v1/permit/query",
-          "Test Type": "Positive",
-          "Expected Result": "ระบบแสดงรายละเอียดเอกสาร API และตัวอย่าง Payload ได้ถูกต้อง",
-          "Remark": "",
-          "Automate": "TRUE",
-          "Req No.": "REQ0031",
+          "Req No.": "<รหัส REQ จริงจากโครงการ>",
           "Platforms": "Web Application",
           "Updated By": "QA Team"
         }}
@@ -1700,7 +1807,7 @@ You MUST generate the entire workbook as a strict JSON object following this exa
             prompt = f"""
 You are an expert Principal Software Architect, Lead Business Analyst, and Senior Technical Writer.
 Your task is to generate a comprehensive, enterprise-grade, production-ready {doc_type} document for Project '{project_name}' ({project_code}) named '{doc_name}'.
-You MUST analyze, cross-reference, and synthesize ALL provided Project Knowledge Base documents (TOR, PO Briefing, SRS, SDD, previous tests, specs) to ensure 100% technical accuracy, depth, and zero requirement loss.
+You MUST analyze, cross-reference, and synthesize ALL provided Project Knowledge Base documents (TOR, PO Briefing, SRS, SDD, System Diagrams, Structured Requirements, Recent QA Consult Insights, and Active Exit Criteria) to ensure 100% technical accuracy, depth, and zero requirement loss.
 
 # Target Document Information
 - Document Name: {doc_name}
@@ -1710,11 +1817,15 @@ You MUST analyze, cross-reference, and synthesize ALL provided Project Knowledge
 
 {framework_header}
 
+{exit_criteria_section}
+
 {engineering_guidelines}
 
 {refinement_section}
 
 {learned_rules_section}
+
+{recent_audit_section}
 
 {custom_prompt_section}
 
@@ -1722,18 +1833,21 @@ You MUST analyze, cross-reference, and synthesize ALL provided Project Knowledge
 
 {all_docs_section}
 
+{diagram_context_section}
+
 {structured_reqs_section}
 
 # Final Output Directives:
-1. Synthesize all documents in the project knowledge base into a fully detailed, rigorous, production-grade {doc_type}.
-2. MANDATORY LANGUAGE REQUIREMENT: The entire document MUST be written in professional, grammatically correct Thai (ภาษาไทย). Standard English technical terms, acronyms, and code identifiers may be kept or placed in parentheses (e.g., API, Database, JWT).
-3. Ensure every single requirement is measurable, testable, and unambiguous.
-4. NEVER leave placeholder text or brief outlines.
-5. Output the complete document directly in clean, structured Markdown.
+1. Synthesize all documents, diagrams, and requirements across the project knowledge base into a fully detailed, rigorous, production-grade {doc_type}.
+2. If an AI Skill template was selected above, strictly match its section structure, headings, and detail requirements.
+3. Ensure EVERY mandatory Exit Criteria item listed above is explicitly satisfied so this document passes QA Consult cleanly.
+4. MANDATORY LANGUAGE REQUIREMENT: The entire document MUST be written in professional, grammatically correct Thai (ภาษาไทย). Standard English technical terms, acronyms, and code identifiers may be kept or placed in parentheses (e.g., API, Database, JWT).
+5. Ensure every single requirement is measurable, testable, and unambiguous. NEVER leave placeholder text (`[TBD]`, `...`) or brief outlines.
+6. Output the complete document directly in clean, structured Markdown.
 """
 
-        logger.info(f"Generating document async '{doc_name}' ({doc_type})...")
-        model_to_use = os.environ.get("GEMINI_DOC_MODEL", "gemini-3.1-pro")
+        logger.info(f"Generating document async '{doc_name}' ({doc_type}) [Refinement={is_refinement}, Skills={skill_name}]...")
+        model_to_use = os.environ.get("GEMINI_DOC_MODEL", "gemini-2.5-pro")
         doc_content, usage_metadata = call_gemini(prompt, model_name=model_to_use, max_output_tokens=32768)
         
         if usage_metadata:

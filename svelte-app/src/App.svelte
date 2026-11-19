@@ -193,7 +193,7 @@
       return;
     }
     if (e.key === 'Escape') {
-      if (showMyProfileModal) showMyProfileModal = false;
+      if (showMyProfileModal) requestCloseProfileModal();
       else if (showProfileMenu) showProfileMenu = false;
       else if (showNotifications) showNotifications = false;
       else if (showNotificationConfigModal) showNotificationConfigModal = false;
@@ -366,19 +366,71 @@
   let myProfileFormData = { 
     display_name: '', 
     password: '',
+    password_confirm: '',
     phone: '',
     department: '',
     github_url: '',
     linkedin_url: '',
-    line_id: ''
+    line_id: '',
+    avatar_path: undefined
   };
+  let initialProfileSnapshot = null;
+  let isLoadingMyProfile = false;
+  let profileLoadError = null;
+  let isSavingMyProfile = false;
   let showMyPassword = false;
+  let showMyPasswordConfirm = false;
+  let profileValidationError = '';
+  let confirmDiscardProfile = false;
   let myProfileAvatarFile = null;
   let myProfileAvatarPreview = null;
+  let myProfileAvatarBlobUrl = null;
+  let previousAvatarBeforeRemove = null;
+  let avatarRemovalPending = false;
   let previewImageError = false;
   let topbarAvatarError = false;
   let isDragOverAvatar = false;
   let activeProfileTab = 'general';
+
+  $: hasUnsavedProfileChanges = (() => {
+    if (!initialProfileSnapshot) return false;
+    if (myProfileAvatarFile || avatarRemovalPending) return true;
+    if (myProfileFormData.password || myProfileFormData.password_confirm) return true;
+    return (
+      (myProfileFormData.display_name || '') !== (initialProfileSnapshot.display_name || '') ||
+      (myProfileFormData.department || '') !== (initialProfileSnapshot.department || '') ||
+      (myProfileFormData.phone || '') !== (initialProfileSnapshot.phone || '') ||
+      (myProfileFormData.github_url || '') !== (initialProfileSnapshot.github_url || '') ||
+      (myProfileFormData.linkedin_url || '') !== (initialProfileSnapshot.linkedin_url || '') ||
+      (myProfileFormData.line_id || '') !== (initialProfileSnapshot.line_id || '')
+    );
+  })();
+
+  $: generalTabDirty = !!(initialProfileSnapshot && (
+    (myProfileFormData.display_name || '') !== (initialProfileSnapshot.display_name || '') ||
+    (myProfileFormData.department || '') !== (initialProfileSnapshot.department || '') ||
+    (myProfileFormData.phone || '') !== (initialProfileSnapshot.phone || '')
+  ));
+
+  $: socialTabDirty = !!(initialProfileSnapshot && (
+    (myProfileFormData.github_url || '') !== (initialProfileSnapshot.github_url || '') ||
+    (myProfileFormData.linkedin_url || '') !== (initialProfileSnapshot.linkedin_url || '') ||
+    (myProfileFormData.line_id || '') !== (initialProfileSnapshot.line_id || '')
+  ));
+
+  $: securityTabDirty = !!(myProfileFormData.password || myProfileFormData.password_confirm);
+
+  $: passwordMismatch = !!(
+    myProfileFormData.password &&
+    myProfileFormData.password_confirm &&
+    myProfileFormData.password !== myProfileFormData.password_confirm
+  );
+
+  $: passwordTooShort = !!(
+    myProfileFormData.password &&
+    myProfileFormData.password.length > 0 &&
+    myProfileFormData.password.length < 6
+  );
   
   function getUserIdFromToken() {
       const token = localStorage.getItem('jwt_token');
@@ -390,86 +442,191 @@
           return payload.user_id;
       } catch(e) { return null; }
   }
+
+  function revokeAvatarBlob() {
+      if (myProfileAvatarBlobUrl) {
+          URL.revokeObjectURL(myProfileAvatarBlobUrl);
+          myProfileAvatarBlobUrl = null;
+      }
+  }
+
+  function requestCloseProfileModal() {
+      if (isSavingMyProfile) return;
+      if (hasUnsavedProfileChanges && !confirmDiscardProfile) {
+          confirmDiscardProfile = true;
+          return;
+      }
+      revokeAvatarBlob();
+      confirmDiscardProfile = false;
+      profileValidationError = '';
+      showMyProfileModal = false;
+  }
+
+  function handleProfileKeydown(e) {
+      if (showMyProfileModal && e.key === 'Escape') {
+          e.preventDefault();
+          requestCloseProfileModal();
+      }
+  }
   
   async function openMyProfileModal() {
       showProfileMenu = false;
-      let currentDisplayName = localStorage.getItem('auth_display_name') || localStorage.getItem('auth_user');
-      let currentAvatar = localStorage.getItem('auth_avatar_path');
+      revokeAvatarBlob();
+      confirmDiscardProfile = false;
+      profileValidationError = '';
+      profileLoadError = null;
+      avatarRemovalPending = false;
+      previousAvatarBeforeRemove = null;
+      showMyPassword = false;
+      showMyPasswordConfirm = false;
+
+      let currentDisplayName = localStorage.getItem('auth_display_name') || localStorage.getItem('auth_user') || '';
+      let currentAvatar = localStorage.getItem('auth_avatar_path') || '';
       myProfileFormData = { 
         display_name: currentDisplayName, 
         password: '',
+        password_confirm: '',
         phone: '',
         department: '',
         github_url: '',
         linkedin_url: '',
-        line_id: ''
+        line_id: '',
+        avatar_path: currentAvatar || undefined
       };
       myProfileAvatarFile = null;
       myProfileAvatarPreview = currentAvatar ? `${currentAvatar}` : null;
       previewImageError = false;
       activeProfileTab = 'general';
+      showMyProfileModal = true;
 
+      await fetchMyProfileDetail(currentDisplayName, currentAvatar);
+  }
+
+  async function fetchMyProfileDetail(fallbackName = '', fallbackAvatar = '') {
       const userId = getUserIdFromToken();
-      if (userId) {
-        try {
+      if (!userId) {
+          profileLoadError = 'ไม่พบข้อมูลเซสชันผู้ใช้งาน กรุณาเข้าสู่ระบบใหม่อีกครั้ง';
+          return;
+      }
+      isLoadingMyProfile = true;
+      profileLoadError = null;
+      try {
           const token = localStorage.getItem('jwt_token');
           const res = await fetch(`/api/users/${userId}`, {
             headers: { 'Authorization': `Bearer ${token}` }
           });
-          if (res.ok) {
-            const data = await res.json();
-            if (data.user) {
-              myProfileFormData.display_name = data.user.display_name || currentDisplayName;
-              myProfileFormData.phone = data.user.phone || '';
-              myProfileFormData.department = data.user.department || '';
-              myProfileFormData.github_url = data.user.github_url || '';
-              myProfileFormData.linkedin_url = data.user.linkedin_url || '';
-              myProfileFormData.line_id = data.user.line_id || '';
-              if (data.user.avatar_path) {
-                myProfileAvatarPreview = `${data.user.avatar_path}`;
-                previewImageError = false;
-              }
-            }
+          if (!res.ok) {
+            throw new Error(`HTTP ${res.status}`);
           }
-        } catch (e) {
+          const data = await res.json();
+          if (data.user) {
+            myProfileFormData = {
+              display_name: data.user.display_name || fallbackName,
+              password: '',
+              password_confirm: '',
+              phone: data.user.phone || '',
+              department: data.user.department || '',
+              github_url: data.user.github_url || '',
+              linkedin_url: data.user.linkedin_url || '',
+              line_id: data.user.line_id || '',
+              avatar_path: data.user.avatar_path || fallbackAvatar || undefined
+            };
+            myProfileAvatarPreview = data.user.avatar_path ? `${data.user.avatar_path}` : (fallbackAvatar || null);
+            previewImageError = false;
+            initialProfileSnapshot = { ...myProfileFormData };
+          } else {
+            throw new Error('ไม่พบข้อมูลผู้ใช้งาน');
+          }
+      } catch (e) {
           console.error('Failed to load user detail', e);
-        }
+          profileLoadError = 'ไม่สามารถโหลดข้อมูลโปรไฟล์ล่าสุดจากเซิร์ฟเวอร์ได้ กรุณาลองใหม่อีกครั้งเพื่อป้องกันการบันทึกทับข้อมูลเดิม';
+      } finally {
+          isLoadingMyProfile = false;
       }
+  }
 
-      showMyProfileModal = true;
+  function validateAndSetAvatarFile(file) {
+      if (!file) return;
+      const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
+      if (!allowedTypes.includes(file.type)) {
+          toast('รองรับเฉพาะไฟล์รูปภาพ JPG, PNG หรือ WEBP เท่านั้น', 'warning');
+          return;
+      }
+      const maxSizeBytes = 5 * 1024 * 1024;
+      if (file.size > maxSizeBytes) {
+          toast('ขนาดไฟล์รูปภาพต้องไม่เกิน 5 MB', 'warning');
+          return;
+      }
+      revokeAvatarBlob();
+      myProfileAvatarBlobUrl = URL.createObjectURL(file);
+      myProfileAvatarFile = file;
+      myProfileAvatarPreview = myProfileAvatarBlobUrl;
+      avatarRemovalPending = false;
+      previousAvatarBeforeRemove = null;
+      previewImageError = false;
+      confirmDiscardProfile = false;
+      toast('เลือกรูปโปรไฟล์ใหม่แล้ว (กดบันทึกเพื่อยืนยัน)', 'success');
   }
   
   function removeMyAvatar() {
+      if (!avatarRemovalPending) {
+          previousAvatarBeforeRemove = myProfileAvatarPreview;
+      }
+      revokeAvatarBlob();
       myProfileAvatarFile = null;
       myProfileAvatarPreview = null;
       myProfileFormData.avatar_path = '';
+      avatarRemovalPending = true;
       previewImageError = false;
-      toast('ลบรูปภาพโปรไฟล์เรียบร้อยแล้ว (กดบันทึกเพื่อยืนยัน)', 'info');
+      confirmDiscardProfile = false;
+  }
+
+  function undoRemoveMyAvatar() {
+      myProfileAvatarPreview = previousAvatarBeforeRemove;
+      myProfileFormData.avatar_path = previousAvatarBeforeRemove || undefined;
+      avatarRemovalPending = false;
+      previousAvatarBeforeRemove = null;
+      previewImageError = false;
   }
 
   function handleAvatarDrop(e) {
       e.preventDefault();
       isDragOverAvatar = false;
       if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]) {
-          const file = e.dataTransfer.files[0];
-          if (file.type.startsWith('image/')) {
-              myProfileAvatarFile = file;
-              myProfileAvatarPreview = URL.createObjectURL(file);
-              previewImageError = false;
-              toast('เลือกรูปภาพสำเร็จแล้ว', 'success');
-          } else {
-              toast('กรุณาเลือกไฟล์รูปภาพเท่านั้น', 'warning');
-          }
+          validateAndSetAvatarFile(e.dataTransfer.files[0]);
       }
   }
 
   async function saveMyProfile() {
+      if (isSavingMyProfile || isLoadingMyProfile || profileLoadError) return;
+      profileValidationError = '';
+
+      if (!myProfileFormData.display_name || !myProfileFormData.display_name.trim()) {
+          activeProfileTab = 'general';
+          profileValidationError = 'กรุณาระบุชื่อที่แสดงในระบบ (Display Name)';
+          return;
+      }
+
+      if (myProfileFormData.password || myProfileFormData.password_confirm) {
+          if (myProfileFormData.password.length < 6) {
+              activeProfileTab = 'security';
+              profileValidationError = 'รหัสผ่านใหม่ต้องมีความยาวอย่างน้อย 6 ตัวอักษร';
+              return;
+          }
+          if (myProfileFormData.password !== myProfileFormData.password_confirm) {
+              activeProfileTab = 'security';
+              profileValidationError = 'รหัสผ่านใหม่และการยืนยันรหัสผ่านไม่ตรงกัน';
+              return;
+          }
+      }
+
       const userId = getUserIdFromToken();
       if (!userId) {
-          toast('Session invalid. Please login again.', 'error');
+          toast('เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่อีกครั้ง', 'error');
           return;
       }
       
+      isSavingMyProfile = true;
       try {
           const token = localStorage.getItem('jwt_token');
           const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` };
@@ -485,40 +642,53 @@
                   headers: { 'Authorization': `Bearer ${token}` },
                   body: fd
               });
-              const avaData = await avaRes.json();
+              const avaData = await avaRes.json().catch(() => ({}));
               if (avaRes.ok && avaData.success) {
                   newAvatarPath = avaData.avatar_path;
               } else {
-                  toast(avaData.error || 'Failed to upload avatar image', 'error');
+                  toast(avaData.error || 'ไม่สามารถอัปโหลดรูปภาพโปรไฟล์ได้ กรุณาลองใหม่', 'error');
                   return;
               }
           }
 
+          const payload = {
+              display_name: myProfileFormData.display_name.trim(),
+              phone: myProfileFormData.phone.trim(),
+              department: myProfileFormData.department.trim(),
+              github_url: myProfileFormData.github_url.trim(),
+              linkedin_url: myProfileFormData.linkedin_url.trim(),
+              line_id: myProfileFormData.line_id.trim(),
+              password: myProfileFormData.password || ''
+          };
           if (newAvatarPath !== undefined) {
-              myProfileFormData.avatar_path = newAvatarPath;
+              payload.avatar_path = newAvatarPath;
           }
           
           // 2) บันทึกข้อมูลโปรไฟล์ทั้งหมด
           const res = await fetch(`/api/users/${userId}`, {
               method: 'PUT',
               headers,
-              body: JSON.stringify(myProfileFormData)
+              body: JSON.stringify(payload)
           });
-          const data = await res.json();
+          const data = await res.json().catch(() => ({}));
           
           if (res.ok && data.success) {
-              const finalAvatar = data.user.avatar_path || newAvatarPath;
-              const finalName = data.user.display_name || myProfileFormData.display_name;
+              const finalAvatar = data.user?.avatar_path !== undefined ? data.user.avatar_path : newAvatarPath;
+              const finalName = data.user?.display_name || payload.display_name;
               updateAuthProfile(finalName, finalAvatar);
               topbarAvatarError = false;
               previewImageError = false;
+              revokeAvatarBlob();
+              confirmDiscardProfile = false;
               showMyProfileModal = false;
-              toast('บันทึกข้อมูลส่วนตัวเรียบร้อยแล้ว!', 'success');
+              toast(payload.password ? 'บันทึกข้อมูลส่วนตัวและเปลี่ยนรหัสผ่านเรียบร้อยแล้ว' : 'บันทึกข้อมูลส่วนตัวเรียบร้อยแล้ว', 'success');
           } else {
-              toast(data.error || 'Failed to update profile', 'error');
+              toast(data.error || 'ไม่สามารถบันทึกข้อมูลโปรไฟล์ได้ กรุณาลองใหม่อีกครั้ง', 'error');
           }
       } catch (e) {
-          toast('Network error', 'error');
+          toast('ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้ กรุณาตรวจสอบการเชื่อมต่ออินเทอร์เน็ต', 'error');
+      } finally {
+          isSavingMyProfile = false;
       }
   }
   
@@ -1375,11 +1545,11 @@
             {:else if activeView === "qa_performance"}
               <QAPerformance />
             {:else if activeView === "qa_research"}
-              <QAResearch />
+              <QAResearch on:navigate={(e) => { if (e.detail?.view) activeView = e.detail.view; }} />
             {:else if activeView === "qa_security"}
               <QASecurity />
             {:else if activeView === "qa_automate"}
-              <QATestAutomation />
+              <QATestAutomation on:navigate={(e) => { if (e.detail?.view) activeView = e.detail.view; }} />
             {:else if activeView === "qa_doc_creation"}
               <QADocumentCreation on:navigate={(e) => { if (e.detail?.view) activeView = e.detail.view; }} />
             {:else if activeView === "qa_analysis_diagram"}
@@ -1428,164 +1598,306 @@
 <NotificationConfigModal bind:showModal={showNotificationConfigModal} />
 
 {#if showMyProfileModal}
-<div class="modal-backdrop" transition:fade={{ duration: 200 }}>
-    <div class="modal-content profile-modal-card glass-panel" in:scale={{ start: 0.9, duration: 250 }}>
-        <button class="close-btn" on:click={() => showMyProfileModal = false} title="ปิด (Esc)">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="18" height="18"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-        </button>
-        
-        <div class="profile-modal-header">
-            <h2 class="modal-title">👤 แก้ไขข้อมูลส่วนตัว & โปรไฟล์</h2>
-            <p class="modal-subtitle">จัดการข้อมูลส่วนตัว รูปภาพโปรไฟล์ ช่องทางติดต่อ และการเข้าถึงของบัญชี</p>
+<div class="modal-backdrop" transition:fade={{ duration: 180 }} on:click={requestCloseProfileModal}>
+    <div
+      class="modal-content profile-modal-card"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="profile-modal-heading"
+      in:scale={{ start: 0.94, duration: 200 }}
+      on:click|stopPropagation
+    >
+        <div class="profile-modal-top">
+            <div class="profile-modal-title-wrap">
+                <h2 id="profile-modal-heading" class="modal-title">แก้ไขข้อมูลส่วนตัว & โปรไฟล์</h2>
+                <p class="modal-subtitle">จัดการข้อมูลบัญชี รูปโปรไฟล์ ช่องทางติดต่อ และความปลอดภัย</p>
+            </div>
+            <button type="button" class="profile-close-btn" on:click={requestCloseProfileModal} title="ปิด (Esc)" aria-label="ปิดหน้าต่างโปรไฟล์">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+            </button>
         </div>
 
-        <!-- Avatar Upload Area -->
-        <div class="avatar-hero-container">
-            <!-- svelte-ignore a11y-click-events-have-key-events -->
-            <div 
-              class="avatar-hero-circle" 
-              class:drag-over={isDragOverAvatar}
-              on:dragover|preventDefault={() => isDragOverAvatar = true}
-              on:dragleave|preventDefault={() => isDragOverAvatar = false}
-              on:drop|preventDefault={handleAvatarDrop}
-              on:click={() => document.getElementById('my_profile_avatar_input').click()}
-              title="คลิกเพื่อเปลี่ยนรูป หรือลากวางไฟล์รูปภาพตรงนี้"
-            >
-                {#if myProfileAvatarPreview && !previewImageError}
-                    <img src={myProfileAvatarPreview} alt="Preview Avatar" on:error={() => previewImageError = true} />
-                {:else}
-                    <div class="avatar-fallback-text">
-                        {$authDisplayName ? $authDisplayName.charAt(0).toUpperCase() : ($authUser ? $authUser.charAt(0).toUpperCase() : 'A')}
-                    </div>
-                {/if}
-                
-                <div class="avatar-hover-overlay">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
-                    <span>เปลี่ยนรูปภาพ</span>
-                </div>
-                <div class="camera-badge" title="อัปโหลดรูปภาพ">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
+        {#if confirmDiscardProfile}
+            <div class="profile-discard-banner" transition:slide={{ duration: 140 }}>
+                <span>มีการแก้ไขที่ยังไม่ได้บันทึก ต้องการทิ้งการเปลี่ยนแปลงและปิดหน้าต่างหรือไม่?</span>
+                <div class="discard-banner-actions">
+                    <button type="button" class="btn-banner-stay" on:click={() => (confirmDiscardProfile = false)}>แก้ไขต่อ</button>
+                    <button type="button" class="btn-banner-discard" on:click={requestCloseProfileModal}>ทิ้งการแก้ไข</button>
                 </div>
             </div>
+        {/if}
 
-            <input 
-              type="file" 
-              id="my_profile_avatar_input" 
-              accept="image/*" 
-              style="display: none;" 
-              on:change={(e) => {
-                  const file = e.target.files[0];
-                  if (file) {
-                      myProfileAvatarFile = file;
-                      myProfileAvatarPreview = URL.createObjectURL(file);
-                      previewImageError = false;
-                      toast('เลือกรูปภาพใหม่สำเร็จ', 'success');
-                  }
-              }} 
-            />
-
-            <div class="avatar-controls">
-                <button class="btn-avatar-action upload" type="button" on:click={() => document.getElementById('my_profile_avatar_input').click()}>
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
-                    อัปโหลดรูปภาพใหม่
+        {#if isLoadingMyProfile}
+            <div class="profile-state-box">
+                <div class="profile-spinner"></div>
+                <span>กำลังโหลดข้อมูลโปรไฟล์ล่าสุด...</span>
+            </div>
+        {:else if profileLoadError}
+            <div class="profile-state-box error">
+                <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+                <p>{profileLoadError}</p>
+                <button type="button" class="btn-avatar-action upload" on:click={() => fetchMyProfileDetail(myProfileFormData.display_name, myProfileAvatarPreview || '')}>
+                    ลองโหลดข้อมูลใหม่
                 </button>
-
-                {#if myProfileAvatarPreview}
-                    <button class="btn-avatar-action remove" type="button" on:click={removeMyAvatar}>
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
-                        ลบรูปโปรไฟล์
-                    </button>
-                {/if}
             </div>
-            <span class="drag-hint-text">รองรับไฟล์ JPG, PNG, WEBP (คลิกหรือลากวางรูปภาพ)</span>
-        </div>
+        {:else}
+            <form on:submit|preventDefault={saveMyProfile} class="profile-form-root">
+                <!-- Compact Horizontal Identity & Avatar Header -->
+                <div
+                  class="profile-identity-bar"
+                  class:drag-over={isDragOverAvatar}
+                  on:dragover|preventDefault={() => (isDragOverAvatar = true)}
+                  on:dragleave|preventDefault={() => (isDragOverAvatar = false)}
+                  on:drop|preventDefault={handleAvatarDrop}
+                >
+                    <label
+                      for="my_profile_avatar_input"
+                      class="avatar-trigger-circle"
+                      title="คลิกหรือลากวางไฟล์รูปภาพเพื่อเปลี่ยนรูปโปรไฟล์"
+                    >
+                        {#if myProfileAvatarPreview && !previewImageError}
+                            <img src={myProfileAvatarPreview} alt="รูปโปรไฟล์ปัจจุบัน" on:error={() => (previewImageError = true)} />
+                        {:else}
+                            <span class="avatar-fallback-text">
+                                {myProfileFormData.display_name ? myProfileFormData.display_name.charAt(0).toUpperCase() : ($authUser ? $authUser.charAt(0).toUpperCase() : 'U')}
+                            </span>
+                        {/if}
+                        <span class="avatar-hover-overlay" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" width="18" height="18"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
+                        </span>
+                    </label>
 
-        <!-- Form Tab Switcher -->
-        <div class="profile-tabs-header">
-            <button class="ptab-btn" class:active={activeProfileTab === 'general'} on:click={() => activeProfileTab = 'general'}>
-                📌 ข้อมูลทั่วไป
-            </button>
-            <button class="ptab-btn" class:active={activeProfileTab === 'social'} on:click={() => activeProfileTab = 'social'}>
-                🌐 โซเชียล & ช่องทางติดต่อ
-            </button>
-            <button class="ptab-btn" class:active={activeProfileTab === 'security'} on:click={() => activeProfileTab = 'security'}>
-                🔒 รหัสผ่าน
-            </button>
-        </div>
+                    <input
+                      type="file"
+                      id="my_profile_avatar_input"
+                      accept="image/jpeg,image/png,image/webp"
+                      class="sr-only-input"
+                      on:change={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) validateAndSetAvatarFile(file);
+                          e.target.value = '';
+                      }}
+                    />
 
-        <!-- Form Body -->
-        <div class="profile-form-body">
-            {#if activeProfileTab === 'general'}
-                <div class="form-grid">
-                    <div class="form-group">
-                        <label for="my_display_name">Display Name (ชื่อที่แสดงในระบบ)</label>
-                        <input type="text" id="my_display_name" bind:value={myProfileFormData.display_name} placeholder="เช่น John Doe" />
-                    </div>
-
-                    <div class="form-group">
-                        <label for="my_department">แผนก / ตำแหน่งงาน (Department / Position)</label>
-                        <input type="text" id="my_department" bind:value={myProfileFormData.department} placeholder="เช่น Senior QA Automation Lead" />
-                    </div>
-
-                    <div class="form-group">
-                        <label for="my_phone">เบอร์โทรศัพท์ (Phone Number)</label>
-                        <div class="input-with-icon">
-                            <span class="field-icon">📞</span>
-                            <input type="tel" id="my_phone" bind:value={myProfileFormData.phone} placeholder="081-234-5678" />
+                    <div class="identity-meta">
+                        <div class="identity-name-row">
+                            <strong class="identity-display">{myProfileFormData.display_name || $authDisplayName || $authUser || 'ผู้ใช้งาน'}</strong>
+                            <span class="identity-role-pill">{$authRole === 'admin' ? 'Admin' : 'Member'}</span>
                         </div>
+                        <span class="identity-username">@{$authUser || 'account'}</span>
+                        <span class="drag-hint-text">รองรับ JPG, PNG, WEBP ไม่เกิน 5 MB (คลิกหรือลากวาง)</span>
+                    </div>
+
+                    <div class="avatar-controls">
+                        <label for="my_profile_avatar_input" class="btn-avatar-action upload">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" width="14" height="14"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                            <span>เปลี่ยนรูป</span>
+                        </label>
+
+                        {#if avatarRemovalPending}
+                            <button type="button" class="btn-avatar-action undo" on:click={undoRemoveMyAvatar}>
+                                ยกเลิกการลบ
+                            </button>
+                        {:else if myProfileAvatarPreview}
+                            <button type="button" class="btn-avatar-action remove" on:click={removeMyAvatar}>
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" width="14" height="14"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                                <span>ลบรูป</span>
+                            </button>
+                        {/if}
                     </div>
                 </div>
 
-            {:else if activeProfileTab === 'social'}
-                <div class="form-grid">
-                    <div class="form-group">
-                        <label for="my_github">GitHub Profile URL</label>
-                        <div class="input-with-icon">
-                            <span class="field-icon">🐙</span>
-                            <input type="url" id="my_github" bind:value={myProfileFormData.github_url} placeholder="https://github.com/username" />
-                        </div>
-                    </div>
-
-                    <div class="form-group">
-                        <label for="my_linkedin">LinkedIn Profile URL</label>
-                        <div class="input-with-icon">
-                            <span class="field-icon">💼</span>
-                            <input type="url" id="my_linkedin" bind:value={myProfileFormData.linkedin_url} placeholder="https://linkedin.com/in/username" />
-                        </div>
-                    </div>
-
-                    <div class="form-group">
-                        <label for="my_line_id">Line ID / Telegram Contact</label>
-                        <div class="input-with-icon">
-                            <span class="field-icon">💬</span>
-                            <input type="text" id="my_line_id" bind:value={myProfileFormData.line_id} placeholder="@line_id / @telegram" />
-                        </div>
-                    </div>
+                <!-- Accessible Form Tab Switcher -->
+                <div class="profile-tabs-header" role="tablist" aria-label="หมวดหมู่การตั้งค่าโปรไฟล์">
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={activeProfileTab === 'general'}
+                      class="ptab-btn"
+                      class:active={activeProfileTab === 'general'}
+                      on:click={() => (activeProfileTab = 'general')}
+                    >
+                        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+                        <span>ข้อมูลทั่วไป</span>
+                        {#if generalTabDirty}<span class="tab-dirty-dot" title="มีการแก้ไข"></span>{/if}
+                    </button>
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={activeProfileTab === 'social'}
+                      class="ptab-btn"
+                      class:active={activeProfileTab === 'social'}
+                      on:click={() => (activeProfileTab = 'social')}
+                    >
+                        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
+                        <span>ช่องทางติดต่อ</span>
+                        {#if socialTabDirty}<span class="tab-dirty-dot" title="มีการแก้ไข"></span>{/if}
+                    </button>
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={activeProfileTab === 'security'}
+                      class="ptab-btn"
+                      class:active={activeProfileTab === 'security'}
+                      on:click={() => (activeProfileTab = 'security')}
+                    >
+                        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                        <span>รหัสผ่าน</span>
+                        {#if securityTabDirty}<span class="tab-dirty-dot warn" title="เตรียมเปลี่ยนรหัสผ่าน"></span>{/if}
+                    </button>
                 </div>
 
-            {:else if activeProfileTab === 'security'}
-                <div class="form-group">
-                    <label>เปลี่ยนรหัสผ่านใหม่ (Password)</label>
-                    <div class="input-with-icon" style="position: relative;">
-                        <span class="field-icon">🔑</span>
-                        <input type={showMyPassword ? "text" : "password"} bind:value={myProfileFormData.password} placeholder="••••••••" style="flex: 1; padding-right: 44px;" />
-                        <button type="button" class="eye-btn" on:click={() => showMyPassword = !showMyPassword} title="ดูรหัสผ่าน">
-                            {#if showMyPassword}
-                                <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>
+                {#if profileValidationError}
+                    <div class="profile-inline-error" role="alert">
+                        {profileValidationError}
+                    </div>
+                {/if}
+
+                <!-- Form Body -->
+                <div class="profile-form-body">
+                    {#if activeProfileTab === 'general'}
+                        <div class="form-grid">
+                            <div class="form-group">
+                                <label for="my_display_name">ชื่อที่แสดงในระบบ (Display Name)</label>
+                                <input type="text" id="my_display_name" bind:value={myProfileFormData.display_name} placeholder="เช่น เอกราช โอสถานุเคราะห์" required />
+                            </div>
+
+                            <div class="form-group">
+                                <label for="my_department">แผนก / ตำแหน่งงาน (Department / Position)</label>
+                                <input type="text" id="my_department" bind:value={myProfileFormData.department} placeholder="เช่น Senior QA Automation Lead" />
+                            </div>
+
+                            <div class="form-group">
+                                <label for="my_phone">เบอร์โทรศัพท์ (Phone Number)</label>
+                                <div class="input-with-icon">
+                                    <span class="field-icon" aria-hidden="true">
+                                        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
+                                    </span>
+                                    <input type="tel" id="my_phone" bind:value={myProfileFormData.phone} placeholder="081-234-5678" />
+                                </div>
+                            </div>
+                        </div>
+
+                    {:else if activeProfileTab === 'social'}
+                        <div class="form-grid">
+                            <div class="form-group">
+                                <label for="my_github">ลิงก์โปรไฟล์ GitHub (GitHub Profile URL)</label>
+                                <div class="input-with-icon">
+                                    <span class="field-icon" aria-hidden="true">
+                                        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path></svg>
+                                    </span>
+                                    <input type="url" id="my_github" bind:value={myProfileFormData.github_url} placeholder="https://github.com/username" />
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="my_linkedin">ลิงก์โปรไฟล์ LinkedIn (LinkedIn URL)</label>
+                                <div class="input-with-icon">
+                                    <span class="field-icon" aria-hidden="true">
+                                        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M16 8a6 6 0 0 1 6 6v7h-4v-7a2 2 0 0 0-2-2 2 2 0 0 0-2 2v7h-4v-7a6 6 0 0 1 6-6z"></path><rect x="2" y="9" width="4" height="12"></rect><circle cx="4" cy="4" r="2"></circle></svg>
+                                    </span>
+                                    <input type="url" id="my_linkedin" bind:value={myProfileFormData.linkedin_url} placeholder="https://linkedin.com/in/username" />
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="my_line_id">Line ID / Telegram</label>
+                                <div class="input-with-icon">
+                                    <span class="field-icon" aria-hidden="true">
+                                        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path></svg>
+                                    </span>
+                                    <input type="text" id="my_line_id" bind:value={myProfileFormData.line_id} placeholder="@line_id หรือ @telegram" />
+                                </div>
+                            </div>
+                        </div>
+
+                    {:else if activeProfileTab === 'security'}
+                        <div class="security-grid">
+                            <div class="form-group">
+                                <label for="my_new_password">รหัสผ่านใหม่ (New Password)</label>
+                                <div class="input-with-icon">
+                                    <span class="field-icon" aria-hidden="true">
+                                        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"></path></svg>
+                                    </span>
+                                    <input
+                                      id="my_new_password"
+                                      type={showMyPassword ? "text" : "password"}
+                                      bind:value={myProfileFormData.password}
+                                      placeholder="อย่างน้อย 6 ตัวอักษร"
+                                      autocomplete="new-password"
+                                      class="password-input"
+                                    />
+                                    <button type="button" class="eye-btn" on:click={() => (showMyPassword = !showMyPassword)} title={showMyPassword ? "ซ่อนรหัสผ่าน" : "แสดงรหัสผ่าน"} aria-label={showMyPassword ? "ซ่อนรหัสผ่าน" : "แสดงรหัสผ่าน"}>
+                                        {#if showMyPassword}
+                                            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="1.75" fill="none"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>
+                                        {:else}
+                                            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="1.75" fill="none"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                                        {/if}
+                                    </button>
+                                </div>
+                                {#if passwordTooShort}
+                                    <span class="field-error-text">รหัสผ่านต้องมีความยาวอย่างน้อย 6 ตัวอักษร</span>
+                                {/if}
+                            </div>
+
+                            <div class="form-group">
+                                <label for="my_confirm_password">ยืนยันรหัสผ่านใหม่ (Confirm Password)</label>
+                                <div class="input-with-icon">
+                                    <span class="field-icon" aria-hidden="true">
+                                        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.75"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                                    </span>
+                                    <input
+                                      id="my_confirm_password"
+                                      type={showMyPasswordConfirm ? "text" : "password"}
+                                      bind:value={myProfileFormData.password_confirm}
+                                      placeholder="พิมพ์รหัสผ่านใหม่อีกครั้งเพื่อยืนยัน"
+                                      autocomplete="new-password"
+                                      class="password-input"
+                                    />
+                                    <button type="button" class="eye-btn" on:click={() => (showMyPasswordConfirm = !showMyPasswordConfirm)} title={showMyPasswordConfirm ? "ซ่อนรหัสผ่าน" : "แสดงรหัสผ่าน"} aria-label={showMyPasswordConfirm ? "ซ่อนรหัสผ่าน" : "แสดงรหัสผ่าน"}>
+                                        {#if showMyPasswordConfirm}
+                                            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="1.75" fill="none"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>
+                                        {:else}
+                                            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="1.75" fill="none"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                                        {/if}
+                                    </button>
+                                </div>
+                                {#if passwordMismatch}
+                                    <span class="field-error-text">รหัสผ่านใหม่ทั้งสองช่องไม่ตรงกัน</span>
+                                {:else}
+                                    <span class="field-hint">ปล่อยว่างทั้งสองช่องหากไม่ต้องการเปลี่ยนรหัสผ่าน</span>
+                                {/if}
+                            </div>
+                        </div>
+                    {/if}
+                </div>
+
+                <div class="profile-modal-footer">
+                    <div class="footer-status-hint">
+                        {#if securityTabDirty}
+                            <span class="staged-pill warn">เตรียมอัปเดตรหัสผ่านใหม่</span>
+                        {:else if hasUnsavedProfileChanges}
+                            <span class="staged-pill">มีการแก้ไขที่ยังไม่บันทึก</span>
+                        {/if}
+                    </div>
+                    <div class="footer-btn-group">
+                        <button type="button" class="btn-secondary" on:click={requestCloseProfileModal} disabled={isSavingMyProfile}>ยกเลิก</button>
+                        <button
+                          type="submit"
+                          class="btn-primary profile-save-btn"
+                          disabled={isSavingMyProfile || passwordMismatch || passwordTooShort}
+                        >
+                            {#if isSavingMyProfile}
+                                <span class="btn-spinner-sm"></span>
+                                <span>กำลังบันทึก...</span>
                             {:else}
-                                <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                                <span>บันทึกข้อมูลส่วนตัว</span>
                             {/if}
                         </button>
                     </div>
-                    <span class="field-hint">* ปล่อยว่างไว้หากไม่ต้องการเปลี่ยนรหัสผ่าน</span>
                 </div>
-            {/if}
-        </div>
-
-        <div class="modal-actions">
-            <button class="btn-secondary" on:click={() => showMyProfileModal = false}>ยกเลิก</button>
-            <button class="btn-primary" on:click={saveMyProfile}>บันทึกข้อมูลส่วนตัว</button>
-        </div>
+            </form>
+        {/if}
     </div>
 </div>
 {/if}
@@ -2922,20 +3234,6 @@
     justify-content: center; padding: 4px; border-radius: 4px; transition: color 0.2s;
   }
   .eye-btn:hover { color: var(--text-main); }
-  .avatar-upload-container {
-    display: flex; align-items: center; gap: 20px; margin-bottom: 20px;
-  }
-  .avatar-preview {
-    width: 60px; height: 60px; border-radius: 50%;
-    background: rgba(255,255,255,0.05); border: 1px dashed var(--glass-border);
-    display: flex; align-items: center; justify-content: center; overflow: hidden;
-  }
-  .avatar-preview img { width: 100%; height: 100%; object-fit: cover; }
-  .avatar-preview svg { width: 30px; height: 30px; color: var(--text-muted); }
-  .upload-btn-wrapper { position: relative; overflow: hidden; display: inline-block; }
-  .upload-btn-wrapper input[type=file] {
-    font-size: 100px; position: absolute; left: 0; top: 0; opacity: 0; cursor: pointer;
-  }
   .modal-actions {
     display: flex; justify-content: flex-end; gap: 10px; margin-top: 25px;
   }
@@ -2947,213 +3245,385 @@
   .btn-secondary:hover { background: rgba(255,255,255,0.1); }
   .btn-sm { padding: 6px 12px; font-size: 13px; }
 
-  /* ── Enhanced Profile Modal Styles ── */
-  .profile-modal-card {
-    max-width: 620px !important;
-    width: 95% !important;
-    padding: 28px 32px !important;
-    background: rgba(15, 23, 42, 0.95) !important;
-    backdrop-filter: blur(24px) !important;
-    border: 1px solid rgba(139, 92, 246, 0.25) !important;
-    box-shadow: 0 25px 60px rgba(0, 0, 0, 0.7), 0 0 30px rgba(139, 92, 246, 0.15) !important;
-    border-radius: 20px !important;
+  /* ── Polished Profile Modal Styles (DESIGN.md aligned) ── */
+  .modal-content.profile-modal-card {
+    max-width: 640px;
+    width: 94%;
+    max-height: 90vh;
+    overflow-y: auto;
+    padding: 26px 28px;
+    background: #141928;
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.52);
+    border-radius: 20px;
+    font-family: var(--font-th);
   }
-  .profile-modal-header {
-    text-align: center;
-    margin-bottom: 20px;
+  .profile-modal-card button:focus-visible,
+  .profile-modal-card label.btn-avatar-action:focus-visible,
+  .profile-modal-card input:focus-visible {
+    outline: 2px solid #818cf8;
+    outline-offset: 2px;
   }
-  .profile-modal-header .modal-title {
-    font-size: 22px;
-    font-weight: 700;
-    margin: 0 0 6px 0;
-    color: var(--text-main);
+  .profile-modal-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 14px;
+    margin-bottom: 18px;
   }
-  .profile-modal-header .modal-subtitle {
+  .profile-modal-title-wrap .modal-title {
+    font-size: 20px;
+    font-weight: 600;
+    margin: 0 0 4px 0;
+    color: #f8fafc;
+    font-family: var(--font-th);
+  }
+  .profile-modal-title-wrap .modal-subtitle {
     font-size: 13px;
-    color: var(--text-muted);
+    color: #94a3b8;
     margin: 0;
   }
+  .profile-close-btn {
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    color: #cbd5e1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background-color 0.16s ease, color 0.16s ease;
+  }
+  .profile-close-btn:hover {
+    background: rgba(255, 255, 255, 0.12);
+    color: #ffffff;
+  }
 
-  /* Avatar Hero Upload Section */
-  .avatar-hero-container {
+  .profile-discard-banner {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    padding: 10px 14px;
+    margin-bottom: 16px;
+    background: rgba(245, 158, 11, 0.14);
+    border: 1px solid rgba(245, 158, 11, 0.4);
+    border-radius: 12px;
+    font-size: 13px;
+    color: #fde68a;
+  }
+  .discard-banner-actions {
+    display: flex;
+    gap: 8px;
+  }
+  .btn-banner-stay {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    color: #f8fafc;
+    padding: 5px 12px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-family: var(--font-th);
+    cursor: pointer;
+  }
+  .btn-banner-discard {
+    background: #e11d48;
+    border: none;
+    color: #ffffff;
+    padding: 5px 12px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 500;
+    font-family: var(--font-th);
+    cursor: pointer;
+  }
+
+  .profile-state-box {
     display: flex;
     flex-direction: column;
     align-items: center;
+    justify-content: center;
     gap: 12px;
-    margin-bottom: 24px;
-    padding: 16px;
-    background: rgba(255, 255, 255, 0.02);
-    border: 1px dashed rgba(255, 255, 255, 0.12);
-    border-radius: 16px;
-    transition: all 0.3s ease;
+    padding: 40px 20px;
+    color: #cbd5e1;
+    font-size: 14px;
+    text-align: center;
   }
-  .avatar-hero-container:hover {
-    border-color: rgba(139, 92, 246, 0.3);
-    background: rgba(139, 92, 246, 0.02);
+  .profile-state-box.error {
+    color: #fecdd3;
   }
-  .avatar-hero-circle {
-    position: relative;
-    width: 104px;
-    height: 104px;
+  .profile-state-box p {
+    margin: 0;
+    max-width: 48ch;
+    line-height: 1.55;
+  }
+  .profile-spinner {
+    width: 28px;
+    height: 28px;
+    border: 3px solid rgba(148, 163, 184, 0.2);
+    border-top-color: #6366f1;
     border-radius: 50%;
-    background: linear-gradient(135deg, #1e1b4b 0%, #311b92 100%);
-    border: 3px solid #8b5cf6;
-    box-shadow: 0 8px 24px rgba(139, 92, 246, 0.3);
+    animation: profileSpin 0.8s linear infinite;
+  }
+  @keyframes profileSpin {
+    to { transform: rotate(360deg); }
+  }
+
+  .sr-only-input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    border: 0;
+  }
+
+  /* Compact Horizontal Identity & Avatar Header */
+  .profile-identity-bar {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 14px 16px;
+    margin-bottom: 18px;
+    background: #1b2338;
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    border-radius: 12px;
+    transition: border-color 0.18s ease, background-color 0.18s ease;
+  }
+  .profile-identity-bar.drag-over {
+    border-color: #6366f1;
+    background: rgba(99, 102, 241, 0.12);
+  }
+  .avatar-trigger-circle {
+    position: relative;
+    width: 72px;
+    height: 72px;
+    border-radius: 50%;
+    background: #232f4d;
+    border: 2px solid rgba(148, 163, 184, 0.32);
     cursor: pointer;
     overflow: hidden;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    flex-shrink: 0;
+    transition: border-color 0.18s ease;
   }
-  .avatar-hero-circle:hover {
-    transform: scale(1.04);
-    box-shadow: 0 12px 32px rgba(139, 92, 246, 0.45);
-    border-color: #a78bfa;
+  .avatar-trigger-circle:hover {
+    border-color: #818cf8;
   }
-  .avatar-hero-circle.drag-over {
-    border-color: #3b82f6;
-    box-shadow: 0 0 25px rgba(59, 130, 246, 0.6);
-    transform: scale(1.06);
-  }
-  .avatar-hero-circle img {
+  .avatar-trigger-circle img {
     width: 100%;
     height: 100%;
     object-fit: cover;
   }
   .avatar-fallback-text {
-    font-size: 40px;
-    font-weight: 800;
-    color: #f3e8ff;
-    text-shadow: 0 2px 10px rgba(0,0,0,0.5);
+    font-family: var(--font-en);
+    font-size: 26px;
+    font-weight: 700;
+    color: #e2e8f0;
   }
   .avatar-hover-overlay {
     position: absolute;
     inset: 0;
-    background: rgba(15, 23, 42, 0.75);
-    backdrop-filter: blur(2px);
+    background: rgba(15, 23, 42, 0.72);
     display: flex;
-    flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 4px;
-    color: #f3e8ff;
-    font-size: 11px;
-    font-weight: 600;
+    color: #f8fafc;
     opacity: 0;
-    transition: opacity 0.25s ease;
+    transition: opacity 0.18s ease;
   }
-  .avatar-hero-circle:hover .avatar-hover-overlay {
+  .avatar-trigger-circle:hover .avatar-hover-overlay {
     opacity: 1;
   }
-  .camera-badge {
-    position: absolute;
-    bottom: 2px;
-    right: 2px;
-    background: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%);
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
+  .identity-meta {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .identity-name-row {
     display: flex;
     align-items: center;
-    justify-content: center;
-    color: white;
-    border: 2px solid #0f172a;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.4);
-    z-index: 2;
-    transition: transform 0.2s;
+    gap: 8px;
+    flex-wrap: wrap;
   }
-  .avatar-hero-circle:hover .camera-badge {
-    transform: scale(1.1);
+  .identity-display {
+    font-size: 15px;
+    font-weight: 600;
+    color: #f8fafc;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .identity-role-pill {
+    font-family: var(--font-en);
+    font-size: 12px;
+    font-weight: 600;
+    padding: 1px 8px;
+    border-radius: 20px;
+    background: rgba(99, 102, 241, 0.18);
+    border: 1px solid rgba(129, 140, 248, 0.35);
+    color: #c7d2fe;
+  }
+  .identity-username {
+    font-family: var(--font-en);
+    font-size: 12.5px;
+    color: #94a3b8;
+  }
+  .drag-hint-text {
+    font-size: 12px;
+    color: #94a3b8;
+    margin-top: 2px;
   }
   .avatar-controls {
     display: flex;
-    align-items: center;
-    gap: 10px;
+    flex-direction: column;
+    gap: 6px;
+    flex-shrink: 0;
   }
   .btn-avatar-action {
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     gap: 6px;
-    padding: 7px 14px;
+    padding: 7px 12px;
     border-radius: 8px;
     font-size: 12px;
-    font-weight: 600;
+    font-weight: 500;
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: background-color 0.16s ease, border-color 0.16s ease, color 0.16s ease;
     font-family: var(--font-th);
+    white-space: nowrap;
   }
   .btn-avatar-action.upload {
-    background: rgba(139, 92, 246, 0.15);
-    border: 1px solid rgba(139, 92, 246, 0.35);
-    color: #c084fc;
+    background: #232f4d;
+    border: 1px solid rgba(129, 140, 248, 0.38);
+    color: #e0e7ff;
   }
   .btn-avatar-action.upload:hover {
-    background: rgba(139, 92, 246, 0.3);
-    border-color: rgba(139, 92, 246, 0.6);
+    background: rgba(99, 102, 241, 0.25);
+    border-color: #818cf8;
     color: #ffffff;
-    transform: translateY(-1px);
   }
   .btn-avatar-action.remove {
-    background: rgba(239, 68, 68, 0.12);
-    border: 1px solid rgba(239, 68, 68, 0.3);
-    color: #fca5a5;
+    background: transparent;
+    border: 1px solid rgba(148, 163, 184, 0.24);
+    color: #cbd5e1;
   }
   .btn-avatar-action.remove:hover {
-    background: rgba(239, 68, 68, 0.25);
-    border-color: rgba(239, 68, 68, 0.5);
-    color: #ffffff;
-    transform: translateY(-1px);
+    background: rgba(244, 63, 94, 0.14);
+    border-color: rgba(244, 63, 94, 0.45);
+    color: #fecdd3;
   }
-  .drag-hint-text {
-    font-size: 11px;
-    color: var(--text-muted);
-    font-family: var(--font-th);
+  .btn-avatar-action.undo {
+    background: rgba(245, 158, 11, 0.16);
+    border: 1px solid rgba(245, 158, 11, 0.45);
+    color: #fde68a;
   }
 
   /* Profile Tabs Navigation */
   .profile-tabs-header {
     display: flex;
     gap: 6px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-    margin-bottom: 20px;
-    padding-bottom: 8px;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+    margin-bottom: 18px;
+    padding-bottom: 10px;
+    flex-wrap: wrap;
   }
   .ptab-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
     background: transparent;
-    border: none;
-    color: var(--text-muted);
-    padding: 8px 16px;
+    border: 1px solid transparent;
+    color: #94a3b8;
+    padding: 8px 14px;
     font-size: 13px;
     font-weight: 500;
     cursor: pointer;
-    border-radius: 10px;
-    transition: all 0.2s ease;
+    border-radius: 8px;
+    transition: background-color 0.16s ease, color 0.16s ease, border-color 0.16s ease;
     font-family: var(--font-th);
   }
   .ptab-btn:hover {
-    color: white;
+    color: #f8fafc;
     background: rgba(255, 255, 255, 0.05);
   }
   .ptab-btn.active {
-    color: white;
-    background: rgba(139, 92, 246, 0.2);
-    border: 1px solid rgba(139, 92, 246, 0.4);
+    color: #ffffff;
+    background: rgba(99, 102, 241, 0.2);
+    border-color: rgba(129, 140, 248, 0.42);
     font-weight: 600;
-    box-shadow: 0 4px 12px rgba(139, 92, 246, 0.15);
+  }
+  .tab-dirty-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #818cf8;
+  }
+  .tab-dirty-dot.warn {
+    background: #f59e0b;
+  }
+
+  .profile-inline-error {
+    padding: 10px 14px;
+    margin-bottom: 14px;
+    background: rgba(244, 63, 94, 0.14);
+    border: 1px solid rgba(244, 63, 94, 0.4);
+    border-radius: 8px;
+    color: #fecdd3;
+    font-size: 13px;
   }
 
   /* Form Layout & Icon Inputs */
   .profile-form-body {
-    min-height: 200px;
+    min-height: 175px;
+  }
+  .profile-form-body label {
+    font-family: var(--font-th);
+    font-size: 13px;
+    color: #cbd5e1;
+    margin-bottom: 6px;
+    display: block;
+  }
+  .profile-form-body input {
+    font-family: var(--font-th);
+    font-size: 14px;
+    background: #1b2338;
+    border: 1px solid rgba(148, 163, 184, 0.24);
+    border-radius: 12px;
+    color: #f8fafc;
+    padding: 10px 14px;
+    width: 100%;
+    box-sizing: border-box;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+  .profile-form-body input:focus {
+    border-color: #6366f1;
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.18);
+    outline: none;
   }
   .form-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 16px;
+    gap: 14px;
   }
   .form-grid .form-group:first-child {
     grid-column: 1 / -1;
+  }
+  .security-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
   }
   .input-with-icon {
     position: relative;
@@ -3163,21 +3633,99 @@
   }
   .field-icon {
     position: absolute;
-    left: 14px;
-    font-size: 15px;
+    left: 13px;
+    color: #94a3b8;
+    display: inline-flex;
+    align-items: center;
     pointer-events: none;
     z-index: 1;
   }
-  .input-with-icon input {
-    padding-left: 42px !important;
-    width: 100%;
+  .profile-form-body .input-with-icon input {
+    padding-left: 38px;
+  }
+  .profile-form-body .input-with-icon input.password-input {
+    padding-right: 40px;
   }
   .field-hint {
-    font-size: 11px;
-    color: var(--text-muted);
-    margin-top: 4px;
+    font-size: 12px;
+    color: #94a3b8;
+    margin-top: 6px;
     display: block;
     font-family: var(--font-th);
+  }
+  .field-error-text {
+    font-size: 12px;
+    color: #fda4af;
+    margin-top: 6px;
+    display: block;
+    font-family: var(--font-th);
+  }
+
+  .profile-modal-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-top: 22px;
+    padding-top: 16px;
+    border-top: 1px solid rgba(148, 163, 184, 0.16);
+  }
+  .footer-status-hint {
+    display: flex;
+    align-items: center;
+  }
+  .staged-pill {
+    font-size: 12px;
+    color: #c7d2fe;
+    background: rgba(99, 102, 241, 0.16);
+    border: 1px solid rgba(129, 140, 248, 0.35);
+    padding: 4px 10px;
+    border-radius: 20px;
+  }
+  .staged-pill.warn {
+    color: #fde68a;
+    background: rgba(245, 158, 11, 0.16);
+    border-color: rgba(245, 158, 11, 0.4);
+  }
+  .footer-btn-group {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-left: auto;
+  }
+  .profile-save-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 0;
+  }
+  .profile-save-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+  .btn-spinner-sm {
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-top-color: #ffffff;
+    border-radius: 50%;
+    animation: profileSpin 0.7s linear infinite;
+  }
+
+  @media (max-width: 600px) {
+    .profile-identity-bar {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+    .avatar-controls {
+      flex-direction: row;
+      width: 100%;
+    }
+    .form-grid,
+    .security-grid {
+      grid-template-columns: 1fr;
+    }
   }
 
   /* Delete Confirmation Modal */

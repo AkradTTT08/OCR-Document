@@ -149,6 +149,8 @@
     resolveUserEmail();
   });
 
+  let sourceGeneratedDocId = null;
+
   $: if ($activeQAContext) {
     const ctx = $activeQAContext;
     activeQAContext.set(null); // Clear it
@@ -160,6 +162,7 @@
     scanGroupName = cleanGName;
     scanGroupType = ctx.group_type || 'Project Plan';
     isGroupNameSet = true;
+    sourceGeneratedDocId = ctx.source_generated_doc_id || null;
 
     // If file is passed from QA Document Creation or another module
     if (ctx.file) {
@@ -729,12 +732,22 @@
       const totalValid = g.items.length - na;
       const score = totalValid > 0 ? Math.round((passed / totalValid) * 100) : 100;
       
-      const hasCat12Fail = g.items.some((/** @type {any} */ i) => i.status === 'FAIL' && (
-        (i.category || '').includes('Defect') || 
-        (i.category || '').includes('Content') || 
-        (i.item_code || '').startsWith('1.') || 
-        (i.item_code || '').startsWith('2.')
-      ));
+      const hasCat12Fail = g.items.some((/** @type {any} */ i) => {
+        if (i.status !== 'FAIL') return false;
+        const cat = i.category || '';
+        const baseCode = String(i.item_code || '').replace(/^.*-/, '').trim();
+        const sev = String(i.severity || '').toUpperCase();
+        const isMand = i.is_mandatory !== false;
+        const isCat3Formatting = baseCode.startsWith('3.') || (cat.includes('Formatting') && !cat.includes('Defect') && !cat.includes('Content'));
+        return (
+          cat.includes('Defect') ||
+          cat.includes('Content') ||
+          baseCode.startsWith('1.') ||
+          baseCode.startsWith('2.') ||
+          sev === 'CRITICAL' ||
+          (isMand && !isCat3Formatting)
+        );
+      });
 
       let status = 'PASSED';
       if (failed > 0) {
@@ -815,11 +828,20 @@
   let groupTypeOpen = false;
   const masterGroupTypes = MASTER_DOC_TYPES;
 
+  function normalizeDocTypeKey(val) {
+    const s = String(val || '').trim().replace(/\s+/g, '').toUpperCase();
+    if (s === 'REQUIREMENTS' || s === 'REQUIREMENT') return 'SRS';
+    return s;
+  }
+
   $: matchedCriteriaTemplate = exitCriteriaTemplates.find(t => 
     t.is_active && 
     t.doc_type && 
-    t.doc_type.trim().toUpperCase() === scanGroupType.trim().toUpperCase() &&
-    t.doc_type.trim().toUpperCase() !== 'ALL'
+    t.doc_type.trim().toUpperCase() !== 'ALL' &&
+    (
+      t.doc_type.trim().toUpperCase() === scanGroupType.trim().toUpperCase() ||
+      normalizeDocTypeKey(t.doc_type) === normalizeDocTypeKey(scanGroupType)
+    )
   );
   $: hasUniversalTemplate = exitCriteriaTemplates.some(t => 
     t.is_active && 
@@ -905,10 +927,16 @@
     return lower.endsWith('.xlsx') || lower.endsWith('.xls') || lower.endsWith('.xlsm') || lower.endsWith('.csv');
   }
 
+  function isMarkdownFile(fName) {
+    if (!fName) return false;
+    const lower = fName.toLowerCase();
+    return lower.endsWith('.md') || lower.endsWith('.txt');
+  }
+
   function isValidQAFile(fName) {
     if (!fName) return false;
     const lower = fName.toLowerCase();
-    return lower.endsWith('.pdf') || isExcelFile(fName);
+    return lower.endsWith('.pdf') || isExcelFile(fName) || isMarkdownFile(fName);
   }
 
   function handleDrop(e) {
@@ -917,7 +945,7 @@
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       const selected = e.dataTransfer.files[0];
       if (!isValidQAFile(selected.name)) {
-        toast("กรุณาเลือกไฟล์ PDF หรือ Excel (.xlsx, .xls) เท่านั้น", "warning");
+        toast("กรุณาเลือกไฟล์ PDF, Excel (.xlsx, .xls, .csv) หรือ Markdown (.md, .txt) เท่านั้น", "warning");
         return;
       }
       file = selected;
@@ -931,7 +959,7 @@
     if (e.target.files && e.target.files.length > 0) {
       const selected = e.target.files[0];
       if (!isValidQAFile(selected.name)) {
-        toast("กรุณาเลือกไฟล์ PDF หรือ Excel (.xlsx, .xls) เท่านั้น", "warning");
+        toast("กรุณาเลือกไฟล์ PDF, Excel (.xlsx, .xls, .csv) หรือ Markdown (.md, .txt) เท่านั้น", "warning");
         return;
       }
       file = selected;
@@ -1020,6 +1048,9 @@
     }
     formData.append("group_name", cleanGroupName);
     formData.append("group_type", scanGroupType);
+    if (sourceGeneratedDocId) {
+      formData.append("source_generated_doc_id", String(sourceGeneratedDocId));
+    }
 
     const token = (typeof window !== 'undefined' && window.localStorage) ? (localStorage.getItem('jwt_token') || '') : '';
     const currentUsername = (typeof window !== 'undefined' && window.localStorage) ? (localStorage.getItem('auth_user') || '') : '';
@@ -1259,6 +1290,7 @@
         exit_criteria_eval: exitEval,
         total_pages: scanResult.total_pages || 1,
         source_filename: scanResult.filename || cleanDocName,
+        source_doc_id: sourceGeneratedDocId || null,
         raw_markdown: scanResult.markdown || scanResult.extracted_text || scanResult.raw_text || '',
         source_text: scanResult.report || '',
         created_at: new Date().toISOString()
@@ -1286,6 +1318,51 @@
       toast('เกิดข้อผิดพลาดในการส่งข้อมูล: ' + err.message, 'error');
     } finally {
       isSendingToDocCreation = false;
+    }
+  }
+
+  let isReevaluatingExitCriteria = false;
+
+  async function reevaluateExitCriteria() {
+    if (!scanResult || isReevaluatingExitCriteria) return;
+    isReevaluatingExitCriteria = true;
+    try {
+      const activeProj = $selectedProjectStore;
+      const pId = scanResult.project_id || (activeProj ? (activeProj.id || activeProj.project_id) : null);
+      const targetDocType = (selectedDocTypes && selectedDocTypes.length > 0)
+        ? selectedDocTypes.join(', ')
+        : (scanResult.doc_type || scanGroupType || 'ALL');
+      const res = await fetch('/api/qa_consult/reevaluate_exit_criteria', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          transaction_id: scanResult.id || null,
+          project_id: pId,
+          doc_type: targetDocType,
+          filename: scanResult.filename || 'Document.pdf',
+          group_name: scanResult.group_name || scanGroupName || 'General',
+          group_type: scanResult.group_type || scanGroupType || '',
+          extracted_text: scanResult.extracted_text || scanResult.raw_text || '',
+          report: scanResult.report || '',
+          qa_findings: scanResult.qa_findings || []
+        })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'ไม่สามารถประเมิน Exit Criteria ใหม่ได้');
+      }
+      scanResult = {
+        ...scanResult,
+        exit_criteria_eval: data.exit_criteria_eval,
+        excel_url: data.excel_url || scanResult.excel_url
+      };
+      gateResultData = data.exit_criteria_eval;
+      toast(`ประเมิน Exit Criteria Review Gate ใหม่สำเร็จ (${data.exit_criteria_eval?.status || 'DONE'} — ${data.exit_criteria_eval?.score_percentage ?? 100}%)`, 'success');
+    } catch (err) {
+      console.error('Re-evaluate exit criteria error:', err);
+      toast('เกิดข้อผิดพลาดในการประเมิน Exit Criteria ใหม่: ' + err.message, 'error');
+    } finally {
+      isReevaluatingExitCriteria = false;
     }
   }
 </script>
@@ -1797,19 +1874,20 @@
                 <div class="upload-icon-orb" aria-hidden="true">
                   <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
                 </div>
-                <p class="drop-title">ลากไฟล์ PDF หรือ Excel มาวางที่นี่</p>
+                <p class="drop-title">ลากไฟล์ PDF, Excel หรือ Markdown มาวางที่นี่</p>
                 <p class="drop-sub">หรือ <span>คลิกเพื่อเลือกไฟล์จากเครื่อง</span> สำหรับตรวจสอบกับ Knowledge Base</p>
                 <div class="supported-formats" aria-hidden="true">
                   <span class="fmt-pill pdf">.PDF</span>
                   <span class="fmt-pill excel">.XLSX</span>
                   <span class="fmt-pill excel">.XLS</span>
+                  <span class="fmt-pill pdf">.MD</span>
                 </div>
               </div>
             {/if}
           </div>
           <input
             type="file"
-            accept=".pdf, .xlsx, .xls, .xlsm, application/pdf, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel"
+            accept=".pdf, .xlsx, .xls, .xlsm, .csv, .md, .txt, application/pdf, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel, text/markdown, text/plain"
             bind:this={fileInput}
             on:change={handleFileSelect}
             style="display: none;"
@@ -2213,6 +2291,15 @@
               <span class="template-badge">{scanResult.exit_criteria_eval.template_title}</span>
             </div>
             <div class="gate-header-actions">
+              <button
+                type="button"
+                class="btn-table-toggle"
+                on:click={reevaluateExitCriteria}
+                disabled={isReevaluatingExitCriteria}
+                title="ประเมินเอกสารนี้เทียบกับเกณฑ์ Exit Criteria ล่าสุดใหม่อีกครั้งโดยไม่ต้องอัปโหลดไฟล์ใหม่"
+              >
+                {isReevaluatingExitCriteria ? '⏳ กำลังประเมินเกณฑ์ใหม่...' : '🔄 ประเมินเกณฑ์ใหม่'}
+              </button>
               {#if activeTabStats.status !== 'PASSED'}
                 <button class="btn-mini-autofix" on:click={sendFindingsToDocCreation} disabled={isSendingToDocCreation}>
                   🔄 ส่งแก้ไขตามเกณฑ์ Gate

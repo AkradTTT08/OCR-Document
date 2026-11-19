@@ -1,492 +1,580 @@
 <script>
   import { createEventDispatcher, onMount, onDestroy } from 'svelte';
-  import { fade, fly, scale, slide } from 'svelte/transition';
+  import { fade, fly } from 'svelte/transition';
+  import { cubicOut } from 'svelte/easing';
 
   export let userRole = 'admin'; // 'admin' | 'user'
 
   const dispatch = createEventDispatcher();
-  let showStepDropdown = false;
+  let showMobileMenu = false;
+  let direction = 1; // 1 = forward, -1 = backward
 
-  // ── Tutorial Steps with Detailed Workflows ──────────────────────────────
+  // ── Detailed, Up-to-Date Tutorial Curriculum ─────────────────────────────
   const adminSteps = [
     {
       id: 'welcome',
-      title: '👋 ยินดีต้อนรับสู่ Spectra QA Platform',
-      subtitle: 'Intelligent Document Analysis & QA Automation System (Admin Mode)',
-      description: `📌 **ภาพรวมระบบ**
-แพลตฟอร์มการตรวจเอกสารคุณภาพและเครื่องมือ QA อัจฉริยะแบบบูรณาการ ช่วยสแกน PDF, วิเคราะห์ด้วย AI, จัดการ Knowledge Base, ออกแบบ Workflow และสั่งการ Master Agent ครบวงจร
-
-🔄 **ลำดับ Flow การทำงานโดยรวม (System Workflow)**
-🔹 **ขั้นตอนที่ 1 (ตั้งค่าโครงการ):** สร้าง Project ในเมนู Project Management เพื่อกำหนดขอบเขตงาน
-🔹 **ขั้นตอนที่ 2 (สแกนเอกสาร):** อัปโหลดไฟล์ PDF ในเมนู Scan OCR เพื่อทำ OCR และตรวจคำผิด
-🔹 **ขั้นตอนที่ 3 (ตรวจสอบเกณฑ์):** ระบบ AI ประเมินคุณภาพเอกสารเทียบกับ Exit Criteria 13 ข้อ
-🔹 **ขั้นตอนที่ 4 (จัดเก็บ RAG):** บันทึก Chunks ข้อความลงใน Knowledge Base เพื่อใช้สืบค้น
-🔹 **ขั้นตอนที่ 5 (สั่งงานอัจฉริยะ):** ใช้ Master Agent หรือ AI Workflow Builder รันกระบวนการอัตโนมัติ`,
-      icon: '🚀',
-      target: null,
-      role: 'admin',
+      category: 'ภาพรวมระบบ',
+      iconType: 'compass',
+      title: 'ยินดีต้อนรับสู่ Spectra QA Platform',
+      subtitle: 'Unified AI QA Automation & Document Verification (Admin Mode)',
       color: '#6366f1',
-    },
-    {
-      id: 'scan_ocr',
-      title: '📄 Scan OCR Engine',
-      subtitle: 'เมนู: Scan OCR (Admin)',
-      description: `📌 **หน้าที่ของเมนู**
-อัปโหลดไฟล์ PDF แปลงข้อความสแกนด้วย OCR ตรวจสอบคำผิดภาษาไทย-อังกฤษ และประเมินคุณภาพเอกสารด้วย AI
-
-🔄 **ลำดับ Flow การทำงาน (Step-by-Step Workflow)**
-🔹 **ขั้นตอนที่ 1 (Input):** ลากและวางไฟล์ PDF (ขนาดสูงสุด 50MB) ลงใน Upload Area
-🔹 **ขั้นตอนที่ 2 (OCR Processing):** ระบบประมวลผล OCR สกัดข้อความ และแบ่งเป็น Chunks
-🔹 **ขั้นตอนที่ 3 (AI Audit):** Spell Checker ตรวจคำผิด + AI Evaluator วิเคราะห์คุณภาพเอกสาร
-🔹 **ขั้นตอนที่ 4 (Output):** แสดง Audit Report, สรุปรายการคำผิด และบันทึกเข้า Knowledge Base อัตโนมัติ`,
-      icon: '📄',
-      target: 'nav-ocr',
-      role: 'admin',
-      color: '#6366f1',
+      overview:
+        'Spectra QA คือแพลตฟอร์มประกันคุณภาพซอฟต์แวร์แบบครบวงจรที่ผสาน Multi-Agent AI, การสแกน OCR ภาษาไทย-อังกฤษ, ฐานความรู้ RAG, การสร้างและตรวจเอกสารด้วย Exit Criteria Gate, การทดสอบ API/Security/Performance และ Playwright MCP Automation ไว้ในโครงการเดียว',
+      flow: ['Project Setup', 'Knowledge Base', 'Doc Creation', 'QA Consult Gate', 'Test Automation'],
+      steps: [
+        {
+          title: 'ตั้งค่าโครงการและสิทธิ์ทีมงาน',
+          detail: 'สร้างโครงการใน Project Management เพื่อแยกคลังเอกสาร, Requirement และประวัติการตรวจออกจากกัน 100% แล้วกำหนดสิทธิ์สมาชิกใน QA Member'
+        },
+        {
+          title: 'นำเข้าเอกสารต้นทางเข้าสู่ Knowledge Base',
+          detail: 'อัปโหลด SRS, TOR, SDD หรือสแกน PDF ผ่าน Scan OCR ระบบจะสกัดข้อความ, แบ่ง Chunk, สร้าง Vector Embedding และระบุ Golden Data'
+        },
+        {
+          title: 'กำหนดมาตรฐานด้วย AI Skills & Exit Criteria',
+          detail: 'ตั้งค่า Template หัวข้อเอกสารใน AI Skills และกำหนดเกณฑ์ผ่าน/ไม่ผ่าน (Mandatory / KPI) ใน Exit Criteria เพื่อคุมคุณภาพทุกเอกสาร'
+        },
+        {
+          title: 'ผลิต-ตรวจ-ปรับปรุงเอกสารแบบ Closed-Loop',
+          detail: 'สร้างเอกสารจาก QA Document Creation → ส่งตรวจที่ QA Consult → ส่งข้อบกพร่องกลับมาผ่าตัดแก้ไขอัตโนมัติจนผ่านเกณฑ์ 100%'
+        },
+        {
+          title: 'ขยายสู่ Automation, Security, Performance & MCP',
+          detail: 'ต่อยอด Requirement ไปยัง QA Test Automation (Playwright MCP), QA Security, QA Performance, AI Workflow Builder และ Master Agent'
+        }
+      ],
+      tip: 'เริ่มจากการอัปโหลด SRS หรือ TOR ของโครงการและติ๊กเป็น Golden Data ใน Knowledge Base ก่อนเสมอ เพื่อให้ AI ทุกเมนูอ้างอิงขอบเขตงานได้อย่างแม่นยำสูงสุด'
     },
     {
       id: 'project_management',
-      title: '📁 Project Management',
-      subtitle: 'เมนู: Project Management (Admin)',
-      description: `📌 **หน้าที่ของเมนู**
-บริหารจัดการข้อมูลโครงการ (Projects) สำหรับใช้จัดหมวดหมู่เอกสาร สิทธิ์การเข้าถึง และการรัน Workflow
-
-🔄 **ลำดับ Flow การทำงาน (Step-by-Step Workflow)**
-🔹 **ขั้นตอนที่ 1 (Create Project):** กดปุ่ม "+ New Project" เพื่อเริ่มต้นสร้างโครงการใหม่
-🔹 **ขั้นตอนที่ 2 (Config):** ระบุ Project Code (เช่น PROJ-001), Project Name และคำอธิบายโครงการ
-🔹 **ขั้นตอนที่ 3 (Binding):** นำ Project Code ไปผูกกับการ Scan OCR, กลุ่มเอกสาร QA Consult และ Workflows
-🔹 **ขั้นตอนที่ 4 (Manage):** ตรวจสอบสถิติจำนวนเอกสารในโครงการ แก้ไขข้อมูล หรือลบโครงการที่ไม่ใช้งาน`,
-      icon: '📁',
-      target: 'nav-project-mgmt',
-      role: 'admin',
-      color: '#3b82f6',
+      category: 'ตั้งค่าพื้นฐาน',
+      iconType: 'folder',
+      title: 'Project Management',
+      subtitle: 'ศูนย์กลางจัดการโครงการและขอบเขตข้อมูล (Project Isolation)',
+      color: '#6366f1',
+      overview:
+        'สร้างและบริหารโครงการทั้งหมดในระบบ ทุกเมนูใน Spectra QA จะยึดขอบเขตข้อมูลตามโครงการที่เลือก (Strict Project Isolation) เพื่อป้องกันข้อมูลข้ามโครงการปะปนกัน',
+      flow: ['สร้าง Project Code', 'ระบุขอบเขต', 'ผูกสมาชิก', 'เชื่อมทุกเมนู QA'],
+      steps: [
+        {
+          title: 'สร้างโครงการใหม่ (+ New Project)',
+          detail: 'กำหนด Project Code (เช่น 69A, WMS-01), ชื่อโครงการ และคำอธิบายขอบเขตระบบให้ชัดเจน'
+        },
+        {
+          title: 'ตรวจสอบความพร้อมของคลังข้อมูลโครงการ',
+          detail: 'ดูภาพรวมจำนวนเอกสารใน Knowledge Base, ประวัติการสแกน และสถานะการใช้งานของแต่ละโครงการได้จากหน้าเดียว'
+        },
+        {
+          title: 'ผูกสิทธิ์การเข้าถึงตามทีม',
+          detail: 'กำหนดให้ QA หรือ BA แต่ละคนเห็นเฉพาะโครงการที่รับผิดชอบผ่านเมนู QA Member'
+        }
+      ],
+      tip: 'ตั้ง Project Code ให้สั้นและสื่อความหมาย (เช่น PRJ-2026) เพราะรหัสนี้จะถูกนำไปแสดงบนหัวรายงาน PDF, ไฟล์ Excel และชื่อกลุ่มสแกนอัตโนมัติ'
+    },
+    {
+      id: 'scan_ocr',
+      category: 'นำเข้าข้อมูล',
+      iconType: 'scan',
+      title: 'Scan OCR & Bilingual Spell Check',
+      subtitle: 'สแกนเอกสาร PDF ภาษาไทย-อังกฤษ พร้อมตรวจคำผิดด้วยพจนานุกรมเฉพาะทาง',
+      color: '#818cf8',
+      overview:
+        'แปลงเอกสาร PDF สแกนหรือรูปภาพเป็นข้อความ Markdown โครงสร้างชัดเจน ตรวจคำผิดภาษาไทย-อังกฤษตามบริบท และนำเข้าฐานข้อมูลโครงการได้ทันที',
+      flow: ['อัปโหลด PDF (<=50MB)', 'OCR Extraction', 'ตรวจคำผิด TH/EN', 'Export / บันทึก KB'],
+      steps: [
+        {
+          title: 'อัปโหลดเอกสารต้นฉบับ',
+          detail: 'ลากไฟล์ PDF (ขนาดสูงสุด 50MB) ลงในพื้นที่อัปโหลด เลือกโครงการเป้าหมายและโหมดการประมวลผล'
+        },
+        {
+          title: 'ตรวจสอบผล OCR และรายการคำผิด',
+          detail: 'ระบบจะแสดงข้อความที่สกัดได้คู่กับรายการคำผิดที่ตรวจพบ พร้อมคำแนะนำคำที่ถูกต้องและพจนานุกรมคำศัพท์เฉพาะทางขององค์กร'
+        },
+        {
+          title: 'ส่งออกหรือนำเข้าสู่ Knowledge Base',
+          detail: 'สามารถคัดลอก Markdown, ส่งออกรายงาน หรือจัดเก็บเข้าสู่ Knowledge Base ของโครงการเพื่อใช้เป็นแหล่งอ้างอิงให้ AI Agent ทันที'
+        }
+      ],
+      tip: 'หากเอกสารมีคำศัพท์เฉพาะของธุรกิจ (เช่น ชื่อย่อระบบ) สามารถเพิ่มลงใน Custom Dictionary เพื่อให้ระบบไม่แจ้งเตือนเป็นคำผิดซ้ำ'
     },
     {
       id: 'knowledge_base',
-      title: '📚 Knowledge Base & Vector Search',
-      subtitle: 'เมนู: Knowledge Base (Admin)',
-      description: `📌 **หน้าที่ของเมนู**
-คลังจัดเก็บข้อมูล RAG (Retrieval-Augmented Generation) และระบบค้นหาเชิงความหมายผ่าน Vector Database
-
-🔄 **ลำดับ Flow การทำงาน (Step-by-Step Workflow)**
-🔹 **ขั้นตอนที่ 1 (Search):** พิมพ์คำค้นหาเชิงความหมาย (Semantic Query) หรือเลือกตัวกรองตาม Project
-🔹 **ขั้นตอนที่ 2 (Vector Retrieval):** ระบบคำนวณ Embedding Vector ค้นหา Chunk ที่มี Similarity สูงสุด
-🔹 **ขั้นตอนที่ 3 (Inspect Chunks):** แสดงเนื้อหา Chunk, Metadata, หน้าเอกสาร และไฟล์ต้นฉบับ
-🔹 **ขั้นตอนที่ 4 (AI Context Sync):** ข้อมูลใน KB จะถูกส่งเป็นบริบท (Context) ให้ Master Agent ตอบคำถาม`,
-      icon: '📚',
-      target: 'nav-kb',
-      role: 'admin',
+      category: 'นำเข้าข้อมูล',
+      iconType: 'database',
+      title: 'Knowledge Base & Golden Data',
+      subtitle: 'คลังข้อมูล RAG และระบบสืบค้นเชิงความหมาย (Vector Database)',
       color: '#8b5cf6',
+      overview:
+        'หัวใจสำคัญของความแม่นยำใน Spectra QA จัดเก็บเอกสารทั้งหมดของโครงการ (TOR, SRS, SDD, Test Case, คู่มือ) ในรูปแบบ Vector Chunks และ Structured Requirements',
+      flow: ['อัปโหลดเอกสาร', 'แบ่ง Chunks & Vector', 'ตั้งค่า Golden Data', 'AI ทุกเมนูดึงใช้อัตโนมัติ'],
+      steps: [
+        {
+          title: 'จัดหมวดหมู่เอกสารให้ถูกต้อง',
+          detail: 'เลือกหมวดหมู่ให้ตรงกับเนื้อหา (SRS, Requirement, TOR/SOW, SDD, TestCase, User Manual) เพื่อให้ Multi-Source RAG ค้นหาได้แม่นยำ'
+        },
+        {
+          title: 'กำหนด Golden Data สำหรับเอกสารหลัก',
+          detail: 'เปิดสถานะ Golden Data ให้กับเอกสารฉบับอนุมัติ (Baseline) เพื่อให้ QA Consult และ QA Document Creation ยึดเป็นเกณฑ์อ้างอิงอันดับแรก'
+        },
+        {
+          title: 'ทดสอบค้นหาเชิงความหมาย (Semantic Search)',
+          detail: 'พิมพ์คำถามหรือฟังก์ชันที่ต้องการค้นหา ระบบจะดึง Chunk ที่เกี่ยวข้องมากที่สุดพร้อมเลขหน้าและชื่อไฟล์ต้นฉบับมาแสดงทันที'
+        }
+      ],
+      tip: 'เมื่อมีการอัปเดต SRS เวอร์ชันใหม่ ควรอัปโหลดฉบับล่าสุดและปรับสถานะฉบับเก่าออก เพื่อไม่ให้ AI สับสนระหว่างข้อกำหนดเก่าและใหม่'
     },
     {
       id: 'ai_skills',
-      title: '⚡ AI Skills Manager',
-      subtitle: 'เมนู: AI Skills (Admin)',
-      description: `📌 **หน้าที่ของเมนู**
-สร้าง แก้ไข และควบคุมความสามารถ (Instructions & Prompts) ของ AI Agents ในระบบ
-
-🔄 **ลำดับ Flow การทำงาน (Step-by-Step Workflow)**
-🔹 **ขั้นตอนที่ 1 (Select/New Skill):** เลือก Skill ที่มีอยู่ หรือกดสร้าง AI Skill ใหม่
-🔹 **ขั้นตอนที่ 2 (Define Target):** ระบุชื่อ Skill, คำอธิบาย และประเภทเอกสารเป้าหมาย (SRS, Test Case, SDD)
-🔹 **ขั้นตอนที่ 3 (Write Instructions):** เขียน Prompt ในรูปแบบ Markdown กำหนดบทบาทและกฎการวิเคราะห์ของ AI
-🔹 **ขั้นตอนที่ 4 (Sync & Activate):** กด Sync Exit Criteria เพื่อดึงเกณฑ์มาตรฐานสากลมารวมใน Skill แล้วเปิดใช้งาน`,
-      icon: '⚡',
-      target: 'nav-skills',
-      role: 'admin',
-      color: '#f59e0b',
-    },
-    {
-      id: 'qa_member',
-      title: '👥 QA Member Management',
-      subtitle: 'เมนู: QA Member (Admin)',
-      description: `📌 **หน้าที่ของเมนู**
-บริหารจัดการสิทธิ์ผู้ใช้งาน สมาชิกในทีม QA และสถานะการเข้าถึงระบบ
-
-🔄 **ลำดับ Flow การทำงาน (Step-by-Step Workflow)**
-🔹 **ขั้นตอนที่ 1 (Add User):** กดปุ่ม "+ Add User" เพื่อลงทะเบียนสมาชิกใหม่ในทีม
-🔹 **ขั้นตอนที่ 2 (Assign Role):** กำหนด Username, Password, Display Name และ Role (System Admin / Standard User)
-🔹 **ขั้นตอนที่ 3 (Account Status):** สลับสถานะบัญชี Active / Inactive เมื่อต้องการเปิดหรือระงับสิทธิ์การใช้งาน
-🔹 **ขั้นตอนที่ 4 (Audit Log):** ตรวจสอบสถิติการใช้งาน Login Count, วันเวลาที่เข้าใช้งานล่าสุด และจัดการรูป Avatar`,
-      icon: '👥',
-      target: 'nav-qa-member',
-      role: 'admin',
-      color: '#10b981',
+      category: 'มาตรฐาน AI',
+      iconType: 'sparkles',
+      title: 'AI Skills & Template Manager',
+      subtitle: 'กำหนดโครงสร้างหัวข้อ, ตาราง และกฎการวิเคราะห์เฉพาะทางของ AI',
+      color: '#a855f7',
+      overview:
+        'สร้างชุดคำสั่ง (Skill.md) สำหรับควบคุมรูปแบบเอกสารและเกณฑ์การวิเคราะห์ เช่น Template การเขียน SRS, โครงสร้างคอลัมน์ Test Case หรือแนวทางการตรวจเอกสารเฉพาะทาง',
+      flow: ['สร้าง/เลือก Skill', 'ระบุ Target Doc Type', 'เขียน Markdown Template', 'เลือกใช้ได้ตามต้องการ'],
+      steps: [
+        {
+          title: 'สร้าง Skill ใหม่และระบุประเภทเอกสารเป้าหมาย',
+          detail: 'ตั้งชื่อ Skill ให้ชัดเจน (เช่น Create SRS Standard, Audit Test Case) และผูกกับ Target Doc Type หรือตั้งเป็น ALL'
+        },
+        {
+          title: 'กำหนดหัวข้อและระดับรายละเอียด (Template Blueprint)',
+          detail: 'เขียนโครงสร้างหัวข้อ, คอลัมน์ตาราง และข้อกำหนดที่ต้องการด้วย Markdown ยิ่งระบุโครงสร้างชัดเจน AI ยิ่งสร้างเอกสารได้ตรงใจ'
+        },
+        {
+          title: 'ใช้งานแบบเลือกหรือไม่เลือกก็ได้ (Optional)',
+          detail: 'ในเมนู QA Document Creation และ QA Consult ผู้ใช้สามารถเลือก Skill เพื่อคุม Template หรือเว้นว่างเพื่อใช้มาตรฐานสากลอัตโนมัติ'
+        }
+      ],
+      tip: 'แยก Skill สำหรับ "สร้างเอกสาร (Create)" ออกจาก Skill สำหรับ "ตรวจเอกสาร (Audit)" เพื่อให้โครงสร้างไม่ตีกันเมื่อใช้งานจริง'
     },
     {
       id: 'exit_criteria',
-      title: '✅ Exit Criteria Rules Manager',
-      subtitle: 'เมนู: Exit Criteria (Admin)',
-      description: `📌 **หน้าที่ของเมนู**
-ตั้งค่าและจัดการเกณฑ์มาตรฐานการตรวจรับเอกสารสากล 13 ข้อ (Quality Gate Decision)
-
-🔄 **ลำดับ Flow การทำงาน (Step-by-Step Workflow)**
-🔹 **ขั้นตอนที่ 1 (Category Setup):** จัดหมวดหมู่กฎ (Defect Resolution, Content Accuracy, Format, Governance)
-🔹 **ขั้นตอนที่ 2 (Severity Rules):** กำหนดระดับความรุนแรง Critical, Major, Minor สำหรับแต่ละเกณฑ์
-🔹 **ขั้นตอนที่ 3 (Evaluation):** ระบบ AI Evaluator นำกฎเหล่านี้ไปสแกนวิเคราะห์เอกสารทุกฉบับที่อัปโหลด
-🔹 **ขั้นตอนที่ 4 (Gate Decision):** คำนวณสรุปสถานะ Gate Result: PASSED, CONDITIONAL PASSED หรือ REJECTED`,
-      icon: '✅',
-      target: 'nav-exit-criteria',
-      role: 'admin',
-      color: '#ef4444',
-    },
-    {
-      id: 'api_collection',
-      title: '🔌 API Collections Manager',
-      subtitle: 'เมนู: API Collections (Admin)',
-      description: `📌 **หน้าที่ของเมนู**
-บันทึก จัดหมวดหมู่ และทดสอบ API Endpoints สำหรับใช้รัน Automation Test และ Workflow
-
-🔄 **ลำดับ Flow การทำงาน (Step-by-Step Workflow)**
-🔹 **ขั้นตอนที่ 1 (New Endpoint):** สร้าง API Request ระบุ HTTP Method (GET, POST, PUT, DELETE) และ URL
-🔹 **ขั้นตอนที่ 2 (Headers & Body):** กำหนด Headers, Authorization Token และ Body Payload (JSON format)
-🔹 **ขั้นตอนที่ 3 (Test Run):** กดปุ่มทดสอบส่ง Request เพื่อเช็ค Response Code และ Data Payload
-🔹 **ขั้นตอนที่ 4 (Integration):** นำ API Collection ไปผูกกับ AI Workflow Builder หรือ Test Automation`,
-      icon: '🔌',
-      target: 'nav-api-col',
-      role: 'admin',
-      color: '#06b6d4',
-    },
-    {
-      id: 'api_usage',
-      title: '📊 Token Usage & Cost Analytics',
-      subtitle: 'เมนู: Token Usage (Admin)',
-      description: `📌 **หน้าที่ของเมนู**
-ติดตามปริมาณการใช้งาน AI API ควบคุมงบประมาณ Token และวิเคราะห์ประสิทธิภาพระบบ
-
-🔄 **ลำดับ Flow การทำงาน (Step-by-Step Workflow)**
-🔹 **ขั้นตอนที่ 1 (Summary Dashboard):** ดูยอดรวม Total Tokens, Total API Calls และประเมินค่าใช้จ่ายรวม
-🔹 **ขั้นตอนที่ 2 (Trend Graphs):** ดูกราฟแนวโน้มปริมาณการใช้งานรายวัน/รายเดือน แยกตามประเภทโมเดล AI
-🔹 **ขั้นตอนที่ 3 (Logs Audit):** ตรวจสอบประวัติ Log การประมวลผลย้อนหลัง แยกตามโมดูลเพื่อประเมินความคุ้มค่า`,
-      icon: '📊',
-      target: 'nav-api-usage',
-      role: 'admin',
+      category: 'มาตรฐาน AI',
+      iconType: 'shield',
+      title: 'Exit Criteria Review Gate',
+      subtitle: 'กำหนดเกณฑ์ตรวจรับเอกสาร (Quality Gate) ทั้งเกณฑ์กลางและเฉพาะประเภท',
       color: '#ec4899',
+      overview:
+        'ควบคุมมาตรฐานก่อนส่งมอบเอกสารทุกฉบับด้วย Checklist แยกหมวดหมู่ (Defect & Bug, Content Completeness, Formatting, Governance) พร้อมระดับความรุนแรงและเกณฑ์บังคับ (Mandatory)',
+      flow: ['ตั้ง Template (ALL + Specific)', 'กำหนด KPI & Mandatory', 'ตรวจอัตโนมัติใน QA Consult', 'ตัดสิน PASSED / REJECTED'],
+      steps: [
+        {
+          title: 'แยกเกณฑ์กลาง (ALL) และเกณฑ์เฉพาะประเภทเอกสาร',
+          detail: 'สร้าง Template กลางสำหรับทุกเอกสาร และสร้าง Template เฉพาะเช่น SRS หรือ Test Case ระบบจะนำมาประเมินร่วมกันอัตโนมัติ'
+        },
+        {
+          title: 'กำหนด KPI, Severity และ Mandatory ให้ชัดเจน',
+          detail: 'ระบุว่าข้อใดเป็น Critical/Mandatory (หากไม่ผ่านจะได้ REJECTED) และข้อใดเป็น Minor/Formatting (หากไม่ผ่านเฉพาะหมวดจัดหน้าจะได้ CONDITIONAL_PASSED)'
+        },
+        {
+          title: 'เชื่อมตรงกับ QA Document Creation และ QA Consult',
+          detail: 'เกณฑ์ที่เปิดใช้งาน (Active) จะถูกส่งเข้าไปเป็นกรอบให้ AI ตอนสร้างเอกสารด้วย ทำให้เอกสารที่สร้างขึ้นผ่านเกณฑ์ได้ตั้งแต่รอบแรก'
+        }
+      ],
+      tip: 'หากมีการปรับแก้ข้อตรวจใน Exit Criteria สามารถกลับไปกดปุ่ม "ประเมินเกณฑ์ใหม่" ในเมนู QA Consult ได้ทันทีโดยไม่ต้องอัปโหลดไฟล์ซ้ำ'
     },
     {
-      id: 'master_agent',
-      title: '🤖 Master Agent (Orchestrator)',
-      subtitle: 'เมนู: Master Agent (Admin/User)',
-      description: `📌 **หน้าที่ของเมนู**
-ศูนย์กลางผู้ช่วย AI สั่งการและประสานงานระหว่าง QA Tools ทุกโมดูลผ่านแชทโต้ตอบอัจฉริยะ
-
-🔄 **ลำดับ Flow การทำงาน (Step-by-Step Workflow)**
-🔹 **ขั้นตอนที่ 1 (User Input):** พิมพ์คำถาม/คำสั่งภาษาไทย หรือเลือกกดปุ่มคำสั่งด่วน (Quick Prompt Chips)
-🔹 **ขั้นตอนที่ 2 (Orchestration):** Master Agent วิเคราะห์คำสั่ง แล้วเลือกเรียกใช้ Tool ที่เหมาะสม (Security, Performance, Consult, RAG)
-🔹 **ขั้นตอนที่ 3 (AI Response):** สังเคราะห์คำตอบพร้อมจัดฟอร์แมต Markdown, บล็อกโค้ด และตารางวิเคราะห์
-🔹 **ขั้นตอนที่ 4 (Interactive Tools):** กดปุ่ม Copy ข้อความตอบกลับ หรือกดล้างแชทเพื่อเริ่มหัวข้อใหม่`,
-      icon: '🤖',
-      target: 'nav-master-agent',
-      role: 'admin',
-      color: '#c084fc',
+      id: 'qa_doc_and_consult',
+      category: 'วงจรคุณภาพเอกสาร',
+      iconType: 'workflow',
+      title: 'QA Document Creation ↔ QA Consult',
+      subtitle: 'วงจรสร้าง ตรวจ และผ่าตัดแก้ไขเอกสารอัตโนมัติ (Closed-Loop Quality)',
+      color: '#6366f1',
+      overview:
+        'การทำงานร่วมกันแบบไร้รอยต่อระหว่างการสร้างเอกสารจากคลังทุกเมนู และการส่งตรวจเทียบกับ Baseline + Exit Criteria จนกว่าเอกสารจะผ่านเกณฑ์สมบูรณ์',
+      flow: ['สร้างเอกสาร (Auto Context)', 'ส่งตรวจ QA (1 คลิก)', 'รับผล Gate & Findings', 'Auto Refine (_v2) จนผ่าน'],
+      steps: [
+        {
+          title: 'สร้างเอกสารใน QA Document Creation',
+          detail: 'ระบุชื่อและประเภทเอกสาร ระบบจะดึง Knowledge Base, Structured Requirements, System Diagram และ Exit Criteria ของโครงการมาสังเคราะห์อัตโนมัติ (เลือก AI Skill เพิ่มเติมได้)'
+        },
+        {
+          title: 'ส่งตรวจ QA Consult ในคลิกเดียว',
+          detail: 'กดปุ่ม "ส่งตรวจ QA" จากตารางประวัติ ระบบจะแนบไฟล์ (.xlsx สำหรับ Test Case / .pdf สำหรับเอกสารอื่น) ข้ามไป QA Consult พร้อมอัปเดตสถานะอัตโนมัติ'
+        },
+        {
+          title: 'ตรวจสอบผล QA Findings และ Exit Criteria Gate',
+          detail: 'ดูรายการข้อบกพร่อง, คะแนน Gate, ดาวน์โหลด Excel Report หรือกด "ประเมินเกณฑ์ใหม่" หลังปรับ Template'
+        },
+        {
+          title: 'ส่งแก้ไขกลับอัตโนมัติ (Auto Refine)',
+          detail: 'หากพบข้อบกพร่อง กด "ส่งแก้ไขใน QA Doc Creation" ระบบจะล็อกรายการที่ต้องแก้ไว้ใน Refinement Banner และรันเวอร์ชัน _v2 เพื่อให้ AI ผ่าตัดแก้ตรงจุด'
+        }
+      ],
+      tip: 'เมื่อเอกสารผ่านสถานะ PASSED ใน QA Consult แล้ว กด "บันทึกเข้า KB" ในหน้าประวัติเพื่อยกระดับเป็นเอกสารอ้างอิงหลักของโครงการได้ทันที'
     },
     {
-      id: 'workflow_builder',
-      title: '🔗 AI Workflow Builder',
-      subtitle: 'เมนู: AI Workflow Builder (Admin/User)',
-      description: `📌 **หน้าที่ของเมนู**
-ออกแบบ ออกแบบและรัน Multi-Agent Pipeline ด้วย Visual Node Diagram (Nodes & Edges)
-
-🔄 **ลำดับ Flow การทำงาน (Step-by-Step Workflow)**
-🔹 **ขั้นตอนที่ 1 (Drag & Drop):** เลือก Project แล้ววาง Node ประเภทต่าง ๆ (Input, Agent, Debate Loop, Output)
-🔹 **ขั้นตอนที่ 2 (Connect Edges):** ลากเส้นเชื่อมต่อ Edges เพื่อกำหนดทิศทางการส่งต่อข้อมูลระหว่าง Agents
-🔹 **ขั้นตอนที่ 3 (Node Config):** กำหนด Prompt, AI Model และ Timeout ของแต่ละ Node
-🔹 **ขั้นตอนที่ 4 (Execution):** กดปุ่ม "Run Workflow" เพื่อประมวลผลตาม Graph พร้อมติดตาม Real-time Execution Logs`,
-      icon: '🔗',
-      target: 'nav-workflow',
-      role: 'admin',
-      color: '#34d399',
+      id: 'api_and_extension',
+      category: 'เครื่องมือทดสอบ',
+      iconType: 'plug',
+      title: 'API Collections, Usage & Chrome Extension',
+      subtitle: 'ดักจับ API จริงจากเบราว์เซอร์ จัดการ Collection และติดตาม Token',
+      color: '#06b6d4',
+      overview:
+        'รวบรวม API Endpoints จาก Chrome Extension (Spectra QA - Network & API Sniffer) หรือสร้างเองเพื่อใช้ทดสอบอัตโนมัติ พร้อมแดชบอร์ดติดตามปริมาณการใช้ Token และค่าใช้จ่าย AI',
+      flow: ['Sniff API ผ่าน Extension', 'Sync เข้า API Collections', 'นำไปรัน Test / Workflow', 'ติดตาม Token Usage'],
+      steps: [
+        {
+          title: 'ดักจับ Traffic จริงด้วย Chrome Extension',
+          detail: 'เปิด Extension ขณะใช้งานเว็บเป้าหมายเพื่อบันทึก Request/Response จริง แล้ว Sync เข้าโครงการใน Spectra QA'
+        },
+        {
+          title: 'จัดการและทดสอบใน API Collections',
+          detail: 'แก้ไข Headers, Auth Token และ Payload แล้วทดสอบยิง Request ดู Response Status และ Schema ทันที'
+        },
+        {
+          title: 'ตรวจสอบประสิทธิภาพและต้นทุนใน Token Usage',
+          detail: 'ติดตามจำนวน Token และจำนวนการเรียกใช้ AI แยกตามโมดูลและโมเดลเพื่อวางแผนโควต้า API'
+        }
+      ],
+      tip: 'การ Sync API จริงจาก Chrome Extension ช่วยให้ทั้ง QA Performance และ QA Test Automation มี Payload และ Endpoint ที่ตรงกับระบบจริง 100%'
     },
     {
-      id: 'mcp_integration_admin',
-      title: '⚙️ Claude Desktop & MCP Integration',
-      subtitle: 'การทำงานแบบ Fully Autonomous ผ่าน MCP Server',
-      description: `📌 **หน้าที่ของเมนู**
-เชื่อมต่อระบบ Spectra QA เข้ากับ Claude Desktop app ผ่านโปรโตคอล MCP (Model Context Protocol)
-
-🔄 **ลำดับ Flow การทำงาน (Step-by-Step Workflow)**
-🔹 **ขั้นตอนที่ 1 (Config File):** ตั้งค่าไฟล์ claude_desktop_config.json ให้เชื่อมต่อ MCP Server ของ Spectra QA
-🔹 **ขั้นตอนที่ 2 (Tool Verification):** เปิด Claude Desktop สังเกตไอคอน 🔨 (Tools) สแกนพบเครื่องมือใน Spectra QA
-🔹 **ขั้นตอนที่ 3 (Prompt Execution):** สั่งงาน Claude ภาษาธรรมชาติ เช่น "ช่วยตรวจ SRS และสร้าง Test Cases"
-🔹 **ขั้นตอนที่ 4 (Auto Loop):** Claude จะหมุนเรียกใช้ MCP Tools ใน Spectra QA ประมวลผลแบบอัตโนมัติ`,
-      icon: '⚙️',
-      target: null,
-      role: 'admin',
-      color: '#f43f5e',
+      id: 'orchestration_and_mcp',
+      category: 'ระบบอัตโนมัติขั้นสูง',
+      iconType: 'cpu',
+      title: 'Master Agent, Workflow Builder & MCP',
+      subtitle: 'ศูนย์กลางสั่งการ Multi-Agent และเชื่อมต่อเครื่องมือภายนอกผ่าน MCP',
+      color: '#a855f7',
+      overview:
+        'ประสานงานทุกความสามารถของ Spectra QA ผ่านแชทอัจฉริยะ (Master Agent), ออกแบบ Pipeline แบบ Visual Node (AI Workflow Builder) และเชื่อมต่อกับ Claude Desktop / IDE ผ่าน MCP Server',
+      flow: ['Master Agent Chat', 'Visual Workflow Graph', 'Playwright & QA MCP Tools', 'ผลลัพธ์ครบวงจร'],
+      steps: [
+        {
+          title: 'สั่งงานข้ามโมดูลผ่าน Master Agent',
+          detail: 'พิมพ์คำสั่งภาษาไทยหรือเลือก Quick Prompt เช่น สรุปความเสี่ยงโครงการ, ตรวจเอกสาร หรือสร้างแผนทดสอบ Master Agent จะเลือกเรียก Agent ย่อยให้เอง'
+        },
+        {
+          title: 'สร้าง Pipeline ซับซ้อนใน AI Workflow Builder',
+          detail: 'ลากวาง Node (Input, Agent, Debate Loop, Output) เชื่อมเส้นทางการส่งต่อข้อมูลแล้วกด Run พร้อมดู Execution Logs แบบ Real-time'
+        },
+        {
+          title: 'เชื่อมต่อ MCP Server จากภายนอก',
+          detail: 'ผูก Spectra QA MCP Server กับ Claude Desktop หรือ Cursor เพื่อสั่งตรวจเอกสาร, ค้นหา KB และรัน Playwright Automation ได้จากภายนอก'
+        }
+      ],
+      tip: 'ใช้ AI Workflow Builder เมื่อมีงานที่ต้องทำซ้ำหลายขั้นตอน (เช่น วิเคราะห์ SRS → สร้าง Test Case → ตรวจ Exit Criteria) เพื่อให้ได้ผลลัพธ์มาตรฐานเดียวกันทุกครั้ง'
     },
     {
-      id: 'admin_done',
-      title: '🎉 พร้อมเริ่มต้นใช้งาน!',
-      subtitle: 'Admin Mode — All Systems Operational',
-      description: `📌 **สรุปขั้นตอนการทำงานที่แนะนำ (Recommended Admin Journey)**
-🔹 **1. ตั้งค่า:** สร้าง Project ใน Project Management
-🔹 **2. สแกน:** สแกนและตรวจเอกสารใน Scan OCR
-🔹 **3. ค้นคว้า:** ตรวจสอบผล RAG ใน Knowledge Base
-🔹 **4. ควบคุม:** ควบคุมคุณภาพเอกสารผ่าน Exit Criteria
-🔹 **5. อัตโนมัติ:** ใช้ Master Agent และ Workflow Builder เพื่อสั่งงานอัตโนมัติ
-
-🚀 ปิดหน้าต่างนี้เพื่อเริ่มใช้งานระบบได้ทันทีครับ!`,
-      icon: '🎉',
-      target: null,
-      role: 'admin',
+      id: 'qa_member',
+      category: 'จัดการทีม',
+      iconType: 'users',
+      title: 'QA Member & Role Access Control',
+      subtitle: 'บริหารบัญชีผู้ใช้งาน สิทธิ์การมองเห็นเมนู และขอบเขตโครงการ',
       color: '#10b981',
-    },
+      overview:
+        'จัดการบัญชีสมาชิกทีม QA, BA และ Developer พร้อมกำหนดสิทธิ์แบบละเอียดทั้งระดับ Role (Admin / User), เมนูที่อนุญาตให้เข้าถึง และโครงการที่รับผิดชอบ',
+      flow: ['เพิ่มสมาชิก (+ Add User)', 'กำหนด Role & เมนู', 'กำหนด Project Scope', 'ติดตาม Login Activity'],
+      steps: [
+        {
+          title: 'สร้างบัญชีและกำหนดบทบาท',
+          detail: 'ระบุ Username, รหัสผ่าน, Display Name, ตำแหน่งงาน และเลือกระดับสิทธิ์ System Admin หรือ Standard User'
+        },
+        {
+          title: 'จำกัดสิทธิ์เมนูและโครงการ (Granular Scoping)',
+          detail: 'เลือกเฉพาะเมนูและโครงการที่ผู้ใช้งานควรเข้าถึง เพื่อความปลอดภัยของข้อมูลลูกค้าแต่ละโครงการ'
+        },
+        {
+          title: 'เปิด/ระงับบัญชีและตรวจสอบประวัติ',
+          detail: 'สลับสถานะ Active / Inactive ได้ทันที พร้อมตรวจสอบจำนวนครั้งและเวลาที่เข้าสู่ระบบล่าสุด'
+        }
+      ],
+      tip: 'ผู้ใช้งานทุกคนสามารถอัปเดตรูปโปรไฟล์, อีเมลสำหรับรับรายงาน และเปลี่ยนรหัสผ่านด้วยตนเองได้จากเมนูตั้งค่า Profile ที่มุมล่างซ้ายของแถบเมนู'
+    }
   ];
 
   const userSteps = [
     {
       id: 'welcome_user',
-      title: '👋 ยินดีต้อนรับสู่ Spectra QA Portal',
-      subtitle: 'Intelligent QA & Testing Workspace (User Mode)',
-      description: `📌 **ภาพรวมระบบ**
-ศูนย์รวมเครื่องมือตรวจสอบและสร้างเอกสารคุณภาพซอฟต์แวร์สำหรับ QA, Tester และ Developer
-
-🔄 **ลำดับ Flow การทำงานโดยรวม (User Workflow)**
-🔹 **ขั้นตอนที่ 1 (เลือกเครื่องมือ):** เลือกเครื่องมือ QA ทางแถบซ้ายมือ (QA Consult, Security, Performance, Automation)
-🔹 **ขั้นตอนที่ 2 (ป้อนข้อมูล):** อัปโหลดไฟล์ PDF, วางซอร์สโค้ด หรือป้อนรายละเอียด Requirement
-🔹 **ขั้นตอนที่ 3 (AI ประมวลผล):** AI Evaluator สแกน วิเคราะห์ช่องโหว่ และประเมินคุณภาพอัตโนมัติ
-🔹 **ขั้นตอนที่ 4 (รับรายงาน):** ตรวจสอบ Audit Report, ดูผล Pass/Fail และดาวน์โหลดรายงานส่งให้ทีม`,
-      icon: '🚀',
-      target: null,
-      role: 'user',
-      color: '#8b5cf6',
-    },
-    {
-      id: 'qa_consult',
-      title: '📋 QA Consult & SRS Review',
-      subtitle: 'เมนู: QA Consult (User)',
-      description: `📌 **หน้าที่ของเมนู**
-วิเคราะห์เอกสารความต้องการระบบ (SRS / Requirements) ตรวจสอบกับเกณฑ์ Exit Criteria 13 ข้อ และตรวจคำผิด
-
-🔄 **ลำดับ Flow การทำงาน (Step-by-Step Workflow)**
-🔹 **ขั้นตอนที่ 1 (Select Group):** เลือก Project และสร้าง/เลือก Group สำหรับรอบการตรวจเอกสารนี้
-🔹 **ขั้นตอนที่ 2 (Upload File):** ลากและวางไฟล์ PDF (ขนาดสูงสุด 50MB) ลงในระบบ
-🔹 **ขั้นตอนที่ 3 (AI Audit):** AI รัน OCR, ตรวจคำผิด, วิเคราะห์ Gap Analysis และประเมิน Exit Criteria
-🔹 **ขั้นตอนที่ 4 (Review & Export):** ดู Audit Report, สรุปสถานะ Gate Result และดาวน์โหลด Excel Report`,
-      icon: '📋',
-      target: 'nav-qa-consult',
-      role: 'user',
-      color: '#8b5cf6',
-    },
-    {
-      id: 'qa_security',
-      title: '🛡️ QA Security Audit',
-      subtitle: 'เมนู: QA Security (User)',
-      description: `📌 **หน้าที่ของเมนู**
-สแกนตรวจสอบช่องโหว่ความปลอดภัยของ Source Code ด้วยมาตรฐานสากล (OWASP Top 10, ASVS, SANS 25)
-
-🔄 **ลำดับ Flow การทำงาน (Step-by-Step Workflow)**
-🔹 **ขั้นตอนที่ 1 (Input Code):** วางซอร์สโค้ดในกล่องข้อความ หรือ ระบุลิงก์ GitHub Repository URL
-🔹 **ขั้นตอนที่ 2 (Select Standard):** เลือกภาษาโปรแกรม และ มาตรฐานความปลอดภัยที่ต้องการตรวจวัด
-🔹 **ขั้นตอนที่ 3 (Security Scan):** กดปุ่ม "Scan Code Security" ให้ AI ตรวจวิเคราะห์ช่องโหว่และจุดเสี่ยง
-🔹 **ขั้นตอนที่ 4 (Remediation Report):** ดูรายการช่องโหว่ ระดับ Severity และโค้ดตัวอย่างวิธีแก้ไขที่ถูกต้อง`,
-      icon: '🛡️',
-      target: 'nav-qa-security',
-      role: 'user',
-      color: '#f43f5e',
-    },
-    {
-      id: 'qa_performance',
-      title: '⚡ QA Performance Testing',
-      subtitle: 'เมนู: QA Performance (User)',
-      description: `📌 **หน้าที่ของเมนู**
-วางแผนและรันสคริปต์ทดสอบค่าน้ำหนักโหลด (Load Testing / Performance Benchmark)
-
-🔄 **ลำดับ Flow การทำงาน (Step-by-Step Workflow)**
-🔹 **ขั้นตอนที่ 1 (Script & Config):** เลือกสคริปต์ k6 หรือระบุจำนวน Virtual Users (VUs) และ Duration
-🔹 **ขั้นตอนที่ 2 (Test Execution):** กดรันการทดสอบ Performance Test ผ่านระบบ
-🔹 **ขั้นตอนที่ 3 (Real-time Metrics):** ติดตามผลผ่านกราฟ Real-time (Response Time, Throughput, Error Rate)
-🔹 **ขั้นตอนที่ 4 (SLA Benchmark):** AI เปรียบเทียบผลลัพธ์กับ SLA และออกรายงานสรุปจุดคอขวด (Bottleneck)`,
-      icon: '⚡',
-      target: 'nav-qa-perf',
-      role: 'user',
-      color: '#f59e0b',
+      category: 'เริ่มต้นใช้งาน',
+      iconType: 'compass',
+      title: 'ยินดีต้อนรับสู่ Spectra QA Portal',
+      subtitle: 'พื้นที่ทำงาน QA อัจฉริยะครบวงจร (User Mode)',
+      color: '#6366f1',
+      overview:
+        'ศูนย์รวมเครื่องมือสำหรับ QA Engineer, Tester และ BA ครอบคลุมตั้งแต่การค้นคว้า Requirement, วิเคราะห์ Diagram, สร้างและตรวจเอกสาร, ไปจนถึง Playwright Automation, Security และ Performance Testing',
+      flow: ['เลือกโครงการ', 'Research / Diagram', 'สร้าง & ตรวจเอกสาร', 'Automation / Security / Perf'],
+      steps: [
+        {
+          title: 'เลือกโครงการที่รับผิดชอบก่อนเริ่มงาน',
+          detail: 'ทุกเครื่องมือจะอ้างอิงเอกสารและ Requirement จากโครงการที่เลือกโดยอัตโนมัติ เพื่อความแม่นยำและไม่ปะปนกับโครงการอื่น'
+        },
+        {
+          title: 'ทำความเข้าใจระบบด้วย QA Research & QA Diagram',
+          detail: 'สอบถามข้อกำหนดเชิงลึก วิเคราะห์ผลกระทบการแก้ไข (Change Impact) และดูภาพรวม Flow การทำงานของระบบก่อนออกแบบการทดสอบ'
+        },
+        {
+          title: 'สร้างและตรวจรับเอกสารแบบ Closed-Loop',
+          detail: 'สร้าง Test Case / SRS ใน QA Document Creation แล้วส่งตรวจใน QA Consult พร้อมแก้ไขอัตโนมัติตาม Exit Criteria'
+        },
+        {
+          title: 'ทดสอบระบบเชิงลึกด้วย Automation, Security & Performance',
+          detail: 'สร้างสคริปต์ Playwright ผ่าน MCP, สแกนช่องโหว่โค้ดตามมาตรฐาน OWASP และทดสอบโหลดด้วย k6 ได้ในแพลตฟอร์มเดียว'
+        }
+      ],
+      tip: 'ใช้คีย์บอร์ดปุ่มลูกศร ซ้าย/ขวา เพื่อเลื่อนอ่านคู่มือทีละเมนู หรือคลิกเลือกหัวข้อจากแถบสารบัญด้านซ้ายได้เลยครับ'
     },
     {
       id: 'qa_research',
-      title: '🔍 QA Research Agent',
-      subtitle: 'เมนู: QA Research (User)',
-      description: `📌 **หน้าที่ของเมนู**
-สืบค้น ค้นคว้า และวิเคราะห์ข้อมูลทางเทคนิคและข้อกำหนดซอฟต์แวร์ด้วย AI Research Agent
-
-🔄 **ลำดับ Flow การทำงาน (Step-by-Step Workflow)**
-🔹 **ขั้นตอนที่ 1 (Query):** พิมพ์คำถาม ข้อสงสัย หรือหัวข้อเทคโนโลยีที่ต้องการศึกษาวิจัย
-🔹 **ขั้นตอนที่ 2 (Deep Research):** AI Research Agent ค้นหาข้อมูล รวบรวมแนวคิด และเปรียบเทียบข้อดี-ข้อเสีย
-🔹 **ขั้นตอนที่ 3 (Synthesis):** สังเคราะห์ออกมาเป็นรายงานบทความสรุปที่กระชับ อ้างอิงแหล่งข้อมูลชัดเจน
-🔹 **ขั้นตอนที่ 4 (Export):** คัดลอกรายงานนำไปใช้ประกอบเอกสารสถาปัตยกรรมและแผนการทดสอบ`,
-      icon: '🔍',
-      target: 'nav-qa-research',
-      role: 'user',
+      category: 'วิเคราะห์และค้นคว้า',
+      iconType: 'search',
+      title: 'QA Research Agent (5 Research Lenses)',
+      subtitle: 'ผู้ช่วยสืบค้น วิเคราะห์ช่องโหว่ และประเมินผลกระทบจากคลังโครงการ',
       color: '#06b6d4',
+      overview:
+        'สืบค้นข้อมูลจากทุกแหล่งในโครงการ (Knowledge Base, Requirements, QA Documents, ผลตรวจ Consult และ Diagram) ผ่าน 5 โหมดวิเคราะห์เฉพาะทางพร้อมระบุแหล่งอ้างอิง',
+      flow: ['เลือก Research Lens', 'เลือกขอบเขตเอกสาร', 'ถามคำถามเชิงลึก', 'ส่งออกรายงาน .md'],
+      steps: [
+        {
+          title: 'เลือกโหมดการค้นคว้า (Research Lens) ให้ตรงงาน',
+          detail: 'เลือกได้ 5 โหมด: Deep QA Research (วิเคราะห์เจาะลึก), Gap & Risk Audit (หาจุดเสี่ยง), Test Scenarios (ออกแบบกรณีทดสอบ), Change Impact (ประเมินผลกระทบ) และ Quick Lookup (ค้นหาด่วน)'
+        },
+        {
+          title: 'ตรวจสอบจำนวนข้อมูลที่ระบบ Index ไว้',
+          detail: 'ดูแถบ Indexed Knowledge ด้านซ้ายเพื่อเช็กว่าโครงการมีเอกสาร KB, Requirements หรือ Diagram พร้อมอ้างอิงกี่รายการ และสามารถเลือกกรองเฉพาะไฟล์ได้'
+        },
+        {
+          title: 'ส่งออกหรือเชื่อมต่อไปยังเมนูอื่น',
+          detail: 'สามารถส่งออกบทสนทนาเป็นไฟล์ Markdown (.md) หรือกดทางลัดด้านบนเพื่อไปยัง QA Consult, QA Diagram และ QA Automation ได้ทันที'
+        }
+      ],
+      tip: 'ใช้โหมด "Change Impact" ทุกครั้งที่มี Change Request เพื่อดูว่าต้องแก้ไขเอกสารหรือ Regression Test จุดใดบ้างในโครงการ'
     },
     {
-      id: 'qa_automate',
-      title: '🤖 QA Test Automation',
-      subtitle: 'เมนู: QA Test Automation (User)',
-      description: `📌 **หน้าที่ของเมนู**
-สร้างและรันสคริปต์ทดสอบระบบอัตโนมัติ (Playwright / Cypress)
-
-🔄 **ลำดับ Flow การทำงาน (Step-by-Step Workflow)**
-🔹 **ขั้นตอนที่ 1 (Scenario Input):** ระบุ URL เว็บไซต์ หรือ รายละเอียด Test Scenario ที่ต้องการทดสอบ
-🔹 **ขั้นตอนที่ 2 (Framework Selection):** เลือก Framework ที่ต้องการ ( Playwright หรือ Cypress )
-🔹 **ขั้นตอนที่ 3 (Code Generation):** AI เจนเนอเรตสคริปต์ทดสอบอัตโนมัติพร้อมโครงสร้าง Assertions
-🔹 **ขั้นตอนที่ 4 (Test Run):** กดทดสอบรันสคริปต์เพื่อตรวจสอบ Pass/Fail และดู Execution Output`,
-      icon: '🤖',
-      target: 'nav-qa-automate',
-      role: 'user',
-      color: '#10b981',
+      id: 'qa_diagram',
+      category: 'วิเคราะห์และค้นคว้า',
+      iconType: 'diagram',
+      title: 'QA Analysis Diagram',
+      subtitle: 'สังเคราะห์แผนภาพสถาปัตยกรรม, Workflow และ Screen Flow อัตโนมัติ',
+      color: '#818cf8',
+      overview:
+        'แปลงเอกสาร SRS และ Requirement ที่ซับซ้อนให้เป็นแผนภาพ Mermaid (Flowchart, Sequence Diagram, ER Diagram, System Architecture) เพื่อให้ทีมเห็นภาพตรงกันก่อนทดสอบ',
+      flow: ['อ่านเอกสารโครงการ', 'เลือกชนิด Diagram', 'AI สร้าง Mermaid Diagram', 'บันทึกใช้ร่วมกับเมนูอื่น'],
+      steps: [
+        {
+          title: 'เลือกประเภทแผนภาพที่ต้องการวิเคราะห์',
+          detail: 'สร้างได้ทั้ง User Flow, Process Flowchart, Sequence Diagram และความสัมพันธ์ของข้อมูลจากเอกสารโครงการ'
+        },
+        {
+          title: 'ตรวจสอบและปรับแต่งแผนภาพ',
+          detail: 'ซูมดูรายละเอียด แก้ไขโค้ด Mermaid หรือสั่ง AI ปรับปรุงจุดที่ต้องการเพิ่มเติมได้แบบ Real-time'
+        },
+        {
+          title: 'บันทึกเพื่อแชร์บริบทให้ AI ตัวอื่น',
+          detail: 'Diagram ที่บันทึกไว้ในโครงการจะถูกดึงไปใช้อ้างอิงอัตโนมัติทั้งใน QA Document Creation และ QA Research'
+        }
+      ],
+      tip: 'การสร้าง System Flow Diagram ไว้ก่อนจะช่วยให้ AI สร้าง Test Case และวิเคราะห์ Edge Cases ได้ครบถ้วนตามเส้นทางการทำงานจริง'
     },
     {
       id: 'qa_doc_creation',
-      title: '📑 QA Document Creation',
-      subtitle: 'เมนู: QA Document Creation (User)',
-      description: `📌 **หน้าที่ของเมนู**
-สร้างเอกสารมาตรฐานงาน QA อัตโนมัติ (Test Plan, Test Cases, UAT Acceptance, Summary Report)
-
-🔄 **ลำดับ Flow การทำงาน (Step-by-Step Workflow)**
-🔹 **ขั้นตอนที่ 1 (Doc Type):** เลือกประเภทเอกสารที่ต้องการสร้างจากเมนู
-🔹 **ขั้นตอนที่ 2 (Project Context):** กรอกรายละเอียดโครงการ ขอบเขตฟีเจอร์ และข้อมูลประกอบ
-🔹 **ขั้นตอนที่ 3 (AI Drafting):** AI ร่างเนื้อหาเอกสารตามโครงสร้างมาตรฐานอุตสาหกรรม
-🔹 **ขั้นตอนที่ 4 (Export):** ตรวจสอบ ปรับแต่งเนื้อหา และดาวน์โหลดหรือคัดลอกเอกสารนำไปใช้งาน`,
-      icon: '📑',
-      target: 'nav-qa-doc',
-      role: 'user',
-      color: '#3b82f6',
+      category: 'สร้างและตรวจเอกสาร',
+      iconType: 'file',
+      title: 'QA Document Creation',
+      subtitle: 'สร้างและปรับปรุงเอกสาร QA อัตโนมัติจากคลังทุกเมนูในโครงการ',
+      color: '#6366f1',
+      overview:
+        'สร้างเอกสารมาตรฐาน (Test Case .xlsx แยกชีทตามเมนู SRS, SRS, SDD, TOR, UAT, User Manual) โดยระบบดึงข้อมูล KB, Requirements, Diagram และเกณฑ์ Exit Criteria มาวิเคราะห์ให้อัตโนมัติ',
+      flow: ['ระบุชื่อ & ประเภทเอกสาร', 'เลือก AI Skill (Optional)', 'สร้างเอกสารเบื้องหลัง', 'ส่งตรวจ QA / บันทึก KB'],
+      steps: [
+        {
+          title: 'กรอกชื่อและเลือกประเภทเอกสาร',
+          detail: 'ระบบจะปรับรูปแบบไฟล์ให้อัตโนมัติ: Test Case จะสร้างเป็นไฟล์ Excel (.xlsx) แยก Sheet ตามเมนูใน SRS ส่วนเอกสารอื่นจะเป็น PDF + Markdown'
+        },
+        {
+          title: 'ตั้งค่าตัวเลือกเสริม (AI Skill / Reference Docs / Prompt)',
+          detail: 'เปิดแถบตัวเลือกเสริมหากต้องการเลือก AI Skill เพื่อคุมหัวข้อและ Template ให้ตรงตามต้องการ (ไม่เลือกก็ได้ ระบบจะใช้มาตรฐานสากล + Exit Criteria อัตโนมัติ)'
+        },
+        {
+          title: 'ส่งตรวจ QA Consult หรือแก้ไขจากประวัติ',
+          detail: 'เมื่อสร้างเสร็จ กด "ส่งตรวจ QA" ได้ทันทีโดยไม่ต้องดาวน์โหลดใหม่ และหากงานไหนไม่ผ่านเกณฑ์ คลิกที่ป้ายผลตรวจเพื่อเปิดดูข้อผิดพลาดและกด Auto Refine ได้เลย'
+        }
+      ],
+      tip: 'ในโหมดปรับปรุงเอกสาร (Auto Refine) คำสั่งแก้ไขจาก QA Consult จะถูกล็อกไว้ในระบบอัตโนมัติ คุณสามารถพิมพ์คำสั่งเสริมหรือเลือก AI Skill เพิ่มเติมได้โดยไม่กระทบรายการที่ต้องแก้'
     },
     {
-      id: 'master_agent',
-      title: '🤖 Master Agent (Orchestrator)',
-      subtitle: 'เมนู: Master Agent (User)',
-      description: `📌 **หน้าที่ของเมนู**
-ศูนย์รวมผู้ช่วย AI สนทนาโต้ตอบและสั่งงานครอบคลุมทุกเครื่องมือ QA ในอินเทอร์เฟซเดียว
-
-🔄 **ลำดับ Flow การทำงาน (Step-by-Step Workflow)**
-🔹 **ขั้นตอนที่ 1 (Command Input):** พิมพ์คำถามภาษาไทย หรือคลิกเลือก Quick Prompt ด้านล่างช่องป้อนข้อความ
-🔹 **ขั้นตอนที่ 2 (Tool Integration):** Master Agent ประสานงานระหว่าง Security, Performance, RAG, Consult
-🔹 **ขั้นตอนที่ 3 (Markdown Output):** รับข้อความตอบกลับในรูปแบบ Markdown, Code Blocks และตารางวิเคราะห์
-🔹 **ขั้นตอนที่ 4 (Copy/Reset):** กดคัดลอกข้อความคำตอบไปใช้งาน หรือ ล้างแชทเพื่อเปิดหัวข้อใหม่`,
-      icon: '🤖',
-      target: 'nav-master-agent',
-      role: 'user',
-      color: '#c084fc',
+      id: 'qa_consult',
+      category: 'สร้างและตรวจเอกสาร',
+      iconType: 'check',
+      title: 'QA Consult & Exit Criteria Gate',
+      subtitle: 'ตรวจคุณภาพเอกสารเทียบ Baseline โครงการและเกณฑ์ Exit Criteria',
+      color: '#8b5cf6',
+      overview:
+        'ตรวจสอบความถูกต้อง, ความสอดคล้องกับ SRS/Requirements, จุดขัดแย้ง, ข้อมูลที่ขาดหาย และประเมินผ่าน/ไม่ผ่านตามเกณฑ์ Exit Criteria พร้อมส่งออกรายงาน Excel และส่งอีเมล',
+      flow: ['เลือกกลุ่มตรวจ (Scan Group)', 'อัปโหลด PDF / Excel / MD', 'ตรวจเทียบ KB + Exit Criteria', 'Export Excel / Auto Refine'],
+      steps: [
+        {
+          title: 'เลือกหรือสร้างกลุ่มการตรวจ (Scan Group)',
+          detail: 'จัดกลุ่มการตรวจเอกสารแต่ละรอบ (เช่น SRS รอบที่ 1, Test Case Sprint 2) เพื่อเก็บประวัติเปรียบเทียบการแก้ไขย้อนหลัง (Revision Check)'
+        },
+        {
+          title: 'อัปโหลดเอกสาร (รองรับ PDF, Excel, Markdown)',
+          detail: 'ระบุประเภทเอกสาร (Explicit Mode) หรือปล่อยว่างให้ AI จำแนกอัตโนมัติ ระบบจะดึงทั้ง Structured Requirements และเอกสาร Baseline ของโครงการมาเทียบเสมอ'
+        },
+        {
+          title: 'ตรวจสอบผล Gate, ประเมินเกณฑ์ใหม่ หรือส่งแก้',
+          detail: 'ดูตาราง QA Audit Findings และ Exit Criteria Gate (PASSED / CONDITIONAL_PASSED / REJECTED) สามารถกด "ประเมินเกณฑ์ใหม่" ได้ในคลิกเดียว หรือกด "ส่งแก้ไขใน QA Doc Creation"'
+        }
+      ],
+      tip: 'ควรส่งเอกสารเวอร์ชันปรับปรุงเข้าใน Scan Group เดิม เพื่อให้ AI เปรียบเทียบกับรอบก่อนหน้าและยืนยันว่าประเด็น Critical/High เดิมได้รับการแก้ไขแล้ว 100%'
     },
     {
-      id: 'workflow_builder',
-      title: '🔗 AI Workflow Builder',
-      subtitle: 'เมนู: AI Workflow Builder (User)',
-      description: `📌 **หน้าที่ของเมนู**
-รันและติดตามผลการทำงานของ AI Workflow Graph แบบ Multi-Agent
-
-🔄 **ลำดับ Flow การทำงาน (Step-by-Step Workflow)**
-🔹 **ขั้นตอนที่ 1 (Select Workflow):** เลือก Workflow Pipeline ของโครงการที่ต้องการทดสอบรัน
-🔹 **ขั้นตอนที่ 2 (Provide Input):** ป้อนข้อมูลนำเข้า (Requirement / Data Context)
-🔹 **ขั้นตอนที่ 3 (Track Execution):** ติดตามการทำงานของแต่ละ Node ใน Diagram แบบ Real-time
-🔹 **ขั้นตอนที่ 4 (Final Result):** ตรวจสอบและรับผลลัพธ์การวิเคราะห์ขั้นสุดท้ายจาก Pipeline`,
-      icon: '🔗',
-      target: 'nav-workflow',
-      role: 'user',
-      color: '#34d399',
-    },
-    {
-      id: 'mcp_integration_user',
-      title: '⚙️ Claude Desktop Integration',
-      subtitle: 'การสั่งงาน Spectra QA ผ่าน Claude Desktop app',
-      description: `📌 **หน้าที่ของเมนู**
-ใช้งานร่วมกับ Claude Desktop บนคอมพิวเตอร์เพื่อรันเครื่องมือใน Spectra QA อัตโนมัติ
-
-🔄 **ลำดับ Flow การทำงาน (Step-by-Step Workflow)**
-🔹 **ขั้นตอนที่ 1 (Verify Tools):** เปิด Claude Desktop สังเกตไอคอน 🔨 ขึ้นรายการ Spectra QA Tools
-🔹 **ขั้นตอนที่ 2 (Natural Prompt):** พิมพ์สั่งงานปกติ เช่น "ช่วยตรวจ Security โค้ดนี้แล้วสร้าง Test Cases"
-🔹 **ขั้นตอนที่ 3 (Automatic Execution):** Claude เรียกใช้ MCP Tools ใน Spectra QA ประมวลผลจนเสร็จ
-🔹 **ขั้นตอนที่ 4 (Done):** รับผลลัพธ์รายงานสมบูรณ์ผ่าน Claude โดยไม่ต้องสลับหน้าจอ`,
-      icon: '⚙️',
-      target: null,
-      role: 'user',
-      color: '#f43f5e',
-    },
-    {
-      id: 'user_done',
-      title: '🎉 พร้อมเริ่มต้นใช้งาน!',
-      subtitle: 'User Portal — Ready to Test',
-      description: `📌 **สรุปขั้นตอนง่ายๆ ในการใช้งาน (Quick User Journey)**
-🔹 **1. QA Consult:** ใช้สำหรับตรวจ SRS/Requirement
-🔹 **2. QA Security:** ใช้สำหรับสแกนช่องโหว่โค้ด
-🔹 **3. QA Performance:** ใช้สำหรับทดสอบ Load Test
-🔹 **4. Master Agent:** ใช้สำหรับสอบถามและสั่งงานรวมทุก Tools
-
-🚀 เลือกเมนูที่ต้องการทางแถบซ้ายมือเพื่อเริ่มใช้งานได้เลยครับ!`,
-      icon: '🎉',
-      target: null,
-      role: 'user',
+      id: 'qa_automate',
+      category: 'ทดสอบระบบอัตโนมัติ',
+      iconType: 'code',
+      title: 'QA Test Automation & Playwright MCP',
+      subtitle: 'วิเคราะห์ความคุ้มค่า, บันทึก Flow บนเว็บจริง และสร้างสคริปต์ POM',
       color: '#10b981',
+      overview:
+        'วางแผนกลยุทธ์การทำ Automation (ROI & ข้อดี-ข้อเสีย), สกัด Test Case จากระบบ, เปิดเบราว์เซอร์เล่นจริงผ่าน Playwright MCP, สร้างสคริปต์ Page Object Model และวัดความแม่นยำเทียบ Business Flow',
+      flow: ['วิเคราะห์ Feasibility / ROI', 'ดึง Test Case / เล่นเว็บจริง', 'Generate POM Script', 'Run & วัด Business Accuracy'],
+      steps: [
+        {
+          title: 'วิเคราะห์ Requirement ว่าจุดไหนควรทำ Automate',
+          detail: 'ใช้แท็บ Strategy Planner เพื่อวิเคราะห์ว่าฟังก์ชันใดคุ้มค่าในการเขียน Automate, จุดใดควรทำ Manual และมีข้อดี-ข้อเสียอย่างไร'
+        },
+        {
+          title: 'เลือกโหมดสร้างสคริปต์ (Test Case / Live Web Play / Hybrid)',
+          detail: 'สร้างจาก Test Case ในระบบ, ให้ Playwright MCP เปิดเว็บไซต์เล่นและบันทึก Action จริง หรือใช้โหมด Hybrid ผสานทั้งสองอย่างเพื่อความแม่นยำสูงสุด'
+        },
+        {
+          title: 'รันทดสอบ, Self-Heal และตรวจ Accuracy Scorecard',
+          detail: 'สั่งรันสคริปต์ผ่าน Playwright พร้อมระบบ Self-Healing แก้ Selector อัตโนมัติ และตรวจสอบคะแนนความตรงตาม Flow ธุรกิจของลูกค้า'
+        }
+      ],
+      tip: 'แนะนำให้ใช้โหมด Hybrid (อ้างอิง Test Case ของโครงการ + บันทึก Selector จากหน้าเว็บจริงผ่าน MCP) เพื่อให้สคริปต์ทั้งรันผ่านจริงและครอบคลุม Business Rules ครบถ้วน'
     },
+    {
+      id: 'qa_security',
+      category: 'ทดสอบความปลอดภัยและโหลด',
+      iconType: 'lock',
+      title: 'QA Security Audit',
+      subtitle: 'ตรวจสอบช่องโหว่ซอร์สโค้ดตามมาตรฐาน OWASP Top 10, ASVS & SANS 25',
+      color: '#f43f5e',
+      overview:
+        'วิเคราะห์ความเสี่ยงด้านความปลอดภัยของโค้ดและ API เพื่อระบุช่องโหว่ (SQL Injection, XSS, Broken Auth, Sensitive Data Exposure) พร้อมโค้ดตัวอย่างในการแก้ไข',
+      flow: ['วางโค้ด / ระบุ GitHub URL', 'เลือกมาตรฐาน Security', 'AI Scan ช่องโหว่', 'รับแนวทาง Remediation'],
+      steps: [
+        {
+          title: 'นำเข้าซอร์สโค้ดที่ต้องการตรวจสอบ',
+          detail: 'วางซอร์สโค้ดโดยตรงหรือระบุลิงก์ Repository พร้อมเลือกภาษาโปรแกรมที่ใช้'
+        },
+        {
+          title: 'เลือกมาตรฐานการประเมินความปลอดภัย',
+          detail: 'กำหนดมาตรฐานที่ต้องการอ้างอิง เช่น OWASP Top 10, OWASP ASVS หรือ SANS Top 25'
+        },
+        {
+          title: 'ตรวจสอบรายงานความเสี่ยงและโค้ดแก้ไข',
+          detail: 'ดูรายการช่องโหว่แยกตามระดับความรุนแรง (Critical / High / Medium / Low) พร้อมคำแนะนำและตัวอย่างโค้ดที่ปลอดภัย'
+        }
+      ],
+      tip: 'ตรวจซ้ำทุกครั้งก่อนขึ้น Production โดยเฉพาะโมดูลที่เกี่ยวกับการ Login, การจัดการ Token, การอัปโหลดไฟล์ และการเชื่อมต่อฐานข้อมูล'
+    },
+    {
+      id: 'qa_performance',
+      category: 'ทดสอบความปลอดภัยและโหลด',
+      iconType: 'bolt',
+      title: 'QA Performance Testing',
+      subtitle: 'วางแผนและทดสอบประสิทธิภาพระบบ (Load / Stress Benchmark)',
+      color: '#f59e0b',
+      overview:
+        'ออกแบบและรันสคริปต์ทดสอบโหลด (k6) เพื่อวัด Response Time (P95/P99), Throughput และ Error Rate เทียบกับเกณฑ์ SLA ของโครงการ',
+      flow: ['เลือก API / สคริปต์ k6', 'ตั้งค่า VUs & Duration', 'รัน Load Test', 'วิเคราะห์ Bottleneck & SLA'],
+      steps: [
+        {
+          title: 'กำหนด Endpoint และสคริปต์ทดสอบโหลด',
+          detail: 'เลือกจาก API Collections ของโครงการหรือสร้างสคริปต์ k6 พร้อมตั้งค่า Virtual Users (VUs), Ramp-up และระยะเวลาทดสอบ'
+        },
+        {
+          title: 'ติดตามตัวชี้วัดแบบ Real-time',
+          detail: 'สังเกตกราฟ Response Time (P95 / P99), Requests per Second (RPS) และอัตราการเกิด Error ขณะระบบรับโหลด'
+        },
+        {
+          title: 'สรุปจุดคอขวดเทียบกับเกณฑ์ SLA',
+          detail: 'ให้ AI วิเคราะห์ผลลัพธ์และชี้จุดคอขวด (Bottleneck) พร้อมข้อเสนอแนะในการจูนประสิทธิภาพ'
+        }
+      ],
+      tip: 'ควรเริ่มทดสอบจาก Smoke Test (VUs น้อย) ก่อนขยับไป Load Test และ Stress Test เพื่อป้องกันไม่ให้ระบบเป้าหมายล่มกะทันหัน'
+    },
+    {
+      id: 'master_agent_user',
+      category: 'ผู้ช่วยอัจฉริยะ',
+      iconType: 'cpu',
+      title: 'Master Agent & AI Workflow Builder',
+      subtitle: 'สั่งงานผู้ช่วย AI กลางและรัน Pipeline แบบ Multi-Agent',
+      color: '#a855f7',
+      overview:
+        'ศูนย์รวมการสั่งงานด้วยภาษาธรรมชาติที่เชื่อมทุกเครื่องมือ QA เข้าด้วยกัน รวมถึงการรัน Multi-Agent Workflow Pipeline ที่ตั้งค่าไว้สำหรับโครงการ',
+      flow: ['พิมพ์คำสั่ง / Quick Prompt', 'Agent ประสานงานข้ามเมนู', 'รับผลวิเคราะห์ Markdown', 'คัดลอก / ใช้งานต่อ'],
+      steps: [
+        {
+          title: 'สั่งงานภาษาไทยผ่าน Master Agent',
+          detail: 'พิมพ์คำถามหรือเลือกคำสั่งด่วน Master Agent จะเรียกใช้ความรู้จาก KB และประสานงานกับเครื่องมือ QA ที่เกี่ยวข้องให้อัตโนมัติ'
+        },
+        {
+          title: 'รัน Pipeline ใน AI Workflow Builder',
+          detail: 'เลือก Workflow ของโครงการ ใส่ข้อมูลนำเข้า แล้วติดตามการทำงานของแต่ละ Agent Node แบบ Real-time จนได้ผลลัพธ์สุดท้าย'
+        },
+        {
+          title: 'เชื่อมต่อ Claude Desktop ผ่าน MCP',
+          detail: 'สามารถเรียกใช้เครื่องมือของ Spectra QA จาก Claude Desktop ได้โดยตรงหากติดตั้ง MCP Server ไว้ในเครื่อง'
+        }
+      ],
+      tip: 'เมื่อไม่แน่ใจว่าควรเริ่มจากเมนูไหน สามารถถาม Master Agent ให้ช่วยวางแผนลำดับการทดสอบสำหรับโครงการของคุณได้ทันที'
+    }
   ];
 
   $: steps = userRole === 'admin' ? adminSteps : userSteps;
   let currentStep = 0;
+  $: if (currentStep >= steps.length) currentStep = 0;
   $: step = steps[currentStep];
   $: isFirst = currentStep === 0;
   $: isLast = currentStep === steps.length - 1;
-  $: progress = ((currentStep + 1) / steps.length) * 100;
+  $: progressRatio = (currentStep + 1) / steps.length;
+  $: progressPct = Math.round(progressRatio * 100);
+
+  function goToStep(idx) {
+    if (idx === currentStep || idx < 0 || idx >= steps.length) return;
+    direction = idx > currentStep ? 1 : -1;
+    currentStep = idx;
+    showMobileMenu = false;
+  }
 
   function next() {
-    if (!isLast) currentStep++;
+    if (!isLast) {
+      direction = 1;
+      currentStep += 1;
+    }
   }
+
   function prev() {
-    if (!isFirst) currentStep--;
+    if (!isFirst) {
+      direction = -1;
+      currentStep -= 1;
+    }
   }
+
   function close() {
     dispatch('close');
   }
 
-  function formatDescription(text) {
-    if (!text) return '';
-
-    // Split text by lines and parse structured blocks
-    const lines = text.split('\n');
-    let outputHtml = '';
-
-    for (let line of lines) {
-      let trimmed = line.trim();
-      if (!trimmed) continue;
-
-      if (trimmed.startsWith('📌')) {
-        let titleText = trimmed.replace(/^📌\s*/, '').replace(/\*\*/g, '');
-        outputHtml += `<div class="overview-badge-box"><span class="badge-icon">📌</span><span class="badge-title">${titleText}</span></div>`;
-      } else if (trimmed.startsWith('🔄')) {
-        let titleText = trimmed.replace(/^🔄\s*/, '').replace(/\*\*/g, '');
-        outputHtml += `<div class="workflow-badge-box"><span class="badge-icon">🔄</span><span class="badge-title">${titleText}</span></div>`;
-      } else if (trimmed.startsWith('🔹')) {
-        // Step line format: 🔹 **ขั้นตอนที่ 1 (Title):** Details
-        let content = trimmed.replace(/^🔹\s*/, '');
-        let stepMatch = content.match(/\*\*(.*?)\*\*\s*(.*)/);
-        if (stepMatch) {
-          let stepHeader = stepMatch[1];
-          let stepDesc = stepMatch[2];
-          outputHtml += `
-            <div class="flow-step-card">
-              <div class="step-card-header">
-                <span class="step-bullet-icon">🔹</span>
-                <span class="step-title-text">${stepHeader}</span>
-              </div>
-              ${stepDesc ? `<div class="step-card-desc">${stepDesc}</div>` : ''}
-            </div>
-          `;
-        } else {
-          outputHtml += `<div class="flow-step-card"><div class="step-card-desc">${content}</div></div>`;
-        }
+  function handleKeydown(e) {
+    if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      next();
+    } else if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      prev();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      if (showMobileMenu) {
+        showMobileMenu = false;
       } else {
-        let formattedLine = trimmed.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-        outputHtml += `<p class="normal-desc-para">${formattedLine}</p>`;
+        close();
       }
     }
-
-    return outputHtml;
-  }
-
-  function handleKeydown(e) {
-    if (e.key === 'ArrowRight' || e.key === 'Enter') next();
-    else if (e.key === 'ArrowLeft') prev();
-    else if (e.key === 'Escape') close();
   }
 
   onMount(() => window.addEventListener('keydown', handleKeydown));
@@ -498,138 +586,262 @@
   class="tutorial-backdrop"
   role="dialog"
   aria-modal="true"
-  aria-label="Tutorial"
-  transition:fade={{ duration: 250 }}
+  aria-labelledby="tutorial-step-title"
+  transition:fade={{ duration: 220 }}
   on:click|self={close}
 >
-
-  <!-- ── Large Premium Tutorial Card ── -->
+  <!-- ── 2-Pane Interactive Guide Deck ── -->
   <div
-    class="tutorial-card glass-panel"
-    in:fly={{ y: 40, duration: 300 }}
+    class="tutorial-shell"
+    in:fly={{ y: 24, duration: 360, easing: cubicOut }}
+    out:fade={{ duration: 160 }}
     style="--step-color: {step.color};"
   >
-    <!-- Header: icon + custom step dropdown + close -->
-    <div class="tc-header">
-      <div class="tc-badge" style="background: color-mix(in srgb, {step.color} 20%, transparent); border-color: color-mix(in srgb, {step.color} 45%, transparent);">
+    <!-- Top Progress Accent Rail (GPU scaleX) -->
+    <div class="top-progress-track" aria-hidden="true">
+      <div class="top-progress-bar" style="transform: scaleX({progressRatio});"></div>
+    </div>
+
+    <!-- LEFT RAIL: Chapter Navigation (Desktop) -->
+    <aside class="tutorial-sidebar" aria-label="สารบัญคู่มือการใช้งาน">
+      <div class="sidebar-brand">
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path>
+            <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <span class="brand-title">Spectra QA Guide</span>
+          <span class="brand-role">{userRole === 'admin' ? 'System Admin Curriculum' : 'Standard User Curriculum'}</span>
+        </div>
+      </div>
+
+      <nav class="chapter-list">
+        {#each steps as s, idx}
+          <button
+            type="button"
+            class="chapter-item"
+            class:active={idx === currentStep}
+            class:visited={idx < currentStep}
+            on:click={() => goToStep(idx)}
+            aria-current={idx === currentStep ? 'step' : undefined}
+          >
+            <span class="chapter-index">
+              {#if idx < currentStep}
+                <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.6" aria-hidden="true">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+              {:else}
+                {idx + 1}
+              {/if}
+            </span>
+            <span class="chapter-meta">
+              <span class="chapter-cat">{s.category}</span>
+              <span class="chapter-name">{s.title}</span>
+            </span>
+          </button>
+        {/each}
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="progress-readout">
+          <span>ความคืบหน้าคู่มือ</span>
+          <strong>{progressPct}%</strong>
+        </div>
+        <div class="sidebar-progress-track">
+          <div class="sidebar-progress-fill" style="transform: scaleX({progressRatio});"></div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- RIGHT STAGE: Step Content & Animated Flow -->
+    <div class="tutorial-stage">
+      <!-- Top Bar (Mobile Chapter Picker + Close) -->
+      <header class="stage-topbar">
+        <div class="stage-step-counter">
+          <span class="step-dot" aria-hidden="true"></span>
+          <span>บทที่ {currentStep + 1} จาก {steps.length}</span>
+          <span class="step-category-pill">{step.category}</span>
+        </div>
+
+        <div class="topbar-right">
+          <button
+            type="button"
+            class="btn-mobile-chapters"
+            on:click={() => showMobileMenu = !showMobileMenu}
+            aria-expanded={showMobileMenu}
+          >
+            <span>สารบัญ ({currentStep + 1}/{steps.length})</span>
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </button>
+
+          <button type="button" class="btn-close-tutorial" on:click={close} aria-label="ปิดคู่มือการใช้งาน" title="ปิด (Esc)">
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      {#if showMobileMenu}
+        <div class="mobile-chapter-drawer" transition:fly={{ y: -10, duration: 200, easing: cubicOut }}>
+          {#each steps as s, idx}
+            <button
+              type="button"
+              class="mobile-chapter-btn"
+              class:active={idx === currentStep}
+              on:click={() => goToStep(idx)}
+            >
+              <span class="mc-num">{idx + 1}.</span>
+              <span class="mc-title">{s.title}</span>
+            </button>
+          {/each}
+        </div>
+      {/if}
+
+      <!-- Scrollable Animated Stage Body -->
+      <div class="stage-scroll-area">
         {#key currentStep}
-          <span class="tc-icon" in:fade={{ duration: 200 }}>{step.icon}</span>
+          <div
+            class="stage-body"
+            in:fly={{ x: direction * 28, duration: 280, easing: cubicOut }}
+          >
+            <!-- Step Hero Header -->
+            <div class="step-hero">
+              <div class="step-icon-orb" aria-hidden="true">
+                {#if step.iconType === 'compass'}
+                  <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="10"></circle><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"></polygon></svg>
+                {:else if step.iconType === 'folder'}
+                  <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+                {:else if step.iconType === 'scan'}
+                  <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 7V5a2 2 0 0 1 2-2h2"></path><path d="M17 3h2a2 2 0 0 1 2 2v2"></path><path d="M21 17v2a2 2 0 0 1-2 2h-2"></path><path d="M7 21H5a2 2 0 0 1-2-2v-2"></path><line x1="7" y1="12" x2="17" y2="12"></line></svg>
+                {:else if step.iconType === 'database'}
+                  <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>
+                {:else if step.iconType === 'sparkles'}
+                  <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>
+                {:else if step.iconType === 'shield'}
+                  <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path><polyline points="9 12 11 14 15 10"></polyline></svg>
+                {:else if step.iconType === 'workflow'}
+                  <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+                {:else if step.iconType === 'plug'}
+                  <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 22v-5"></path><path d="M9 8V2"></path><path d="M15 8V2"></path><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"></path></svg>
+                {:else if step.iconType === 'cpu'}
+                  <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="4" y="4" width="16" height="16" rx="2"></rect><rect x="9" y="9" width="6" height="6"></rect><line x1="9" y1="1" x2="9" y2="4"></line><line x1="15" y1="1" x2="15" y2="4"></line><line x1="9" y1="20" x2="9" y2="23"></line><line x1="15" y1="20" x2="15" y2="23"></line><line x1="20" y1="9" x2="23" y2="9"></line><line x1="20" y1="14" x2="23" y2="14"></line><line x1="1" y1="9" x2="4" y2="9"></line><line x1="1" y1="14" x2="4" y2="14"></line></svg>
+                {:else if step.iconType === 'users'}
+                  <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+                {:else if step.iconType === 'search'}
+                  <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                {:else if step.iconType === 'diagram'}
+                  <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="3" width="7" height="7" rx="1.5"></rect><rect x="8.5" y="14" width="7" height="7" rx="1.5"></rect><path d="M6.5 10v2a2 2 0 0 0 2 2h7a2 2 0 0 0 2-2v-2"></path></svg>
+                {:else if step.iconType === 'file'}
+                  <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+                {:else if step.iconType === 'check'}
+                  <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+                {:else if step.iconType === 'code'}
+                  <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
+                {:else if step.iconType === 'lock'}
+                  <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                {:else}
+                  <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+                {/if}
+              </div>
+              <div class="step-hero-text">
+                <h2 id="tutorial-step-title" class="stage-title">{step.title}</h2>
+                <p class="stage-subtitle">{step.subtitle}</p>
+              </div>
+            </div>
+
+            <!-- Overview -->
+            <p class="overview-copy">{step.overview}</p>
+
+            <!-- Mini Process Flow Strip (Animated Entrance) -->
+            {#if step.flow && step.flow.length > 0}
+              <div class="flow-pipeline" aria-label="ลำดับการทำงานโดยย่อ">
+                {#each step.flow as node, nIdx}
+                  <div class="flow-node" style="--node-delay: {nIdx * 45}ms;">
+                    <span class="flow-node-num">{nIdx + 1}</span>
+                    <span class="flow-node-label">{node}</span>
+                  </div>
+                  {#if nIdx < step.flow.length - 1}
+                    <svg class="flow-arrow" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                      <polyline points="9 18 15 12 9 6"></polyline>
+                    </svg>
+                  {/if}
+                {/each}
+              </div>
+            {/if}
+
+            <!-- Detailed Step-by-Step Cards (Staggered Reveal, capped <= 220ms) -->
+            <div class="steps-section">
+              <div class="section-heading">ขั้นตอนการใช้งานอย่างละเอียด (Step-by-Step)</div>
+              <ol class="step-cards-list">
+                {#each step.steps as item, sIdx}
+                  <li class="step-card" style="--stagger: {Math.min(sIdx * 45, 180)}ms;">
+                    <div class="step-card-num" aria-hidden="true">{sIdx + 1}</div>
+                    <div class="step-card-body">
+                      <div class="step-card-title">{item.title}</div>
+                      <div class="step-card-detail">{item.detail}</div>
+                    </div>
+                  </li>
+                {/each}
+              </ol>
+            </div>
+
+            <!-- Pro Tip Callout -->
+            {#if step.tip}
+              <div class="pro-tip-box">
+                <div class="pro-tip-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="12" y1="16" x2="12" y2="12"></line>
+                    <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                  </svg>
+                </div>
+                <div class="pro-tip-content">
+                  <strong>คำแนะนำการใช้งานให้แม่นยำ:</strong> {step.tip}
+                </div>
+              </div>
+            {/if}
+          </div>
         {/key}
       </div>
 
-      <!-- Custom Glass Dropdown (Replaces raw HTML select) -->
-      <div class="custom-step-dropdown-container">
-        <button 
-          class="custom-dropdown-btn" 
-          on:click={() => (showStepDropdown = !showStepDropdown)}
-          title="เลือกคู่มือเมนูที่ต้องการ"
-        >
-          <span class="cd-num">{currentStep + 1}.</span>
-          <span class="cd-text">{step.title.replace(/^[^\s]+\s+/, '')}</span>
-          <svg class="cd-chevron" class:open={showStepDropdown} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="16" height="16">
-            <polyline points="6 9 12 15 18 9"></polyline>
-          </svg>
-        </button>
-
-        {#if showStepDropdown}
-          <!-- svelte-ignore a11y-click-events-have-key-events -->
-          <div class="dropdown-overlay-bg" on:click={() => (showStepDropdown = false)}></div>
-          <div class="custom-dropdown-menu" transition:fly={{ y: -8, duration: 200 }}>
-            {#each steps as s, idx}
-              <button
-                class="dropdown-menu-item"
-                class:active={idx === currentStep}
-                on:click={() => { currentStep = idx; showStepDropdown = false; }}
-              >
-                <span class="item-icon">{s.icon}</span>
-                <span class="item-idx">{idx + 1}.</span>
-                <span class="item-name">{s.title.replace(/^[^\s]+\s+/, '')}</span>
-                {#if idx === currentStep}
-                  <span class="item-active-check">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" width="14" height="14"><polyline points="20 6 9 17 4 12"></polyline></svg>
-                  </span>
-                {/if}
-              </button>
-            {/each}
-          </div>
-        {/if}
-      </div>
-
-      <button class="tc-close" on:click={close} title="ปิด (Esc)">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="18" height="18">
-          <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-        </svg>
-      </button>
-    </div>
-
-    <!-- Role Tag -->
-    <div class="tc-role-tag">
-      <span class="role-dot" style="background: {step.color}; shadow: 0 0 8px {step.color};"></span>
-      {userRole === 'admin' ? '🛡 System Admin Mode' : '👤 Standard User Mode'} — ขั้นตอนที่ {currentStep + 1} จาก {steps.length}
-    </div>
-
-    <!-- Content area (large & scrollable) -->
-    {#key currentStep}
-      <div class="tc-content" in:fade={{ duration: 180, delay: 60 }}>
-        <h2 class="tc-title">{step.title}</h2>
-        <p class="tc-subtitle">{step.subtitle}</p>
-        <div class="tc-divider"></div>
-        <div class="tc-body">
-          {@html formatDescription(step.description)}
+      <!-- Bottom Action Footer -->
+      <footer class="stage-footer">
+        <div class="footer-hint">
+          <kbd>←</kbd> <kbd>→</kbd> เปลี่ยนบทเรียน &middot; <kbd>Esc</kbd> ปิด
         </div>
-      </div>
-    {/key}
 
-    <!-- Progress Bar -->
-    <div class="tc-progress-wrap">
-      <div class="tc-progress-bar">
-        <div class="tc-progress-fill" style="width: {progress}%; background: {step.color}; box-shadow: 0 0 12px {step.color};"></div>
-      </div>
-      <span class="tc-progress-label" style="color: {step.color};">{Math.round(progress)}%</span>
+        <div class="footer-actions">
+          <button type="button" class="btn-nav-secondary" on:click={prev} disabled={isFirst}>
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <polyline points="15 18 9 12 15 6"></polyline>
+            </svg>
+            <span>ก่อนหน้า</span>
+          </button>
+
+          {#if isLast}
+            <button type="button" class="btn-nav-primary btn-finish" on:click={close}>
+              <span>เริ่มใช้งานระบบ</span>
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
+                <polyline points="20 6 9 17 4 12"></polyline>
+              </svg>
+            </button>
+          {:else}
+            <button type="button" class="btn-nav-primary" on:click={next}>
+              <span>บทถัดไป</span>
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <polyline points="9 18 15 12 9 6"></polyline>
+              </svg>
+            </button>
+          {/if}
+        </div>
+      </footer>
     </div>
-
-    <!-- Step Dots -->
-    <div class="tc-dots">
-      {#each steps as _, i}
-        <button
-          class="tc-dot"
-          class:active={i === currentStep}
-          style={i === currentStep ? `background: ${step.color}; box-shadow: 0 0 10px ${step.color}; width: 26px;` : ''}
-          on:click={() => (currentStep = i)}
-          aria-label="Step {i + 1}"
-        ></button>
-      {/each}
-    </div>
-
-    <!-- Actions -->
-    <div class="tc-actions">
-      {#if !isFirst}
-        <button class="tc-btn tc-btn-secondary" on:click={prev}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-            <polyline points="15 18 9 12 15 6"/>
-          </svg>
-          ก่อนหน้า
-        </button>
-      {:else}
-        <div></div>
-      {/if}
-
-      {#if isLast}
-        <button class="tc-btn tc-btn-primary" style="background: linear-gradient(135deg, #10b981, #059669);" on:click={close}>
-          🎉 เริ่มใช้งาน!
-        </button>
-      {:else}
-        <button class="tc-btn tc-btn-primary" style="background: linear-gradient(135deg, {step.color}, #4f46e5);" on:click={next}>
-          ถัดไป
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-            <polyline points="9 18 15 12 9 6"/>
-          </svg>
-        </button>
-      {/if}
-    </div>
-
-    <!-- Keyboard hint -->
-    <p class="tc-hint">← → นำทาง &nbsp;|&nbsp; Esc ปิด</p>
   </div>
 </div>
 
@@ -638,412 +850,693 @@
     position: fixed;
     inset: 0;
     z-index: 9999;
-    background: rgba(4, 6, 14, 0.85);
+    background: rgba(5, 7, 14, 0.84);
     backdrop-filter: blur(12px);
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 24px;
+    padding: 20px;
+    font-family: 'Prompt', 'Outfit', sans-serif;
   }
 
-  /* Premium Large Modal Card */
-  .tutorial-card {
-    background: linear-gradient(145deg, rgba(16, 18, 30, 0.95), rgba(24, 27, 44, 0.95));
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-top: 4px solid var(--step-color, #6366f1);
-    border-radius: 24px;
-    padding: 32px 38px;
+  .tutorial-shell {
+    position: relative;
     width: 100%;
-    max-width: 820px;
-    max-height: 86vh;
-    display: flex;
-    flex-direction: column;
-    box-shadow:
-      0 32px 90px rgba(0,0,0,0.75),
-      0 0 30px color-mix(in srgb, var(--step-color, #6366f1) 20%, transparent);
-    position: relative;
-    overflow: visible;
-  }
-
-  /* Header */
-  .tc-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    margin-bottom: 14px;
-    position: relative;
-    z-index: 10;
-  }
-
-  .tc-badge {
-    width: 50px; height: 50px;
-    border-radius: 16px;
-    border: 1px solid;
-    display: flex; align-items: center; justify-content: center;
-    flex-shrink: 0;
-    transition: all 0.4s ease;
-  }
-  .tc-icon { font-size: 26px; line-height: 1; display: block; }
-
-  /* Custom Glass Dropdown */
-  .custom-step-dropdown-container {
-    flex: 1;
-    min-width: 0;
-    position: relative;
-  }
-
-  .custom-dropdown-btn {
-    width: 100%;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 10px 16px;
-    border-radius: 14px;
-    background: rgba(10, 12, 22, 0.75);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    color: #f1f5f9;
-    font-family: var(--font-th);
-    font-size: 13.5px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.25s ease;
-  }
-
-  .custom-dropdown-btn:hover {
-    background: rgba(24, 28, 48, 0.9);
-    border-color: rgba(168, 85, 247, 0.4);
-    box-shadow: 0 4px 16px rgba(168, 85, 247, 0.15);
-  }
-
-  .cd-num {
-    color: var(--step-color, #a855f7);
-    font-weight: 700;
-  }
-
-  .cd-text {
-    flex: 1;
-    white-space: nowrap;
+    max-width: 1040px;
+    height: min(86vh, 760px);
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    background: rgba(14, 16, 26, 0.96);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 20px;
     overflow: hidden;
-    text-overflow: ellipsis;
-    text-align: left;
+    box-shadow: 0 30px 80px rgba(0, 0, 0, 0.72);
   }
 
-  .cd-chevron {
-    color: var(--text-muted);
-    transition: transform 0.3s ease;
-    flex-shrink: 0;
-  }
-  .cd-chevron.open {
-    transform: rotate(180deg);
-    color: var(--secondary);
-  }
-
-  .dropdown-overlay-bg {
-    position: fixed;
-    top: 0; left: 0; right: 0; bottom: 0;
-    z-index: 90;
-  }
-
-  .custom-dropdown-menu {
+  /* Top GPU Progress Accent */
+  .top-progress-track {
     position: absolute;
-    top: 100%;
+    top: 0;
     left: 0;
     right: 0;
-    margin-top: 6px;
-    max-height: 280px;
-    overflow-y: auto;
-    background: rgba(15, 18, 30, 0.96);
-    backdrop-filter: blur(20px);
-    border: 1px solid rgba(168, 85, 247, 0.3);
-    border-radius: 16px;
-    padding: 8px;
-    z-index: 100;
-    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
+    height: 3px;
+    background: rgba(255, 255, 255, 0.05);
+    z-index: 20;
+  }
+  .top-progress-bar {
+    height: 100%;
+    width: 100%;
+    transform-origin: left center;
+    background: linear-gradient(90deg, var(--step-color, #6366f1), #a855f7);
+    transition: transform 320ms cubic-bezier(0.16, 1, 0.3, 1);
   }
 
-  .dropdown-menu-item {
+  /* Left Sidebar Rail */
+  .tutorial-sidebar {
+    background: rgba(10, 11, 18, 0.85);
+    border-right: 1px solid rgba(255, 255, 255, 0.07);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .sidebar-brand {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    padding: 20px 18px 16px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  .brand-mark {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    background: rgba(99, 102, 241, 0.16);
+    border: 1px solid rgba(99, 102, 241, 0.35);
+    color: #a5b4fc;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .brand-text {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  .brand-title {
+    font-family: 'Outfit', sans-serif;
+    font-size: 14.5px;
+    font-weight: 700;
+    color: #f8fafc;
+    letter-spacing: -0.01em;
+  }
+
+  .brand-role {
+    font-size: 11px;
+    color: #94a3b8;
+  }
+
+  .chapter-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .chapter-item {
     width: 100%;
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 10px 14px;
+    padding: 9px 10px;
     border-radius: 10px;
     background: transparent;
-    border: none;
-    color: #cbd5e1;
-    font-family: var(--font-th);
-    font-size: 13px;
-    cursor: pointer;
+    border: 1px solid transparent;
+    color: #94a3b8;
     text-align: left;
-    transition: all 0.2s ease;
-  }
-
-  .dropdown-menu-item:hover {
-    background: rgba(168, 85, 247, 0.15);
-    color: #ffffff;
-  }
-
-  .dropdown-menu-item.active {
-    background: linear-gradient(135deg, rgba(99, 102, 241, 0.3), rgba(168, 85, 247, 0.3));
-    color: #ffffff;
-    font-weight: 600;
-    border: 1px solid rgba(168, 85, 247, 0.3);
-  }
-
-  .item-icon { font-size: 16px; }
-  .item-idx { font-weight: 700; color: #a855f7; font-size: 12px; }
-  .item-name { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-  .item-active-check { color: #34d399; display: flex; align-items: center; }
-
-  .tc-close {
-    background: rgba(255,255,255,0.05);
-    border: 1px solid rgba(255,255,255,0.1);
-    color: rgba(255,255,255,0.6);
-    border-radius: 50%;
-    width: 38px; height: 38px;
-    display: flex; align-items: center; justify-content: center;
+    font-family: inherit;
     cursor: pointer;
-    flex-shrink: 0;
-    transition: all 0.2s;
-  }
-  .tc-close:hover {
-    background: rgba(244, 63, 94, 0.2);
-    border-color: rgba(244, 63, 94, 0.4);
-    color: #f43f5e;
-    transform: rotate(90deg);
+    transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease;
   }
 
-  /* Role tag */
-  .tc-role-tag {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 11.5px;
-    font-weight: 600;
-    letter-spacing: 0.5px;
-    padding: 5px 14px;
-    border-radius: 20px;
-    border: 1px solid color-mix(in srgb, var(--step-color, #6366f1) 35%, transparent);
+  .chapter-item:hover {
+    background: rgba(255, 255, 255, 0.04);
+    color: #e2e8f0;
+  }
+
+  .chapter-item.active {
     background: color-mix(in srgb, var(--step-color, #6366f1) 14%, transparent);
-    color: var(--step-color, #6366f1);
-    margin-bottom: 16px;
-    font-family: var(--font-en);
-    align-self: flex-start;
-  }
-
-  .role-dot {
-    width: 6px; height: 6px;
-    border-radius: 50%;
-  }
-
-  /* Scrollable Content Area */
-  .tc-content {
-    flex: 1;
-    min-height: 280px;
-    display: flex;
-    flex-direction: column;
-    overflow-y: auto;
-    padding-right: 8px;
-  }
-
-  .tc-title {
-    font-size: 22px;
-    font-weight: 700;
-    color: #ffffff;
-    margin: 0 0 4px 0;
-    line-height: 1.3;
-    font-family: var(--font-th);
-  }
-
-  .tc-subtitle {
-    font-size: 13px;
-    color: var(--step-color, #a78bfa);
-    margin: 0 0 16px 0;
-    font-weight: 500;
-    font-family: var(--font-en);
-  }
-
-  .tc-divider {
-    height: 1px;
-    background: linear-gradient(90deg, color-mix(in srgb, var(--step-color, #6366f1) 50%, transparent), transparent);
-    margin-bottom: 16px;
-  }
-
-  /* Formatted Body Content Styles */
-  .tc-body {
-    font-size: 14px;
-    line-height: 1.8;
-    color: #cbd5e1;
-    font-family: var(--font-th);
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  :global(.tc-body .overview-badge-box) {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    background: rgba(99, 102, 241, 0.12);
-    border: 1px solid rgba(99, 102, 241, 0.25);
-    padding: 8px 14px;
-    border-radius: 12px;
-    font-weight: 700;
-    color: #e0e7ff;
-    margin-bottom: 4px;
-  }
-
-  :global(.tc-body .workflow-badge-box) {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    background: rgba(168, 85, 247, 0.12);
-    border: 1px solid rgba(168, 85, 247, 0.25);
-    padding: 8px 14px;
-    border-radius: 12px;
-    font-weight: 700;
-    color: #f3e8ff;
-    margin-top: 8px;
-    margin-bottom: 4px;
-  }
-
-  :global(.tc-body .flow-step-card) {
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.07);
-    border-left: 3px solid var(--step-color, #6366f1);
-    padding: 10px 14px;
-    border-radius: 12px;
-    transition: all 0.2s ease;
-  }
-
-  :global(.tc-body .flow-step-card:hover) {
-    background: rgba(255, 255, 255, 0.06);
-    border-color: rgba(255, 255, 255, 0.15);
-    transform: translateX(4px);
-  }
-
-  :global(.tc-body .step-card-header) {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 13.5px;
-    font-weight: 700;
+    border-color: color-mix(in srgb, var(--step-color, #6366f1) 36%, transparent);
     color: #f8fafc;
   }
 
-  :global(.tc-body .step-bullet-icon) {
-    color: var(--step-color, #a855f7);
-  }
-
-  :global(.tc-body .step-card-desc) {
-    font-size: 13px;
-    color: #cbd5e1;
-    margin-top: 2px;
-    line-height: 1.6;
-  }
-
-  :global(.tc-body .normal-desc-para) {
-    margin: 4px 0;
-  }
-
-  /* Progress wrap */
-  .tc-progress-wrap {
+  .chapter-index {
+    width: 22px;
+    height: 22px;
+    border-radius: 7px;
+    background: rgba(255, 255, 255, 0.06);
+    color: #94a3b8;
+    font-family: 'Outfit', sans-serif;
+    font-size: 11.5px;
+    font-weight: 700;
     display: flex;
     align-items: center;
-    gap: 12px;
-    margin-top: 18px;
-    margin-bottom: 12px;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: background-color 180ms ease, color 180ms ease;
   }
 
-  .tc-progress-bar {
-    flex: 1;
-    height: 6px;
-    background: rgba(255,255,255,0.08);
-    border-radius: 6px;
+  .chapter-item.active .chapter-index {
+    background: var(--step-color, #6366f1);
+    color: #ffffff;
+  }
+
+  .chapter-item.visited .chapter-index {
+    background: rgba(16, 185, 129, 0.18);
+    color: #34d399;
+  }
+
+  .chapter-meta {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  .chapter-cat {
+    font-size: 10px;
+    color: #64748b;
+    line-height: 1.2;
+  }
+
+  .chapter-item.active .chapter-cat {
+    color: #a5b4fc;
+  }
+
+  .chapter-name {
+    font-size: 12.5px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .sidebar-footer {
+    padding: 14px 16px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    background: rgba(10, 11, 18, 0.6);
+  }
+
+  .progress-readout {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 11.5px;
+    color: #94a3b8;
+    margin-bottom: 7px;
+  }
+  .progress-readout strong {
+    font-family: 'Outfit', sans-serif;
+    color: #e2e8f0;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .sidebar-progress-track {
+    height: 5px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.08);
     overflow: hidden;
   }
-
-  .tc-progress-fill {
+  .sidebar-progress-fill {
     height: 100%;
-    border-radius: 6px;
-    transition: width 0.3s ease;
+    width: 100%;
+    transform-origin: left center;
+    background: linear-gradient(90deg, #6366f1, #a855f7);
+    transition: transform 320ms cubic-bezier(0.16, 1, 0.3, 1);
   }
 
-  .tc-progress-label {
-    font-size: 12px;
-    font-weight: 700;
-    font-family: 'Inter', sans-serif;
-    min-width: 34px;
-    text-align: right;
-  }
-
-  /* Step Dots */
-  .tc-dots {
+  /* Right Main Stage */
+  .tutorial-stage {
     display: flex;
-    justify-content: center;
-    gap: 6px;
-    margin-bottom: 18px;
-    flex-wrap: wrap;
+    flex-direction: column;
+    min-height: 0;
+    position: relative;
   }
 
-  .tc-dot {
-    width: 8px; height: 8px;
-    border-radius: 50%;
-    background: rgba(255,255,255,0.15);
-    border: none;
-    cursor: pointer;
-    padding: 0;
-    transition: all 0.25s ease;
-  }
-
-  /* Actions */
-  .tc-actions {
+  .stage-topbar {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 16px;
+    gap: 12px;
+    padding: 16px 26px 14px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   }
 
-  .tc-btn {
-    display: inline-flex;
+  .stage-step-counter {
+    display: flex;
     align-items: center;
     gap: 8px;
-    padding: 12px 24px;
-    border-radius: 14px;
-    font-size: 14px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.25s ease;
-    font-family: var(--font-th);
-    border: none;
+    font-size: 12.5px;
+    color: #94a3b8;
+    font-variant-numeric: tabular-nums;
   }
 
-  .tc-btn-secondary {
-    background: rgba(255,255,255,0.06);
-    border: 1px solid rgba(255,255,255,0.12);
-    color: #e2e8f0;
-  }
-  .tc-btn-secondary:hover {
-    background: rgba(255,255,255,0.14);
-    color: #fff;
+  .step-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--step-color, #6366f1);
+    transition: background-color 250ms ease;
   }
 
-  .tc-btn-primary {
-    color: #ffffff;
-    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.4);
-    transition: all 0.25s ease;
-  }
-  .tc-btn-primary:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
-  }
-
-  .tc-hint {
-    text-align: center;
+  .step-category-pill {
+    padding: 2px 9px;
+    border-radius: 8px;
     font-size: 11px;
-    color: rgba(255,255,255,0.35);
-    margin: 12px 0 0 0;
-    font-family: 'Inter', sans-serif;
+    font-weight: 600;
+    background: rgba(255, 255, 255, 0.06);
+    color: #cbd5e1;
+  }
+
+  .topbar-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .btn-mobile-chapters {
+    display: none;
+    align-items: center;
+    gap: 6px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: #e2e8f0;
+    padding: 6px 12px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+  }
+
+  .btn-close-tutorial {
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #94a3b8;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background-color 150ms ease, color 150ms ease;
+  }
+  .btn-close-tutorial:hover {
+    background: rgba(239, 68, 68, 0.18);
+    border-color: rgba(239, 68, 68, 0.36);
+    color: #fca5a5;
+  }
+
+  .mobile-chapter-drawer {
+    position: absolute;
+    top: 62px;
+    left: 16px;
+    right: 16px;
+    z-index: 30;
+    max-height: 280px;
+    overflow-y: auto;
+    background: #121524;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 12px;
+    padding: 8px;
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.65);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .mobile-chapter-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: transparent;
+    border: none;
+    color: #cbd5e1;
+    font-size: 12.5px;
+    font-family: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .mobile-chapter-btn.active {
+    background: rgba(99, 102, 241, 0.2);
+    color: #ffffff;
+    font-weight: 600;
+  }
+  .mc-num {
+    font-family: 'Outfit', sans-serif;
+    color: #94a3b8;
+    width: 18px;
+  }
+
+  .stage-scroll-area {
+    flex: 1;
+    overflow-y: auto;
+    padding: 24px 28px;
+    min-height: 0;
+  }
+
+  .stage-body {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+
+  .step-hero {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+  }
+
+  .step-icon-orb {
+    width: 46px;
+    height: 46px;
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--step-color, #6366f1) 16%, transparent);
+    border: 1px solid color-mix(in srgb, var(--step-color, #6366f1) 38%, transparent);
+    color: color-mix(in srgb, var(--step-color, #6366f1) 80%, #ffffff);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .step-hero-text {
+    min-width: 0;
+  }
+
+  .stage-title {
+    margin: 0;
+    font-family: 'Outfit', 'Prompt', sans-serif;
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: #f8fafc;
+    letter-spacing: -0.02em;
+    line-height: 1.25;
+  }
+
+  .stage-subtitle {
+    margin: 4px 0 0;
+    font-size: 13px;
+    color: #94a3b8;
+  }
+
+  .overview-copy {
+    margin: 0;
+    font-size: 13.5px;
+    line-height: 1.65;
+    color: #cbd5e1;
+    max-width: 70ch;
+  }
+
+  /* Animated Mini Flow Pipeline */
+  .flow-pipeline {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    padding: 12px 14px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.025);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+  }
+
+  .flow-node {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--step-color, #6366f1) 12%, rgba(15, 23, 42, 0.8));
+    border: 1px solid color-mix(in srgb, var(--step-color, #6366f1) 28%, transparent);
+    font-size: 12px;
+    font-weight: 500;
+    color: #e2e8f0;
+    animation: nodeSettle 260ms cubic-bezier(0.16, 1, 0.3, 1) both;
+    animation-delay: var(--node-delay, 0ms);
+  }
+
+  .flow-node-num {
+    width: 17px;
+    height: 17px;
+    border-radius: 5px;
+    background: var(--step-color, #6366f1);
+    color: #ffffff;
+    font-family: 'Outfit', sans-serif;
+    font-size: 10.5px;
+    font-weight: 700;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .flow-arrow {
+    color: #64748b;
+    flex-shrink: 0;
+  }
+
+  @keyframes nodeSettle {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  /* Step-by-Step Cards */
+  .steps-section {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .section-heading {
+    font-size: 12px;
+    font-weight: 600;
+    color: #94a3b8;
+    letter-spacing: 0.02em;
+  }
+
+  .step-cards-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+  }
+
+  .step-card {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 12px 14px;
+    border-radius: 12px;
+    background: rgba(18, 20, 32, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    animation: cardReveal 300ms cubic-bezier(0.16, 1, 0.3, 1) both;
+    animation-delay: var(--stagger, 0ms);
+    transition: border-color 180ms ease, background-color 180ms ease;
+  }
+
+  .step-card:hover {
+    border-color: color-mix(in srgb, var(--step-color, #6366f1) 35%, transparent);
+    background: rgba(24, 27, 44, 0.9);
+  }
+
+  @keyframes cardReveal {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .step-card-num {
+    width: 24px;
+    height: 24px;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--step-color, #6366f1) 18%, transparent);
+    border: 1px solid color-mix(in srgb, var(--step-color, #6366f1) 36%, transparent);
+    color: color-mix(in srgb, var(--step-color, #6366f1) 80%, #ffffff);
+    font-family: 'Outfit', sans-serif;
+    font-size: 12px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+
+  .step-card-body {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+  }
+
+  .step-card-title {
+    font-size: 13.5px;
+    font-weight: 600;
+    color: #f8fafc;
+  }
+
+  .step-card-detail {
+    font-size: 12.5px;
+    line-height: 1.55;
+    color: #94a3b8;
+  }
+
+  /* Pro Tip Box */
+  .pro-tip-box {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 12px 14px;
+    border-radius: 12px;
+    background: rgba(99, 102, 241, 0.1);
+    border: 1px solid rgba(99, 102, 241, 0.28);
+    color: #c7d2fe;
+    font-size: 12.5px;
+    line-height: 1.55;
+  }
+
+  .pro-tip-icon {
+    color: #a5b4fc;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+
+  .pro-tip-content strong {
+    color: #e0e7ff;
+    font-weight: 600;
+  }
+
+  /* Stage Footer */
+  .stage-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 26px;
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
+    background: rgba(10, 11, 18, 0.6);
+  }
+
+  .footer-hint {
+    font-size: 11.5px;
+    color: #64748b;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  kbd {
+    font-family: 'Outfit', monospace;
+    font-size: 10.5px;
+    padding: 2px 6px;
+    border-radius: 5px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: #cbd5e1;
+  }
+
+  .footer-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .btn-nav-secondary {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 9px 16px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: #cbd5e1;
+    font-size: 13px;
+    font-weight: 500;
+    font-family: inherit;
+    cursor: pointer;
+    transition: background-color 150ms ease, color 150ms ease;
+  }
+  .btn-nav-secondary:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.1);
+    color: #ffffff;
+  }
+  .btn-nav-secondary:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .btn-nav-primary {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 9px 20px;
+    border-radius: 10px;
+    background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    color: #ffffff;
+    font-size: 13px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    transition: transform 150ms ease, box-shadow 180ms ease;
+  }
+  .btn-nav-primary:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px rgba(99, 102, 241, 0.38);
+  }
+  .btn-nav-primary.btn-finish {
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  }
+  .btn-nav-primary.btn-finish:hover {
+    box-shadow: 0 6px 20px rgba(16, 185, 129, 0.35);
+  }
+
+  /* Responsive: Collapse Sidebar into Top Chapter Drawer */
+  @media (max-width: 860px) {
+    .tutorial-shell {
+      grid-template-columns: 1fr;
+      height: min(90vh, 780px);
+    }
+    .tutorial-sidebar {
+      display: none;
+    }
+    .btn-mobile-chapters {
+      display: inline-flex;
+    }
+    .stage-topbar {
+      padding: 14px 16px;
+    }
+    .stage-scroll-area {
+      padding: 18px 16px;
+    }
+    .stage-footer {
+      padding: 12px 16px;
+    }
+    .footer-hint {
+      display: none;
+    }
+  }
+
+  /* Reduced Motion: Preserve opacity & color state feedback, remove spatial travel */
+  @media (prefers-reduced-motion: reduce) {
+    .flow-node,
+    .step-card {
+      animation: none !important;
+    }
+    .top-progress-bar,
+    .sidebar-progress-fill,
+    .btn-nav-primary {
+      transition: opacity 150ms ease, background-color 150ms ease !important;
+      transform: none;
+    }
   }
 </style>
