@@ -1,5 +1,5 @@
 <script>
-  import { createEventDispatcher, onMount, onDestroy } from 'svelte';
+  import { createEventDispatcher, onMount, onDestroy, tick } from 'svelte';
 
   export let values = []; // Array of strings/numbers
   export let options = []; // Array of { value, label, icon?, group? } or simple strings
@@ -15,7 +15,15 @@
   const dispatch = createEventDispatcher();
   let isOpen = false;
   let selectEl;
+  let triggerEl;
+  let menuEl;
   let searchQuery = '';
+
+  let menuTop = 0;
+  let menuLeft = 0;
+  let menuWidth = 240;
+  let menuMaxHeight = 340;
+  let dropUp = false;
 
   $: normalizedOptions = options.map(opt => {
     if (typeof opt === 'object' && opt !== null) {
@@ -35,11 +43,90 @@
 
   $: selectedOptions = normalizedOptions.filter(o => values.map(String).includes(String(o.value)));
 
-  function toggleOpen() {
+  function portal(node) {
+    document.body.appendChild(node);
+    return {
+      destroy() {
+        if (node.parentNode) {
+          node.parentNode.removeChild(node);
+        }
+      }
+    };
+  }
+
+  async function updatePosition() {
+    if (!selectEl) return;
+    await tick();
+    const rect = selectEl.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const spaceAbove = rect.top;
+    const estimatedMenuHeight = 320;
+
+    let calculatedWidth = Math.min(Math.max(rect.width, 240), window.innerWidth - 24);
+    let calculatedLeft = rect.left;
+
+    if (calculatedLeft + calculatedWidth > window.innerWidth - 12) {
+      calculatedLeft = Math.max(12, window.innerWidth - calculatedWidth - 12);
+    }
+    if (calculatedLeft < 12) {
+      calculatedLeft = 12;
+    }
+
+    menuWidth = calculatedWidth;
+    menuLeft = calculatedLeft;
+
+    if (spaceBelow < estimatedMenuHeight && spaceAbove > spaceBelow) {
+      dropUp = true;
+      menuTop = rect.top - 6;
+      menuMaxHeight = Math.max(160, Math.min(360, spaceAbove - 12));
+    } else {
+      dropUp = false;
+      menuTop = rect.bottom + 6;
+      menuMaxHeight = Math.max(160, Math.min(360, spaceBelow - 12));
+    }
+  }
+
+  async function toggleOpen() {
     if (disabled) return;
     isOpen = !isOpen;
     if (isOpen) {
       searchQuery = '';
+      await updatePosition();
+    }
+  }
+
+  function closeMenu(returnFocus = false) {
+    isOpen = false;
+    if (returnFocus) {
+      triggerEl?.focus();
+    }
+  }
+
+  function handleTriggerKeydown(e) {
+    if (disabled) return;
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      toggleOpen();
+    } else if (e.key === 'Escape' && isOpen) {
+      e.preventDefault();
+      closeMenu(true);
+    }
+  }
+
+  function handleMenuKeydown(e) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeMenu(true);
+    }
+  }
+
+  function handleOptionKeydown(e, optVal) {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      toggleOption(optVal);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      closeMenu(true);
     }
   }
 
@@ -85,17 +172,29 @@
   }
 
   function handleOutsideClick(e) {
-    if (isOpen && selectEl && !selectEl.contains(e.target)) {
+    if (isOpen) {
+      if (selectEl && selectEl.contains(e.target)) return;
+      if (menuEl && menuEl.contains(e.target)) return;
       isOpen = false;
     }
   }
 
+  function handleScrollResize() {
+    if (isOpen) {
+      updatePosition();
+    }
+  }
+
   onMount(() => {
-    window.addEventListener('click', handleOutsideClick);
+    window.addEventListener('click', handleOutsideClick, true);
+    window.addEventListener('scroll', handleScrollResize, true);
+    window.addEventListener('resize', handleScrollResize);
   });
 
   onDestroy(() => {
-    window.removeEventListener('click', handleOutsideClick);
+    window.removeEventListener('click', handleOutsideClick, true);
+    window.removeEventListener('scroll', handleScrollResize, true);
+    window.removeEventListener('resize', handleScrollResize);
   });
 </script>
 
@@ -105,14 +204,15 @@
   class:disabled 
   class:is-open={isOpen}
   style="width: {width}; min-width: {minWidth};"
-  {id}
 >
   <div 
+    bind:this={triggerEl}
     class="select-trigger-btn" 
+    {id}
     on:click={toggleOpen} 
     role="button"
     tabindex={disabled ? -1 : 0}
-    on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') toggleOpen(); }}
+    on:keydown={handleTriggerKeydown}
     aria-haspopup="listbox"
     aria-expanded={isOpen}
   >
@@ -128,6 +228,7 @@
                 class="badge-remove-btn" 
                 on:click|stopPropagation|preventDefault={(e) => removeValue(e, opt.value)}
                 title="ลบรายการนี้"
+                aria-label="ลบ {opt.label}"
               >
                 ×
               </button>
@@ -151,6 +252,7 @@
           class="clear-all-btn" 
           on:click|stopPropagation|preventDefault={clearAll}
           title="ล้างการเลือกทั้งหมด"
+          aria-label="ล้างการเลือกทั้งหมด"
         >
           ✕
         </button>
@@ -162,7 +264,17 @@
   </div>
 
   {#if isOpen}
-    <div class="custom-dropdown-menu" role="listbox" on:click|stopPropagation>
+    <div 
+      use:portal
+      bind:this={menuEl}
+      class="custom-dropdown-menu"
+      class:drop-up={dropUp}
+      style="position: fixed; top: {menuTop}px; left: {menuLeft}px; width: {menuWidth}px; max-height: {menuMaxHeight}px; z-index: var(--z-portal, 10500);"
+      role="listbox"
+      aria-multiselectable="true"
+      on:click|stopPropagation
+      on:keydown={handleMenuKeydown}
+    >
       {#if showSearch && normalizedOptions.length > 5}
         <div class="dropdown-search-box">
           <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -172,12 +284,13 @@
           <input 
             type="text" 
             placeholder="ค้นหา..." 
+            aria-label="ค้นหารายการ"
             bind:value={searchQuery}
             class="search-input"
             on:click|stopPropagation
           />
           {#if searchQuery}
-            <button class="clear-search-btn" on:click={() => searchQuery = ''}>×</button>
+            <button type="button" class="clear-search-btn" aria-label="ล้างคำค้นหา" on:click={() => searchQuery = ''}>×</button>
           {/if}
         </div>
       {/if}
@@ -198,7 +311,9 @@
             <div 
               class="custom-option-item" 
               class:is-selected={isChecked}
+              tabindex="0"
               on:click|stopPropagation={() => toggleOption(opt.value)}
+              on:keydown={(e) => handleOptionKeydown(e, opt.value)}
               role="option"
               aria-selected={isChecked}
             >
@@ -276,6 +391,7 @@
     display: flex;
     align-items: center;
     flex-grow: 1;
+    min-width: 0;
     overflow: hidden;
   }
 
@@ -285,6 +401,7 @@
     flex-wrap: wrap;
     gap: 6px;
     max-width: 100%;
+    min-width: 0;
   }
 
   .selected-badge {
@@ -298,7 +415,8 @@
     font-size: 12px;
     font-weight: 500;
     color: #f1f5f9;
-    max-width: 220px;
+    max-width: 100%;
+    min-width: 0;
   }
 
   .badge-icon {
@@ -363,12 +481,13 @@
     border: 1px solid rgba(239, 68, 68, 0.3);
     color: #f87171;
     border-radius: 50%;
-    width: 18px;
-    height: 18px;
+    width: 24px;
+    height: 24px;
+    flex-shrink: 0;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 10px;
+    font-size: 11px;
     cursor: pointer;
     transition: all 0.15s ease;
   }
@@ -391,28 +510,38 @@
   }
 
   .custom-dropdown-menu {
-    position: absolute;
-    top: calc(100% + 6px);
-    left: 0;
-    width: 100%;
-    min-width: 240px;
+    position: fixed;
+    max-width: calc(100vw - 24px);
     background: rgba(15, 17, 26, 0.98);
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
     border: 1px solid rgba(168, 85, 247, 0.4);
     border-radius: 12px;
     box-shadow: 0 16px 40px rgba(0, 0, 0, 0.85), 0 0 25px rgba(168, 85, 247, 0.2);
-    z-index: 999;
+    z-index: var(--z-portal, 10500);
     padding: 8px;
+    box-sizing: border-box;
+    overflow-x: hidden;
     animation: dropdownFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
     display: flex;
     flex-direction: column;
     gap: 6px;
+    font-family: var(--font-th, 'Prompt', sans-serif);
+  }
+
+  .custom-dropdown-menu.drop-up {
+    transform: translateY(-100%);
+    animation: dropdownFadeInUp 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   @keyframes dropdownFadeIn {
     from { opacity: 0; transform: translateY(-8px) scale(0.97); }
     to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+
+  @keyframes dropdownFadeInUp {
+    from { opacity: 0; transform: translateY(calc(-100% + 8px)) scale(0.97); }
+    to { opacity: 1; transform: translateY(-100%) scale(1); }
   }
 
   .dropdown-search-box {
@@ -487,8 +616,11 @@
   }
 
   .options-scroll-area {
+    flex: 1;
+    min-height: 0;
     max-height: 240px;
     overflow-y: auto;
+    overflow-x: hidden;
     display: flex;
     flex-direction: column;
     gap: 2px;

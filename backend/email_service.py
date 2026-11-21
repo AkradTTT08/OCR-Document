@@ -39,12 +39,23 @@ def send_qa_report(recipient_email: str, doc_type: str, filename: str, report_co
         msg['To'] = recipient_email
         msg['Subject'] = f"Spectra QA: รายงานผลการตรวจสอบเอกสาร {filename} ({doc_type})"
 
-        # Load SVG logo
-        svg_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'svelte-app', 'public', 'spectra-favicon.svg')
+        # Load PNG logo (broad email client compatibility, with SVG fallback)
+        public_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'svelte-app', 'public')
+        png_path = os.path.join(public_dir, 'spectra-logo.png')
+        svg_path = os.path.join(public_dir, 'spectra-favicon.svg')
         logo_html = ''
         logo_part = None
         try:
-            if os.path.exists(svg_path):
+            if os.path.exists(png_path):
+                with open(png_path, 'rb') as f:
+                    logo_data = f.read()
+                logo_part = MIMEBase('image', 'png')
+                logo_part.set_payload(logo_data)
+                encoders.encode_base64(logo_part)
+                logo_part.add_header('Content-ID', '<spectra_logo>')
+                logo_part.add_header('Content-Disposition', 'inline', filename='spectra-logo.png')
+                logo_html = '<img src="cid:spectra_logo" alt="Spectra QA Logo" style="width: 42px; height: 42px; vertical-align: middle; margin-right: 12px; border-radius: 10px; border: 1px solid rgba(168, 85, 247, 0.35);">'
+            elif os.path.exists(svg_path):
                 with open(svg_path, 'rb') as f:
                     svg_data = f.read()
                 logo_part = MIMEBase('image', 'svg+xml')

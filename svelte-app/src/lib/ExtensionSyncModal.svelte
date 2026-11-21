@@ -5,28 +5,40 @@
 
   const dispatch = createEventDispatcher();
 
-  export var showModal = false;
-  export var projectId = null;
+  export let showModal = false;
+  export let projectId = null;
 
-  var isConnected = true;
-  var isLoading = false;
-  var isSyncingToRepo = false;
-  var selectedApi = null;
-  var activeTab = "response"; // 'response' | 'curl'
-  var apis = [];
-  var lastSyncTime = "";
-  var refreshTimer = null;
+  let isConnected = true;
+  let isLoading = false;
+  let isSyncingToRepo = false;
+  let selectedApi = null;
+  let activeTab = "response"; // 'response' | 'curl'
+  let apis = [];
+  let lastSyncTime = "";
+  let refreshTimer = null;
+  let wasOpen = false;
+  let lastFetchedProjectId = undefined;
 
-  // React to modal opening/closing
-  $: if (showModal) {
-    onModalOpen();
-  } else {
-    onModalClose();
+  // Single guarded reactive trigger to prevent duplicate fetches on open
+  $: {
+    if (showModal && !wasOpen) {
+      wasOpen = true;
+      lastFetchedProjectId = projectId;
+      onModalOpen();
+    } else if (!showModal && wasOpen) {
+      wasOpen = false;
+      lastFetchedProjectId = undefined;
+      onModalClose();
+    } else if (showModal && wasOpen && projectId !== lastFetchedProjectId) {
+      lastFetchedProjectId = projectId;
+      loadCapturedApis(true);
+    }
   }
 
-  // React to projectId changes while open
-  $: if (showModal && projectId) {
-    loadCapturedApis(true);
+  function handleWindowKeydown(e) {
+    if (showModal && e.key === "Escape") {
+      closeModal();
+    }
   }
 
   function onModalOpen() {
@@ -150,18 +162,26 @@
   }
 </script>
 
+<svelte:window on:keydown={handleWindowKeydown} />
+
 {#if showModal}
-<div class="modal-backdrop" transition:fade={{ duration: 200 }}>
-  <div class="modal-card glass-panel" in:scale={{ start: 0.9, duration: 250 }}>
+<div class="modal-backdrop" transition:fade={{ duration: 200 }} on:click|self={closeModal}>
+  <div
+    class="modal-card"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="ext-sync-title"
+    in:scale={{ start: 0.9, duration: 250 }}
+  >
     <div class="modal-header">
-      <div style="display: flex; align-items: center; gap: 10px;">
-        <span class="icon-wrap">🧩</span>
-        <div>
-          <h3 class="modal-title">Spectra Chrome Extension Live Inspector</h3>
+      <div class="modal-header-main">
+        <span class="icon-wrap" aria-hidden="true">🧩</span>
+        <div class="modal-header-copy">
+          <h3 id="ext-sync-title" class="modal-title">Spectra Chrome Extension Live Inspector</h3>
           <p class="modal-subtitle">ดึงข้อมูล Network Traffic, Response Body และ cURL Command จาก Chrome Extension</p>
         </div>
       </div>
-      <button class="close-btn" on:click={closeModal}>✕</button>
+      <button type="button" class="close-btn" aria-label="ปิดหน้าต่าง" on:click={closeModal}>✕</button>
     </div>
 
     <!-- Connection Status Banner -->
@@ -177,7 +197,7 @@
           LIVE CAPTURE: {apis.length} APIs
         {/if}
       </span>
-      <button class="btn-refresh-mini" title="รีเฟรชดึงข้อมูลล่าสุด" on:click={() => loadCapturedApis(false)}>
+      <button type="button" class="btn-refresh-mini" title="รีเฟรชดึงข้อมูลล่าสุด" on:click={() => loadCapturedApis(false)}>
         🔄 รีเฟรช
       </button>
     </div>
@@ -225,14 +245,14 @@
             </div>
           </div>
         </div>
-        <button class="btn-refresh-pulse" on:click={() => loadCapturedApis(false)}>
+        <button type="button" class="btn-refresh-pulse" on:click={() => loadCapturedApis(false)}>
           🔄 กดรีเฟรชตรวจสอบข้อมูลใหม่
         </button>
       </div>
     {:else}
       <!-- Live Captured List with Inspect & Copy Buttons -->
       <div class="api-list-wrap">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+        <div class="api-list-header">
           <div class="list-title">
             รายการ Network APIs ที่ดึงได้ล่าสุด ({apis.length} รายการ - คลิกเพื่อดู Response Body):
           </div>
@@ -242,15 +262,24 @@
         </div>
         <div class="api-list">
           {#each apis as api}
-            <div class="api-row" class:selected={selectedApi === api} on:click={() => selectedApi = api}>
-              <span class="method {api.method || 'GET'}">{api.method || 'GET'}</span>
+            {@const methodUpper = (api.method || 'GET').toUpperCase()}
+            {@const st = api.status || api.statusCode || 200}
+            <div
+              class="api-row"
+              class:selected={selectedApi === api}
+              role="button"
+              tabindex="0"
+              on:click={() => selectedApi = api}
+              on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectedApi = api; } }}
+            >
+              <span class="method {methodUpper}">{methodUpper}</span>
               <span class="path" title={api.url || api.path}>{api.path || api.url}</span>
               <span class="time">{api.time || ''}</span>
-              <span class="status" class:err={(api.status || api.statusCode) >= 400}>
-                {api.status || api.statusCode || 200} OK
+              <span class="status" class:err={st >= 400}>
+                {st}{st < 400 ? ' OK' : ' ERR'}
               </span>
               <div class="row-actions">
-                <button class="btn-row-copy" title="Copy cURL bash" on:click|stopPropagation={() => copyCurl(api)}>🐚 cURL</button>
+                <button type="button" class="btn-row-copy" title="Copy cURL bash" on:click|stopPropagation={() => copyCurl(api)}>🐚 cURL</button>
               </div>
             </div>
           {/each}
@@ -261,14 +290,14 @@
       {#if selectedApi}
         <div class="inspector-box">
           <div class="insp-header">
-            <span style="font-weight: bold; color: #a78bfa; font-size: 12px;">
-              Inspector: {selectedApi.method || 'GET'} {selectedApi.path || selectedApi.url}
+            <span class="insp-title" title="Inspector: {(selectedApi.method || 'GET').toUpperCase()} {selectedApi.path || selectedApi.url}">
+              Inspector: {(selectedApi.method || 'GET').toUpperCase()} {selectedApi.path || selectedApi.url}
             </span>
-            <div style="display: flex; gap: 6px;">
-              <button class="tab-sub-btn" class:active={activeTab === 'response'} on:click={() => activeTab = 'response'}>
+            <div class="insp-tabs">
+              <button type="button" class="tab-sub-btn" class:active={activeTab === 'response'} on:click={() => activeTab = 'response'}>
                 📄 Response Body
               </button>
-              <button class="tab-sub-btn" class:active={activeTab === 'curl'} on:click={() => activeTab = 'curl'}>
+              <button type="button" class="tab-sub-btn" class:active={activeTab === 'curl'} on:click={() => activeTab = 'curl'}>
                 🐚 cURL bash
               </button>
             </div>
@@ -276,9 +305,9 @@
 
           <pre class="insp-content">{activeTab === 'response' ? (selectedApi.responseBody || 'ไม่มี Response Body หรือเป็น Stream Request') : (selectedApi.curl || `curl -X ${selectedApi.method || 'GET'} "${selectedApi.url || selectedApi.path}"`)}</pre>
 
-          <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px;">
-            <button class="btn-sub-copy" on:click={() => copyCurl(selectedApi)}>🐚 Copy cURL (bash)</button>
-            <button class="btn-sub-copy" on:click={() => copyResponse(selectedApi)}>📋 Copy Response</button>
+          <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; flex-wrap: wrap;">
+            <button type="button" class="btn-sub-copy" on:click={() => copyCurl(selectedApi)}>🐚 Copy cURL (bash)</button>
+            <button type="button" class="btn-sub-copy" on:click={() => copyResponse(selectedApi)}>📋 Copy Response</button>
           </div>
         </div>
       {/if}
@@ -286,8 +315,8 @@
 
     <!-- Actions -->
     <div class="modal-actions" style="margin-top: 16px;">
-      <button class="btn-secondary" on:click={closeModal}>ปิด</button>
-      <button class="btn-primary" disabled={apis.length === 0 || isSyncingToRepo} on:click={syncExtensionData}>
+      <button type="button" class="btn-secondary" on:click={closeModal}>ปิด</button>
+      <button type="button" class="btn-primary" disabled={apis.length === 0 || isSyncingToRepo} on:click={syncExtensionData}>
         {#if isSyncingToRepo}
           ⏳ กำลังนำเข้า...
         {:else}
@@ -302,23 +331,39 @@
 <style>
   .modal-backdrop {
     position: fixed; inset: 0; background: rgba(0,0,0,0.8);
-    backdrop-filter: blur(8px); z-index: 9999;
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    z-index: var(--z-modal, 10000);
     display: flex; align-items: center; justify-content: center;
+    padding: 16px; overflow-y: auto;
   }
   .modal-card {
     background: rgba(15, 23, 42, 0.96);
     border: 1px solid rgba(139, 92, 246, 0.35);
     box-shadow: 0 25px 60px rgba(0,0,0,0.85), 0 0 30px rgba(139, 92, 246, 0.2);
-    border-radius: 16px; width: 95%; max-width: 720px; padding: 24px; color: white;
+    border-radius: 16px; width: 100%; max-width: 720px; padding: 24px; color: var(--text-main, #f8fafc);
+    max-height: 90vh; overflow-y: auto;
   }
-  .modal-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }
-  .icon-wrap { font-size: 28px; }
-  .modal-title { font-size: 18px; font-weight: 700; margin: 0; background: linear-gradient(135deg, #fff, #c084fc); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-  .modal-subtitle { font-size: 12px; color: #94a3b8; margin: 2px 0 0 0; }
-  .close-btn { background: transparent; border: none; color: #94a3b8; font-size: 16px; cursor: pointer; }
-  
+  .modal-header {
+    display: flex; justify-content: space-between; align-items: flex-start;
+    gap: 12px; flex-wrap: wrap; margin-bottom: 16px;
+  }
+  .modal-header-main {
+    display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1;
+  }
+  .modal-header-copy { min-width: 0; }
+  .icon-wrap { font-size: 28px; flex-shrink: 0; }
+  .modal-title { font-size: 18px; font-weight: 700; margin: 0; color: var(--text-main, #f8fafc); }
+  .modal-subtitle { font-size: 12px; color: var(--text-muted, #94a3b8); margin: 2px 0 0 0; }
+  .close-btn {
+    background: transparent; border: 1px solid transparent; color: var(--text-muted, #94a3b8);
+    font-size: 16px; cursor: pointer; width: 32px; height: 32px; border-radius: 8px;
+    display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+  }
+  .close-btn:hover { background: rgba(255,255,255,0.08); color: var(--text-main, #f8fafc); border-color: var(--glass-border-light); }
+
   .status-banner {
-    display: flex; align-items: center; gap: 8px; padding: 10px 14px;
+    display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 10px 14px;
     background: rgba(34, 197, 94, 0.1); border: 1px solid rgba(34, 197, 94, 0.3);
     border-radius: 8px; font-size: 12px; color: #4ade80; margin-bottom: 16px;
   }
@@ -329,14 +374,21 @@
     background: #ef4444; box-shadow: 0 0 8px #ef4444;
   }
   .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 8px #22c55e; flex-shrink: 0; }
-  .status-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .badge-live { background: rgba(139, 92, 246, 0.25); color: #c084fc; padding: 3px 8px; border-radius: 12px; font-weight: 600; font-size: 10px; border: 1px solid rgba(139, 92, 246, 0.4); }
-  .btn-refresh-mini { background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.2); color: #cbd5e1; padding: 3px 8px; border-radius: 6px; font-size: 10px; cursor: pointer; }
+  .status-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .badge-live {
+    background: rgba(139, 92, 246, 0.25); color: #c084fc; padding: 3px 8px; border-radius: 12px;
+    font-weight: 600; font-size: 10px; border: 1px solid rgba(139, 92, 246, 0.4);
+    flex-shrink: 0; white-space: nowrap;
+  }
+  .btn-refresh-mini {
+    background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.2); color: #cbd5e1;
+    padding: 3px 8px; border-radius: 6px; font-size: 10px; cursor: pointer;
+    flex-shrink: 0; white-space: nowrap;
+  }
   .btn-refresh-mini:hover { background: rgba(139, 92, 246, 0.3); color: white; }
 
-  .loading-box { text-align: center; padding: 36px 16px; color: #94a3b8; }
+  .loading-box { text-align: center; padding: 36px 16px; color: var(--text-muted, #94a3b8); }
   .spinner { width: 32px; height: 32px; border: 3px solid rgba(139, 92, 246, 0.2); border-top-color: #a855f7; border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 12px; }
-  @keyframes spin { to { transform: rotate(360deg); } }
 
   .empty-state-box {
     background: rgba(0,0,0,0.3); border: 1px dashed rgba(139, 92, 246, 0.3);
@@ -344,19 +396,20 @@
   }
   .empty-icon { font-size: 32px; margin-bottom: 8px; }
   .empty-title { font-size: 14px; font-weight: 600; color: #e2e8f0; margin: 0 0 6px 0; }
-  .empty-desc { font-size: 12px; color: #94a3b8; margin: 0 0 16px 0; }
+  .empty-desc { font-size: 12px; color: var(--text-muted, #94a3b8); margin: 0 0 16px 0; }
   .steps-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 18px; text-align: left; }
   .step-card {
-    background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 8px; padding: 10px 12px; display: flex; gap: 10px; align-items: flex-start;
+    background: rgba(15, 23, 42, 0.8); border: 1px solid var(--glass-border, rgba(255,255,255,0.08));
+    border-radius: 8px; padding: 10px 12px; display: flex; gap: 10px; align-items: flex-start; min-width: 0;
   }
   .step-badge {
     background: rgba(139, 92, 246, 0.25); color: #c084fc; border: 1px solid rgba(139, 92, 246, 0.5);
     width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
     font-size: 11px; font-weight: bold; flex-shrink: 0;
   }
+  .step-content { min-width: 0; }
   .step-content strong { display: block; font-size: 11.5px; color: #e2e8f0; margin-bottom: 2px; }
-  .step-content span { font-size: 10.5px; color: #94a3b8; line-height: 1.3; display: block; }
+  .step-content span { font-size: 10.5px; color: var(--text-muted, #94a3b8); line-height: 1.3; display: block; }
   .btn-refresh-pulse {
     background: linear-gradient(135deg, #7c3aed, #4f46e5); border: none; color: white;
     padding: 8px 16px; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer;
@@ -365,35 +418,68 @@
   .btn-refresh-pulse:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(124, 58, 237, 0.6); }
 
   .api-list-wrap { margin-bottom: 12px; }
+  .api-list-header {
+    display: flex; justify-content: space-between; align-items: center;
+    flex-wrap: wrap; gap: 6px; margin-bottom: 8px;
+  }
   .list-title { font-size: 12px; color: #cbd5e1; font-weight: 600; }
-  .last-sync-time { font-size: 10px; color: #94a3b8; }
-  .api-list { max-height: 200px; overflow-y: auto; background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; }
+  .last-sync-time { font-size: 10px; color: var(--text-muted, #94a3b8); }
+  .api-list { max-height: 200px; overflow-y: auto; background: rgba(0,0,0,0.4); border: 1px solid var(--glass-border, rgba(255,255,255,0.08)); border-radius: 8px; }
   .api-row { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 12px; cursor: pointer; transition: background 0.15s; }
   .api-row:hover, .api-row.selected { background: rgba(139, 92, 246, 0.18); }
-  .method { font-weight: bold; font-size: 10px; padding: 2px 6px; border-radius: 4px; }
+  .api-row:focus-visible { outline: 2px solid var(--primary, #6366f1); outline-offset: -2px; }
+  .method { font-weight: bold; font-size: 10px; padding: 2px 6px; border-radius: 4px; flex-shrink: 0; white-space: nowrap; }
   .method.GET { background: rgba(59, 130, 246, 0.2); color: #60a5fa; }
   .method.POST { background: rgba(34, 197, 94, 0.2); color: #4ade80; }
   .method.PUT { background: rgba(245, 158, 11, 0.2); color: #fbbf24; }
   .method.DELETE { background: rgba(239, 68, 68, 0.2); color: #f87171; }
   .method.PATCH { background: rgba(168, 85, 247, 0.2); color: #c084fc; }
-  .path { flex: 1; font-family: monospace; color: #a78bfa; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .time { color: #64748b; font-size: 11px; }
-  .status { color: #4ade80; font-weight: 600; font-size: 11px; }
+  .path { flex: 1; min-width: 0; font-family: monospace; color: #a78bfa; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .time { color: var(--text-dim, #8494aa); font-size: 11px; flex-shrink: 0; white-space: nowrap; }
+  .status { color: #4ade80; font-weight: 600; font-size: 11px; flex-shrink: 0; white-space: nowrap; }
   .status.err { color: #f87171; }
-  .row-actions { display: flex; gap: 4px; }
-  .btn-row-copy { background: rgba(168, 85, 247, 0.2); border: 1px solid rgba(168, 85, 247, 0.4); color: #c084fc; padding: 2px 8px; border-radius: 4px; font-size: 10px; cursor: pointer; }
+  .row-actions { display: flex; gap: 4px; flex-shrink: 0; white-space: nowrap; }
+  .btn-row-copy { background: rgba(168, 85, 247, 0.2); border: 1px solid rgba(168, 85, 247, 0.4); color: #c084fc; padding: 2px 8px; border-radius: 4px; font-size: 10px; cursor: pointer; flex-shrink: 0; white-space: nowrap; }
   .btn-row-copy:hover { background: rgba(168, 85, 247, 0.4); color: white; }
 
   .inspector-box { background: rgba(0,0,0,0.5); border: 1px solid rgba(139, 92, 246, 0.3); border-radius: 8px; padding: 12px; margin-top: 10px; }
-  .insp-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
-  .tab-sub-btn { background: transparent; border: 1px solid rgba(255,255,255,0.1); color: #94a3b8; padding: 3px 8px; border-radius: 4px; font-size: 11px; cursor: pointer; }
+  .insp-header { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+  .insp-title {
+    font-weight: 700; color: #a78bfa; font-size: 12px;
+    flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .insp-tabs { display: flex; gap: 6px; flex-shrink: 0; }
+  .tab-sub-btn {
+    background: transparent; border: 1px solid rgba(255,255,255,0.1); color: var(--text-muted, #94a3b8);
+    padding: 3px 8px; border-radius: 4px; font-size: 11px; cursor: pointer;
+    flex-shrink: 0; white-space: nowrap;
+  }
   .tab-sub-btn.active { background: rgba(139, 92, 246, 0.25); border-color: #8b5cf6; color: white; }
   .insp-content { font-family: monospace; font-size: 11px; color: #cbd5e1; background: rgba(0,0,0,0.4); padding: 10px; border-radius: 6px; max-height: 140px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; margin: 0; }
   .btn-sub-copy { background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); color: white; padding: 4px 10px; border-radius: 6px; font-size: 11px; cursor: pointer; }
   .btn-sub-copy:hover { background: rgba(139, 92, 246, 0.3); }
 
-  .modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
-  .btn-secondary { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: white; padding: 8px 16px; border-radius: 8px; cursor: pointer; }
-  .btn-primary { background: linear-gradient(135deg, #8b5cf6, #6d28d9); border: none; color: white; padding: 8px 18px; border-radius: 8px; font-weight: 600; cursor: pointer; }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
+  .btn-secondary {
+    background: rgba(255,255,255,0.05); border: 1px solid var(--glass-border-light, rgba(255,255,255,0.15));
+    color: var(--text-main, #f8fafc); height: 38px; padding: 0 16px;
+    border-radius: var(--radius-sm, 8px); font-size: 13px; font-weight: 500;
+    cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .btn-secondary:hover { background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.28); }
+  .btn-primary {
+    background: linear-gradient(135deg, #8b5cf6, #6d28d9); border: none;
+    color: var(--text-main, #f8fafc); height: 38px; padding: 0 18px;
+    border-radius: var(--radius-sm, 8px); font-size: 13px; font-weight: 600;
+    cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    transition: filter 0.15s;
+  }
+  .btn-primary:hover:not(:disabled) { filter: brightness(1.08); }
   .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  @media (max-width: 640px) {
+    .steps-grid { grid-template-columns: 1fr; }
+    .modal-card { padding: 18px; }
+  }
 </style>

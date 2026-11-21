@@ -20,6 +20,7 @@
   let menuTop = 0;
   let menuLeft = 0;
   let menuWidth = 0;
+  let menuMaxHeight = 260;
   let dropUp = false;
 
   $: normalizedOptions = options.map(opt => {
@@ -50,7 +51,7 @@
     const spaceAbove = rect.top;
     const estimatedMenuHeight = Math.min(normalizedOptions.length * 40 + 16, 260);
 
-    let calculatedWidth = Math.max(rect.width, 140);
+    let calculatedWidth = Math.min(Math.max(rect.width, 140), window.innerWidth - 24);
     let calculatedLeft = rect.left;
 
     if (calculatedLeft + calculatedWidth > window.innerWidth - 12) {
@@ -66,9 +67,11 @@
     if (spaceBelow < estimatedMenuHeight && spaceAbove > spaceBelow) {
       dropUp = true;
       menuTop = rect.top - 6;
+      menuMaxHeight = Math.max(120, Math.min(260, spaceAbove - 12));
     } else {
       dropUp = false;
       menuTop = rect.bottom + 6;
+      menuMaxHeight = Math.max(120, Math.min(260, spaceBelow - 12));
     }
   }
 
@@ -161,12 +164,12 @@
   class:disabled 
   class:is-open={isOpen}
   style="width: {width}; min-width: {minWidth};"
-  {id}
 >
   <button 
     bind:this={triggerEl}
     type="button" 
     class="select-trigger-btn" 
+    {id}
     on:click={toggleOpen}
     on:keydown={handleKeydown}
     {disabled}
@@ -192,7 +195,7 @@
       bind:this={menuEl}
       class="custom-dropdown-menu" 
       class:drop-up={dropUp}
-      style="position: fixed; top: {menuTop}px; left: {menuLeft}px; width: {menuWidth}px; min-width: {minWidth}; z-index: 999999;"
+      style="position: fixed; top: {menuTop}px; left: {menuLeft}px; width: {menuWidth}px; max-height: {menuMaxHeight}px; z-index: var(--z-portal, 10500);"
       role="listbox"
     >
       {#each normalizedOptions as opt, idx}
@@ -238,6 +241,7 @@
 
   .select-trigger-btn {
     width: 100%;
+    min-height: 40px;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -248,7 +252,7 @@
     border: 1px solid rgba(168, 85, 247, 0.35);
     border-radius: 12px;
     color: #f8fafc;
-    padding: 9px 14px;
+    padding: 8px 14px;
     font-size: 13.5px;
     font-weight: 500;
     font-family: inherit;
@@ -257,8 +261,8 @@
     transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   }
 
-  .size-sm .select-trigger-btn { padding: 6px 10px; font-size: 12.5px; border-radius: 8px; }
-  .size-lg .select-trigger-btn { padding: 12px 18px; font-size: 15px; border-radius: 14px; }
+  .size-sm .select-trigger-btn { min-height: 34px; padding: 5px 10px; font-size: 12.5px; border-radius: 8px; }
+  .size-lg .select-trigger-btn { min-height: 46px; padding: 11px 18px; font-size: 15px; border-radius: 14px; }
 
   .select-trigger-btn:hover:not(:disabled) {
     border-color: rgba(168, 85, 247, 0.75);
@@ -276,13 +280,26 @@
     display: flex;
     align-items: center;
     gap: 8px;
+    flex: 1;
+    min-width: 0;
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
   }
 
+  .opt-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .opt-placeholder {
     color: #94a3b8;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .chevron-icon {
@@ -305,9 +322,11 @@
     border: 1px solid rgba(168, 85, 247, 0.4) !important;
     border-radius: 12px;
     box-shadow: 0 16px 40px rgba(0, 0, 0, 0.88), 0 0 25px rgba(168, 85, 247, 0.25);
-    z-index: 999999 !important;
+    z-index: var(--z-portal, 10500);
     max-height: 260px;
+    max-width: calc(100vw - 24px);
     overflow-y: auto;
+    overflow-x: hidden;
     padding: 6px;
     box-sizing: border-box;
     animation: dropdownFadeIn 0.18s cubic-bezier(0.16, 1, 0.3, 1);

@@ -70,6 +70,7 @@
             type="button"
             class="filter-pill"
             class:selected={statusFilter === 'all'}
+            aria-pressed={statusFilter === 'all'}
             on:click={() => (statusFilter = 'all')}
           >
             ทั้งหมด <span class="pill-count">{allowedProjects.length}</span>
@@ -78,6 +79,7 @@
             type="button"
             class="filter-pill"
             class:selected={statusFilter === 'Active'}
+            aria-pressed={statusFilter === 'Active'}
             on:click={() => (statusFilter = 'Active')}
           >
             <span class="dot active-dot" aria-hidden="true"></span>
@@ -88,6 +90,7 @@
               type="button"
               class="filter-pill"
               class:selected={statusFilter === 'Inactive'}
+              aria-pressed={statusFilter === 'Inactive'}
               on:click={() => (statusFilter = 'Inactive')}
             >
               <span class="dot inactive-dot" aria-hidden="true"></span>
@@ -99,7 +102,7 @@
     {/if}
   </header>
 
-  <div class="project-grid">
+  <div class="project-grid" class:is-sparse={filteredProjects.length > 0 && filteredProjects.length <= 2}>
     {#if allowedProjects.length === 0}
       <div class="empty-state">
         <svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
@@ -110,7 +113,13 @@
       </div>
     {:else if filteredProjects.length === 0}
       <div class="empty-state">
-        <div class="empty-title">ไม่พบโครงการที่ตรงกับการค้นหา "{searchQuery}"</div>
+        <div class="empty-title">
+          {#if searchQuery.trim()}
+            ไม่พบโครงการที่ตรงกับการค้นหา "{searchQuery.trim()}"
+          {:else}
+            ไม่พบโครงการในสถานะที่เลือก
+          {/if}
+        </div>
         <button type="button" class="reset-filter-btn" on:click={() => { searchQuery = ""; statusFilter = "all"; }}>
           แสดงโครงการทั้งหมด
         </button>
@@ -204,11 +213,11 @@
   }
 
   .deck-header h2 {
-    font-family: var(--font-en, 'Outfit', sans-serif);
+    font-family: var(--font-th, 'Prompt', sans-serif);
     font-size: clamp(28px, 3vw, 36px);
     font-weight: 700;
     letter-spacing: -0.02em;
-    line-height: 1.2;
+    line-height: 1.25;
     margin: 0 0 10px;
     color: var(--text-main, #f8fafc);
   }
@@ -237,12 +246,15 @@
     position: relative;
     flex: 1 1 300px;
     max-width: 420px;
+    min-height: var(--control-height, 40px);
+    height: var(--control-height, 40px);
     display: flex;
     align-items: center;
     background: rgba(10, 11, 18, 0.65);
     border: 1px solid var(--glass-border-light, rgba(255, 255, 255, 0.15));
     border-radius: var(--radius-md, 12px);
     overflow: hidden;
+    box-sizing: border-box;
     transition: border-color 0.25s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.25s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
@@ -254,7 +266,7 @@
   .search-icon {
     position: absolute;
     left: 14px;
-    color: var(--text-dim, #475569);
+    color: var(--text-dim, #8494aa);
     pointer-events: none;
     transition: color 0.22s ease;
   }
@@ -265,24 +277,27 @@
 
   .deck-search input {
     width: 100%;
+    height: 100%;
+    min-width: 0;
     background: transparent;
     border: none;
     outline: none;
     color: var(--text-main, #f8fafc);
     font-family: var(--font-th, 'Prompt', sans-serif);
     font-size: 13.5px;
-    padding: 10px 36px 10px 40px;
+    padding: 0 40px 0 40px;
+    box-sizing: border-box;
   }
 
   .deck-search input::placeholder {
-    color: var(--text-dim, #475569);
+    color: var(--text-dim, #8494aa);
   }
 
   .clear-search-btn {
     position: absolute;
-    right: 8px;
-    width: 24px;
-    height: 24px;
+    right: 6px;
+    width: 28px;
+    height: 28px;
     border-radius: 6px;
     border: none;
     background: transparent;
@@ -291,7 +306,8 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    font-size: 11px;
+    flex-shrink: 0;
+    font-size: 12px;
   }
 
   .clear-search-btn:hover {
@@ -319,27 +335,32 @@
   .status-filter-group {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    flex-wrap: wrap;
+    gap: 4px;
+    min-height: var(--control-height, 40px);
     padding: 4px;
     background: rgba(10, 11, 18, 0.65);
     border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.08));
     border-radius: var(--radius-md, 12px);
+    box-sizing: border-box;
   }
 
   .filter-pill {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    padding: 6px 12px;
+    min-height: 30px;
+    padding: 4px 12px;
     border-radius: var(--radius-sm, 8px);
     border: 1px solid transparent;
     background: transparent;
     color: var(--text-muted, #94a3b8);
-    font-family: var(--font-en, 'Outfit', sans-serif);
+    font-family: var(--font-th, 'Prompt', sans-serif);
     font-size: 12.5px;
     font-weight: 600;
     cursor: pointer;
-    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    flex-shrink: 0;
+    transition: color 0.2s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.2s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   .filter-pill:hover {
@@ -354,6 +375,7 @@
   }
 
   .pill-count {
+    font-family: var(--font-en, 'Outfit', sans-serif);
     font-size: 11px;
     padding: 1px 6px;
     border-radius: 10px;
@@ -365,6 +387,7 @@
     width: 6px;
     height: 6px;
     border-radius: 50%;
+    flex-shrink: 0;
   }
 
   .active-dot {
@@ -379,10 +402,15 @@
   /* ── Project Cards Grid ── */
   .project-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr));
     gap: 20px;
     width: 100%;
     max-width: 100%;
+  }
+
+  .project-grid.is-sparse {
+    grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 420px));
+    justify-content: center;
   }
 
   .project-card {
@@ -399,6 +427,7 @@
     backdrop-filter: blur(16px);
     -webkit-backdrop-filter: blur(16px);
     width: 100%;
+    min-width: 0;
     box-sizing: border-box;
     display: flex;
     flex-direction: column;
@@ -555,6 +584,7 @@
     border-radius: 50%;
     background: currentColor;
     box-shadow: 0 0 8px currentColor;
+    flex-shrink: 0;
   }
 
   /* ── Project Title & Description ── */
@@ -566,6 +596,8 @@
     margin: 0;
     line-height: 1.35;
     letter-spacing: -0.01em;
+    overflow-wrap: break-word;
+    word-break: break-word;
     position: relative;
     z-index: 1;
   }
@@ -596,7 +628,7 @@
   }
 
   .empty-desc {
-    color: var(--text-dim, #475569);
+    color: var(--text-dim, #8494aa);
     font-style: italic;
   }
 
@@ -635,6 +667,7 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    flex-shrink: 0;
     transition: transform 0.26s cubic-bezier(0.16, 1, 0.3, 1),
                 background-color 0.26s ease,
                 border-color 0.26s ease,
@@ -702,9 +735,10 @@
 
   @media (max-width: 640px) {
     .project-selection-wrapper {
-      padding: 20px 14px 48px;
+      padding: 12px 0 40px;
     }
-    .project-grid {
+    .project-grid,
+    .project-grid.is-sparse {
       grid-template-columns: 1fr;
     }
     .deck-toolbar {
@@ -713,6 +747,8 @@
     }
     .deck-search {
       max-width: none;
+      flex: none;
+      width: 100%;
     }
     .status-filter-group {
       justify-content: center;

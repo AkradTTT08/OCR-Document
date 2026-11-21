@@ -1,4 +1,5 @@
 <script>
+    import { onDestroy } from 'svelte';
     import { login } from './authStore.js';
     import { toast } from './toastStore.js';
     import LegalModal from "./LegalModal.svelte";
@@ -10,6 +11,25 @@
     let isLoading = false;
     let legalModalType = null;
     let shakeCard = false;
+    let lockoutSeconds = 0;
+    let lockoutTimer = null;
+
+    function startLockoutCountdown(seconds) {
+        if (lockoutTimer) clearInterval(lockoutTimer);
+        lockoutSeconds = Math.max(1, Math.ceil(Number(seconds) || 30));
+        lockoutTimer = setInterval(() => {
+            lockoutSeconds -= 1;
+            if (lockoutSeconds <= 0) {
+                lockoutSeconds = 0;
+                clearInterval(lockoutTimer);
+                lockoutTimer = null;
+            }
+        }, 1000);
+    }
+
+    onDestroy(() => {
+        if (lockoutTimer) clearInterval(lockoutTimer);
+    });
 
     function triggerShake() {
         shakeCard = false;
@@ -19,21 +39,32 @@
         });
     }
     
-    // Generate random light particles for the background
-    const particles = Array.from({ length: 40 }, (_, i) => ({
+    // Generate lightweight ambient light particles for the background
+    const particles = Array.from({ length: 16 }, (_, i) => ({
         id: i,
         left: Math.random() * 100,
         top: Math.random() * 100,
-        size: Math.random() * 3 + 1,
-        duration: Math.random() * 15 + 15,
-        delay: Math.random() * 10,
-        drift: (Math.random() - 0.5) * 100
+        size: Math.random() * 2.5 + 1.5,
+        duration: Math.random() * 16 + 16,
+        delay: Math.random() * 12,
+        drift: (Math.random() - 0.5) * 80
     }));
 
     async function handleLogin() {
-        if (!email || !password) {
+        if (lockoutSeconds > 0) {
             triggerShake();
-            toast('กรุณากรอก Email และ Password', 'warning');
+            toast(`กรุณารอ ${lockoutSeconds} วินาทีก่อนลองเข้าสู่ระบบใหม่อีกครั้ง`, 'warning');
+            return;
+        }
+        const loginId = email.trim();
+        if (!loginId || !password) {
+            triggerShake();
+            toast('กรุณากรอก Email / Username และ Password', 'warning');
+            return;
+        }
+        if (password.length > 72) {
+            triggerShake();
+            toast('รหัสผ่านมีความยาวเกินกำหนด (สูงสุด 72 ตัวอักษร)', 'warning');
             return;
         }
 
@@ -42,23 +73,31 @@
             const res = await (window.originalFetch || window.fetch)('/api/login', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username: email, password })
+                body: JSON.stringify({ username: loginId, email: loginId, password })
             });
 
-            const data = await res.json();
+            const data = await res.json().catch(() => ({}));
             
             if (res.ok && data.success) {
                 if (remember) {
-                    localStorage.setItem('remembered_email', email);
+                    localStorage.setItem('remembered_email', loginId);
                 } else {
                     localStorage.removeItem('remembered_email');
                 }
-                const userEmail = data.email || (data.user && data.user.includes('@') ? data.user : '') || (email && email.includes('@') ? email : '');
+                password = '';
+                const userEmail = data.email || (data.user && data.user.includes('@') ? data.user : '') || (loginId.includes('@') ? loginId : '');
                 login(data.token, data.user, data.role, data.display_name, data.avatar_path, data.allowed_menus, data.allowed_projects, userEmail);
                 toast(`เข้าสู่ระบบสำเร็จ! ยินดีต้อนรับ ${data.display_name || data.user}`, 'success');
-            } else {
+            } else if (res.status === 429) {
+                password = '';
                 triggerShake();
-                toast(data.error || 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง', 'error');
+                const retrySec = data.retry_after || parseInt(res.headers.get('Retry-After') || '60', 10);
+                startLockoutCountdown(retrySec);
+                toast(data.error || `พยายามเข้าสู่ระบบผิดหลายครั้ง กรุณารอ ${retrySec} วินาที`, 'warning');
+            } else {
+                password = '';
+                triggerShake();
+                toast(data.error || 'อีเมล/ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง', 'error');
             }
         } catch (err) {
             triggerShake();
@@ -81,8 +120,8 @@
             <div class="brand-content">
                 <h3 class="welcome-text">Welcome to QA Agent</h3>
                 
-                <div class="logo-square" style="padding: 10px;">
-                    <img src="/spectra-favicon.svg" alt="Spectra QA Logo" style="width: 100%; height: 100%; object-fit: contain; border-radius: 12px;" />
+                <div class="logo-square">
+                    <img src="/spectra-logo.png" alt="Spectra QA Logo" />
                 </div>
                 
                 <h1 class="brand-title">Spectra QA</h1>
@@ -122,13 +161,13 @@
                 <form on:submit|preventDefault={handleLogin}>
                     
                     <div class="input-group stagger-1" class:has-value={email.trim().length > 0}>
-                        <label for="email">E-mail Address</label>
+                        <label for="email">E-mail Address / Username</label>
                         <div class="input-with-icon">
                             <svg class="field-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                                 <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
                                 <polyline points="22,6 12,13 2,6"></polyline>
                             </svg>
-                            <input type="text" id="email" bind:value={email} placeholder="admin@domain.com" autocomplete="email" />
+                            <input type="text" id="email" bind:value={email} maxlength="254" placeholder="admin@domain.com หรือ username" autocomplete="username" />
                             <span class="focus-beam" aria-hidden="true"></span>
                             <span class="valid-dot" aria-hidden="true"></span>
                         </div>
@@ -141,7 +180,7 @@
                                 <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
                                 <path class="lock-shackle" d="M7 11V7a5 5 0 0 1 10 0v4"></path>
                             </svg>
-                            <input type={showPassword ? "text" : "password"} id="password" bind:value={password} placeholder="••••••••" autocomplete="current-password" />
+                            <input type={showPassword ? "text" : "password"} id="password" bind:value={password} maxlength="72" placeholder="••••••••" autocomplete="current-password" />
                             <span class="focus-beam" aria-hidden="true"></span>
                             <button type="button" class="eye-btn" class:active={showPassword} aria-label={showPassword ? 'ซ่อนรหัสผ่าน' : 'แสดงรหัสผ่าน'} on:click={() => showPassword = !showPassword}>
                                 {#if showPassword}
@@ -166,9 +205,11 @@
                     </div>
                     
                     <div class="action-buttons stagger-4">
-                        <button type="submit" disabled={isLoading} class="btn-primary">
+                        <button type="submit" disabled={isLoading || lockoutSeconds > 0} class="btn-primary">
                             {#if isLoading}
                                 <span class="spinner"></span> กำลังเข้าสู่ระบบ...
+                            {:else if lockoutSeconds > 0}
+                                รอสักครู่ ({lockoutSeconds}s)...
                             {:else}
                                 เข้าสู่ระบบ
                             {/if}
@@ -180,7 +221,9 @@
             
             <div class="form-footer">
                 &copy; {new Date().getFullYear()} Spectra QA System. All rights reserved. <br/>
-                <a href="#" on:click|preventDefault={() => legalModalType = 'privacy'}>Privacy Policy</a> &middot; <a href="#" on:click|preventDefault={() => legalModalType = 'terms'}>Terms of Service</a> &middot; <a href="#" on:click|preventDefault={() => legalModalType = 'security'}>Security Architecture</a>
+                <button type="button" class="legal-link-btn" on:click={() => legalModalType = 'privacy'}>Privacy Policy</button> &middot;
+                <button type="button" class="legal-link-btn" on:click={() => legalModalType = 'terms'}>Terms of Service</button> &middot;
+                <button type="button" class="legal-link-btn" on:click={() => legalModalType = 'security'}>Security Architecture</button>
             </div>
         </div>
 
@@ -200,42 +243,25 @@
         overflow: hidden;
     }
 
-    /* ── Animated Spectrum Background ── */
+    /* ── Static Obsidian / Neon Ambient Background ── */
     .spectrum-bg {
         position: absolute;
-        width: 150vw;
-        height: 150vh;
-        top: -25vh;
-        left: -25vw;
-        background: conic-gradient(
-            from 180deg at 50% 50%,
-            var(--bg-dark) 0deg,
-            var(--danger) 60deg,
-            var(--warning) 120deg,
-            var(--success) 180deg,
-            var(--primary) 240deg,
-            var(--secondary) 300deg,
-            var(--bg-dark) 360deg
-        );
-        filter: blur(140px);
-        opacity: 0.15;
-        animation: spin 30s linear infinite;
+        inset: 0;
+        background:
+            radial-gradient(circle at 20% 28%, rgba(99, 102, 241, 0.18) 0%, transparent 48%),
+            radial-gradient(circle at 80% 72%, rgba(168, 85, 247, 0.16) 0%, transparent 48%),
+            radial-gradient(circle at 50% 50%, rgba(6, 182, 212, 0.08) 0%, transparent 60%);
         z-index: 1;
         pointer-events: none;
     }
     
     .spectrum-bg.layer-2 {
-        background: radial-gradient(circle at 70% 30%, rgba(99, 102, 241, 0.25), transparent 40%),
-                    radial-gradient(circle at 30% 70%, rgba(168, 85, 247, 0.25), transparent 40%);
-        filter: blur(90px);
-        opacity: 0.6;
-        animation: pulse 15s ease-in-out infinite alternate;
+        background:
+            radial-gradient(circle at 72% 24%, rgba(99, 102, 241, 0.14), transparent 42%),
+            radial-gradient(circle at 26% 78%, rgba(168, 85, 247, 0.14), transparent 42%);
         z-index: 2;
         pointer-events: none;
     }
-
-    @keyframes spin { 100% { transform: rotate(360deg); } }
-    @keyframes pulse { 0% { transform: scale(1); } 100% { transform: scale(1.1); } }
 
     /* ── Split Layout ── */
     .split-layout {
@@ -248,12 +274,16 @@
 
     /* ── Left Branding Panel ── */
     .brand-panel {
+        position: relative;
         flex: 1;
+        min-width: 0;
         display: flex;
+        flex-direction: column;
         align-items: center;
-        justify-content: center;
+        justify-content: flex-start;
         padding: 40px;
         color: var(--text-main);
+        overflow-y: auto;
     }
 
     .brand-content {
@@ -261,7 +291,9 @@
         flex-direction: column;
         align-items: center;
         text-align: center;
+        width: 100%;
         max-width: 650px;
+        min-height: 100%;
     }
 
     @keyframes riseIn {
@@ -284,13 +316,13 @@
 
     .welcome-text {
         font-family: var(--font-en);
-        font-size: clamp(32px, 4vw, 56px);
+        font-size: clamp(26px, 3.6vw, 52px);
         font-weight: 800;
-        margin-bottom: 40px;
+        margin-top: auto;
+        margin-bottom: 36px;
         color: var(--text-main);
         letter-spacing: -0.5px;
-        line-height: 1.1;
-        white-space: nowrap;
+        line-height: 1.15;
         animation: riseIn 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
     }
 
@@ -298,18 +330,26 @@
         position: relative;
         width: 140px;
         height: 140px;
-        background: var(--glass-bg);
+        padding: 0;
+        background: #080912;
         border: 1px solid var(--glass-border-light);
         border-radius: var(--radius-xl);
         display: flex;
         align-items: center;
         justify-content: center;
         margin-bottom: 30px;
-        box-shadow: 0 0 40px var(--primary-glow),
+        box-shadow: 0 12px 40px rgba(99, 102, 241, 0.35),
                     inset 0 0 20px rgba(255, 255, 255, 0.05);
-        backdrop-filter: var(--glass-blur);
         animation: cardReveal 0.6s 0.08s cubic-bezier(0.22, 1, 0.36, 1) both,
                    float 5.5s 0.7s ease-in-out infinite;
+    }
+
+    .logo-square img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        border-radius: inherit;
+        display: block;
     }
 
     @property --prism-angle {
@@ -390,8 +430,9 @@
     }
     
     .footer-text {
-        position: absolute;
-        bottom: 40px;
+        position: static;
+        margin-top: auto;
+        padding-top: 28px;
         font-family: var(--font-en);
         font-size: 12px;
         font-weight: 600;
@@ -408,15 +449,18 @@
     .form-panel {
         position: relative;
         flex: 1;
+        min-width: 0;
         display: flex;
+        flex-direction: column;
         align-items: center;
-        justify-content: center;
-        padding: 40px;
+        justify-content: flex-start;
+        padding: 36px 40px;
         background: var(--glass-bg);
         backdrop-filter: var(--glass-blur);
         border-left: 1px solid var(--glass-border);
         box-shadow: -20px 0 50px rgba(0, 0, 0, 0.4);
-        overflow: hidden;
+        overflow-x: hidden;
+        overflow-y: auto;
     }
 
     /* ── Light Particles ── */
@@ -447,10 +491,12 @@
     .glass-card {
         width: 100%;
         max-width: 480px;
+        flex-shrink: 0;
+        margin-top: auto;
         background: rgba(10, 11, 18, 0.65);
         border: 1px solid var(--glass-border-light);
         border-radius: var(--radius-xl);
-        padding: 50px;
+        padding: 46px 48px;
         box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.6);
         position: relative;
         z-index: 10;
@@ -480,24 +526,33 @@
     .stagger-4 { animation: riseIn 0.45s 0.30s cubic-bezier(0.22, 1, 0.36, 1) both; }
     
     .form-footer {
-        position: absolute;
-        bottom: 30px;
+        position: static;
+        flex-shrink: 0;
+        z-index: 10;
+        margin-top: 24px;
+        margin-bottom: auto;
         text-align: center;
         width: 100%;
         font-size: 12px;
         color: var(--text-dim);
-        line-height: 1.6;
+        line-height: 1.7;
         font-family: var(--font-en);
     }
     
-    .form-footer a {
+    .legal-link-btn {
+        background: none;
+        border: none;
+        padding: 0;
+        font: inherit;
         color: var(--text-muted);
+        cursor: pointer;
         text-decoration: none;
         transition: color 0.2s;
     }
     
-    .form-footer a:hover {
+    .legal-link-btn:hover {
         color: var(--primary);
+        text-decoration: underline;
     }
 
     .form-title {
@@ -716,6 +771,7 @@
     }
 
     .checkbox-container {
+        position: relative;
         display: inline-flex;
         align-items: center;
         gap: 12px;
@@ -858,8 +914,12 @@
         .brand-panel {
             flex: none;
             padding: 36px 20px 20px;
+            overflow-y: visible;
         }
-        .welcome-text { font-size: 28px; margin-bottom: 20px; white-space: normal; }
+        .brand-content {
+            min-height: auto;
+        }
+        .welcome-text { font-size: 28px; margin-top: 0; margin-bottom: 20px; white-space: normal; }
         .brand-title { font-size: 32px; }
         .logo-square { width: 96px; height: 96px; margin-bottom: 18px; border-radius: 20px; }
         .logo-square img { width: 64px; height: 64px; }
@@ -871,18 +931,23 @@
             flex-direction: column;
             border-left: none;
             border-top: 1px solid var(--glass-border);
+            overflow-y: visible;
         }
         .glass-card {
+            margin-top: 0;
             padding: 36px 24px;
         }
         .form-footer {
-            position: relative;
-            bottom: auto;
+            position: static;
             margin-top: 24px;
+            margin-bottom: 0;
         }
     }
 
     @media (prefers-reduced-motion: reduce) {
+        .particles-container {
+            display: none;
+        }
         .particle,
         .logo-square,
         .logo-square::before,

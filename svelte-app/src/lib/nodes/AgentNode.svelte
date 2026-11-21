@@ -30,7 +30,7 @@
 <div class="custom-node agent-node">
   <Handle type="target" position={Position.Left} isConnectable={true} />
   <div class="node-header">
-    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M8 14s1.5 2 4 2 4-2 4-2"></path><line x1="9" y1="9" x2="9.01" y2="9"></line><line x1="15" y1="9" x2="15.01" y2="9"></line></svg>
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M8 14s1.5 2 4 2 4-2 4-2"></path><line x1="9" y1="9" x2="9.01" y2="9"></line><line x1="15" y1="9" x2="15.01" y2="9"></line></svg>
     <span>AI Agent</span>
     <button type="button" class="delete-btn" aria-label="ลบ Node นี้" on:click|stopPropagation={deleteNode} title="ลบ Card นี้">✕</button>
   </div>
@@ -144,12 +144,15 @@
     box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
   }
   select {
+    flex: 1;
+    min-width: 0;
     width: 100%;
+    height: 34px;
     background: #0f111a;
     border: 1px solid #3f3f46;
     color: #e5e7eb;
     border-radius: 6px;
-    padding: 6px 24px 6px 8px; /* space for arrow */
+    padding: 0 26px 0 8px;
     font-size: 12px;
     font-weight: 500;
     appearance: none;
@@ -165,7 +168,8 @@
   select:hover {
     border-color: #6366f1;
   }
-  select:focus {
+  select:focus,
+  select:focus-visible {
     border-color: #6366f1;
     box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
   }
@@ -175,15 +179,17 @@
   }
   .agent-select-row {
     display: flex;
-    gap: 8px;
+    gap: 6px;
     align-items: center;
   }
   .btn-config {
+    flex-shrink: 0;
+    height: 34px;
     background: #374151;
     border: 1px solid #4b5563;
     color: white;
     border-radius: 6px;
-    padding: 6px 10px;
+    padding: 0 10px;
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -207,41 +213,47 @@
     background: #0f111a;
     border: 1px solid #3f3f46;
     color: white;
-    border-radius: 4px;
+    border-radius: 6px;
     padding: 8px;
-    font-size: 11px;
+    font-size: 11.5px;
     resize: vertical;
     outline: none;
     transition: all 0.2s;
   }
-  .config-area textarea:focus {
+  .config-area textarea:focus,
+  .config-area textarea:focus-visible {
     border-color: #6366f1;
     box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
   }
   .config-area .config-input {
     width: 100%;
+    min-width: 0;
+    height: 32px;
     background: #0f111a;
     border: 1px solid #3f3f46;
     color: white;
-    border-radius: 4px;
-    padding: 8px;
-    font-size: 11px;
+    border-radius: 6px;
+    padding: 0 8px;
+    font-size: 11.5px;
     outline: none;
     transition: all 0.2s;
     margin-bottom: 8px;
   }
-  .config-area .config-input:focus {
+  .config-area .config-input:focus,
+  .config-area .config-input:focus-visible {
     border-color: #6366f1;
     box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
   }
   .config-area .config-select {
     width: 100%;
+    min-width: 0;
+    height: 32px;
     background: #0f111a;
     border: 1px solid #3f3f46;
     color: #e5e7eb;
-    border-radius: 4px;
-    padding: 8px 24px 8px 8px;
-    font-size: 11px;
+    border-radius: 6px;
+    padding: 0 24px 0 8px;
+    font-size: 11.5px;
     appearance: none;
     background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a1a1aa' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
     background-repeat: no-repeat;
@@ -252,7 +264,8 @@
     cursor: pointer;
     margin-bottom: 8px;
   }
-  .config-area .config-select:focus {
+  .config-area .config-select:focus,
+  .config-area .config-select:focus-visible {
     border-color: #6366f1;
     box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
   }

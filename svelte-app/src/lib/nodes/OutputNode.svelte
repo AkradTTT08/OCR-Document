@@ -13,7 +13,7 @@
 <div class="custom-node output-node">
   <Handle type="target" position={Position.Left} isConnectable={true} />
   <div class="node-header">
-    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path></svg>
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path></svg>
     <span>Final Output</span>
     <button type="button" class="delete-btn" aria-label="ลบ Node นี้" on:click|stopPropagation={deleteNode} title="ลบ Card นี้">✕</button>
   </div>
@@ -45,14 +45,15 @@
   }
   .delete-btn {
     margin-left: auto;
+    flex-shrink: 0;
     background: transparent;
     border: none;
     color: var(--danger, #f43f5e);
     cursor: pointer;
     font-size: 13px;
     font-weight: 700;
-    width: 28px;
-    height: 28px;
+    width: 30px;
+    height: 30px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -67,5 +68,7 @@
     color: var(--text-muted, #94a3b8);
     text-align: center;
     padding: 10px 0;
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
 </style>

@@ -11,13 +11,17 @@
 
 <div class="toast-container">
   {#each $toasts as t (t.id)}
-    <div class="toast toast-{t.type}" role="alert">
-      <span class="toast-icon" class:success={t.type==='success'} class:error={t.type==='error'} class:warning={t.type==='warning'} class:info={t.type==='info'}>
+    <div
+      class="toast toast-{t.type}"
+      role={t.type === 'error' ? 'alert' : 'status'}
+      aria-live={t.type === 'error' ? 'assertive' : 'polite'}
+    >
+      <span class="toast-icon" class:success={t.type==='success'} class:error={t.type==='error'} class:warning={t.type==='warning'} class:info={t.type==='info'} aria-hidden="true">
         {@html ICONS[t.type] ?? ICONS.info}
       </span>
       <span class="toast-msg">{t.message}</span>
-      <button class="toast-close" on:click={() => dismissToast(t.id)} aria-label="ปิด">
-        <svg viewBox="0 0 16 16" fill="currentColor" width="12" height="12">
+      <button type="button" class="toast-close" on:click={() => dismissToast(t.id)} aria-label="ปิดการแจ้งเตือน">
+        <svg viewBox="0 0 16 16" fill="currentColor" width="12" height="12" aria-hidden="true">
           <path d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z"/>
         </svg>
       </button>
@@ -30,11 +34,11 @@
   position: fixed;
   bottom: 24px;
   right: 24px;
-  z-index: 99999;
+  z-index: var(--z-toast, 20000);
   display: flex;
   flex-direction: column;
   gap: 10px;
-  max-width: 380px;
+  max-width: min(380px, calc(100vw - 32px));
   pointer-events: none;
 }
 
@@ -53,7 +57,7 @@
   font-family: var(--font-th);
   font-size: 13.5px;
   line-height: 1.5;
-  max-width: 380px;
+  max-width: 100%;
 }
 
 @keyframes slideIn {
@@ -99,16 +103,30 @@
 
 .toast-close {
   flex-shrink: 0;
+  min-width: 26px;
+  min-height: 26px;
   background: none;
   border: none;
   cursor: pointer;
   color: var(--text-muted);
   padding: 2px;
-  border-radius: 4px;
-  display: flex;
+  border-radius: 6px;
+  display: inline-flex;
   align-items: center;
-  transition: color 0.15s;
-  margin-top: 1px;
+  justify-content: center;
+  transition: color 0.15s, background-color 0.15s;
 }
-.toast-close:hover { color: var(--text-main); }
+.toast-close:hover {
+  color: var(--text-main);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+@media (max-width: 520px) {
+  .toast-container {
+    right: 16px;
+    left: 16px;
+    bottom: 16px;
+    max-width: none;
+  }
+}
 </style>

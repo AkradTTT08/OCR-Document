@@ -1,5 +1,5 @@
 <script>
-  import { createEventDispatcher, onMount } from 'svelte';
+  import { createEventDispatcher, onDestroy } from 'svelte';
   import { fade, scale, slide } from 'svelte/transition';
   import SpectraLoading from './SpectraLoading.svelte';
   import { toast } from './toastStore.js';
@@ -38,14 +38,36 @@
   let executionResult = null;
   let executionError = null;
   let isLogsOpen = false;
+  let progressInterval = null;
 
-  $: if (baseUrl && routePath) {
-    const cleanRoute = routePath.startsWith('/') ? routePath : `/${routePath}`;
-    fullTargetUrl = `${baseUrl.replace(/\/+$/, '')}${cleanRoute}`;
+  $: {
+    const cleanBase = (baseUrl || '').trim().replace(/\/+$/, '');
+    const trimmedRoute = (routePath || '').trim();
+    if (!cleanBase) {
+      fullTargetUrl = '';
+    } else if (!trimmedRoute) {
+      fullTargetUrl = cleanBase;
+    } else {
+      const cleanRoute = trimmedRoute.startsWith('/') ? trimmedRoute : `/${trimmedRoute}`;
+      fullTargetUrl = `${cleanBase}${cleanRoute}`;
+    }
   }
 
   $: if (isOpen && cardData) {
     loadMapping();
+  }
+
+  onDestroy(() => {
+    if (progressInterval) {
+      clearInterval(progressInterval);
+      progressInterval = null;
+    }
+  });
+
+  function handleWindowKeydown(event) {
+    if (isOpen && event.key === 'Escape' && !isExecuting) {
+      closeModal();
+    }
   }
 
   function handleEnvChange(envName) {
@@ -155,7 +177,10 @@
     executionProgressStep = 1;
 
     // Simulated progress steps during Playwright execution
-    const interval = setInterval(() => {
+    if (progressInterval) {
+      clearInterval(progressInterval);
+    }
+    progressInterval = setInterval(() => {
       if (executionProgressStep < 3) {
         executionProgressStep += 1;
       }
@@ -179,7 +204,10 @@
         })
       });
 
-      clearInterval(interval);
+      if (progressInterval) {
+        clearInterval(progressInterval);
+        progressInterval = null;
+      }
       if (!res.ok) throw new Error(`Server returned HTTP ${res.status}`);
       const data = await res.json();
 
@@ -190,10 +218,17 @@
         executionError = data.error || 'Execution failed';
       }
     } catch (err) {
-      clearInterval(interval);
+      if (progressInterval) {
+        clearInterval(progressInterval);
+        progressInterval = null;
+      }
       console.error('Test execution error:', err);
       executionError = 'เกิดข้อผิดพลาดในการรัน Playwright หรือ AI Evaluator: ' + err.message;
     } finally {
+      if (progressInterval) {
+        clearInterval(progressInterval);
+        progressInterval = null;
+      }
       isExecuting = false;
     }
   }
@@ -204,27 +239,42 @@
   }
 </script>
 
+<svelte:window on:keydown={handleWindowKeydown} />
+
 {#if isOpen}
   <!-- Backdrop -->
   <!-- svelte-ignore a11y-click-events-have-key-events -->
   <!-- svelte-ignore a11y-no-static-element-interactions -->
   <div class="test-modal-backdrop" transition:fade={{ duration: 180 }} on:click={closeModal}>
-    <div class="test-modal-window" in:scale={{ start: 0.96, duration: 200 }} on:click|stopPropagation>
+    <div
+      class="test-modal-window"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="smart-launcher-title"
+      in:scale={{ start: 0.96, duration: 200 }}
+      on:click|stopPropagation
+    >
       
       <!-- Top Modal Header -->
       <div class="test-modal-header">
         <div class="header-left">
-          <div class="agent-icon-badge">🚀</div>
-          <div>
+          <div class="agent-icon-badge" aria-hidden="true">🚀</div>
+          <div class="header-title-wrap">
             <div class="modal-title-row">
-              <h3 class="modal-main-title">Smart AI Test Agent Execution</h3>
+              <h3 class="modal-main-title" id="smart-launcher-title">Smart AI Test Agent Execution</h3>
               <span class="project-tag-pill">{projectName || 'Project'}</span>
             </div>
             <p class="modal-subtitle">AI Auto-Mapping: ระบุ Target URL, หน้าจอ, และ Test Cases จาก RAG & Traceability Matrix โดยอัตโนมัติ</p>
           </div>
         </div>
 
-        <button class="btn-modal-close" on:click={closeModal} disabled={isExecuting}>✕</button>
+        <button
+          type="button"
+          class="btn-modal-close"
+          aria-label="ปิดหน้าต่าง"
+          on:click={closeModal}
+          disabled={isExecuting}
+        >✕</button>
       </div>
 
       <!-- Modal Body -->
@@ -234,7 +284,7 @@
         {#if cardData}
           <div class="target-feature-card">
             <div class="feature-info-row">
-              <span class="feature-icon">🎯</span>
+              <span class="feature-icon" aria-hidden="true">🎯</span>
               <div class="feature-text">
                 <div class="feature-label">Feature / Task ที่เลือกทดสอบ:</div>
                 <div class="feature-title">{cardData.title}</div>
@@ -256,12 +306,19 @@
           </div>
 
         {:else if mappingError}
-          <div class="error-banner">
+          <div class="error-banner" role="alert">
             <span>❌ {mappingError}</span>
-            <button class="btn-retry" on:click={loadMapping}>🔄 ลองใหม่</button>
+            <button type="button" class="btn-retry" on:click={loadMapping}>🔄 ลองใหม่</button>
           </div>
 
         {:else}
+          {#if executionError}
+            <div class="error-banner" role="alert" transition:slide={{ duration: 160 }}>
+              <span>❌ {executionError}</span>
+              <button type="button" class="btn-retry" on:click={() => (executionError = null)}>ปิดข้อความ</button>
+            </div>
+          {/if}
+
           <!-- MAIN CONFIG & EXECUTION VIEW -->
           {#if !executionResult}
             <div class="config-grid-layout" transition:fade>
@@ -275,17 +332,18 @@
 
                   <!-- Environment Buttons -->
                   <div class="form-group">
-                    <label class="form-label">เลือกสภาพแวดล้อม (Environment):</label>
-                    <div class="env-button-group">
+                    <span class="form-label" id="env-select-label">เลือกสภาพแวดล้อม (Environment):</span>
+                    <div class="env-button-group" role="group" aria-labelledby="env-select-label">
                       {#each environments as env}
                         <button 
+                          type="button"
                           class="btn-env-select" 
                           class:active={targetEnvironment === env.name} 
                           on:click={() => handleEnvChange(env.name)}>
                           <span class="env-code">
                             {env.name}
                             {#if env.is_default}
-                              <span style="font-size: 10px; color: #38bdf8; margin-left: 4px;">★ Default</span>
+                              <span class="env-default-tag">★ Default</span>
                             {/if}
                           </span>
                           <span class="env-desc">{env.description}</span>
@@ -325,7 +383,7 @@
                   <!-- Full Resolved URL Preview Box -->
                   <div class="resolved-url-preview">
                     <div class="preview-label">👉 Target Full URL ที่ Agent จะเข้าไปทดสอบ:</div>
-                    <div class="preview-url-text">{fullTargetUrl}</div>
+                    <div class="preview-url-text">{fullTargetUrl || '— กรุณาระบุ Base URL —'}</div>
                   </div>
 
                   <!-- User Role & Credentials -->
@@ -358,9 +416,9 @@
                       <span>📋 2. รายการ Test Cases ({testCases.length})</span>
                     </div>
                     <div class="test-case-actions">
-                      <button class="btn-toggle-tc" on:click={() => toggleAllTestCases(true)}>เลือกทั้งหมด</button>
-                      <button class="btn-toggle-tc" on:click={() => toggleAllTestCases(false)}>ยกเลิกทั้งหมด</button>
-                      <button class="btn-add-custom-tc" on:click={() => showAddCustomTc = !showAddCustomTc}>
+                      <button type="button" class="btn-toggle-tc" on:click={() => toggleAllTestCases(true)}>เลือกทั้งหมด</button>
+                      <button type="button" class="btn-toggle-tc" on:click={() => toggleAllTestCases(false)}>ยกเลิกทั้งหมด</button>
+                      <button type="button" class="btn-add-custom-tc" on:click={() => showAddCustomTc = !showAddCustomTc}>
                         {showAddCustomTc ? '✕ ปิดฟอร์ม' : '➕ เพิ่มเคสเอง'}
                       </button>
                     </div>
@@ -379,8 +437,8 @@
                       <div class="custom-form-title">✍️ เพิ่ม Test Case กำหนดเอง</div>
                       <div class="custom-form-fields">
                         <div class="form-subgroup">
-                          <label for="new-tc-type">ประเภท (Type):</label>
-                          <div class="type-toggle-group" id="new-tc-type">
+                          <span class="subgroup-label" id="new-tc-type-label">ประเภท (Type):</span>
+                          <div class="type-toggle-group" role="group" aria-labelledby="new-tc-type-label">
                             <button type="button" class="type-pill" class:active={newTcType === 'Positive'} on:click={() => newTcType = 'Positive'}>
                               ✅ Positive Case
                             </button>
@@ -413,7 +471,7 @@
                     {#if testCases.length === 0}
                       <div class="empty-tc-text">ไม่พบ Test Cases ในระบบ (กด "➕ เพิ่มเคสเอง" เพื่อสร้างเคสใหม่)</div>
                     {:else}
-                      {#each testCases as tc, idx}
+                      {#each testCases as tc, idx (tc.id || idx)}
                         <div class="test-case-item-card" class:checked={tc.selected}>
                           <input type="checkbox" bind:checked={tc.selected} class="tc-checkbox" id={`tc-chk-${idx}`} />
                           <label for={`tc-chk-${idx}`} class="tc-info">
@@ -433,7 +491,13 @@
                               <div class="tc-expected"><b>Expected:</b> {tc.expected_result}</div>
                             {/if}
                           </label>
-                          <button type="button" class="btn-tc-delete" title="ลบเคสนี้ออกจากการทดสอบ" on:click|preventDefault|stopPropagation={() => removeTestCase(idx)}>
+                          <button
+                            type="button"
+                            class="btn-tc-delete"
+                            title="ลบเคสนี้ออกจากการทดสอบ"
+                            aria-label="ลบเคสนี้ออกจากการทดสอบ"
+                            on:click|preventDefault|stopPropagation={() => removeTestCase(idx)}
+                          >
                             🗑️
                           </button>
                         </div>
@@ -525,7 +589,7 @@
                   <!-- Execution Logs Accordion -->
                   {#if executionResult.logs}
                     <div class="logs-accordion">
-                      <button class="btn-logs-toggle" on:click={() => isLogsOpen = !isLogsOpen}>
+                      <button type="button" class="btn-logs-toggle" on:click={() => isLogsOpen = !isLogsOpen}>
                         <span>📜 Browser Step Logs ({isLogsOpen ? 'ซ่อน' : 'แสดง'})</span>
                         <span>{isLogsOpen ? '▲' : '▼'}</span>
                       </button>
@@ -569,8 +633,9 @@
           </div>
 
           <div class="footer-actions">
-            <button class="btn-cancel" on:click={closeModal} disabled={isExecuting}>ยกเลิก</button>
+            <button type="button" class="btn-cancel" on:click={closeModal} disabled={isExecuting}>ยกเลิก</button>
             <button 
+              type="button"
               class="btn-start-run" 
               on:click={startExecution} 
               disabled={isExecuting || isLoadingMapping || selectedTestCasesCount === 0}>
@@ -587,8 +652,8 @@
             <span class="test-done-pill">🎉 บันทึกผลการทดสอบลงประวัติโครงการเรียบร้อย</span>
           </div>
           <div class="footer-actions">
-            <button class="btn-cancel" on:click={() => executionResult = null}>🔄 ปรับแต่งและรันใหม่</button>
-            <button class="btn-finish" on:click={closeModal}>✅ เสร็จสิ้นและปิดหน้าต่าง</button>
+            <button type="button" class="btn-cancel" on:click={() => executionResult = null}>🔄 ปรับแต่งและรันใหม่</button>
+            <button type="button" class="btn-finish" on:click={closeModal}>✅ เสร็จสิ้นและปิดหน้าต่าง</button>
           </div>
         {/if}
       </div>
@@ -606,7 +671,7 @@
     bottom: 0;
     background: rgba(3, 7, 18, 0.85);
     backdrop-filter: blur(8px);
-    z-index: 99999;
+    z-index: var(--z-modal, 10000);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -634,12 +699,21 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
   }
 
   .header-left {
     display: flex;
     align-items: center;
     gap: 14px;
+    min-width: 0;
+    flex: 1;
+  }
+
+  .header-title-wrap {
+    min-width: 0;
+    flex: 1;
   }
 
   .agent-icon-badge {
@@ -652,12 +726,14 @@
     display: flex;
     align-items: center;
     justify-content: center;
+    flex-shrink: 0;
   }
 
   .modal-title-row {
     display: flex;
     align-items: center;
     gap: 10px;
+    flex-wrap: wrap;
   }
 
   .modal-main-title {
@@ -696,6 +772,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
+    flex-shrink: 0;
     transition: all 0.15s;
   }
   .btn-modal-close:hover:not(:disabled) {
@@ -727,10 +804,11 @@
     align-items: flex-start;
     gap: 12px;
   }
-  .feature-icon { font-size: 20px; }
+  .feature-icon { font-size: 20px; flex-shrink: 0; }
+  .feature-text { min-width: 0; flex: 1; }
   .feature-label { font-size: 11px; color: #94a3b8; font-weight: 600; text-transform: uppercase; }
-  .feature-title { font-size: 14px; color: #f1f5f9; font-weight: 700; margin-top: 2px; }
-  .feature-desc { font-size: 12px; color: #cbd5e1; margin-top: 4px; line-height: 1.4; }
+  .feature-title { font-size: 14px; color: #f1f5f9; font-weight: 700; margin-top: 2px; overflow-wrap: break-word; }
+  .feature-desc { font-size: 12px; color: #cbd5e1; margin-top: 4px; line-height: 1.4; overflow-wrap: break-word; }
 
   /* Loading State */
   .mapping-loading-state {
@@ -743,22 +821,9 @@
     color: #94a3b8;
   }
 
-  .spinner-large {
-    width: 44px;
-    height: 44px;
-    border: 3px solid rgba(139, 92, 246, 0.2);
-    border-top-color: #8b5cf6;
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-    margin-bottom: 16px;
-  }
-
   @keyframes spin {
     to { transform: rotate(360deg); }
   }
-
-  .mapping-loading-state h4 { color: #f8fafc; margin: 0 0 6px 0; font-size: 15px; }
-  .mapping-loading-state p { margin: 0; font-size: 12.5px; }
 
   /* Error Banner */
   .error-banner {
@@ -770,6 +835,8 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
     font-size: 13px;
   }
   .btn-retry {
@@ -781,6 +848,10 @@
     font-size: 12px;
     cursor: pointer;
     font-weight: 600;
+    flex-shrink: 0;
+  }
+  .btn-retry:hover {
+    background: #dc2626;
   }
 
   /* Config Grid Layout */
@@ -788,6 +859,11 @@
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 18px;
+    align-items: start;
+  }
+
+  .config-col {
+    min-width: 0;
   }
 
   .section-card {
@@ -798,7 +874,6 @@
     display: flex;
     flex-direction: column;
     gap: 12px;
-    height: 100%;
     box-sizing: border-box;
   }
 
@@ -812,11 +887,14 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
   }
 
   .test-case-actions {
     display: flex;
-    gap: 6px;
+    gap: 10px;
+    flex-wrap: wrap;
   }
 
   .btn-toggle-tc {
@@ -836,6 +914,10 @@
     gap: 5px;
   }
 
+  .mt-3 {
+    margin-top: 12px;
+  }
+
   .form-label {
     font-size: 11.5px;
     color: #94a3b8;
@@ -846,43 +928,57 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
   }
 
   .sitemap-match-tag {
     background: rgba(16, 185, 129, 0.15);
     border: 1px solid rgba(16, 185, 129, 0.35);
     color: #6ee7b7;
-    font-size: 10.5px;
+    font-size: 11px;
     padding: 1px 6px;
     border-radius: 4px;
     font-weight: 600;
   }
 
   .custom-text-input {
+    height: 36px;
     background: #030712;
-    border: 1px solid #334155;
+    border: 1px solid var(--glass-border);
     color: #f1f5f9;
-    padding: 7px 10px;
-    border-radius: 6px;
+    padding: 0 10px;
+    border-radius: 8px;
     font-size: 12.5px;
-    outline: none;
     font-family: monospace;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
   }
-  .custom-text-input:focus { border-color: #8b5cf6; }
+  .custom-text-input:focus {
+    border-color: #8b5cf6;
+  }
+  .custom-text-input:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+  }
 
   .custom-select-input {
-    background: #030712;
-    border: 1px solid #334155;
+    height: 36px;
+    padding: 0 30px 0 10px;
+    border-radius: 8px;
+    font-size: 12.5px;
+    border: 1px solid var(--glass-border);
+    background-color: #030712;
     color: #f1f5f9;
-    padding: 7px 10px;
-    border-radius: 6px;
-    font-size: 12px;
-    outline: none;
+  }
+  .custom-select-input:focus-visible {
+    border-color: #8b5cf6;
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
   }
 
   .env-button-group {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
     gap: 8px;
   }
 
@@ -905,7 +1001,8 @@
 
   .env-code { font-weight: 700; color: #f8fafc; font-size: 12px; }
   .btn-env-select.active .env-code { color: #60a5fa; }
-  .env-desc { font-size: 9.5px; color: #94a3b8; margin-top: 2px; }
+  .env-default-tag { font-size: 11px; color: #38bdf8; margin-left: 4px; font-weight: 600; }
+  .env-desc { font-size: 11px; color: #94a3b8; margin-top: 2px; text-align: center; }
 
   /* Resolved URL Preview */
   .resolved-url-preview {
@@ -932,12 +1029,10 @@
     padding: 1px 6px;
     border-radius: 4px;
     font-family: monospace;
-    font-size: 10px;
+    font-size: 11px;
   }
 
   /* Test Cases List */
-  .tc-hint { font-size: 11.5px; color: #94a3b8; margin: 0; line-height: 1.4; }
-
   .test-cases-scroll-list {
     display: flex;
     flex-direction: column;
@@ -945,6 +1040,16 @@
     max-height: 220px;
     overflow-y: auto;
     padding-right: 4px;
+  }
+
+  .empty-tc-text {
+    padding: 18px 14px;
+    text-align: center;
+    font-size: 12.5px;
+    color: var(--text-muted);
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px dashed rgba(255, 255, 255, 0.12);
+    border-radius: 8px;
   }
 
   .test-case-item-card {
@@ -964,15 +1069,15 @@
     border-color: rgba(139, 92, 246, 0.4);
   }
 
-  .tc-checkbox { margin-top: 3px; cursor: pointer; }
-  .tc-info { flex: 1; }
-  .tc-header-row { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
-  .tc-id-badge { background: #1e293b; color: #cbd5e1; font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 3px; font-family: monospace; }
-  .tc-type-badge { font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 3px; }
+  .tc-checkbox { margin-top: 3px; cursor: pointer; flex-shrink: 0; }
+  .tc-info { flex: 1; min-width: 0; }
+  .tc-header-row { display: flex; align-items: center; gap: 6px 10px; flex-wrap: wrap; margin-bottom: 3px; }
+  .tc-id-badge { background: #1e293b; color: #cbd5e1; font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 3px; font-family: monospace; }
+  .tc-type-badge { font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: 3px; }
   .tc-type-badge.pos { background: rgba(16, 185, 129, 0.2); color: #6ee7b7; }
   .tc-type-badge.neg { background: rgba(245, 158, 11, 0.2); color: #fcd34d; }
-  .tc-title { font-size: 12px; color: #f1f5f9; font-weight: 600; }
-  .tc-expected { font-size: 11px; color: #94a3b8; margin-top: 2px; }
+  .tc-title { font-size: 12px; color: #f1f5f9; font-weight: 600; overflow-wrap: break-word; }
+  .tc-expected { font-size: 11px; color: #94a3b8; margin-top: 2px; overflow-wrap: break-word; }
 
   /* Custom Test Case Add & Badges */
   .btn-add-custom-tc {
@@ -998,7 +1103,7 @@
     padding: 7px 10px;
     font-size: 11px;
     color: #93c5fd;
-    line-height: 1.4;
+    line-height: 1.45;
     display: flex;
     gap: 6px;
     align-items: flex-start;
@@ -1011,10 +1116,10 @@
     border-radius: 8px;
     padding: 10px 12px;
     margin-bottom: 10px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
   }
   .custom-form-title {
-    font-size: 11.5px;
+    font-size: 12px;
     font-weight: 700;
     color: #c4b5fd;
     margin-bottom: 8px;
@@ -1029,32 +1134,37 @@
     flex-direction: column;
     gap: 3px;
   }
-  .form-subgroup label {
-    font-size: 10.5px;
+  .form-subgroup label,
+  .subgroup-label {
+    font-size: 11px;
     color: #cbd5e1;
     font-weight: 600;
   }
   .form-input-sm {
     background: #0b0f19;
     border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 4px;
-    padding: 5px 8px;
-    font-size: 11.5px;
+    border-radius: 6px;
+    padding: 6px 9px;
+    font-size: 12px;
     color: white;
-    outline: none;
   }
   .form-input-sm:focus {
     border-color: #8b5cf6;
   }
+  .form-input-sm:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+  }
   .type-toggle-group {
     display: flex;
     gap: 6px;
+    flex-wrap: wrap;
   }
   .type-pill {
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.15);
     border-radius: 4px;
-    padding: 3px 8px;
+    padding: 4px 8px;
     font-size: 11px;
     color: #94a3b8;
     cursor: pointer;
@@ -1068,6 +1178,7 @@
   .custom-form-buttons {
     display: flex;
     gap: 8px;
+    flex-wrap: wrap;
     margin-top: 4px;
   }
   .btn-save-custom-tc {
@@ -1092,8 +1203,8 @@
   }
 
   .tc-source-badge {
-    font-size: 9.5px;
-    padding: 1px 5px;
+    font-size: 11px;
+    padding: 1px 6px;
     border-radius: 3px;
     font-weight: 500;
   }
@@ -1113,11 +1224,12 @@
     border: none;
     font-size: 13px;
     cursor: pointer;
-    opacity: 0.5;
+    opacity: 0.65;
     padding: 2px 5px;
     border-radius: 4px;
     transition: all 0.15s;
     align-self: flex-start;
+    flex-shrink: 0;
   }
   .btn-tc-delete:hover {
     opacity: 1;
@@ -1135,9 +1247,21 @@
   .steps-header { font-size: 11.5px; font-weight: 700; color: #c084fc; }
   .steps-list { display: flex; flex-direction: column; gap: 4px; max-height: 120px; overflow-y: auto; }
   .step-row { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: #cbd5e1; }
-  .step-num { width: 18px; height: 18px; background: rgba(139, 92, 246, 0.25); color: #d8b4fe; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; }
-  .step-action { flex: 1; }
-  .step-target { font-size: 9.5px; background: rgba(255, 255, 255, 0.06); padding: 1px 5px; border-radius: 3px; color: #94a3b8; }
+  .step-num {
+    width: 20px;
+    height: 20px;
+    background: rgba(139, 92, 246, 0.25);
+    color: #d8b4fe;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+  .step-action { flex: 1; min-width: 0; overflow-wrap: break-word; }
+  .step-target { font-size: 11px; background: rgba(255, 255, 255, 0.06); padding: 1px 6px; border-radius: 3px; color: #94a3b8; }
 
   /* Execution Result View */
   .execution-result-view {
@@ -1163,7 +1287,8 @@
     border: 1px solid rgba(239, 68, 68, 0.4);
     color: #fca5a5;
   }
-  .result-badge-icon { font-size: 28px; }
+  .result-badge-icon { font-size: 28px; flex-shrink: 0; }
+  .result-summary-text { min-width: 0; flex: 1; }
   .result-verdict-title { font-size: 15px; font-weight: 700; color: #f8fafc; }
   .result-summary-desc { font-size: 12.5px; margin-top: 2px; }
 
@@ -1173,7 +1298,7 @@
     gap: 16px;
   }
 
-  .eval-details-box { display: flex; flex-direction: column; gap: 12px; }
+  .eval-details-box { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
   .eval-section h4 { margin: 0 0 6px 0; font-size: 12.5px; color: #f1f5f9; }
   .criteria-list { margin: 0; padding-left: 20px; font-size: 12px; color: #cbd5e1; }
   .criteria-item { margin-bottom: 4px; }
@@ -1187,9 +1312,42 @@
     border-radius: 6px;
     font-size: 12px;
   }
-  .defect-severity { color: #f87171; font-weight: 700; margin-right: 4px; }
+  .defect-header {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .defect-severity {
+    color: #f87171;
+    font-weight: 700;
+    font-size: 11.5px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: rgba(239, 68, 68, 0.18);
+  }
+  .defect-severity.critical {
+    color: #fecaca;
+    background: rgba(220, 38, 38, 0.35);
+    border: 1px solid rgba(248, 113, 113, 0.45);
+  }
+  .defect-severity.high {
+    color: #fca5a5;
+    background: rgba(239, 68, 68, 0.22);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+  }
+  .defect-severity.medium {
+    color: #fcd34d;
+    background: rgba(245, 158, 11, 0.2);
+    border: 1px solid rgba(245, 158, 11, 0.38);
+  }
+  .defect-severity.low {
+    color: #93c5fd;
+    background: rgba(59, 130, 246, 0.2);
+    border: 1px solid rgba(59, 130, 246, 0.38);
+  }
   .defect-item { color: #fca5a5; font-weight: 600; }
-  .defect-impact { font-size: 11px; color: #fecaca; margin-top: 2px; }
+  .defect-impact { font-size: 11.5px; color: #fecaca; margin-top: 4px; }
 
   .recommendation-card {
     background: rgba(245, 158, 11, 0.1);
@@ -1222,6 +1380,7 @@
     border-radius: 6px;
     font-size: 11px;
     white-space: pre-wrap;
+    overflow-wrap: anywhere;
     max-height: 140px;
     overflow-y: auto;
     margin-top: 6px;
@@ -1236,6 +1395,7 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
+    min-width: 0;
   }
   .evidence-box h4 { margin: 0; font-size: 12.5px; color: #93c5fd; }
   .screenshot-frame {
@@ -1250,11 +1410,21 @@
     max-height: 320px;
     object-fit: contain;
     display: block;
+    margin: 0 auto;
     cursor: zoom-in;
     transition: transform 0.2s;
   }
   .proof-img:hover { transform: scale(1.02); }
-  .screenshot-caption { font-size: 10.5px; color: #94a3b8; padding: 6px; background: #0f172a; }
+  .screenshot-caption { font-size: 11px; color: #94a3b8; padding: 6px; background: #0f172a; }
+  .empty-shot {
+    padding: 32px 16px;
+    text-align: center;
+    font-size: 12.5px;
+    color: var(--text-muted);
+    background: rgba(3, 7, 18, 0.55);
+    border: 1px dashed rgba(255, 255, 255, 0.12);
+    border-radius: 8px;
+  }
 
   /* Footer */
   .test-modal-footer {
@@ -1264,23 +1434,29 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
   }
 
-  .footer-left-info { display: flex; align-items: center; gap: 8px; }
+  .footer-left-info { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .tc-count-pill { background: rgba(139, 92, 246, 0.2); color: #c4b5fd; font-size: 11.5px; font-weight: 600; padding: 3px 8px; border-radius: 4px; }
   .target-env-pill { background: rgba(59, 130, 246, 0.2); color: #93c5fd; font-size: 11.5px; font-weight: 600; padding: 3px 8px; border-radius: 4px; }
   .test-done-pill { color: #6ee7b7; font-size: 12px; font-weight: 600; }
 
-  .footer-actions { display: flex; gap: 10px; }
+  .footer-actions { display: flex; gap: 10px; flex-wrap: wrap; }
   .btn-cancel {
     background: rgba(255, 255, 255, 0.08);
     border: 1px solid rgba(255, 255, 255, 0.15);
     color: #cbd5e1;
     padding: 8px 16px;
-    border-radius: 6px;
+    min-height: 38px;
+    border-radius: var(--radius-sm);
     font-size: 12.5px;
     font-weight: 600;
     cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
   .btn-cancel:hover:not(:disabled) { background: rgba(255, 255, 255, 0.15); color: white; }
 
@@ -1289,12 +1465,14 @@
     border: none;
     color: white;
     padding: 8px 20px;
-    border-radius: 6px;
+    min-height: 38px;
+    border-radius: var(--radius-sm);
     font-size: 13px;
     font-weight: 700;
     cursor: pointer;
-    display: flex;
+    display: inline-flex;
     align-items: center;
+    justify-content: center;
     gap: 8px;
     box-shadow: 0 4px 14px rgba(124, 58, 237, 0.4);
     transition: all 0.15s;
@@ -1310,10 +1488,14 @@
     border: none;
     color: white;
     padding: 8px 20px;
-    border-radius: 6px;
+    min-height: 38px;
+    border-radius: var(--radius-sm);
     font-size: 13px;
     font-weight: 700;
     cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
   .btn-finish:hover { background: #059669; }
 
@@ -1325,5 +1507,47 @@
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
     display: inline-block;
+    flex-shrink: 0;
+  }
+
+  @media (max-width: 860px) {
+    .config-grid-layout,
+    .result-details-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .test-modal-footer {
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+  }
+
+  @media (max-width: 560px) {
+    .test-modal-backdrop {
+      padding: 10px;
+    }
+
+    .test-modal-header,
+    .test-modal-footer {
+      padding: 12px 14px;
+    }
+
+    .test-modal-body {
+      padding: 14px;
+    }
+
+    .env-button-group {
+      grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+    }
+
+    .footer-actions {
+      width: 100%;
+    }
+
+    .btn-cancel,
+    .btn-start-run,
+    .btn-finish {
+      flex: 1 1 auto;
+    }
   }
 </style>

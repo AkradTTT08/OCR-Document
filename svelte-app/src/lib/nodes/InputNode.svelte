@@ -12,7 +12,7 @@
 
 <div class="custom-node input-node">
   <div class="node-header">
-    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path></svg>
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path></svg>
     <span>Input Data</span>
     <button type="button" class="delete-btn" aria-label="ลบ Node นี้" on:click|stopPropagation={deleteNode} title="ลบ Card นี้">✕</button>
   </div>
@@ -64,7 +64,7 @@
   }
   textarea {
     width: 100%;
-    height: 64px;
+    min-height: 64px;
     background: var(--bg, #0a0b12);
     border: 1px solid var(--glass-border-light, rgba(255, 255, 255, 0.15));
     color: var(--text-main, #f8fafc);
@@ -72,6 +72,12 @@
     border-radius: 6px;
     padding: 8px;
     font-size: 12px;
-    resize: none;
+    resize: vertical;
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  textarea:focus-visible {
+    outline: none;
+    border-color: var(--success, #10b981);
+    box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.25);
   }
 </style>

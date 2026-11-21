@@ -11,6 +11,7 @@
 
   const dispatch = createEventDispatcher();
 
+  let panelContainerEl;
   let docName = "";
   let docType = "Test Case"; // Default
   let customPrompt = "";
@@ -604,7 +605,7 @@
     }
     isFormCollapsed = false;
     closeErrorModal();
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    panelContainerEl?.scrollTo({ top: 0, behavior: 'smooth' });
     toast(`นำข้อมูล "${doc.doc_name}" กลับเข้าฟอร์มแล้ว กดสร้างเอกสารเพื่อลองใหม่`, 'info', 4000);
   }
 
@@ -790,7 +791,7 @@
     activeFeedback = feedbackObj;
     applyRefinementFeedback(feedbackObj);
     closeFindingsModal();
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    panelContainerEl?.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
   let showDeleteModal = false;
@@ -843,7 +844,7 @@
 
 <svelte:window on:keydown={handleGlobalKeydown} />
 
-<div class="panel-container" in:fade>
+<div class="panel-container" bind:this={panelContainerEl} in:fade>
   {#if !$selectedProjectStore}
     <ProjectSelection 
       {projects} 
@@ -1141,7 +1142,7 @@
               </tr>
             {:else}
               {#each paginatedHistory as doc (doc.id)}
-                <tr class:row-highlight={recentlyCreatedId && String(doc.id) === String(recentlyCreatedId)} transition:slide>
+                <tr class:row-highlight={recentlyCreatedId && String(doc.id) === String(recentlyCreatedId)}>
                   <td class="col-date">
                     {doc.created_at ? new Date(doc.created_at).toLocaleString('th-TH') : '-'}
                   </td>
@@ -1637,6 +1638,9 @@
     border: 1px solid rgba(99, 102, 241, 0.28);
     font-size: 12.5px;
     color: #e2e8f0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .project-dot {
     width: 7px;
@@ -1644,16 +1648,22 @@
     border-radius: 50%;
     background: #6366f1;
     box-shadow: 0 0 8px rgba(99, 102, 241, 0.7);
+    flex-shrink: 0;
   }
   .project-code {
     font-family: 'Outfit', sans-serif;
     font-weight: 700;
     color: #a5b4fc;
     letter-spacing: 0.02em;
+    flex-shrink: 0;
   }
   .project-name {
     font-weight: 500;
     color: #f8fafc;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .project-kb-count {
     font-family: 'Outfit', 'Prompt', sans-serif;
@@ -1664,6 +1674,8 @@
     color: #c7d2fe;
     border: 1px solid rgba(99, 102, 241, 0.25);
     font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+    white-space: nowrap;
   }
   
   .glass-panel {
@@ -1874,12 +1886,18 @@
     background: rgba(10, 11, 18, 0.85);
     border: 1px solid rgba(255, 255, 255, 0.12);
     color: #f8fafc;
-    padding: 10px 13px;
-    border-radius: 8px;
+    min-height: 40px;
+    padding: 9px 13px;
+    border-radius: var(--radius-md);
     font-size: 13.5px;
     font-family: inherit;
     outline: none;
+    box-sizing: border-box;
     transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  .text-input::placeholder {
+    color: #94a3b8;
   }
 
   .custom-prompt-textarea {
@@ -1917,12 +1935,14 @@
     background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
     color: #ffffff;
     border: 1px solid rgba(255, 255, 255, 0.14);
-    padding: 10px 22px;
-    border-radius: 12px;
+    min-height: 40px;
+    padding: 9px 22px;
+    border-radius: var(--radius-md);
     cursor: pointer;
     font-size: 13.5px;
     font-weight: 600;
     font-family: inherit;
+    box-sizing: border-box;
     transition: all 0.2s ease;
     display: inline-flex;
     align-items: center;
@@ -2015,7 +2035,7 @@
     outline: none;
   }
   .history-search-input::placeholder {
-    color: #64748b;
+    color: #94a3b8;
   }
 
   .filter-chips {
@@ -2049,7 +2069,8 @@
   }
 
   .table-container {
-    overflow-x: auto;
+    max-height: 520px;
+    overflow: auto;
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 12px;
     background: rgba(10, 11, 18, 0.45);
@@ -2066,14 +2087,15 @@
   .history-table th {
     text-align: left;
     padding: 11px 14px;
-    background: rgba(18, 20, 28, 0.9);
+    background: #141724;
     font-weight: 600;
     font-size: 12px;
     color: #94a3b8;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
     position: sticky;
     top: 0;
-    z-index: 2;
+    z-index: 3;
+    white-space: nowrap;
   }
 
   .history-table td {
@@ -2106,6 +2128,8 @@
   .col-docname {
     font-weight: 500;
     color: #f8fafc;
+    max-width: 280px;
+    word-break: break-word;
   }
 
   .col-skill {
@@ -2212,12 +2236,15 @@
   .btn-action {
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     gap: 6px;
-    padding: 6px 12px;
+    min-height: 30px;
+    padding: 5px 12px;
     border-radius: 6px;
     font-size: 12.5px;
     font-weight: 500;
     cursor: pointer;
+    box-sizing: border-box;
     transition: all 0.2s ease;
     border: 1px solid transparent;
   }
@@ -2317,6 +2344,7 @@
     display: inline-flex;
     align-items: center;
     gap: 5px;
+    min-height: 30px;
     padding: 5px 10px;
     border-radius: 6px;
     background: rgba(34, 197, 94, 0.15);
@@ -2324,6 +2352,7 @@
     color: #86efac;
     font-size: 12px;
     font-weight: 500;
+    box-sizing: border-box;
   }
 
   .spinner-micro {
@@ -2345,7 +2374,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 9999;
+    z-index: var(--z-modal, 10000);
     padding: 20px;
   }
 
@@ -2356,6 +2385,8 @@
     padding: 26px 28px;
     width: 440px;
     max-width: 92vw;
+    max-height: 88vh;
+    overflow-y: auto;
     box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7), 0 0 30px rgba(59, 130, 246, 0.1);
     color: #f8fafc;
     position: relative;
@@ -2369,14 +2400,15 @@
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.1);
     color: #94a3b8;
-    width: 28px;
-    height: 28px;
+    width: 32px;
+    height: 32px;
     border-radius: 50%;
     display: flex;
     align-items: center;
     justify-content: center;
     font-size: 13px;
     cursor: pointer;
+    z-index: 2;
     transition: all 0.2s ease;
   }
 
@@ -2391,6 +2423,7 @@
     align-items: flex-start;
     gap: 14px;
     margin-bottom: 18px;
+    padding-right: 44px;
   }
 
   .modal-icon-badge {
@@ -2495,14 +2528,18 @@
     background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
     border: 1px solid rgba(239, 68, 68, 0.6);
     color: #ffffff;
+    min-height: 40px;
     padding: 9px 20px;
-    border-radius: 8px;
+    border-radius: var(--radius-md);
     cursor: pointer;
-    font-size: 14px;
-    font-weight: 500;
+    font-size: 13.5px;
+    font-weight: 600;
+    font-family: inherit;
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     gap: 8px;
+    box-sizing: border-box;
     transition: all 0.2s ease;
     box-shadow: 0 4px 14px rgba(239, 68, 68, 0.4);
   }
@@ -2522,14 +2559,19 @@
     background: rgba(10, 11, 18, 0.85);
     border: 1px solid rgba(255, 255, 255, 0.12);
     color: #f8fafc;
-    padding: 9px 12px;
-    border-radius: 8px;
+    min-height: 40px;
+    padding: 9px 13px;
+    border-radius: var(--radius-md);
     font-family: inherit;
     font-size: 13.5px;
     outline: none;
     transition: border-color 0.2s ease, box-shadow 0.2s ease;
     width: 100%;
     box-sizing: border-box;
+  }
+
+  .form-input::placeholder {
+    color: #94a3b8;
   }
 
   .form-input:focus {
@@ -2639,6 +2681,7 @@
     align-items: center;
     gap: 10px;
     margin-top: 22px;
+    flex-wrap: wrap;
   }
   .modal-actions-center {
     justify-content: center;
@@ -2654,21 +2697,24 @@
     display: flex;
     align-items: center;
     gap: 10px;
+    flex-wrap: wrap;
   }
 
   .btn-cancel {
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    min-height: 40px;
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.12);
     color: #cbd5e1;
     padding: 9px 18px;
-    border-radius: 10px;
+    border-radius: var(--radius-md);
     cursor: pointer;
     font-size: 13.5px;
     font-weight: 500;
     font-family: inherit;
+    box-sizing: border-box;
     transition: all 0.2s ease;
   }
 
@@ -2682,15 +2728,18 @@
     background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
     border: 1px solid rgba(255, 255, 255, 0.16);
     color: #ffffff;
+    min-height: 40px;
     padding: 9px 20px;
-    border-radius: 10px;
+    border-radius: var(--radius-md);
     cursor: pointer;
     font-size: 13.5px;
     font-weight: 600;
     font-family: inherit;
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     gap: 6px;
+    box-sizing: border-box;
     transition: all 0.2s ease;
   }
 
@@ -2720,6 +2769,7 @@
     justify-content: space-between;
     gap: 10px;
     flex-wrap: wrap;
+    padding-right: 44px;
   }
   .findings-header-row h3 {
     margin: 0;
@@ -2797,6 +2847,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
+    flex-wrap: wrap;
   }
 
   .btn-findings-toggle {
@@ -2915,10 +2966,11 @@
     align-items: center;
     gap: 8px;
     margin-bottom: 4px;
+    flex-wrap: wrap;
   }
   .f-num { color: #94a3b8; font-weight: 700; font-family: 'Outfit', sans-serif; }
   .f-type { color: #a5b4fc; font-weight: 600; font-size: 11px; }
-  .f-issue { color: #f8fafc; font-weight: 500; flex: 1; }
+  .f-issue { color: #f8fafc; font-weight: 500; flex: 1; min-width: 0; }
   .f-sev {
     font-family: 'Outfit', sans-serif;
     font-size: 10px;
@@ -2955,14 +3007,16 @@
     align-items: center;
     justify-content: center;
     gap: 8px;
+    min-height: 40px;
     background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
     color: #ffffff;
     border: 1px solid rgba(255, 255, 255, 0.18);
-    padding: 10px 20px;
-    border-radius: 12px;
+    padding: 9px 20px;
+    border-radius: var(--radius-md);
     font-size: 13.5px;
     font-weight: 600;
     font-family: inherit;
+    box-sizing: border-box;
     cursor: pointer;
     transition: all 0.2s ease;
   }

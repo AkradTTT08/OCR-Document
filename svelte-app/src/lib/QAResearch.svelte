@@ -1,5 +1,5 @@
 <script>
-  import { onMount, afterUpdate, createEventDispatcher } from "svelte";
+  import { onMount, onDestroy, afterUpdate, createEventDispatcher } from "svelte";
   import { fade, slide } from "svelte/transition";
   import { toast } from "./toastStore.js";
   import { selectedProjectStore, qaRefinementFeedback } from "./qaHistoryStore.js";
@@ -315,8 +315,13 @@
     dispatch("navigate", { view: viewName });
   }
 
-  function handleInspectSource(src) {
-    inspectedSource = inspectedSource?.name === src.name ? null : src;
+  function handleInspectSource(msgIdx, src) {
+    inspectedSource =
+      inspectedSource &&
+      inspectedSource.msgIdx === msgIdx &&
+      inspectedSource.source?.name === src.name
+        ? null
+        : { msgIdx, source: src };
   }
 
   function filterToInspectedDocument(src) {
@@ -415,6 +420,23 @@
       recognition.onend = () => {
         isListening = false;
       };
+    }
+  });
+
+  onDestroy(() => {
+    if (recognition) {
+      try {
+        recognition.stop();
+      } catch (_) {}
+      recognition = null;
+    }
+    if (abortController) {
+      abortController.abort();
+      abortController = null;
+    }
+    if (undoTimer) {
+      clearTimeout(undoTimer);
+      undoTimer = null;
     }
   });
 
@@ -1114,7 +1136,7 @@
             {/if}
           {:else}
             <!-- Conversation Feed -->
-            <div class="feed-list">
+            <div class="feed-list" aria-live="polite">
               {#each messages as msg, i}
                 {#if msg.role === "user"}
                   <article class="query-entry">
@@ -1170,8 +1192,8 @@
                             <button
                               type="button"
                               class="source-tag type-{src.type}"
-                              class:active={inspectedSource?.name === src.name}
-                              on:click={() => handleInspectSource(src)}
+                              class:active={inspectedSource?.msgIdx === i && inspectedSource?.source?.name === src.name}
+                              on:click={() => handleInspectSource(i, src)}
                             >
                               {src.name}
                             </button>
@@ -1187,22 +1209,22 @@
                           {/if}
                         </div>
 
-                        {#if inspectedSource && allSources.some(s => s.name === inspectedSource.name)}
+                        {#if inspectedSource && inspectedSource.msgIdx === i}
                           <div class="source-inspector-popover" transition:slide={{ duration: 140 }}>
                             <div class="inspector-pop-info">
-                              <strong>{inspectedSource.name}</strong>
-                              <span>หมวดหมู่: {inspectedSource.category || inspectedSource.type}</span>
+                              <strong>{inspectedSource.source.name}</strong>
+                              <span>หมวดหมู่: {inspectedSource.source.category || inspectedSource.source.type}</span>
                             </div>
                             <div class="inspector-pop-actions">
-                              {#if inspectedSource.type === "document"}
-                                <button type="button" class="pop-action-btn" on:click={() => filterToInspectedDocument(inspectedSource)}>
+                              {#if inspectedSource.source.type === "document"}
+                                <button type="button" class="pop-action-btn" on:click={() => filterToInspectedDocument(inspectedSource.source)}>
                                   จำกัดการค้นหาเฉพาะไฟล์นี้
                                 </button>
-                              {:else if inspectedSource.type === "diagram"}
+                              {:else if inspectedSource.source.type === "diagram"}
                                 <button type="button" class="pop-action-btn" on:click={() => navigateToAgent("qa_analysis_diagram")}>
                                   เปิดผัง QA Diagram
                                 </button>
-                              {:else if inspectedSource.type === "qa_consult"}
+                              {:else if inspectedSource.source.type === "qa_consult"}
                                 <button type="button" class="pop-action-btn" on:click={() => navigateToAgent("qa_consult")}>
                                   เปิดผลตรวจ QA Consult
                                 </button>
@@ -1275,24 +1297,25 @@
         </div>
       </div>
 
-      <!-- Jump-to-Latest Pill when user scrolled up -->
-      {#if userScrolledUp && hasConversation}
-        <div class="jump-latest-wrap" transition:fade={{ duration: 140 }}>
-          <button type="button" class="btn-jump-latest" on:click={() => scrollToBottom(true)}>
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
-            <span>{isLoading ? "กำลังสตรีมคำตอบ — เลื่อนลงล่างสุด" : "เลื่อนลงล่างสุด"}</span>
-          </button>
-        </div>
-      {/if}
-
       <!-- Anchored Composer Dock (Editable while streaming so user can draft next query) -->
       <div class="composer-dock">
+        <!-- Jump-to-Latest Pill anchored cleanly above composer -->
+        {#if userScrolledUp && hasConversation}
+          <div class="jump-latest-wrap" transition:fade={{ duration: 140 }}>
+            <button type="button" class="btn-jump-latest" on:click={() => scrollToBottom(true)}>
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+              <span>{isLoading ? "กำลังสตรีมคำตอบ — เลื่อนลงล่างสุด" : "เลื่อนลงล่างสุด"}</span>
+            </button>
+          </div>
+        {/if}
+
         <div class="composer-shell">
           <textarea
             bind:this={textareaElement}
             bind:value={currentInput}
             on:keydown={handleKeydown}
             on:input={resizeTextarea}
+            aria-label="พิมพ์คำถามวิจัยหรือคำสั่ง QA"
             placeholder={isListening
               ? `กำลังรับเสียง (${speechLang === "th-TH" ? "ไทย" : "EN"})...`
               : `พิมพ์คำถามเพื่อค้นคว้าในโหมด ${activeModeObj.label}...`}
@@ -1371,7 +1394,7 @@
     overflow: hidden;
     background: #141928;
     color: #f8fafc;
-    font-family: "Prompt", "Inter", sans-serif;
+    font-family: var(--font-th, "Prompt", sans-serif);
   }
 
   .research-shell ::selection {
@@ -1445,7 +1468,7 @@
   }
 
   .project-code {
-    font-family: "Outfit", "Inter", sans-serif;
+    font-family: var(--font-en, "Outfit", sans-serif);
     font-size: 12px;
     font-weight: 700;
     letter-spacing: 0.04em;
@@ -1463,6 +1486,7 @@
 
   .rail-scroll {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
     padding: 14px;
     display: flex;
@@ -1596,7 +1620,7 @@
   }
 
   .lens-title {
-    font-family: "Outfit", "Inter", sans-serif;
+    font-family: var(--font-en, "Outfit", sans-serif);
     font-size: 13px;
     font-weight: 600;
     line-height: 1.25;
@@ -1669,7 +1693,7 @@
 
   .ledger-key {
     color: #cbd5e1;
-    font-family: "Outfit", "Inter", sans-serif;
+    font-family: var(--font-en, "Outfit", sans-serif);
   }
 
   .ledger-val {
@@ -1758,7 +1782,7 @@
   }
 
   .doc-scope-tag {
-    font-family: "Outfit", "Inter", sans-serif;
+    font-family: var(--font-en, "Outfit", sans-serif);
     font-size: 12px;
     font-weight: 500;
     color: #94a3b8;
@@ -1785,6 +1809,8 @@
 
   .rail-footer-btn {
     flex: 1;
+    min-width: 0;
+    white-space: nowrap;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -1837,13 +1863,15 @@
   }
 
   .canvas-topbar {
-    height: 52px;
-    padding: 0 20px;
+    min-height: 52px;
+    height: auto;
+    padding: 8px 20px;
     border-bottom: 1px solid rgba(148, 163, 184, 0.18);
     display: flex;
     justify-content: space-between;
     align-items: center;
-    gap: 12px;
+    flex-wrap: wrap;
+    gap: 8px;
     flex-shrink: 0;
     background: rgba(25, 33, 54, 0.88);
   }
@@ -1853,6 +1881,16 @@
     display: flex;
     align-items: center;
     gap: 10px;
+  }
+
+  .topbar-left {
+    min-width: 0;
+    overflow: hidden;
+    flex: 1 1 auto;
+  }
+
+  .topbar-right {
+    flex-shrink: 0;
   }
 
   .icon-toggle-btn {
@@ -1866,6 +1904,7 @@
     align-items: center;
     justify-content: center;
     cursor: pointer;
+    flex-shrink: 0;
   }
 
   .icon-toggle-btn:hover {
@@ -1877,26 +1916,35 @@
     display: flex;
     align-items: baseline;
     gap: 8px;
+    min-width: 0;
+    overflow: hidden;
   }
 
   .topbar-title-group h1 {
     margin: 0;
-    font-family: "Outfit", "Inter", sans-serif;
+    font-family: var(--font-en, "Outfit", sans-serif);
     font-size: 16px;
     font-weight: 700;
     color: #f8fafc;
     letter-spacing: -0.01em;
+    white-space: nowrap;
+    flex-shrink: 0;
   }
 
   .topbar-divider {
     color: #94a3b8;
+    flex-shrink: 0;
   }
 
   .topbar-lens-label {
-    font-family: "Outfit", "Inter", sans-serif;
+    font-family: var(--font-en, "Outfit", sans-serif);
     font-size: 13.5px;
     font-weight: 500;
     color: #cbd5e1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .scope-indicator {
@@ -1906,6 +1954,8 @@
     border: 1px solid rgba(129, 140, 248, 0.4);
     padding: 2px 10px;
     border-radius: 20px;
+    flex-shrink: 0;
+    white-space: nowrap;
   }
 
   .undo-banner-btn {
@@ -2117,7 +2167,7 @@
   }
 
   .entry-time {
-    font-family: "Outfit", "Inter", sans-serif;
+    font-family: var(--font-en, "Outfit", sans-serif);
     font-size: 12px;
     color: #94a3b8;
     font-variant-numeric: tabular-nums;
@@ -2164,7 +2214,7 @@
     border-radius: 8px;
     background: linear-gradient(135deg, #6366f1, #a855f7);
     color: #ffffff;
-    font-family: "Outfit", "Inter", sans-serif;
+    font-family: var(--font-en, "Outfit", sans-serif);
     font-size: 12px;
     font-weight: 700;
     display: inline-flex;
@@ -2173,14 +2223,14 @@
   }
 
   .brief-author {
-    font-family: "Outfit", "Inter", sans-serif;
+    font-family: var(--font-en, "Outfit", sans-serif);
     font-size: 13.5px;
     font-weight: 600;
     color: #ffffff;
   }
 
   .brief-mode-tag {
-    font-family: "Outfit", "Inter", sans-serif;
+    font-family: var(--font-en, "Outfit", sans-serif);
     font-size: 12px;
     color: #cbd5e1;
     background: #212b45;
@@ -2198,7 +2248,8 @@
     font-size: 14.5px;
     line-height: 1.74;
     color: #f1f5f9;
-    max-width: 74ch;
+    max-width: 100%;
+    min-width: 0;
   }
 
   .stream-cursor {
@@ -2344,9 +2395,13 @@
     background: transparent;
     border: 1px solid rgba(148, 163, 184, 0.28);
     color: #cbd5e1;
-    width: 26px;
-    height: 26px;
+    width: 30px;
+    height: 30px;
     border-radius: 6px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
     cursor: pointer;
   }
 
@@ -2415,10 +2470,10 @@
     cursor: pointer;
   }
 
-  /* Jump to Latest Floating Button */
+  /* Jump to Latest Floating Button (anchored inside .composer-dock) */
   .jump-latest-wrap {
     position: absolute;
-    bottom: 108px;
+    bottom: calc(100% + 12px);
     left: 50%;
     transform: translateX(-50%);
     z-index: 10;
@@ -2437,66 +2492,72 @@
     font-size: 12.5px;
     cursor: pointer;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.38);
+    white-space: nowrap;
   }
 
   /* ========================================
-     MARKDOWN CONTENT TYPOGRAPHY
+     MARKDOWN CONTENT TYPOGRAPHY (Scoped to .research-shell)
      ======================================== */
-  :global(.markdown-preview .md-heading) {
+  .research-shell :global(.markdown-preview .md-heading) {
     margin: 20px 0 8px;
     color: #ffffff;
     font-weight: 600;
     line-height: 1.35;
+    max-width: 74ch;
   }
-  :global(.markdown-preview .md-h1) { font-size: 19px; }
-  :global(.markdown-preview .md-h2) { font-size: 16.5px; color: #c7d2fe; }
-  :global(.markdown-preview .md-h3) { font-size: 15px; color: #93c5fd; }
-  :global(.markdown-preview .md-para) {
+  .research-shell :global(.markdown-preview .md-h1) { font-size: 19px; }
+  .research-shell :global(.markdown-preview .md-h2) { font-size: 16.5px; color: #c7d2fe; }
+  .research-shell :global(.markdown-preview .md-h3) { font-size: 15px; color: #93c5fd; }
+  .research-shell :global(.markdown-preview .md-para) {
     margin: 0 0 12px;
+    max-width: 74ch;
   }
-  :global(.markdown-preview .md-para:last-child) {
+  .research-shell :global(.markdown-preview .md-para:last-child) {
     margin-bottom: 0;
   }
-  :global(.markdown-preview .md-hr) {
+  .research-shell :global(.markdown-preview .md-hr) {
     border: none;
     border-top: 1px solid rgba(148, 163, 184, 0.2);
     margin: 16px 0;
   }
-  :global(.markdown-preview .md-quote) {
+  .research-shell :global(.markdown-preview .md-quote) {
     margin: 10px 0;
     padding: 10px 14px;
     background: #1b243b;
     border: 1px solid rgba(148, 163, 184, 0.22);
     border-radius: 8px;
     color: #e2e8f0;
+    max-width: 74ch;
   }
-  :global(.markdown-preview .md-table-wrap) {
+  .research-shell :global(.markdown-preview .md-table-wrap) {
     overflow-x: auto;
     margin: 12px 0;
     border: 1px solid rgba(148, 163, 184, 0.24);
     border-radius: 12px;
+    max-width: 100%;
+    width: 100%;
   }
-  :global(.markdown-preview .md-table) {
+  .research-shell :global(.markdown-preview .md-table) {
     width: 100%;
     border-collapse: collapse;
     font-size: 13px;
     background: #1a2338;
   }
-  :global(.markdown-preview .md-table th),
-  :global(.markdown-preview .md-table td) {
+  .research-shell :global(.markdown-preview .md-table th),
+  .research-shell :global(.markdown-preview .md-table td) {
     padding: 9px 12px;
     border-bottom: 1px solid rgba(148, 163, 184, 0.14);
     text-align: left;
   }
-  :global(.markdown-preview .md-table th) {
+  .research-shell :global(.markdown-preview .md-table th) {
     background: #232f4d;
     color: #f8fafc;
     font-weight: 600;
   }
-  :global(.markdown-preview .md-table tbody tr:hover) {
+  .research-shell :global(.markdown-preview .md-table tbody tr:hover) {
     background: rgba(255, 255, 255, 0.04);
   }
-  :global(.markdown-preview .citation-pill) {
+  .research-shell :global(.markdown-preview .citation-pill) {
     display: inline-block;
     background: rgba(16, 185, 129, 0.18);
     border: 1px solid rgba(16, 185, 129, 0.42);
@@ -2509,11 +2570,11 @@
     cursor: pointer;
     vertical-align: baseline;
   }
-  :global(.markdown-preview .citation-pill:hover) {
+  .research-shell :global(.markdown-preview .citation-pill:hover) {
     background: rgba(16, 185, 129, 0.3);
     color: #ffffff;
   }
-  :global(.markdown-preview .inline-code) {
+  .research-shell :global(.markdown-preview .inline-code) {
     background: #232f4d;
     border: 1px solid rgba(148, 163, 184, 0.24);
     color: #bfdbfe;
@@ -2522,27 +2583,29 @@
     font-size: 12.5px;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   }
-  :global(.markdown-preview .code-block-wrapper) {
+  .research-shell :global(.markdown-preview .code-block-wrapper) {
     margin: 12px 0;
     background: #111827;
     border: 1px solid rgba(148, 163, 184, 0.24);
     border-radius: 12px;
     overflow: hidden;
+    max-width: 100%;
+    width: 100%;
   }
-  :global(.markdown-preview .code-header) {
+  .research-shell :global(.markdown-preview .code-header) {
     background: #1e293b;
     padding: 6px 12px;
     display: flex;
     justify-content: space-between;
     align-items: center;
-    font-family: "Outfit", "Inter", sans-serif;
+    font-family: var(--font-en, "Outfit", sans-serif);
     font-size: 12px;
     color: #cbd5e1;
     text-transform: uppercase;
     font-weight: 600;
     border-bottom: 1px solid rgba(148, 163, 184, 0.16);
   }
-  :global(.markdown-preview .btn-copy-code-block) {
+  .research-shell :global(.markdown-preview .btn-copy-code-block) {
     background: rgba(255, 255, 255, 0.08);
     border: 1px solid rgba(148, 163, 184, 0.25);
     color: #e2e8f0;
@@ -2553,26 +2616,27 @@
     text-transform: none;
     cursor: pointer;
   }
-  :global(.markdown-preview .btn-copy-code-block:hover) {
+  .research-shell :global(.markdown-preview .btn-copy-code-block:hover) {
     background: rgba(99, 102, 241, 0.3);
     color: #ffffff;
   }
-  :global(.markdown-preview pre) {
+  .research-shell :global(.markdown-preview pre) {
     margin: 0;
     padding: 12px 14px;
     overflow-x: auto;
   }
-  :global(.markdown-preview pre code) {
+  .research-shell :global(.markdown-preview pre code) {
     color: #f1f5f9;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     font-size: 12.5px;
   }
-  :global(.markdown-preview .custom-list),
-  :global(.markdown-preview .custom-olist) {
+  .research-shell :global(.markdown-preview .custom-list),
+  .research-shell :global(.markdown-preview .custom-olist) {
     margin: 6px 0 12px;
     padding-left: 22px;
+    max-width: 74ch;
   }
-  :global(.markdown-preview .list-item) {
+  .research-shell :global(.markdown-preview .list-item) {
     margin-bottom: 5px;
   }
 
@@ -2580,6 +2644,7 @@
      ANCHORED COMPOSER DOCK (Brighter Slate)
      ======================================== */
   .composer-dock {
+    position: relative;
     padding: 12px 24px 18px;
     background: rgba(20, 25, 40, 0.92);
     border-top: 1px solid rgba(148, 163, 184, 0.16);
@@ -2629,7 +2694,8 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    gap: 10px;
+    flex-wrap: wrap;
+    gap: 8px;
     padding-top: 6px;
     border-top: 1px solid rgba(148, 163, 184, 0.16);
   }
@@ -2649,13 +2715,14 @@
   }
 
   .ctx-sep {
-    color: #64748b;
+    color: var(--text-dim, #8494aa);
   }
 
   .composer-controls {
     display: flex;
     align-items: center;
     gap: 8px;
+    flex-shrink: 0;
   }
 
   .composer-lang-btn {
@@ -2665,10 +2732,11 @@
     background: #273352;
     border: 1px solid rgba(148, 163, 184, 0.24);
     color: #cbd5e1;
-    font-family: "Outfit", "Inter", sans-serif;
+    font-family: var(--font-en, "Outfit", sans-serif);
     font-size: 12px;
     font-weight: 600;
     cursor: pointer;
+    flex-shrink: 0;
   }
 
   .composer-lang-btn:hover {
@@ -2687,6 +2755,7 @@
     align-items: center;
     justify-content: center;
     cursor: pointer;
+    flex-shrink: 0;
   }
 
   .composer-icon-btn:hover:not(:disabled) {
@@ -2703,16 +2772,19 @@
   .composer-submit-btn {
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     gap: 6px;
+    height: 34px;
     background: linear-gradient(135deg, #6366f1, #a855f7);
     border: none;
     color: #ffffff;
-    padding: 7px 15px;
+    padding: 0 15px;
     border-radius: 8px;
     font-family: "Prompt", sans-serif;
     font-size: 13px;
     font-weight: 500;
     cursor: pointer;
+    flex-shrink: 0;
     transition: filter 0.15s ease;
   }
 
@@ -2742,8 +2814,11 @@
 
     .inspector-rail {
       position: absolute;
+      top: 0;
+      left: 0;
       z-index: 20;
       height: 100%;
+      max-width: calc(100vw - 32px);
       box-shadow: 12px 0 32px rgba(0, 0, 0, 0.45);
     }
 

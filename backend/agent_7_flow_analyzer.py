@@ -185,7 +185,7 @@ def _merge_preserved_wireframe_assets(new_mockups: list, old_mockups: list) -> l
     for om in old_mockups:
         if not isinstance(om, dict):
             continue
-        has_asset = bool(om.get('figma_url') or om.get('image_url'))
+        has_asset = bool(om.get('figma_url') or om.get('image_url') or om.get('stitch_html'))
         if not has_asset:
             continue
         if om.get('screen_id'):
@@ -195,6 +195,11 @@ def _merge_preserved_wireframe_assets(new_mockups: list, old_mockups: list) -> l
         if om.get('screen_name'):
             by_name[str(om['screen_name']).strip().lower()] = om
 
+    preserved_keys = (
+        'figma_url', 'image_url', 'image_filename', 'wireframe_type',
+        'stitch_html', 'stitch_screen_id', 'stitch_project_id',
+        'stitch_design_system', 'stitch_engine', 'stitch_device', 'stitch_updated_at'
+    )
     for nm in new_mockups:
         if not isinstance(nm, dict):
             continue
@@ -204,7 +209,7 @@ def _merge_preserved_wireframe_assets(new_mockups: list, old_mockups: list) -> l
             or by_name.get(str(nm.get('screen_name', '')).strip().lower())
         )
         if match:
-            for k in ('figma_url', 'image_url', 'image_filename', 'wireframe_type'):
+            for k in preserved_keys:
                 if match.get(k):
                     nm[k] = match[k]
     return new_mockups
@@ -498,27 +503,27 @@ Generate a single, strict JSON object following this exact schema (replace all a
       "screen_id": "SCR-MOD-01",
       "screen_name": "<Real Screen Name>",
       "route": "/<real-route>",
-      "layout_type": "dashboard | form | table | detail",
+      "layout_type": "auth | discovery | detail | form | table | dashboard",
       "description": "<Thai description of what this screen does and its key business rules>",
       "header": {{
         "title": "<Real Screen Title>",
         "badge": "<Module Category>",
         "badge_color": "blue | emerald | purple | amber",
-        "actions": ["<Primary Action Button>", "<Secondary Action>"]
+        "actions": ["<Clean Action Label WITHOUT Leading Emoji>", "<Secondary Action WITHOUT Emoji>"]
       }},
       "stats": [
-        {{ "label": "<Relevant Metric>", "value": "<Sample Value>", "sub": "<Context>", "color": "blue" }}
+        {{ "label": "<Relevant Metric>", "value": "<Sample Value>", "sub": "<Context>", "color": "blue | emerald | purple | amber" }}
       ],
-      "tabs": ["<Tab 1>", "<Tab 2>"],
+      "tabs": ["<Tab 1 WITHOUT Emoji>", "<Tab 2 WITHOUT Emoji>"],
       "sections": [
         {{
-          "section_name": "<Real Form / Table Section Name>",
+          "section_name": "<Real Form / Table Section Name WITHOUT Leading Emoji>",
           "type": "form | table | cards",
           "fields": [
-            {{ "label": "<Real Field Name from SRS>", "type": "text | select | date | toggle | textarea", "default_value": "<Realistic Domain Value>", "required": true }}
+            {{ "label": "<Real Field Name from SRS>", "type": "text | password | select | date | toggle | textarea", "default_value": "<Realistic Domain Value>", "required": true }}
           ],
           "buttons": [
-            {{ "label": "<Action Button Label>", "variant": "primary | secondary | outline" }}
+            {{ "label": "<Clean Button Label WITHOUT Leading Emoji>", "variant": "primary | secondary | outline | danger" }}
           ],
           "table_headers": ["<Col 1>", "<Col 2>", "<Col 3>"],
           "table_rows": [["<Val 1>", "<Val 2>", "<Val 3>"]]
@@ -826,6 +831,443 @@ def get_diagram_context_for_agents(project_id: str, include_mockups: bool = True
     except Exception as err:
         logger.warning(f"Failed to format diagram context for project {project_id}: {err}")
         return ""
+
+
+# ==============================================================================
+# Google Stitch MCP + Gemini Live HTML/Tailwind High-Fidelity Screen UI Engine
+# ==============================================================================
+import base64
+import uuid
+from pathlib import Path
+import requests
+
+
+def _call_stitch_mcp(tool_name: str, arguments: dict, api_key: str, timeout: int = 90) -> tuple[bool, dict | str]:
+    """
+    Calls the remote Google Stitch MCP server (https://stitch.googleapis.com/mcp)
+    using JSON-RPC 2.0 tools/call with X-Goog-Api-Key authentication.
+    """
+    mcp_url = os.environ.get("STITCH_MCP_URL", "https://stitch.googleapis.com/mcp").strip()
+    if not api_key:
+        return False, "Missing STITCH_API_KEY"
+
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "X-Goog-Api-Key": api_key.strip()
+    }
+    payload = {
+        "jsonrpc": "2.0",
+        "id": uuid.uuid4().hex[:8],
+        "method": "tools/call",
+        "params": {
+            "name": tool_name,
+            "arguments": arguments or {}
+        }
+    }
+    try:
+        res = requests.post(mcp_url, headers=headers, json=payload, timeout=timeout)
+        data = res.json() if res.text else {}
+        if "error" in data:
+            err_obj = data["error"]
+            msg = err_obj.get("message") if isinstance(err_obj, dict) else str(err_obj)
+            return False, f"Stitch MCP Error: {msg}"
+
+        result = data.get("result") or {}
+        if result.get("isError"):
+            content_list = result.get("content") or []
+            err_text = " ".join(c.get("text", "") for c in content_list if isinstance(c, dict)).strip()
+            return False, err_text or f"Stitch MCP HTTP {res.status_code}"
+
+        if isinstance(result.get("structuredContent"), dict):
+            return True, result["structuredContent"]
+
+        content_list = result.get("content") or []
+        for item in content_list:
+            if isinstance(item, dict) and item.get("text"):
+                txt = item["text"].strip()
+                try:
+                    return True, json.loads(txt)
+                except Exception:
+                    return True, {"text": txt}
+        return True, result
+    except Exception as e:
+        return False, f"Stitch MCP connection error: {str(e)}"
+
+
+def _extract_screen_from_stitch_result(res_obj: dict) -> dict | None:
+    """Extracts the first generated Screen dictionary from Stitch V1 or V2 tool output."""
+    if not isinstance(res_obj, dict):
+        return None
+    screens = res_obj.get("screens")
+    if isinstance(screens, list) and len(screens) > 0 and isinstance(screens[0], dict):
+        return screens[0]
+    out_comps = res_obj.get("outputComponents") or []
+    for comp in out_comps:
+        if not isinstance(comp, dict):
+            continue
+        design = comp.get("design") or {}
+        d_screens = design.get("screens") or []
+        if isinstance(d_screens, list) and len(d_screens) > 0 and isinstance(d_screens[0], dict):
+            return d_screens[0]
+        if isinstance(comp.get("screen"), dict):
+            return comp["screen"]
+    if res_obj.get("htmlCode") or res_obj.get("screenshot"):
+        return res_obj
+    return None
+
+
+def _build_gemini_live_html_ui(
+    project_name: str,
+    project_code: str,
+    project_desc: str,
+    screen_mockup: dict,
+    device_type: str = "DESKTOP",
+    custom_prompt: str = "",
+    design_dna: dict | None = None
+) -> tuple[str, dict]:
+    """
+    Generates a domain-authentic, production-grade standalone HTML5 + Tailwind CSS UI
+    tailored specifically to the project's domain and screen specification.
+    """
+    screen_id = screen_mockup.get("screen_id") or "SCR-001"
+    screen_name = screen_mockup.get("screen_name") or "Screen"
+    route = screen_mockup.get("route") or "/"
+    desc = screen_mockup.get("description") or ""
+    sections = screen_mockup.get("sections") or []
+    tabs = screen_mockup.get("tabs") or []
+    stats = screen_mockup.get("stats") or []
+    reqs = screen_mockup.get("connected_req_codes") or []
+    ucs = screen_mockup.get("connected_use_cases") or []
+
+    dna_hint = json.dumps(design_dna, ensure_ascii=False) if design_dna else "Auto-detect distinct brand palette, surface style, and navigation pattern appropriate for this project's industry/domain."
+
+    prompt = f"""You are a World-Class Principal Product Designer & Frontend Architect.
+Generate a COMPLETE, self-contained, interactive, visually breathtaking HTML5 screen mockup using Tailwind CSS CDN (`https://cdn.tailwindcss.com`) and Google Fonts (`Prompt` for Thai + `Plus Jakarta Sans` / `Inter` for English).
+
+### PROJECT CONTEXT (1-to-1 Isolated Project Brand Space)
+- Project Code: `{project_code}`
+- Project Name: `{project_name}`
+- Project Domain / Description: `{project_desc or project_name}`
+- Project Brand Design DNA: {dna_hint}
+
+### TARGET SCREEN SPECIFICATION
+- Screen ID: `{screen_id}`
+- Screen Title: `{screen_name}`
+- Route Path: `{route}`
+- Target Viewport Mode: `{device_type}` ({'Mobile App viewport ~390px wide with mobile header & bottom navigation bar' if device_type == 'MOBILE' else 'Responsive Web Application layout'})
+- Screen Purpose: `{desc}`
+- Key Tabs/Flows: `{json.dumps(tabs, ensure_ascii=False)}`
+- Key Metrics/Highlights: `{json.dumps(stats, ensure_ascii=False)}`
+- Form Fields / Data Sections: `{json.dumps(sections, ensure_ascii=False)}`
+- Linked Requirements & Use Cases: REQs={json.dumps(reqs)} | UCs={json.dumps(ucs)}
+- User Custom Design Instructions: `{custom_prompt or 'Make it look like a real, flagship commercial consumer/enterprise product for this exact domain — NOT a generic dark admin wireframe.'}`
+
+### STRICT CRAFT & DESIGN REQUIREMENTS
+1. **Domain-Authentic Visual World**:
+   - Design specifically for `{project_name}`'s real industry! (For example, if it's a food/restaurant app like FoodSmile, use an appetizing modern consumer aesthetic with warm coral/amber/emerald accents, realistic Thai restaurant/food photography from Unsplash, clean cards, social login with Google & LINE, etc. If fintech/healthcare/SaaS, use that industry's flagship visual language.)
+   - **NEVER** render a generic dark QA inspector table or developer wireframe box. Render the **actual end-user application screen** that a customer or operator uses on `{route}`!
+2. **Rich Interactive Behavior (Vanilla JS included inside `<script>`)**:
+   - Interactive tabs that switch views when clicked.
+   - Working form inputs with realistic Thai/English sample data, password visibility toggle, validation feedback, and interactive submit buttons that show an in-page toast notification when clicked.
+   - Interactive search/filter pills, toggles, or action buttons on cards/rows.
+3. **Bilingual Thai + English Polish**:
+   - Use natural, crisp Thai & English UI copy appropriate for `{screen_name}` (`font-family: 'Prompt', 'Plus Jakarta Sans', sans-serif`).
+4. **Concise & Complete Output Format (CRITICAL)**:
+   - Keep the code concise, clean, and well-structured (~180–280 lines total, using compact Tailwind utility classes and inline Lucide/hero SVG icons) so the full file is ALWAYS emitted completely without truncation.
+   - Return ONLY valid, complete `<!DOCTYPE html><html lang="th">...</body></html>` code. Do NOT wrap in markdown explanations.
+"""
+    model_name = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+    raw_html, _ = call_gemini(prompt, model_name=model_name, max_output_tokens=32768)
+    cleaned = str(raw_html or "").strip()
+    cleaned = re.sub(r'^```(?:html)?\s*', '', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'\s*```$', '', cleaned)
+    m = re.search(r'(<!DOCTYPE html[\s\S]*?<\/html>|<html[\s\S]*?<\/html>)', cleaned, re.IGNORECASE)
+    if m:
+        cleaned = m.group(1).strip()
+    elif "</html>" not in cleaned.lower():
+        if "</body>" not in cleaned.lower():
+            cleaned += "\n</body>"
+        cleaned += "\n</html>"
+
+    if not design_dna:
+        design_dna = {
+            "project_code": project_code,
+            "project_name": project_name,
+            "established_at": datetime.datetime.now().isoformat()
+        }
+    return cleaned, design_dna
+
+
+def generate_highfi_screen_ui(
+    project_id: str,
+    screen_id: str,
+    device_type: str = "DESKTOP",
+    custom_prompt: str = "",
+    engine: str = "auto",
+    stitch_api_key: str = ""
+) -> tuple[bool, dict | str]:
+    """
+    Generates or refines a high-fidelity interactive UI for a specific screen in a project.
+    - Isolated 1-to-1 per project (`stitch_project_id` & `design_dna` stored per `project_id`).
+    - Primary engine: Google Stitch MCP (`https://stitch.googleapis.com/mcp`) when a valid key is available.
+    - Automatic fallback (or direct choice): Gemini 2.5 Live HTML/Tailwind Generator.
+    """
+    if not project_id or not screen_id:
+        return False, "project_id and screen_id are required"
+
+    device_norm = str(device_type or "DESKTOP").upper()
+    if device_norm not in ("DESKTOP", "MOBILE", "TABLET"):
+        device_norm = "DESKTOP"
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT d.id, d.sitemap_data, d.screen_mockups, d.summary_stats,
+                   p.project_name, p.project_code, p.description
+            FROM qa_analysis_diagrams d
+            LEFT JOIN projects p ON d.project_id = p.project_id
+            WHERE d.project_id = %s::uuid
+            ORDER BY d.updated_at DESC LIMIT 1
+        """, (project_id,))
+        row = cursor.fetchone()
+        if not row:
+            cursor.close()
+            conn.close()
+            return False, "ไม่พบข้อมูล Flow Analysis ของโครงการนี้ กรุณากดวิเคราะห์ Flow ก่อน"
+
+        analysis_id = row[0]
+        sitemap_data = row[1] if isinstance(row[1], list) else []
+        mockups = row[2] if isinstance(row[2], list) else []
+        summary_stats = row[3] if isinstance(row[3], dict) else {}
+        project_name = row[4] or "System"
+        project_code = row[5] or "PROJ"
+        project_desc = row[6] or ""
+
+        mockups = ensure_all_screen_mockups(sitemap_data, mockups, project_name)
+        target_mockup = None
+        for m in mockups:
+            if str(m.get("screen_id", "")).strip().lower() == str(screen_id).strip().lower():
+                target_mockup = m
+                break
+        if not target_mockup:
+            for node in sitemap_data:
+                for n in [node] + (node.get("children") or []):
+                    if str(n.get("screen_id", "")).strip().lower() == str(screen_id).strip().lower():
+                        target_mockup = generate_mockup_for_node(n, project_name)
+                        mockups.append(target_mockup)
+                        break
+                if target_mockup:
+                    break
+        if not target_mockup:
+            cursor.close()
+            conn.close()
+            return False, f"ไม่พบหน้าจอ {screen_id} ในโครงการนี้"
+
+        effective_key = (stitch_api_key or os.environ.get("STITCH_API_KEY") or "").strip()
+        stitch_project_id = summary_stats.get("stitch_project_id") or target_mockup.get("stitch_project_id") or ""
+        stitch_design_system = summary_stats.get("stitch_design_system") or ""
+        existing_stitch_screen_id = target_mockup.get("stitch_screen_id") or ""
+
+        html_output = ""
+        saved_image_url = target_mockup.get("image_url") or ""
+        used_engine = "gemini_live_html"
+        stitch_notice = ""
+
+        # ── PATH 1: Try Google Stitch MCP when engine is 'auto' or 'stitch' ──
+        if engine in ("auto", "stitch") and effective_key:
+            # 1) Ensure 1-to-1 Stitch Project Container exists for this Spectra QA Project
+            if not stitch_project_id:
+                ok_proj, proj_res = _call_stitch_mcp(
+                    "create_project",
+                    {"title": f"[{project_code}] {project_name}"},
+                    effective_key
+                )
+                if ok_proj and isinstance(proj_res, dict):
+                    res_name = str(proj_res.get("name") or "")
+                    if "/" in res_name:
+                        stitch_project_id = res_name.split("/")[-1].strip()
+                    elif proj_res.get("projectId"):
+                        stitch_project_id = str(proj_res["projectId"]).strip()
+                    if stitch_project_id:
+                        summary_stats["stitch_project_id"] = stitch_project_id
+                else:
+                    stitch_notice = str(proj_res)
+                    if engine == "stitch":
+                        cursor.close()
+                        conn.close()
+                        return False, f"เชื่อมต่อ Google Stitch MCP ไม่สำเร็จ: {stitch_notice}"
+
+            # 2) Generate or Edit Screen inside this project's isolated Stitch container
+            if stitch_project_id:
+                screen_title = target_mockup.get("screen_name") or screen_id
+                screen_route = target_mockup.get("route") or "/"
+                screen_desc = target_mockup.get("description") or ""
+                fields_summary = []
+                for sec in (target_mockup.get("sections") or []):
+                    for f in (sec.get("fields") or []):
+                        if f.get("label"):
+                            fields_summary.append(f["label"])
+
+                stitch_prompt = (
+                    f"Project: {project_name} ({project_desc or project_code}). "
+                    f"Screen: {screen_title} (Route: {screen_route}). "
+                    f"Purpose: {screen_desc}. "
+                    f"Key UI elements & fields: {', '.join(fields_summary[:10]) or 'Modern interactive controls'}. "
+                    f"Bilingual Thai and English interface. "
+                )
+                if custom_prompt:
+                    stitch_prompt += f"Additional design instructions: {custom_prompt}"
+
+                if existing_stitch_screen_id and custom_prompt:
+                    ok_scr, scr_res = _call_stitch_mcp(
+                        "edit_screens",
+                        {
+                            "projectId": stitch_project_id,
+                            "selectedScreenIds": [existing_stitch_screen_id],
+                            "prompt": stitch_prompt,
+                            "deviceType": device_norm
+                        },
+                        effective_key
+                    )
+                else:
+                    gen_args = {
+                        "projectId": stitch_project_id,
+                        "prompt": stitch_prompt,
+                        "deviceType": device_norm
+                    }
+                    if stitch_design_system:
+                        gen_args["designSystem"] = stitch_design_system
+                    ok_scr, scr_res = _call_stitch_mcp("generate_screen_from_text", gen_args, effective_key)
+
+                if ok_scr and isinstance(scr_res, dict):
+                    scr_obj = _extract_screen_from_stitch_result(scr_res)
+                    if scr_obj:
+                        scr_name = str(scr_obj.get("name") or "")
+                        if "/screens/" in scr_name:
+                            existing_stitch_screen_id = scr_name.split("/screens/")[-1].strip()
+                        ds_obj = scr_obj.get("designSystem")
+                        if isinstance(ds_obj, dict) and ds_obj.get("name"):
+                            stitch_design_system = str(ds_obj["name"]).strip()
+                            summary_stats["stitch_design_system"] = stitch_design_system
+
+                        # Download HTML code
+                        html_meta = scr_obj.get("htmlCode") or {}
+                        if isinstance(html_meta, dict):
+                            if html_meta.get("name"):
+                                ok_dl, dl_res = _call_stitch_mcp("download_file", {"name": html_meta["name"]}, effective_key)
+                                if ok_dl and isinstance(dl_res, dict) and dl_res.get("html"):
+                                    html_output = dl_res["html"]
+                            if not html_output and html_meta.get("downloadUrl"):
+                                try:
+                                    r_html = requests.get(html_meta["downloadUrl"], timeout=20)
+                                    if r_html.ok:
+                                        html_output = r_html.text
+                                except Exception:
+                                    pass
+
+                        # Download screenshot if present
+                        shot_meta = scr_obj.get("screenshot") or {}
+                        if isinstance(shot_meta, dict):
+                            img_bytes = None
+                            if shot_meta.get("name"):
+                                ok_img, img_res = _call_stitch_mcp("download_file", {"name": shot_meta["name"]}, effective_key)
+                                if ok_img and isinstance(img_res, dict) and img_res.get("image"):
+                                    try:
+                                        img_bytes = base64.b64decode(img_res["image"])
+                                    except Exception:
+                                        pass
+                            if not img_bytes and shot_meta.get("downloadUrl"):
+                                try:
+                                    r_img = requests.get(shot_meta["downloadUrl"], timeout=20)
+                                    if r_img.ok:
+                                        img_bytes = r_img.content
+                                except Exception:
+                                    pass
+                            if img_bytes:
+                                wf_dir = Path(__file__).resolve().parent.parent / "uploads" / "wireframes"
+                                wf_dir.mkdir(exist_ok=True, parents=True)
+                                safe_p = re.sub(r'[^a-zA-Z0-9_]', '_', str(project_id)[:8])
+                                safe_s = re.sub(r'[^a-zA-Z0-9_]', '_', str(screen_id))
+                                fname = f"stitch_{safe_p}_{safe_s}_{uuid.uuid4().hex[:6]}.png"
+                                (wf_dir / fname).write_bytes(img_bytes)
+                                saved_image_url = f"/uploads/wireframes/{fname}"
+
+                        if html_output:
+                            used_engine = "google_stitch_mcp"
+                else:
+                    stitch_notice = str(scr_res)
+                    if engine == "stitch":
+                        cursor.close()
+                        conn.close()
+                        return False, f"Google Stitch MCP สร้างหน้าจอไม่สำเร็จ: {stitch_notice}"
+
+        # ── PATH 2: Gemini Live HTML/Tailwind Engine (Fallback or Direct) ──
+        if not html_output:
+            design_dna = summary_stats.get("design_dna") if isinstance(summary_stats.get("design_dna"), dict) else None
+            html_output, updated_dna = _build_gemini_live_html_ui(
+                project_name=project_name,
+                project_code=project_code,
+                project_desc=project_desc,
+                screen_mockup=target_mockup,
+                device_type=device_norm,
+                custom_prompt=custom_prompt,
+                design_dna=design_dna
+            )
+            summary_stats["design_dna"] = updated_dna
+            used_engine = "gemini_live_html"
+
+        now_iso = datetime.datetime.now().isoformat()
+        target_mockup["stitch_html"] = html_output
+        target_mockup["stitch_screen_id"] = existing_stitch_screen_id
+        target_mockup["stitch_project_id"] = stitch_project_id or f"LOCAL-{project_code}"
+        target_mockup["stitch_design_system"] = stitch_design_system
+        target_mockup["stitch_engine"] = used_engine
+        target_mockup["stitch_device"] = device_norm
+        target_mockup["stitch_updated_at"] = now_iso
+        target_mockup["wireframe_type"] = "stitch"
+        if saved_image_url:
+            target_mockup["image_url"] = saved_image_url
+
+        cursor.execute("""
+            UPDATE qa_analysis_diagrams
+            SET screen_mockups = %s::jsonb,
+                summary_stats = %s::jsonb,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = %s::uuid
+        """, (
+            json.dumps(mockups, ensure_ascii=False),
+            json.dumps(summary_stats, ensure_ascii=False),
+            analysis_id
+        ))
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        return True, {
+            "screen_id": screen_id,
+            "wireframe_type": "stitch",
+            "stitch_html": html_output,
+            "stitch_screen_id": existing_stitch_screen_id,
+            "stitch_project_id": target_mockup["stitch_project_id"],
+            "stitch_engine": used_engine,
+            "stitch_device": device_norm,
+            "stitch_updated_at": now_iso,
+            "image_url": saved_image_url,
+            "stitch_notice": stitch_notice
+        }
+    except Exception as e:
+        logger.error(f"Error in generate_highfi_screen_ui: {e}", exc_info=True)
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        return False, str(e)
+
 
 
 if __name__ == "__main__":

@@ -183,6 +183,18 @@ export function logout(reason = '') {
     expiryTimeoutId = null;
   }
 
+  // Revoke active JWT server-side (best-effort, non-blocking)
+  const currentToken = localStorage.getItem('jwt_token');
+  if (currentToken) {
+    try {
+      const fetchFn = window.originalFetch || window.fetch;
+      fetchFn('/api/logout', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${currentToken}` }
+      }).catch(() => {});
+    } catch (_) {}
+  }
+
   _token.set('');
   _user.set('');
   _email.set('');

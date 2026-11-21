@@ -35,14 +35,28 @@
       dispatch('navigate', { view: noti.actionView, payload: noti.actionPayload });
     }
   }
+  function handleItemKeydown(e, item) {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      handleNotiClick(item);
+    }
+  }
+
+  function handleWindowKeydown(e) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      dispatch('close');
+    }
+  }
 </script>
 
+<svelte:window on:keydown={handleWindowKeydown} />
+
 <!-- Backdrop overlay to dismiss when clicking outside -->
-<!-- svelte-ignore a11y-click-events-have-key-events -->
-<div class="noti-overlay" on:click|stopPropagation={() => dispatch('close')}></div>
+<div class="noti-overlay" role="presentation" on:click|stopPropagation={() => dispatch('close')}></div>
 
 <!-- Main Notification Popup Container -->
-<div class="noti-panel glass-panel" in:fly={{ y: -10, duration: 220 }} out:fade={{ duration: 150 }}>
+<div class="noti-panel glass-panel" role="region" aria-label="การแจ้งเตือน" in:fly={{ y: -10, duration: 220 }} out:fade={{ duration: 150 }}>
   <!-- Header -->
   <div class="noti-header">
     <div class="header-title-row">
@@ -59,7 +73,7 @@
     </div>
 
     {#if $notifications.length > 0}
-      <button class="btn-mark-all" on:click={markAllAsRead} title="ทำเครื่องหมายว่าอ่านแล้วทั้งหมด">
+      <button type="button" class="btn-mark-all" on:click={markAllAsRead} title="ทำเครื่องหมายว่าอ่านแล้วทั้งหมด">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
           <polyline points="20 6 9 17 4 12"></polyline>
         </svg>
@@ -77,11 +91,13 @@
       </div>
     {:else}
       {#each $notifications as item (item.id)}
-        <!-- svelte-ignore a11y-click-events-have-key-events -->
         <div 
           class="noti-item {item.type}" 
           class:unread={!item.read}
+          role="button"
+          tabindex="0"
           on:click={() => handleNotiClick(item)}
+          on:keydown={(e) => handleItemKeydown(e, item)}
           transition:slide={{ duration: 180 }}
         >
           <div class="item-icon-wrapper {item.type}">
@@ -100,9 +116,11 @@
           </div>
 
           <button 
+            type="button"
             class="btn-remove-noti" 
             on:click|stopPropagation={() => removeNotification(item.id)}
             title="ลบรายการนี้"
+            aria-label="ลบการแจ้งเตือน"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
               <line x1="18" y1="6" x2="6" y2="18"></line>
@@ -117,7 +135,7 @@
   <!-- Footer -->
   {#if $notifications.length > 0}
     <div class="noti-footer">
-      <button class="btn-clear-all" on:click={clearAllNotifications}>
+      <button type="button" class="btn-clear-all" on:click={clearAllNotifications}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
           <polyline points="3 6 5 6 21 6"></polyline>
           <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
@@ -140,9 +158,11 @@
     top: calc(100% + 12px);
     right: 0;
     width: 380px;
+    max-width: calc(100vw - 24px);
     max-height: 520px;
     background: rgba(16, 18, 30, 0.95);
-    backdrop-filter: blur(24px);
+    backdrop-filter: var(--glass-blur);
+    -webkit-backdrop-filter: var(--glass-blur);
     border: 1px solid rgba(168, 85, 247, 0.25);
     border-radius: 20px;
     box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6), 0 0 20px rgba(168, 85, 247, 0.15);
@@ -212,6 +232,7 @@
   /* Notification List */
   .noti-list {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
     padding: 8px 12px;
     display: flex;
@@ -235,7 +256,7 @@
   .noti-item {
     display: flex;
     gap: 12px;
-    padding: 12px 14px;
+    padding: 12px 14px 12px 18px;
     border-radius: 14px;
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid rgba(255, 255, 255, 0.05);
@@ -332,15 +353,19 @@
     color: var(--text-dim);
     cursor: pointer;
     opacity: 0;
-    padding: 2px;
+    padding: 4px;
+    border-radius: 6px;
     display: flex;
     align-items: center;
     justify-content: center;
+    flex-shrink: 0;
     transition: all 0.2s ease;
     align-self: flex-start;
   }
 
-  .noti-item:hover .btn-remove-noti {
+  .noti-item:hover .btn-remove-noti,
+  .noti-item:focus-within .btn-remove-noti,
+  .btn-remove-noti:focus-visible {
     opacity: 1;
   }
 
@@ -373,5 +398,22 @@
 
   .btn-clear-all:hover {
     opacity: 0.8;
+  }
+
+  @media (hover: none), (pointer: coarse) {
+    .btn-remove-noti {
+      opacity: 0.85;
+    }
+  }
+
+  @media (max-width: 520px) {
+    .noti-panel {
+      position: fixed;
+      top: 62px;
+      right: 12px;
+      left: 12px;
+      width: auto;
+      max-width: none;
+    }
   }
 </style>

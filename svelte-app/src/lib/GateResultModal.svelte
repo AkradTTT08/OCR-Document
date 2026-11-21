@@ -39,14 +39,23 @@
   function handleBackdropClick() {
     onClose();
   }
+
+  function handleKeydown(e) {
+    if (e.key === 'Escape' && showModal) {
+      onClose();
+    }
+  }
 </script>
+
+<svelte:window on:keydown={handleKeydown} />
 
 {#if showModal && resultData}
   <!-- svelte-ignore a11y-click-events-have-key-events -->
+  <!-- svelte-ignore a11y-no-static-element-interactions -->
   <div class="gate-modal-backdrop" in:fade={{ duration: 250 }} out:fade={{ duration: 200 }} on:click={handleBackdropClick}>
     
     <!-- Animation Particles Layer -->
-    <div class="animation-container">
+    <div class="animation-container" aria-hidden="true">
       {#if isPassed}
         <!-- Side Fireworks & Confetti Burst -->
         <div class="confetti-side-wrapper left-side">
@@ -90,13 +99,17 @@
 
     <!-- Glassmorphic Modal Box -->
     <!-- svelte-ignore a11y-click-events-have-key-events -->
+    <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
     <div 
-      class="gate-modal-card status-{status.toLowerCase()}" 
+      class="gate-modal-card status-{status.toLowerCase()}"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="gate-modal-title"
       in:scale={{ start: 0.85, duration: 300 }} 
       out:scale={{ start: 0.95, duration: 150 }} 
       on:click|stopPropagation
     >
-      <div class="modal-badge-wrapper">
+      <div class="modal-badge-wrapper" aria-hidden="true">
         <div class="icon-ring">
           {#if isPassed}
             <span class="main-icon">🎉</span>
@@ -112,44 +125,44 @@
         <div class="gate-tag">Final Gate Assessment Rule</div>
         
         {#if isPassed}
-          <h2 class="status-title text-passed">PASSED (ผ่านบริบูรณ์)</h2>
+          <h2 id="gate-modal-title" class="status-title text-passed">PASSED (ผ่านบริบูรณ์)</h2>
           <p class="status-subtitle">เอกสารผ่านเกณฑ์การประเมินมาตรฐานกลาง Exit Criteria ทั้งหมด 100%</p>
         {:else if isConditional}
-          <h2 class="status-title text-conditional">CONDITIONAL PASSED (ผ่านแบบมีเงื่อนไข)</h2>
+          <h2 id="gate-modal-title" class="status-title text-conditional">CONDITIONAL PASSED (ผ่านแบบมีเงื่อนไข)</h2>
           <p class="status-subtitle">ผ่านเกณฑ์สาระสำคัญ (หมวด 1, 2, 4) สามารถส่ง Final Clean Copy ได้เลย</p>
         {:else}
-          <h2 class="status-title text-rejected">REJECTED (ไม่ผ่าน - ต้องส่งตรวจใหม่)</h2>
+          <h2 id="gate-modal-title" class="status-title text-rejected">REJECTED (ไม่ผ่าน - ต้องส่งตรวจใหม่)</h2>
           <p class="status-subtitle">พบข้อผิดพลาดในสาระสำคัญ (หมวด 1 หรือ หมวด 2) จำเป็นต้องแก้ไขและส่งตรวจใหม่</p>
         {/if}
 
         <div class="metrics-grid">
           <div class="metric-box">
-            <span class="metric-val">{resultData.score_percentage || 100}%</span>
+            <span class="metric-val">{resultData.score_percentage ?? 100}%</span>
             <span class="metric-lbl">คะแนนสมบูรณ์</span>
           </div>
           <div class="metric-box green">
-            <span class="metric-val">{resultData.passed_items || 0}</span>
+            <span class="metric-val">{resultData.passed_items ?? 0}</span>
             <span class="metric-lbl">ผ่าน (PASS)</span>
           </div>
           <div class="metric-box red">
-            <span class="metric-val">{resultData.failed_items || 0}</span>
+            <span class="metric-val">{resultData.failed_items ?? 0}</span>
             <span class="metric-lbl">ไม่ผ่าน (FAIL)</span>
           </div>
           <div class="metric-box gray">
-            <span class="metric-val">{resultData.na_items || 0}</span>
+            <span class="metric-val">{resultData.na_items ?? 0}</span>
             <span class="metric-lbl">ข้าม (N/A)</span>
           </div>
         </div>
 
         {#if resultData.summary_remarks}
           <div class="remarks-box">
-            📌 <strong>ข้อสรุปจากระบบ AI Auditor:</strong> {resultData.summary_remarks}
+            <span aria-hidden="true">📌</span> <strong>ข้อสรุปจากระบบ AI Auditor:</strong> {resultData.summary_remarks}
           </div>
         {/if}
 
         {#if resultData.failed_items > 0 && resultData.items}
           <div class="failed-preview-box">
-            <div class="failed-header">⚠️ รายการข้อตรวจที่ไม่ผ่าน ({resultData.failed_items} ข้อ):</div>
+            <div class="failed-header"><span aria-hidden="true">⚠️</span> รายการข้อตรวจที่ไม่ผ่าน ({resultData.failed_items} ข้อ):</div>
             <div class="failed-list">
               {#each resultData.items.filter(i => i.status === 'FAIL') as fi}
                 <div class="failed-item-row">
@@ -162,7 +175,7 @@
         {/if}
 
         <div class="modal-footer-btns">
-          <button class="btn btn-close-modal" on:click={onClose}>
+          <button type="button" class="btn btn-close-modal" on:click={onClose}>
             ดูรายละเอียดผลการตรวจทั้งหมด
           </button>
         </div>
@@ -174,27 +187,25 @@
 <style>
   .gate-modal-backdrop {
     position: fixed;
-    top: 0;
-    left: 0;
-    width: 100vw;
-    height: 100vh;
+    inset: 0;
     background: rgba(10, 15, 30, 0.78);
     backdrop-filter: blur(16px);
-    z-index: 9999;
+    -webkit-backdrop-filter: blur(16px);
+    z-index: var(--z-modal, 10000);
     display: flex;
     justify-content: center;
-    align-items: center;
-    overflow: hidden;
+    align-items: safe center;
+    overflow-y: auto;
+    padding: 56px 16px 24px;
+    box-sizing: border-box;
   }
 
   .animation-container {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
+    position: fixed;
+    inset: 0;
+    overflow: hidden;
     pointer-events: none;
-    z-index: 10000;
+    z-index: 1;
   }
 
   /* Confetti Side Fireworks Animation */
@@ -276,16 +287,19 @@
   /* Modal Container Card */
   .gate-modal-card {
     position: relative;
-    width: 90%;
+    width: 100%;
     max-width: 520px;
+    max-height: none;
+    margin: auto;
     background: rgba(15, 23, 42, 0.92);
     border-radius: 24px;
     padding: 32px 28px 24px 28px;
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.7), 0 0 40px rgba(99, 102, 241, 0.2);
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    z-index: 10001;
+    border: 1px solid var(--glass-border-light, rgba(255, 255, 255, 0.15));
+    z-index: 2;
     text-align: center;
-    color: #ffffff;
+    color: var(--text-main, #f8fafc);
+    box-sizing: border-box;
   }
 
   .gate-modal-card.status-passed {
@@ -396,15 +410,15 @@
   }
 
   .remarks-box {
-    background: rgba(30, 41, 59, 0.6);
-    border-left: 3px solid #6366f1;
-    border-radius: 8px;
+    background: rgba(99, 102, 241, 0.1);
+    border: 1px solid rgba(99, 102, 241, 0.3);
+    border-radius: var(--radius-sm, 8px);
     padding: 10px 12px;
     font-size: 0.82rem;
     color: #e2e8f0;
     text-align: left;
     margin-bottom: 16px;
-    line-height: 1.4;
+    line-height: 1.45;
   }
 
   .failed-preview-box {
@@ -414,7 +428,7 @@
     padding: 10px 12px;
     text-align: left;
     margin-bottom: 16px;
-    max-height: 110px;
+    max-height: 140px;
     overflow-y: auto;
   }
 
@@ -428,20 +442,47 @@
   .failed-list {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 6px;
   }
 
   .failed-item-row {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 8px;
     font-size: 0.78rem;
     color: #cbd5e1;
+    line-height: 1.45;
   }
 
   .item-code {
-    font-weight: bold;
-    color: #ef4444;
+    font-weight: 700;
+    flex-shrink: 0;
+    white-space: nowrap;
+    color: #f87171;
+  }
+
+  .item-code.badge-sev-critical,
+  .item-code.badge-sev-high {
+    color: #f87171;
+  }
+
+  .item-code.badge-sev-major,
+  .item-code.badge-sev-medium {
+    color: #fbbf24;
+  }
+
+  .item-code.badge-sev-minor,
+  .item-code.badge-sev-low {
+    color: #60a5fa;
+  }
+
+  .item-code.badge-sev-info {
+    color: #cbd5e1;
+  }
+
+  .item-text {
+    min-width: 0;
+    overflow-wrap: break-word;
   }
 
   .modal-footer-btns {
@@ -451,19 +492,38 @@
   .btn-close-modal {
     width: 100%;
     padding: 12px 20px;
-    border-radius: 12px;
+    border-radius: var(--radius-md, 12px);
     border: none;
-    background: linear-gradient(135deg, #6366f1, #4f46e5);
+    background: linear-gradient(135deg, var(--primary, #6366f1), #4f46e5);
     color: #ffffff;
+    font-family: var(--font-th, 'Prompt', sans-serif);
     font-size: 0.92rem;
     font-weight: 600;
     cursor: pointer;
     box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);
-    transition: all 0.2s ease;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
   }
 
   .btn-close-modal:hover {
     transform: translateY(-2px);
     box-shadow: 0 6px 18px rgba(99, 102, 241, 0.5);
+  }
+
+  @media (max-width: 520px) {
+    .gate-modal-card {
+      padding: 28px 18px 20px;
+    }
+    .metrics-grid {
+      grid-template-columns: repeat(2, 1fr);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .animation-container {
+      display: none !important;
+    }
+    .btn-close-modal:hover {
+      transform: none;
+    }
   }
 </style>

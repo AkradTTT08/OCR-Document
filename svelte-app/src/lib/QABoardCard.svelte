@@ -1,6 +1,6 @@
 <script>
-  import { onMount, onDestroy } from "svelte";
-  import { fade, slide, fly, scale } from "svelte/transition";
+  import { onMount } from "svelte";
+  import { fade, scale } from "svelte/transition";
   import { selectedProjectStore } from "./qaHistoryStore.js";
   import ProjectSelection from "./ProjectSelection.svelte";
   import { toast } from "./toastStore.js";
@@ -574,9 +574,14 @@
     + selectedMemberIds.size
     + (filterNoLabels ? 1 : 0)
     + selectedLabelNames.size
-    + (filterSavedStatus !== 'all' ? 1 : 0)
+    + (activeTab === 'live' && filterSavedStatus !== 'all' ? 1 : 0)
     + (filterCompletion !== 'all' ? 1 : 0)
     + filterTypes.size;
+
+  function isCardUnestimated(card) {
+    const pts = parseFloat(card?.story_points);
+    return isNaN(pts) || pts === 0;
+  }
 
   // Memoized card mapping by column with rich filters
   function computeCardsByColumn(cardsList, cols, query, noMembers, memberIds, noLabels, labelNames, savedStatus, completion, types) {
@@ -1009,7 +1014,24 @@
     }
     return null;
   }
+
+  function handleWindowKeydown(e) {
+    if (e.key !== 'Escape') return;
+    if (showImageModal) {
+      showImageModal = false;
+    } else if (showFilterModal) {
+      showFilterModal = false;
+    } else if (showAgileSummaryModal) {
+      showAgileSummaryModal = false;
+    } else if (showConfigModal) {
+      showConfigModal = false;
+    } else if (showDetailModal) {
+      closeCardDetail();
+    }
+  }
 </script>
+
+<svelte:window on:keydown={handleWindowKeydown} />
 
 <div class="board-container" in:fade>
   {#if !$selectedProjectStore}
@@ -1074,9 +1096,9 @@
             {/if}
           </button>
 
-          <button class="btn-config" on:click={() => showConfigModal = true} title="ตั้งค่าเชื่อมต่อกับ Trello หรือ GitHub">
+          <button type="button" class="btn-config" on:click={() => showConfigModal = true} title="ตั้งค่าเชื่อมต่อกับ Trello หรือ GitHub">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
-            ⚙️ ตั้งค่า Board
+            ตั้งค่า Board
           </button>
         </div>
       </div>
@@ -1129,15 +1151,16 @@
 
           <div class="action-bar-right">
             <div class="search-input-wrapper">
-              <span class="search-icon">🔍</span>
+              <span class="search-icon" aria-hidden="true">🔍</span>
               <input 
                 type="text" 
                 placeholder="ค้นหาชื่อ Card, ID, Labels..." 
+                aria-label="ค้นหาชื่อ Card, ID, Labels"
                 bind:value={cardSearchQuery}
                 class="card-search-box"
               />
               {#if cardSearchQuery}
-                <button class="clear-search-btn" on:click={() => cardSearchQuery = ''}>✕</button>
+                <button type="button" class="clear-search-btn" aria-label="ล้างคำค้นหา" on:click={() => cardSearchQuery = ''}>✕</button>
               {/if}
             </div>
 
@@ -1221,6 +1244,7 @@
                     class="task-card live-card" 
                     class:selected={isCardSelected(card, selectedCardIds)}
                     class:is-saved={card.is_saved}
+                    class:is-unestimated={markUnestimated && isCardUnestimated(card)}
                     class:is-dragging={draggedCard && (draggedCard.id === card.id || draggedCard.raw_ext_id === card.raw_ext_id)}
                     draggable="true"
                     on:dragstart={(e) => handleDragStart(card, column.id, e)}
@@ -1268,9 +1292,15 @@
                         {#if card.description}
                           <span class="desc-icon" title="มีรายละเอียด">≡</span>
                         {/if}
-                        <span class="story-points-pill" title="Story Points">
-                          P {card.story_points || '1'}
-                        </span>
+                        {#if markUnestimated && isCardUnestimated(card)}
+                          <span class="unestimated-pill" title="การ์ดนี้ยังไม่ได้ประเมิน Story Points">
+                            Unestimated
+                          </span>
+                        {:else}
+                          <span class="story-points-pill" title="Story Points">
+                            P {card.story_points || '1'}
+                          </span>
+                        {/if}
                         <span class="badge priority-{card.priority ? card.priority.toLowerCase() : 'medium'}">
                           {card.priority === 'High' ? 'Main Card' : (card.type || 'Main Card')}
                         </span>
@@ -1325,15 +1355,16 @@
 
           <div class="saved-bar-right">
             <div class="search-input-wrapper">
-              <span class="search-icon">🔍</span>
+              <span class="search-icon" aria-hidden="true">🔍</span>
               <input 
                 type="text" 
                 placeholder="ค้นหาการ์ดที่บันทึกไว้..." 
+                aria-label="ค้นหาการ์ดที่บันทึกไว้"
                 bind:value={cardSearchQuery}
                 class="card-search-box"
               />
               {#if cardSearchQuery}
-                <button class="clear-search-btn" on:click={() => cardSearchQuery = ''}>✕</button>
+                <button type="button" class="clear-search-btn" aria-label="ล้างคำค้นหา" on:click={() => cardSearchQuery = ''}>✕</button>
               {/if}
             </div>
 
@@ -1414,6 +1445,7 @@
                     <!-- svelte-ignore a11y-click-events-have-key-events -->
                     <div 
                       class="task-card saved-card-item" 
+                      class:is-unestimated={markUnestimated && isCardUnestimated(card)}
                       class:is-dragging={draggedCard && (draggedCard.id === card.id || draggedCard.raw_ext_id === card.raw_ext_id)}
                       draggable="true"
                       on:dragstart={(e) => handleDragStart(card, column.id, e)}
@@ -1449,9 +1481,15 @@
                           {#if card.description}
                             <span class="desc-icon" title="มีรายละเอียด">≡</span>
                           {/if}
-                          <span class="story-points-pill" title="Story Points">
-                            P {card.story_points || '1'}
-                          </span>
+                          {#if markUnestimated && isCardUnestimated(card)}
+                            <span class="unestimated-pill" title="การ์ดนี้ยังไม่ได้ประเมิน Story Points">
+                              Unestimated
+                            </span>
+                          {:else}
+                            <span class="story-points-pill" title="Story Points">
+                              P {card.story_points || '1'}
+                            </span>
+                          {/if}
                           <span class="badge priority-{card.priority ? card.priority.toLowerCase() : 'medium'}">
                             {card.priority === 'High' ? 'Main Card' : (card.type || 'Main Card')}
                           </span>
@@ -1483,15 +1521,16 @@
                       </div>
 
                       <!-- Saved Card Actions Row -->
+                      <!-- svelte-ignore a11y-click-events-have-key-events -->
                       <div class="saved-card-actions-bar" on:click|stopPropagation>
-                        <button class="btn-card-action test" on:click={() => handleAgentTest(card.id)} disabled={card.isTesting} title="ทดสอบอัตโนมัติด้วย AI Agent">
+                        <button type="button" class="btn-card-action test" on:click={() => handleAgentTest(card)} disabled={card.isTesting} title="ทดสอบอัตโนมัติด้วย AI Agent">
                           {#if card.isTesting}
                             <span class="spinner-small"></span> กำลังทดสอบ...
                           {:else}
                             🧪 Test Agent
                           {/if}
                         </button>
-                        <button class="btn-card-action unsave" on:click={(e) => unsaveCard(card, e)} title="ยกเลิกการบันทึก Card ออกจากโครงการนี้">
+                        <button type="button" class="btn-card-action unsave" on:click={(e) => unsaveCard(card, e)} title="ยกเลิกการบันทึก Card ออกจากโครงการนี้">
                           🗑️ ยกเลิก
                         </button>
                       </div>
@@ -1512,9 +1551,10 @@
 
 <!-- Modal ตั้งค่าการเชื่อมต่อบอร์ด (Board Integration Modal) -->
 {#if showConfigModal}
-  <div class="modal-backdrop" transition:fade={{ duration: 150 }}>
+  <!-- svelte-ignore a11y-click-events-have-key-events -->
+  <div class="modal-backdrop" transition:fade={{ duration: 150 }} on:click={() => showConfigModal = false}>
     <!-- svelte-ignore a11y-click-events-have-key-events -->
-    <div class="modal-card glass-panel" in:scale={{ start: 0.95, duration: 200 }} on:click|stopPropagation>
+    <div class="modal-card glass-panel" role="dialog" aria-modal="true" aria-label="ตั้งค่าการเชื่อมต่อบอร์ด" in:scale={{ start: 0.95, duration: 200 }} on:click|stopPropagation>
       <div class="modal-header">
         <div style="display: flex; align-items: center; gap: 10px;">
           <span style="font-size: 24px;">🔌</span>
@@ -1523,7 +1563,7 @@
             <p class="modal-subtitle">กำหนดค่าการเชื่อมต่อเพื่อดึงงานจาก Trello หรือ GitHub เข้าสู่ระบบ QA Agent</p>
           </div>
         </div>
-        <button class="btn-close" on:click={() => showConfigModal = false}>✕</button>
+        <button type="button" class="btn-close" aria-label="ปิดหน้าต่าง" on:click={() => showConfigModal = false}>✕</button>
       </div>
 
       <!-- Provider Tabs -->
@@ -1610,7 +1650,7 @@
   <!-- svelte-ignore a11y-click-events-have-key-events -->
   <div class="modal-backdrop" transition:fade={{ duration: 150 }} on:click={closeCardDetail}>
     <!-- svelte-ignore a11y-click-events-have-key-events -->
-    <div class="trello-modal-container glass-panel" in:scale={{ start: 0.95, duration: 200 }} on:click|stopPropagation>
+    <div class="trello-modal-container glass-panel" role="dialog" aria-modal="true" aria-label="รายละเอียดการ์ด" in:scale={{ start: 0.95, duration: 200 }} on:click|stopPropagation>
       
       <!-- Top Bar with Status Badge & Close -->
       <div class="trello-modal-topbar">
@@ -1639,7 +1679,7 @@
               {/if}
             </a>
           {/if}
-          <button class="btn-close" on:click={closeCardDetail}>✕</button>
+          <button type="button" class="btn-close" aria-label="ปิดหน้าต่าง" on:click={closeCardDetail}>✕</button>
         </div>
       </div>
 
@@ -1721,7 +1761,7 @@
             <button class="btn-modal-unsave" on:click={(e) => unsaveCard(selectedCard, e)}>
               🗑️ ยกเลิกการบันทึกออกจากโครงการ
             </button>
-            <button class="btn-modal-test" on:click={() => handleAgentTest(selectedCard.saved_id || selectedCard.id)} disabled={selectedCard.isTesting}>
+            <button type="button" class="btn-modal-test" on:click={() => handleAgentTest(selectedCard)} disabled={selectedCard.isTesting}>
               🤖 ทดสอบด้วย AI Agent
             </button>
           </div>
@@ -1834,7 +1874,7 @@
             </div>
 
             <div class="agent-box-footer">
-              <button class="btn-run-agent" on:click={() => handleAgentTest(selectedCard.saved_id || selectedCard.id)} disabled={selectedCard.isTesting}>
+              <button type="button" class="btn-run-agent" on:click={() => handleAgentTest(selectedCard)} disabled={selectedCard.isTesting}>
                 🤖 Run Agent Test
               </button>
             </div>
@@ -1989,7 +2029,7 @@
                   </div>
                 {/each}
               {:else}
-                <div style="color: #64748b; font-size: 0.85rem; font-style: italic; padding: 8px 0;">ไม่มีประวัติกิจกรรมล่าสุด</div>
+                <div style="color: var(--text-muted, #94a3b8); font-size: 0.85rem; font-style: italic; padding: 8px 0;">ไม่มีประวัติกิจกรรมล่าสุด</div>
               {/if}
             </div>
           {:else}
@@ -2010,8 +2050,8 @@
   <!-- svelte-ignore a11y-click-events-have-key-events -->
   <div class="image-lightbox-backdrop" transition:fade={{ duration: 150 }} on:click={() => showImageModal = false}>
     <!-- svelte-ignore a11y-click-events-have-key-events -->
-    <div class="image-lightbox-content" in:scale={{ start: 0.95, duration: 200 }} on:click|stopPropagation>
-      <button class="lightbox-close-btn" on:click={() => showImageModal = false} title="ปิด">✕</button>
+    <div class="image-lightbox-content" role="dialog" aria-modal="true" aria-label="ดูรูปภาพขนาดเต็ม" in:scale={{ start: 0.95, duration: 200 }} on:click|stopPropagation>
+      <button type="button" class="lightbox-close-btn" aria-label="ปิดหน้าต่าง" on:click={() => showImageModal = false} title="ปิด">✕</button>
       <img src={previewModalImage} alt={previewModalAlt} class="lightbox-full-img" />
       <div class="lightbox-toolbar">
         <a href={previewModalImage} target="_blank" rel="noreferrer" class="lightbox-btn-download">
@@ -2027,13 +2067,13 @@
   <!-- svelte-ignore a11y-click-events-have-key-events -->
   <div class="modal-backdrop" transition:fade={{ duration: 150 }} on:click={() => showAgileSummaryModal = false}>
     <!-- svelte-ignore a11y-click-events-have-key-events -->
-    <div class="agile-tools-modal-card glass-panel" in:scale={{ start: 0.95, duration: 200 }} on:click|stopPropagation>
+    <div class="agile-tools-modal-card glass-panel" role="dialog" aria-modal="true" aria-label="Agile Tools" in:scale={{ start: 0.95, duration: 200 }} on:click|stopPropagation>
       <div class="agile-modal-header">
         <div style="display: flex; align-items: center; gap: 8px;">
           <span style="font-size: 1.2rem;">⏱️</span>
           <h3 style="margin: 0; font-size: 1.15rem; font-weight: 700; color: #f1f5f9;">Agile Tools</h3>
         </div>
-        <button class="close-btn" on:click={() => showAgileSummaryModal = false}>✕</button>
+        <button type="button" class="btn-close" aria-label="ปิดหน้าต่าง" on:click={() => showAgileSummaryModal = false}>✕</button>
       </div>
 
       <div class="agile-modal-body">
@@ -2086,28 +2126,30 @@
   <!-- svelte-ignore a11y-click-events-have-key-events -->
   <div class="modal-backdrop" transition:fade={{ duration: 150 }} on:click={() => showFilterModal = false}>
     <!-- svelte-ignore a11y-click-events-have-key-events -->
-    <div class="filter-modal-card glass-panel" in:scale={{ start: 0.95, duration: 200 }} on:click|stopPropagation>
+    <div class="filter-modal-card glass-panel" role="dialog" aria-modal="true" aria-label="Filter" in:scale={{ start: 0.95, duration: 200 }} on:click|stopPropagation>
       <div class="filter-modal-header">
         <div style="display: flex; align-items: center; gap: 8px;">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon></svg>
           <h3 style="margin: 0; font-size: 1.15rem; font-weight: 700; color: #f1f5f9;">Filter</h3>
         </div>
-        <button class="close-btn" on:click={() => showFilterModal = false}>✕</button>
+        <button type="button" class="btn-close" aria-label="ปิดหน้าต่าง" on:click={() => showFilterModal = false}>✕</button>
       </div>
 
       <div class="filter-modal-body custom-comment-scrollbar">
         <!-- 1. Keyword -->
         <div class="filter-section">
-          <label class="filter-section-title">Keyword</label>
+          <label class="filter-section-title" for="filter-keyword-input">Keyword</label>
           <div class="filter-input-wrapper">
             <input 
+              id="filter-keyword-input"
               type="text" 
               placeholder="Enter a keyword..." 
+              aria-label="ค้นหาการ์ดด้วยคำค้น"
               bind:value={cardSearchQuery}
               class="filter-text-input" 
             />
             {#if cardSearchQuery}
-              <button class="clear-input-inline" on:click={() => cardSearchQuery = ''}>✕</button>
+              <button type="button" class="clear-input-inline" aria-label="ล้างคำค้นหา" on:click={() => cardSearchQuery = ''}>✕</button>
             {/if}
           </div>
           <span class="filter-helper-text">Search cards, members, labels, and more.</span>
@@ -2371,6 +2413,7 @@
   .header-actions {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 10px;
   }
 
@@ -2388,6 +2431,9 @@
     gap: 6px;
     transition: all 0.2s;
   }
+  .btn-config svg {
+    flex-shrink: 0;
+  }
   .btn-config:hover {
     background: rgba(139, 92, 246, 0.3);
     color: #fff;
@@ -2397,6 +2443,7 @@
   /* Main Tab Switcher Bar */
   .tab-switcher-container {
     display: flex;
+    flex-wrap: wrap;
     gap: 12px;
     border-bottom: 2px solid rgba(255, 255, 255, 0.08);
     padding-bottom: 2px;
@@ -2455,8 +2502,19 @@
     color: #ffffff;
   }
 
+  .live-board-wrapper,
+  .saved-board-wrapper {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+  }
+
   /* Sticky Action Bar (Live Selection) */
   .sticky-action-bar {
+    position: sticky;
+    top: 0;
+    z-index: 20;
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -2464,7 +2522,7 @@
     margin-bottom: 16px;
     flex-wrap: wrap;
     gap: 12px;
-    background: rgba(15, 23, 42, 0.85);
+    background: rgba(15, 23, 42, 0.92);
     border: 1px solid rgba(56, 189, 248, 0.3);
     border-radius: 12px;
   }
@@ -2477,10 +2535,12 @@
   }
 
   .selection-status-badge {
-    display: flex;
+    display: inline-flex;
     align-items: center;
     gap: 6px;
-    padding: 6px 14px;
+    height: 36px;
+    padding: 0 14px;
+    box-sizing: border-box;
     background: rgba(56, 189, 248, 0.12);
     border: 1px solid rgba(56, 189, 248, 0.35);
     border-radius: 8px;
@@ -2489,10 +2549,16 @@
   }
 
   .btn-action-outline {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: 36px;
+    padding: 0 14px;
+    box-sizing: border-box;
     background: rgba(255, 255, 255, 0.06);
     border: 1px solid rgba(255, 255, 255, 0.18);
     color: #e2e8f0;
-    padding: 6px 14px;
     border-radius: 8px;
     font-size: 0.85rem;
     font-weight: 600;
@@ -2518,26 +2584,31 @@
     position: relative;
     display: flex;
     align-items: center;
+    max-width: 100%;
   }
   .search-icon {
     position: absolute;
     left: 10px;
     font-size: 13px;
-    color: #64748b;
+    color: var(--text-muted, #94a3b8);
+    pointer-events: none;
   }
   .card-search-box {
     background: rgba(30, 41, 59, 0.85);
     border: 1px solid rgba(255, 255, 255, 0.15);
     border-radius: 8px;
     color: #f1f5f9;
-    padding: 7px 28px 7px 30px;
+    height: 36px;
+    padding: 0 28px 0 30px;
     font-size: 0.85rem;
-    width: 200px;
-    transition: width 0.2s, border-color 0.2s;
+    width: 220px;
+    max-width: 100%;
+    box-sizing: border-box;
+    transition: border-color 0.2s, box-shadow 0.2s;
   }
   .card-search-box:focus {
-    width: 250px;
     border-color: #38bdf8;
+    box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.2);
     outline: none;
   }
   .clear-search-btn {
@@ -2545,24 +2616,30 @@
     right: 8px;
     background: transparent;
     border: none;
-    color: #94a3b8;
+    color: var(--text-muted, #94a3b8);
     cursor: pointer;
     font-size: 11px;
+    padding: 4px;
   }
 
   .btn-refresh-live {
     background: rgba(255, 255, 255, 0.08);
     border: 1px solid rgba(255, 255, 255, 0.15);
     color: #e2e8f0;
-    padding: 7px 14px;
+    height: 36px;
+    padding: 0 14px;
+    box-sizing: border-box;
     border-radius: 8px;
     font-size: 0.85rem;
     font-weight: 600;
     cursor: pointer;
-    display: flex;
+    display: inline-flex;
     align-items: center;
     gap: 6px;
     transition: all 0.2s;
+  }
+  .btn-refresh-live svg {
+    flex-shrink: 0;
   }
   .btn-refresh-live:hover:not(:disabled) {
     background: rgba(255, 255, 255, 0.16);
@@ -2573,12 +2650,14 @@
     background: linear-gradient(135deg, #2563eb 0%, #7c3aed 100%);
     border: 1px solid rgba(255, 255, 255, 0.25);
     color: #ffffff;
-    padding: 7px 18px;
+    height: 36px;
+    padding: 0 18px;
+    box-sizing: border-box;
     border-radius: 8px;
     font-size: 0.9rem;
     font-weight: 700;
     cursor: pointer;
-    display: flex;
+    display: inline-flex;
     align-items: center;
     gap: 8px;
     box-shadow: 0 4px 15px rgba(37, 99, 235, 0.4);
@@ -2664,9 +2743,8 @@
     display: flex;
     flex-direction: column;
     background: rgba(15, 23, 42, 0.7);
-    max-height: calc(100vh - 270px);
-    height: calc(100vh - 270px);
-    min-height: 480px;
+    max-height: clamp(420px, calc(100vh - 340px), 740px);
+    min-height: 360px;
     border-radius: 12px;
     border: 1px solid rgba(255, 255, 255, 0.08);
     transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
@@ -2693,6 +2771,7 @@
     height: 10px;
     border-radius: 50%;
     margin-right: 10px;
+    flex-shrink: 0;
   }
   
   .column-title {
@@ -2763,13 +2842,18 @@
     border: 2px dashed #38bdf8 !important;
     box-shadow: none !important;
   }
+  .task-card.is-saved {
+    border: 1px solid rgba(34, 197, 94, 0.45);
+    background: rgba(20, 46, 38, 0.55);
+  }
+  .task-card.is-unestimated {
+    border: 1px solid rgba(245, 158, 11, 0.55);
+    background: rgba(58, 39, 14, 0.45);
+  }
   .task-card.selected {
     border: 2px solid #38bdf8;
     background: rgba(30, 58, 95, 0.9);
     box-shadow: 0 0 16px rgba(56, 189, 248, 0.35);
-  }
-  .task-card.is-saved {
-    border-left: 4px solid #22c55e;
   }
 
   /* Card Top Control Row (Labels on Left, Checkbox on Right) */
@@ -2996,11 +3080,26 @@
     align-items: center;
   }
 
+  .unestimated-pill {
+    background: rgba(245, 158, 11, 0.18);
+    border: 1px solid rgba(245, 158, 11, 0.45);
+    color: #fcd34d;
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 700;
+    display: inline-flex;
+    align-items: center;
+  }
+
   .footer-right-members {
     display: flex;
     align-items: center;
-    gap: -4px;
+    gap: 0;
     margin-left: auto;
+  }
+  .footer-right-members > :not(:first-child) {
+    margin-left: -6px;
   }
 
   .member-avatar {
@@ -3147,6 +3246,8 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
   }
   .trello-modal-top-left {
     display: flex;
@@ -3234,7 +3335,7 @@
     min-height: 32px;
   }
   .no-meta-text {
-    color: #738496;
+    color: var(--text-muted, #94a3b8);
     font-size: 13px;
     font-style: italic;
   }
@@ -3271,12 +3372,14 @@
 
   .trello-col-main {
     flex: 1.25;
+    min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 20px;
   }
   .trello-col-sidebar {
     flex: 1;
+    min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 16px;
@@ -3332,7 +3435,7 @@
     overflow-wrap: break-word;
   }
   .no-data-text {
-    color: #738496;
+    color: var(--text-muted, #94a3b8);
     font-style: italic;
   }
 
@@ -3353,6 +3456,24 @@
   }
   .agent-box-content {
     font-size: 13px;
+  }
+  .testing-indicator-large {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px;
+    border-radius: 8px;
+    background: rgba(168, 85, 247, 0.14);
+    border: 1px solid rgba(168, 85, 247, 0.35);
+    color: #e9d5ff;
+    font-size: 0.88rem;
+    font-weight: 500;
+  }
+  .agent-report-container {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
   }
   .test-verdict-badge {
     padding: 6px 12px;
@@ -3388,7 +3509,8 @@
   }
   .test-result-pre.failed {
     color: #fca5a5;
-    border-left: 3px solid #ef4444;
+    border: 1px solid rgba(239, 68, 68, 0.45);
+    background: rgba(127, 29, 29, 0.25);
   }
   .agent-box-footer {
     display: flex;
@@ -3637,6 +3759,7 @@
     border-radius: 50%;
     object-fit: cover;
     margin-top: 2px;
+    flex-shrink: 0;
   }
   .act-initials {
     width: 28px;
@@ -3650,9 +3773,11 @@
     align-items: center;
     justify-content: center;
     margin-top: 2px;
+    flex-shrink: 0;
   }
   .act-details {
     flex: 1;
+    min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 2px;
@@ -3673,7 +3798,7 @@
   }
   .act-date {
     font-size: 11px;
-    color: #738496;
+    color: var(--text-muted, #94a3b8);
     margin-left: 4px;
   }
 
@@ -3764,11 +3889,13 @@
     left: 0;
     width: 100vw;
     height: 100vh;
+    padding: 20px;
+    box-sizing: border-box;
     background: rgba(0, 0, 0, 0.88);
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 1000;
+    z-index: calc(var(--z-modal, 10000) + 50);
   }
   .image-lightbox-content {
     position: relative;
@@ -3788,16 +3915,26 @@
   }
   .lightbox-close-btn {
     position: absolute;
-    top: -36px;
-    right: 0;
-    background: rgba(255, 255, 255, 0.2);
-    border: none;
+    top: 10px;
+    right: 10px;
+    z-index: 2;
+    background: rgba(10, 11, 18, 0.78);
+    border: 1px solid rgba(255, 255, 255, 0.25);
     color: #ffffff;
-    font-size: 18px;
-    width: 32px;
-    height: 32px;
+    font-size: 16px;
+    width: 34px;
+    height: 34px;
     border-radius: 50%;
     cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: background-color 0.2s, transform 0.2s;
+  }
+  .lightbox-close-btn:hover {
+    background: rgba(239, 68, 68, 0.85);
+    transform: scale(1.06);
   }
   .lightbox-toolbar {
     display: flex;
@@ -3825,11 +3962,13 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 999;
+    z-index: var(--z-modal, 10000);
   }
   .modal-card {
     width: 95vw;
     max-width: 580px;
+    max-height: 88vh;
+    overflow-y: auto;
     padding: 24px;
     display: flex;
     flex-direction: column;
@@ -3839,6 +3978,7 @@
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
+    gap: 12px;
   }
   .modal-title {
     margin: 0;
@@ -3853,12 +3993,18 @@
   .btn-close {
     background: transparent;
     border: none;
-    color: #94a3b8;
+    color: var(--text-muted, #94a3b8);
     font-size: 18px;
+    line-height: 1;
+    padding: 4px 8px;
+    border-radius: 6px;
     cursor: pointer;
+    flex-shrink: 0;
+    transition: color 0.15s ease, background-color 0.15s ease;
   }
   .btn-close:hover {
     color: #fff;
+    background: rgba(255, 255, 255, 0.08);
   }
 
   .provider-tabs {
@@ -3900,7 +4046,11 @@
   }
   .form-row {
     display: flex;
+    flex-wrap: wrap;
     gap: 12px;
+  }
+  .form-row > * {
+    min-width: 0;
   }
   .form-group label {
     font-size: 0.85rem;
@@ -3927,6 +4077,8 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
     margin-top: 8px;
   }
 
@@ -3982,7 +4134,7 @@
   .empty-column {
     padding: 24px;
     text-align: center;
-    color: #64748b;
+    color: var(--text-muted, #94a3b8);
     font-size: 0.85rem;
     font-style: italic;
   }
@@ -3994,7 +4146,12 @@
     border: 2px solid rgba(255, 255, 255, 0.3);
     border-top-color: #ffffff;
     border-radius: 50%;
+    flex-shrink: 0;
     animation: spin 0.8s linear infinite;
+  }
+
+  .spinning {
+    animation: spin 0.9s linear infinite;
   }
 
   @keyframes spin {
@@ -4068,14 +4225,20 @@
     margin-left: 2px;
   }
 
+  .btn-filter-toggle svg,
+  .btn-filter-quick svg {
+    flex-shrink: 0;
+  }
   .btn-filter-quick {
-    display: flex;
+    display: inline-flex;
     align-items: center;
     gap: 6px;
+    height: 36px;
+    padding: 0 12px;
+    box-sizing: border-box;
     background: rgba(255, 255, 255, 0.08);
     border: 1px solid rgba(255, 255, 255, 0.15);
     color: #cbd5e1;
-    padding: 7px 12px;
     border-radius: 8px;
     font-size: 0.85rem;
     font-weight: 600;
@@ -4370,7 +4533,7 @@
   }
   .filter-helper-text {
     font-size: 0.75rem;
-    color: #738496;
+    color: var(--text-muted, #94a3b8);
   }
 
   .filter-checkbox-item {
@@ -4401,7 +4564,7 @@
   .filter-members-sublist {
     margin-left: 12px;
     padding-left: 10px;
-    border-left: 2px solid rgba(255, 255, 255, 0.08);
+    border-left: 1px solid rgba(255, 255, 255, 0.12);
     display: flex;
     flex-direction: column;
     gap: 4px;
@@ -4410,7 +4573,7 @@
   }
   .sublist-heading {
     font-size: 0.78rem;
-    color: #738496;
+    color: var(--text-muted, #94a3b8);
     margin-bottom: 2px;
   }
   .filter-member-avatar {
@@ -4435,7 +4598,7 @@
     font-size: 0.85rem;
   }
   .member-name-text small {
-    color: #738496;
+    color: var(--text-muted, #94a3b8);
     margin-left: 4px;
   }
 
@@ -4465,7 +4628,7 @@
   .filter-labels-sublist {
     margin-left: 12px;
     padding-left: 10px;
-    border-left: 2px solid rgba(255, 255, 255, 0.08);
+    border-left: 1px solid rgba(255, 255, 255, 0.12);
     display: flex;
     flex-direction: column;
     gap: 6px;
@@ -4538,5 +4701,18 @@
   }
   .btn-apply-filters:hover {
     background: #0065ff;
+  }
+
+  @media (max-width: 768px) {
+    .board-container {
+      padding: 16px;
+    }
+    .board-column {
+      min-width: 280px;
+      width: 280px;
+    }
+    .trello-modal-container {
+      padding: 18px 16px;
+    }
   }
 </style>

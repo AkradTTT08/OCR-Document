@@ -10,6 +10,7 @@
   export let danger = true;
 
   const dispatch = createEventDispatcher();
+  const titleId = `cm-title-${Math.random().toString(36).slice(2, 9)}`;
 
   function handleConfirm() {
     open = false;
@@ -37,7 +38,7 @@
       class="cm-dialog"
       role="dialog"
       aria-modal="true"
-      aria-labelledby="cm-title"
+      aria-labelledby={titleId}
       in:scale={{ start: 0.94, duration: 180 }}
     >
       <div class="cm-header">
@@ -48,7 +49,7 @@
             <line x1="12" y1="17" x2="12.01" y2="17"></line>
           </svg>
         </div>
-        <h3 id="cm-title" class="cm-title">{title}</h3>
+        <h3 id={titleId} class="cm-title">{title}</h3>
       </div>
 
       {#if message}
@@ -81,14 +82,16 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 10050;
+    z-index: calc(var(--z-modal, 10000) + 200);
     padding: 16px;
   }
 
   .cm-dialog {
     width: 100%;
     max-width: 440px;
-    background: var(--obsidian-surface, #0a0b12);
+    max-height: 90vh;
+    overflow-y: auto;
+    background: var(--bg, #0a0b12);
     border: 1px solid var(--glass-border-light, rgba(255, 255, 255, 0.15));
     border-radius: var(--radius-lg, 20px);
     padding: 24px;
@@ -145,14 +148,19 @@
   .cm-actions {
     display: flex;
     justify-content: flex-end;
+    flex-wrap: wrap;
     gap: 10px;
   }
 
   .cm-btn-cancel {
+    min-height: 38px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.08));
     color: var(--text-main, #f8fafc);
-    padding: 9px 18px;
+    padding: 8px 18px;
     border-radius: var(--radius-md, 12px);
     font-family: var(--font-th, 'Prompt', sans-serif);
     font-size: 13.5px;
@@ -165,9 +173,13 @@
   }
 
   .cm-btn-confirm {
-    border: none;
+    min-height: 38px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid transparent;
     color: #ffffff;
-    padding: 9px 20px;
+    padding: 8px 20px;
     border-radius: var(--radius-md, 12px);
     font-family: var(--font-th, 'Prompt', sans-serif);
     font-size: 13.5px;
@@ -180,6 +192,8 @@
   }
   .cm-btn-warn {
     background: var(--warning, #f59e0b);
+    color: #0a0b12;
+    font-weight: 600;
   }
   .cm-btn-confirm:hover {
     opacity: 0.92;

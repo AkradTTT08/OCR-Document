@@ -3,10 +3,17 @@
   export let status = "";
   export let progressPct = null;
   export let size = "default"; // 'default' | 'compact' | 'large'
+
+  const facetGradId = `spectra-facet-${Math.random().toString(36).slice(2, 8)}`;
+
+  $: clampedProgress =
+    progressPct !== null && progressPct !== undefined
+      ? Math.max(0, Math.min(100, Math.round(Number(progressPct) || 0)))
+      : null;
 </script>
 
-<div class="spectra-loading-wrap {size}">
-  <div class="radar-arena">
+<div class="spectra-loading-wrap {size}" role="status" aria-live="polite">
+  <div class="radar-arena" aria-hidden="true">
     <!-- Outer concentric sonar rings -->
     <div class="concentric-ring ring-outer-pulse"></div>
     <div class="concentric-ring ring-3"></div>
@@ -22,19 +29,16 @@
 
     <!-- Center 3D Isometric Wireframe Cube Logo -->
     <div class="iso-cube-container">
-      <svg class="spectra-iso-cube" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <svg class="spectra-iso-cube" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
         <defs>
-          <filter id="neonGlow" x="-20%" y="-20%" width="140%" height="140%">
-            <feDropShadow dx="0" dy="0" stdDeviation="3" flood-color="#a855f7" flood-opacity="0.8" />
-          </filter>
-          <linearGradient id="facetGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <linearGradient id={facetGradId} x1="0%" y1="0%" x2="100%" y2="100%">
             <stop offset="0%" stop-color="#a855f7" stop-opacity="0.3" />
             <stop offset="100%" stop-color="#6366f1" stop-opacity="0.1" />
           </linearGradient>
         </defs>
 
         <!-- Inner Top Diamond Facet Fill -->
-        <polygon points="50,33 69,44 50,55 31,44" fill="url(#facetGrad)" />
+        <polygon points="50,33 69,44 50,55 31,44" fill={`url(#${facetGradId})`} />
 
         <!-- Outer Hexagon Frame -->
         <polygon 
@@ -73,11 +77,18 @@
     <p class="loading-status">{status}</p>
   {/if}
 
-  {#if progressPct !== null && progressPct !== undefined}
-    <div class="progress-bar-container">
-      <div class="progress-fill" style="width: {progressPct}%"></div>
+  {#if clampedProgress !== null}
+    <div
+      class="progress-bar-container"
+      role="progressbar"
+      aria-valuenow={clampedProgress}
+      aria-valuemin="0"
+      aria-valuemax="100"
+      aria-label={title || 'ความคืบหน้าการประมวลผล'}
+    >
+      <div class="progress-fill" style="width: {clampedProgress}%"></div>
     </div>
-    <div class="progress-pct-label">{progressPct}%</div>
+    <div class="progress-pct-label">{clampedProgress}%</div>
   {/if}
 </div>
 
@@ -89,9 +100,12 @@
     justify-content: center;
     padding: 40px 20px;
     width: 100%;
+    max-width: 100%;
+    overflow: hidden;
     text-align: center;
     position: relative;
     user-select: none;
+    box-sizing: border-box;
   }
 
   .spectra-loading-wrap.compact {
@@ -101,23 +115,28 @@
   /* Radar Arena & Concentric Rings */
   .radar-arena {
     position: relative;
-    width: 260px;
-    height: 260px;
+    width: min(260px, 75vw);
+    height: min(260px, 75vw);
+    max-width: min(260px, 75vw);
+    aspect-ratio: 1 / 1;
     display: flex;
     align-items: center;
     justify-content: center;
     margin-bottom: 28px;
+    flex-shrink: 0;
   }
 
   .compact .radar-arena {
-    width: 200px;
-    height: 200px;
+    width: min(200px, 68vw);
+    height: min(200px, 68vw);
+    max-width: min(200px, 68vw);
     margin-bottom: 18px;
   }
 
   .large .radar-arena {
-    width: 320px;
-    height: 320px;
+    width: min(320px, 80vw);
+    height: min(320px, 80vw);
+    max-width: min(320px, 80vw);
     margin-bottom: 36px;
   }
 
@@ -131,22 +150,12 @@
 
   /* Ring 1: Inner active circle */
   .ring-1 {
-    width: 130px;
-    height: 130px;
-    border: 2px solid #a855f7;
+    width: 50%;
+    height: 50%;
+    border: 2px solid var(--secondary, #a855f7);
     box-shadow: 0 0 24px rgba(168, 85, 247, 0.45), inset 0 0 18px rgba(168, 85, 247, 0.25);
     z-index: 2;
     animation: innerRingPulse 2.8s ease-in-out infinite alternate;
-  }
-
-  .compact .ring-1 {
-    width: 100px;
-    height: 100px;
-  }
-
-  .large .ring-1 {
-    width: 160px;
-    height: 160px;
   }
 
   .ring-core-glow {
@@ -158,45 +167,25 @@
 
   /* Ring 2: Middle concentric circle */
   .ring-2 {
-    width: 190px;
-    height: 190px;
+    width: 73%;
+    height: 73%;
     border: 1.5px solid rgba(147, 51, 234, 0.45);
     z-index: 1;
     animation: midRingBreathe 3.5s ease-in-out infinite alternate;
   }
 
-  .compact .ring-2 {
-    width: 145px;
-    height: 145px;
-  }
-
-  .large .ring-2 {
-    width: 235px;
-    height: 235px;
-  }
-
   /* Ring 3: Outer concentric circle */
   .ring-3 {
-    width: 250px;
-    height: 250px;
+    width: 96%;
+    height: 96%;
     border: 1px solid rgba(139, 92, 246, 0.25);
     z-index: 1;
   }
 
-  .compact .ring-3 {
-    width: 190px;
-    height: 190px;
-  }
-
-  .large .ring-3 {
-    width: 310px;
-    height: 310px;
-  }
-
   /* Outer expanding sonar wave pulse */
   .ring-outer-pulse {
-    width: 130px;
-    height: 130px;
+    width: 50%;
+    height: 50%;
     border: 1.5px solid rgba(168, 85, 247, 0.6);
     border-radius: 50%;
     animation: sonarWave 3s cubic-bezier(0.1, 0.7, 0.3, 1) infinite;
@@ -204,21 +193,11 @@
     opacity: 0;
   }
 
-  .compact .ring-outer-pulse {
-    width: 100px;
-    height: 100px;
-  }
-
-  .large .ring-outer-pulse {
-    width: 160px;
-    height: 160px;
-  }
-
   /* Radar scanner line */
   .radar-scanner {
     position: absolute;
-    width: 250px;
-    height: 250px;
+    width: 96%;
+    height: 96%;
     border-radius: 50%;
     border-top: 2px solid rgba(192, 132, 252, 0.6);
     border-right: 2px solid transparent;
@@ -228,20 +207,12 @@
     z-index: 1;
   }
 
-  .compact .radar-scanner {
-    width: 190px;
-    height: 190px;
-  }
-
-  .large .radar-scanner {
-    width: 310px;
-    height: 310px;
-  }
-
   /* Center 3D Isometric Cube Container */
   .iso-cube-container {
     position: relative;
     z-index: 5;
+    width: 26%;
+    height: 26%;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -249,30 +220,19 @@
   }
 
   .spectra-iso-cube {
-    width: 68px;
-    height: 68px;
+    width: 100%;
+    height: 100%;
     filter: drop-shadow(0 0 14px rgba(168, 85, 247, 0.85)) drop-shadow(0 0 3px rgba(255, 255, 255, 0.9));
     transition: transform 0.3s ease;
   }
 
-  .compact .spectra-iso-cube {
-    width: 52px;
-    height: 52px;
-  }
-
-  .large .spectra-iso-cube {
-    width: 86px;
-    height: 86px;
-  }
-
   /* Typography */
   .loading-title {
+    font-family: var(--font-th, 'Prompt', sans-serif);
     font-size: 22px;
     font-weight: 700;
     margin: 0 0 10px 0;
-    background: linear-gradient(135deg, #ffffff 30%, #d8b4fe 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
+    color: var(--text-main, #f8fafc);
     letter-spacing: -0.01em;
   }
 
@@ -281,7 +241,8 @@
   }
 
   .loading-status {
-    color: #94a3b8;
+    font-family: var(--font-th, 'Prompt', sans-serif);
+    color: var(--text-muted, #94a3b8);
     font-size: 14.5px;
     margin: 0 0 24px 0;
     max-width: 540px;
@@ -298,7 +259,7 @@
     width: 100%;
     max-width: 440px;
     height: 7px;
-    background: rgba(255, 255, 255, 0.08);
+    background: var(--glass-border, rgba(255, 255, 255, 0.08));
     border: 1px solid rgba(255, 255, 255, 0.05);
     border-radius: 999px;
     overflow: hidden;
@@ -308,7 +269,7 @@
 
   .progress-fill {
     height: 100%;
-    background: linear-gradient(90deg, #9333ea, #6366f1, #38bdf8);
+    background: linear-gradient(90deg, var(--secondary, #a855f7), var(--primary, #6366f1), var(--accent, #06b6d4));
     background-size: 200% 100%;
     border-radius: 999px;
     box-shadow: 0 0 12px rgba(147, 51, 234, 0.8);
@@ -318,6 +279,7 @@
 
   .progress-pct-label {
     margin-top: 8px;
+    font-family: var(--font-en, 'Outfit', sans-serif);
     font-size: 12px;
     font-weight: 600;
     color: #c084fc;
@@ -388,6 +350,20 @@
     }
     100% {
       background-position: 0% 50%;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .ring-1,
+    .ring-2,
+    .ring-outer-pulse,
+    .radar-scanner,
+    .iso-cube-container,
+    .progress-fill {
+      animation: none !important;
+    }
+    .ring-outer-pulse {
+      opacity: 0;
     }
   }
 </style>

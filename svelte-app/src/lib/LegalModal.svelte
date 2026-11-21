@@ -73,19 +73,24 @@
 
 <div
   class="modal-backdrop"
-  role="dialog"
-  aria-modal="true"
+  role="presentation"
   transition:fade={{ duration: 200 }}
   on:click|self={close}
 >
-  <div class="modal-card" in:fly={{ y: 20, duration: 300 }}>
+  <div
+    class="modal-card"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="legal-modal-title"
+    in:fly={{ y: 20, duration: 300 }}
+  >
     <div class="modal-header">
-      <div class="modal-title">
-        <span class="icon">{currentContent.icon}</span>
+      <h2 id="legal-modal-title" class="modal-title">
+        <span class="icon" aria-hidden="true">{currentContent.icon}</span>
         {currentContent.title}
-      </div>
-      <button class="btn-close" on:click={close} title="ปิด (Esc)">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+      </h2>
+      <button type="button" class="btn-close" aria-label="ปิดหน้าต่าง" on:click={close} title="ปิด (Esc)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" aria-hidden="true">
           <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
         </svg>
       </button>
@@ -96,7 +101,7 @@
     </div>
 
     <div class="modal-footer">
-      <button class="btn-primary" on:click={close}>รับทราบและปิดหน้าต่าง</button>
+      <button type="button" class="btn-primary" on:click={close}>รับทราบและปิดหน้าต่าง</button>
     </div>
   </div>
 </div>
@@ -105,25 +110,26 @@
   .modal-backdrop {
     position: fixed;
     inset: 0;
-    z-index: 9999;
-    background: rgba(10, 15, 30, 0.7);
-    backdrop-filter: blur(4px);
+    z-index: calc(var(--z-modal, 10000) + 100);
+    background: rgba(5, 7, 14, 0.78);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 20px;
+    padding: 16px;
   }
 
   .modal-card {
-    background: #1a1c29;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 12px;
+    background: var(--bg2, #12141c);
+    border: 1px solid var(--glass-border-light, rgba(255, 255, 255, 0.15));
+    border-radius: var(--radius-lg, 20px);
     width: 100%;
     max-width: 650px;
-    max-height: 85vh;
+    max-height: 90vh;
     display: flex;
     flex-direction: column;
-    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.65);
     overflow: hidden;
   }
 
@@ -131,43 +137,51 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 12px;
     padding: 20px 24px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-    background: #202336;
+    border-bottom: 1px solid var(--glass-border, rgba(255, 255, 255, 0.08));
+    background: rgba(255, 255, 255, 0.02);
   }
 
   .modal-title {
+    margin: 0;
     font-size: 1.15rem;
     font-weight: 600;
-    color: #fff;
+    color: var(--text-main, #f8fafc);
     display: flex;
     align-items: center;
     gap: 10px;
+    min-width: 0;
   }
 
   .icon {
     font-size: 1.3rem;
+    flex-shrink: 0;
   }
 
   .btn-close {
-    background: transparent;
-    border: none;
-    color: #94a3b8;
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.08));
+    color: var(--text-muted, #94a3b8);
     cursor: pointer;
-    padding: 4px;
-    border-radius: 6px;
-    transition: all 0.2s;
-    display: flex;
+    border-radius: var(--radius-sm, 8px);
+    transition: background-color 0.2s, color 0.2s;
+    display: inline-flex;
     align-items: center;
     justify-content: center;
   }
 
   .btn-close:hover {
     background: rgba(255, 255, 255, 0.1);
-    color: #fff;
+    color: var(--text-main, #f8fafc);
   }
 
   .modal-body {
+    flex: 1;
+    min-height: 0;
     padding: 24px;
     overflow-y: auto;
     color: #cbd5e1;
@@ -176,7 +190,7 @@
   }
 
   .modal-body :global(h3) {
-    color: #fff;
+    color: var(--text-main, #f8fafc);
     font-size: 1.05rem;
     margin-top: 24px;
     margin-bottom: 12px;
@@ -201,30 +215,33 @@
   }
   
   .modal-body :global(strong) {
-    color: #e2e8f0;
+    color: var(--text-main, #f8fafc);
   }
 
   .modal-footer {
     padding: 16px 24px;
-    border-top: 1px solid rgba(255, 255, 255, 0.05);
-    background: #1a1c29;
+    border-top: 1px solid var(--glass-border, rgba(255, 255, 255, 0.08));
+    background: var(--bg2, #12141c);
     display: flex;
     justify-content: flex-end;
   }
 
   .btn-primary {
-    background: #6366f1;
-    color: white;
-    border: none;
+    background: var(--gradient-main, linear-gradient(135deg, #6366f1, #a855f7));
+    color: #ffffff;
+    border: 1px solid transparent;
     padding: 10px 20px;
-    border-radius: 8px;
+    min-height: 40px;
+    border-radius: var(--radius-md, 12px);
     font-size: 0.95rem;
     font-weight: 600;
+    font-family: inherit;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: opacity 0.2s, transform 0.2s;
   }
 
   .btn-primary:hover {
-    background: #4f46e5;
+    opacity: 0.92;
+    transform: translateY(-1px);
   }
 </style>

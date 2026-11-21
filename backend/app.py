@@ -48,7 +48,29 @@ logger = logging.getLogger(__name__)
 
 # สร้าง Flask app
 app = Flask(__name__)
-CORS(app)
+
+# CORS allowlist (defaults to local dev + Chrome Extension; extendable via ALLOWED_ORIGINS env var)
+import re as _re
+_env_origins = [o.strip() for o in os.environ.get('ALLOWED_ORIGINS', '').split(',') if o.strip()]
+_allowed_origins = _env_origins + [
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
+    'http://localhost:5000',
+    'http://127.0.0.1:5000',
+    _re.compile(r'^chrome-extension://[a-z]{32}$'),
+]
+CORS(app, origins=_allowed_origins, supports_credentials=False)
+
+@app.after_request
+def apply_security_headers(response):
+    response.headers.setdefault('X-Content-Type-Options', 'nosniff')
+    response.headers.setdefault('X-Frame-Options', 'DENY')
+    response.headers.setdefault('Referrer-Policy', 'strict-origin-when-cross-origin')
+    response.headers.setdefault('Permissions-Policy', 'camera=(), geolocation=(), payment=()')
+    if request.path.startswith(('/api/login', '/api/logout', '/api/users')):
+        response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        response.headers['Pragma'] = 'no-cache'
+    return response
 
 # ตั้งค่า upload
 BASE_DIR = Path(__file__).parent.parent
@@ -89,6 +111,24 @@ def _auto_init_tables():
             init_flow_diagrams_table()
         except Exception:
             pass
+        try:
+            from db_ingestion import get_auth_db_connection
+            _auth_conn = get_auth_db_connection()
+            _auth_cur = _auth_conn.cursor()
+            _auth_cur.execute("""
+                ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(50);
+                ALTER TABLE users ADD COLUMN IF NOT EXISTS github_url VARCHAR(255);
+                ALTER TABLE users ADD COLUMN IF NOT EXISTS linkedin_url VARCHAR(255);
+                ALTER TABLE users ADD COLUMN IF NOT EXISTS line_id VARCHAR(100);
+                ALTER TABLE users ADD COLUMN IF NOT EXISTS department VARCHAR(100);
+                ALTER TABLE users ADD COLUMN IF NOT EXISTS allowed_menus TEXT;
+                ALTER TABLE users ADD COLUMN IF NOT EXISTS allowed_projects TEXT;
+            """)
+            _auth_conn.commit()
+            _auth_cur.close()
+            _auth_conn.close()
+        except Exception as _u_err:
+            logger.warning(f"Could not ensure users columns on startup: {_u_err}")
     except Exception as e:
         logger.warning(f"Could not auto-initialize DB tables on startup: {e}")
 
@@ -158,36 +198,126 @@ def allowed_file(filename: str) -> bool:
 
 
 # ========================
-# Authentication (JWT)
+# Authentication (JWT) & Rate Limiting
 # ========================
 import hmac
 import hashlib
 import base64
 import json
 import time
+import uuid
+import secrets
+import threading
 from functools import wraps
+import jwt as pyjwt
 
-JWT_SECRET = os.environ.get('JWT_SECRET', 'spectra-qa-super-secret-key-2024')
+_env_jwt_secret = os.environ.get('JWT_SECRET', '').strip()
+if not _env_jwt_secret or len(_env_jwt_secret) < 24:
+    JWT_SECRET = secrets.token_urlsafe(48)
+    logger.warning("JWT_SECRET is missing or too short in .env; generated ephemeral per-process secret. Set a 32+ char JWT_SECRET in .env for persistent sessions.")
+else:
+    JWT_SECRET = _env_jwt_secret
+
+# In-memory server-side token revocation & login rate limiting
+_AUTH_LOCK = threading.Lock()
+_REVOKED_JTIS: Dict[str, float] = {}           # jti -> exp_ts
+_USER_REVOKED_BEFORE: Dict[str, float] = {}    # user_id -> timestamp
+
+_LOGIN_WINDOW_SEC = 300        # 5-minute sliding window
+_MAX_FAILS_PER_ACCOUNT = 5     # max failed tries per account in window
+_MAX_FAILS_PER_IP = 15         # max failed tries per IP in window
+_LOGIN_FAILS_IP: Dict[str, List[float]] = {}
+_LOGIN_FAILS_ACCT: Dict[str, List[float]] = {}
+
+def _get_client_ip() -> str:
+    xff = request.headers.get('X-Forwarded-For', '')
+    if xff:
+        return xff.split(',')[0].strip()
+    return request.remote_addr or 'unknown'
+
+def _prune_attempts(bucket: Dict[str, List[float]], key: str, now: float) -> List[float]:
+    cutoff = now - _LOGIN_WINDOW_SEC
+    recent = [ts for ts in bucket.get(key, []) if ts > cutoff]
+    if recent:
+        bucket[key] = recent
+    else:
+        bucket.pop(key, None)
+    return recent
+
+def _check_login_rate_limit(client_ip: str, acct_key: str):
+    """Returns retry_after seconds (>0) if rate-limited, else 0."""
+    now = time.time()
+    with _AUTH_LOCK:
+        ip_fails = _prune_attempts(_LOGIN_FAILS_IP, client_ip, now)
+        acct_fails = _prune_attempts(_LOGIN_FAILS_ACCT, acct_key, now) if acct_key else []
+        retry_after = 0
+        if len(ip_fails) >= _MAX_FAILS_PER_IP:
+            retry_after = max(retry_after, int(_LOGIN_WINDOW_SEC - (now - ip_fails[0])) + 1)
+        if acct_key and len(acct_fails) >= _MAX_FAILS_PER_ACCOUNT:
+            retry_after = max(retry_after, int(_LOGIN_WINDOW_SEC - (now - acct_fails[0])) + 1)
+        return max(0, retry_after)
+
+def _record_login_failure(client_ip: str, acct_key: str):
+    now = time.time()
+    with _AUTH_LOCK:
+        _prune_attempts(_LOGIN_FAILS_IP, client_ip, now)
+        _LOGIN_FAILS_IP.setdefault(client_ip, []).append(now)
+        if acct_key:
+            _prune_attempts(_LOGIN_FAILS_ACCT, acct_key, now)
+            _LOGIN_FAILS_ACCT.setdefault(acct_key, []).append(now)
+
+def _clear_login_failures(acct_key: str):
+    if not acct_key:
+        return
+    with _AUTH_LOCK:
+        _LOGIN_FAILS_ACCT.pop(acct_key, None)
+
+def revoke_token_jti(jti: str, exp_ts: float):
+    if not jti:
+        return
+    now = time.time()
+    with _AUTH_LOCK:
+        # Prune expired JTIs opportunistically
+        expired = [k for k, v in _REVOKED_JTIS.items() if v < now]
+        for k in expired:
+            _REVOKED_JTIS.pop(k, None)
+        _REVOKED_JTIS[jti] = exp_ts
+
+def revoke_user_sessions(user_id: Any):
+    with _AUTH_LOCK:
+        _USER_REVOKED_BEFORE[str(user_id)] = time.time()
+
+def _validate_password_policy(password: str):
+    if not isinstance(password, str) or len(password) < 8:
+        return 'รหัสผ่านต้องมีความยาวอย่างน้อย 8 ตัวอักษร (Password must be at least 8 characters)'
+    if len(password.encode('utf-8')) > 72:
+        return 'รหัสผ่านต้องมีความยาวไม่เกิน 72 ตัวอักษร (Password exceeds maximum length of 72 bytes)'
+    return None
 
 def encode_jwt(payload):
-    header = base64.urlsafe_b64encode(json.dumps({"alg": "HS256", "typ": "JWT"}).encode()).decode().rstrip('=')
-    payload_b64 = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip('=')
-    signature = base64.urlsafe_b64encode(
-        hmac.new(JWT_SECRET.encode(), f"{header}.{payload_b64}".encode(), hashlib.sha256).digest()
-    ).decode().rstrip('=')
-    return f"{header}.{payload_b64}.{signature}"
+    now = int(time.time())
+    claims = dict(payload)
+    claims.setdefault('iat', now)
+    claims.setdefault('jti', uuid.uuid4().hex)
+    return pyjwt.encode(claims, JWT_SECRET, algorithm='HS256')
 
 def decode_jwt(token):
     try:
-        parts = token.split('.')
-        if len(parts) != 3: return None
-        signature = base64.urlsafe_b64encode(
-            hmac.new(JWT_SECRET.encode(), f"{parts[0]}.{parts[1]}".encode(), hashlib.sha256).digest()
-        ).decode().rstrip('=')
-        if not hmac.compare_digest(parts[2], signature): return None
-        
-        payload = json.loads(base64.urlsafe_b64decode(parts[1] + '==').decode())
-        if payload.get('exp', 0) < time.time(): return None
+        payload = pyjwt.decode(
+            token,
+            JWT_SECRET,
+            algorithms=['HS256'],
+            options={'require': ['exp']}
+        )
+        jti = payload.get('jti')
+        uid = str(payload.get('user_id', ''))
+        iat = payload.get('iat', 0)
+        with _AUTH_LOCK:
+            if jti and jti in _REVOKED_JTIS:
+                return None
+            revoked_before = _USER_REVOKED_BEFORE.get(uid)
+            if revoked_before and iat < revoked_before:
+                return None
         return payload
     except Exception:
         return None
@@ -201,7 +331,7 @@ def token_required(f):
         if not auth_header or not auth_header.startswith('Bearer '):
             return jsonify({'error': 'Unauthorized, please login'}), 401
         
-        token = auth_header.split(' ')[1]
+        token = auth_header.split(' ', 1)[1].strip()
         payload = decode_jwt(token)
         if not payload:
             return jsonify({'error': 'Invalid or expired token'}), 401
@@ -209,20 +339,34 @@ def token_required(f):
         return f(*args, **kwargs)
     return decorated
 
+def admin_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if request.method == 'OPTIONS':
+            return f(*args, **kwargs)
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({'error': 'Unauthorized, please login'}), 401
+        
+        token = auth_header.split(' ', 1)[1].strip()
+        payload = decode_jwt(token)
+        if not payload:
+            return jsonify({'error': 'Invalid or expired token'}), 401
+        if payload.get('role') != 'admin':
+            return jsonify({'error': 'Forbidden: Admin privileges required'}), 403
+            
+        return f(*args, **kwargs)
+    return decorated
+
 def get_request_user():
-    """Extract username from Bearer token, JSON body, form data, or query params."""
+    """Extract authenticated username strictly from verified Bearer JWT."""
     try:
         auth_header = request.headers.get('Authorization')
         if auth_header and auth_header.startswith('Bearer '):
-            token = auth_header.split(' ')[1]
+            token = auth_header.split(' ', 1)[1].strip()
             payload = decode_jwt(token)
             if payload and payload.get('user'):
                 return payload.get('user')
-        if request.is_json and request.json:
-            u = request.json.get('username') or request.json.get('created_by')
-            if u: return str(u).strip()
-        u = request.form.get('username') or request.args.get('username')
-        if u: return str(u).strip()
     except Exception:
         pass
     return None
@@ -232,7 +376,7 @@ def get_request_user_payload():
     try:
         auth_header = request.headers.get('Authorization')
         if auth_header and auth_header.startswith('Bearer '):
-            token = auth_header.split(' ')[1]
+            token = auth_header.split(' ', 1)[1].strip()
             return decode_jwt(token)
     except Exception:
         pass
@@ -268,36 +412,49 @@ def login():
     if request.method == 'OPTIONS':
         return jsonify({}), 200
         
-    data = request.get_json()
+    data = request.get_json(silent=True)
     if not data:
         return jsonify({'error': 'No data provided'}), 400
         
-    username = data.get('username')
+    identifier = str(data.get('username') or data.get('email') or '').strip()
     password = data.get('password')
     
-    if not username or not password:
-        return jsonify({'error': 'Username and password required'}), 400
+    if not identifier or not isinstance(password, str) or not password:
+        return jsonify({'error': 'Email/Username and password required'}), 400
+    if len(identifier) > 254 or len(password.encode('utf-8')) > 72:
+        return jsonify({'error': 'Invalid credentials'}), 400
+
+    client_ip = _get_client_ip()
+    acct_key = identifier.lower()
+    retry_after = _check_login_rate_limit(client_ip, acct_key)
+    if retry_after > 0:
+        logger.warning(f"Rate-limited login attempt from {client_ip} for identifier '{acct_key}' (retry in {retry_after}s)")
+        resp = jsonify({
+            'error': f'พยายามเข้าสู่ระบบผิดหลายครั้งเกินกำหนด กรุณารอ {retry_after} วินาทีแล้วลองใหม่อีกครั้ง',
+            'retry_after': retry_after
+        })
+        resp.status_code = 429
+        resp.headers['Retry-After'] = str(retry_after)
+        return resp
         
     try:
         from db_ingestion import get_auth_db_connection
         conn = get_auth_db_connection()
         cursor = conn.cursor()
         
-        # Ensure permission columns exist
-        cursor.execute("""
-            ALTER TABLE users ADD COLUMN IF NOT EXISTS allowed_menus TEXT;
-            ALTER TABLE users ADD COLUMN IF NOT EXISTS allowed_projects TEXT;
-        """)
-        
-        # ใช้ PostgreSQL crypt() ตรวจสอบ bcrypt password
+        # ใช้ PostgreSQL crypt() ตรวจสอบ bcrypt password (รองรับทั้ง Email และ Username)
         cursor.execute(
             "SELECT user_id, username, email, display_name, role, is_active, avatar_path, allowed_menus, allowed_projects "
-            "FROM users WHERE username = %s AND password_hash = crypt(%s, password_hash);",
-            (username, password)
+            "FROM users "
+            "WHERE (LOWER(TRIM(username)) = LOWER(%s) OR LOWER(TRIM(COALESCE(email, ''))) = LOWER(%s)) "
+            "AND password_hash = crypt(%s, password_hash) "
+            "ORDER BY (username = %s) DESC LIMIT 1;",
+            (identifier, identifier, password, identifier)
         )
         user = cursor.fetchone()
         
         if user and user[5]:  # is_active = True
+            _clear_login_failures(acct_key)
             user_id = str(user[0])
             user_role = user[4] or 'user'
             default_menus = DEFAULT_ADMIN_MENUS if user_role == 'admin' else DEFAULT_USER_MENUS
@@ -311,14 +468,16 @@ def login():
             )
             conn.commit()
             
-            # Token expires in 24 hours
+            # Token expires in 12 hours
+            now_ts = int(time.time())
             payload = {
                 'user_id': user_id,
                 'user': user[1],
                 'role': user_role,
                 'allowed_menus': allowed_menus,
                 'allowed_projects': allowed_projects,
-                'exp': int(time.time()) + (24 * 3600)
+                'iat': now_ts,
+                'exp': now_ts + (12 * 3600)
             }
             token = encode_jwt(payload)
             
@@ -338,11 +497,23 @@ def login():
             
         cursor.close()
         conn.close()
-        return jsonify({'error': 'Invalid credentials'}), 401
+        _record_login_failure(client_ip, acct_key)
+        logger.warning(f"Failed login attempt from {client_ip} for identifier '{acct_key}'")
+        return jsonify({'error': 'อีเมล/ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง'}), 401
         
     except Exception as e:
         logger.error(f"Login DB error: {e}", exc_info=True)
-        return jsonify({'error': f'Database connection error: {str(e)}'}), 500
+        return jsonify({'error': 'ไม่สามารถเชื่อมต่อระบบยืนยันตัวตนได้ในขณะนี้ กรุณาลองใหม่อีกครั้ง'}), 500
+
+
+@app.route('/api/logout', methods=['POST', 'OPTIONS'])
+def api_logout():
+    if request.method == 'OPTIONS':
+        return jsonify({}), 200
+    payload = get_request_user_payload()
+    if payload and payload.get('jti'):
+        revoke_token_jti(payload['jti'], float(payload.get('exp', time.time() + 43200)))
+    return jsonify({'success': True})
 
 
 
@@ -371,22 +542,12 @@ def serve_static(filename):
 # ========================
 
 @app.route('/api/users', methods=['GET'])
-@token_required
+@admin_required
 def get_users():
     try:
         from db_ingestion import get_auth_db_connection
         conn = get_auth_db_connection()
         cursor = conn.cursor()
-        
-        cursor.execute("""
-            ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(50);
-            ALTER TABLE users ADD COLUMN IF NOT EXISTS github_url VARCHAR(255);
-            ALTER TABLE users ADD COLUMN IF NOT EXISTS linkedin_url VARCHAR(255);
-            ALTER TABLE users ADD COLUMN IF NOT EXISTS line_id VARCHAR(100);
-            ALTER TABLE users ADD COLUMN IF NOT EXISTS department VARCHAR(100);
-            ALTER TABLE users ADD COLUMN IF NOT EXISTS allowed_menus TEXT;
-            ALTER TABLE users ADD COLUMN IF NOT EXISTS allowed_projects TEXT;
-        """)
         
         cursor.execute("""
             SELECT user_id, username, email, display_name, role, is_active, 
@@ -425,20 +586,22 @@ def get_users():
         return jsonify({'success': True, 'users': users_data})
     except Exception as e:
         logger.error(f"Error fetching users: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': 'Failed to load users'}), 500
 
 @app.route('/api/users', methods=['POST'])
-@token_required
+@admin_required
 def create_user():
-    data = request.get_json()
+    data = request.get_json(silent=True)
     if not data:
         return jsonify({'error': 'No data provided'}), 400
         
-    username = data.get('username')
-    email = data.get('email')
+    username = str(data.get('username') or '').strip()
+    email = str(data.get('email') or '').strip()
     password = data.get('password')
-    display_name = data.get('display_name', '')
+    display_name = str(data.get('display_name') or '').strip()
     role = data.get('role', 'user')
+    if role not in ('admin', 'user'):
+        return jsonify({'error': 'Invalid role specified'}), 400
     phone = data.get('phone', '')
     department = data.get('department', '')
     github_url = data.get('github_url', '')
@@ -447,24 +610,20 @@ def create_user():
     
     if not username or not email or not password:
         return jsonify({'error': 'Username, email, and password required'}), 400
+    pw_err = _validate_password_policy(password)
+    if pw_err:
+        return jsonify({'error': pw_err}), 400
         
     try:
         from db_ingestion import get_auth_db_connection
         conn = get_auth_db_connection()
         cursor = conn.cursor()
         
-        cursor.execute("""
-            ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(50);
-            ALTER TABLE users ADD COLUMN IF NOT EXISTS github_url VARCHAR(255);
-            ALTER TABLE users ADD COLUMN IF NOT EXISTS linkedin_url VARCHAR(255);
-            ALTER TABLE users ADD COLUMN IF NOT EXISTS line_id VARCHAR(100);
-            ALTER TABLE users ADD COLUMN IF NOT EXISTS department VARCHAR(100);
-            ALTER TABLE users ADD COLUMN IF NOT EXISTS allowed_menus TEXT;
-            ALTER TABLE users ADD COLUMN IF NOT EXISTS allowed_projects TEXT;
-        """)
-        
-        # Check if username or email already exists
-        cursor.execute("SELECT user_id FROM users WHERE username = %s OR email = %s", (username, email))
+        # Check if username or email already exists (case-insensitive)
+        cursor.execute(
+            "SELECT user_id FROM users WHERE LOWER(TRIM(username)) = LOWER(%s) OR LOWER(TRIM(COALESCE(email, ''))) = LOWER(%s)",
+            (username, email)
+        )
         if cursor.fetchone():
             cursor.close()
             conn.close()
@@ -514,25 +673,20 @@ def create_user():
         })
     except Exception as e:
         logger.error(f"Error creating user: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': 'Failed to create user'}), 500
 
 @app.route('/api/users/<int:user_id>', methods=['GET'])
 @token_required
 def get_user_detail(user_id):
+    req_payload = get_request_user_payload() or {}
+    is_admin = req_payload.get('role') == 'admin'
+    is_self = str(req_payload.get('user_id', '')) == str(user_id)
+    if not (is_admin or is_self):
+        return jsonify({'error': 'Forbidden: You can only view your own profile'}), 403
     try:
         from db_ingestion import get_auth_db_connection
         conn = get_auth_db_connection()
         cursor = conn.cursor()
-        
-        cursor.execute("""
-            ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(50);
-            ALTER TABLE users ADD COLUMN IF NOT EXISTS github_url VARCHAR(255);
-            ALTER TABLE users ADD COLUMN IF NOT EXISTS linkedin_url VARCHAR(255);
-            ALTER TABLE users ADD COLUMN IF NOT EXISTS line_id VARCHAR(100);
-            ALTER TABLE users ADD COLUMN IF NOT EXISTS department VARCHAR(100);
-            ALTER TABLE users ADD COLUMN IF NOT EXISTS allowed_menus TEXT;
-            ALTER TABLE users ADD COLUMN IF NOT EXISTS allowed_projects TEXT;
-        """)
         
         cursor.execute("""
             SELECT user_id, username, email, display_name, role, is_active, 
@@ -571,46 +725,77 @@ def get_user_detail(user_id):
         })
     except Exception as e:
         logger.error(f"Error getting user detail: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': 'Failed to load user profile'}), 500
 
 @app.route('/api/users/<int:user_id>', methods=['PUT'])
 @token_required
 def update_user(user_id):
-    data = request.get_json()
+    req_payload = get_request_user_payload() or {}
+    is_admin = req_payload.get('role') == 'admin'
+    is_self = str(req_payload.get('user_id', '')) == str(user_id)
+    if not (is_admin or is_self):
+        return jsonify({'error': 'Forbidden: You can only update your own profile'}), 403
+
+    data = request.get_json(silent=True)
     if not data:
         return jsonify({'error': 'No data provided'}), 400
+
+    # Block privilege escalation attempts from non-admin users
+    privileged_fields = ('role', 'is_active', 'allowed_menus', 'allowed_projects')
+    if not is_admin and any(f in data for f in privileged_fields):
+        return jsonify({'error': 'Forbidden: Admin privileges required to modify role or permissions'}), 403
+
+    new_password = data.get('password') or ''
+    if new_password:
+        pw_err = _validate_password_policy(new_password)
+        if pw_err:
+            return jsonify({'error': pw_err}), 400
         
     try:
         from db_ingestion import get_auth_db_connection
         conn = get_auth_db_connection()
         cursor = conn.cursor()
-        
-        # Ensure extra profile columns and permissions exist
-        cursor.execute("""
-            ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(50);
-            ALTER TABLE users ADD COLUMN IF NOT EXISTS github_url VARCHAR(255);
-            ALTER TABLE users ADD COLUMN IF NOT EXISTS linkedin_url VARCHAR(255);
-            ALTER TABLE users ADD COLUMN IF NOT EXISTS line_id VARCHAR(100);
-            ALTER TABLE users ADD COLUMN IF NOT EXISTS department VARCHAR(100);
-            ALTER TABLE users ADD COLUMN IF NOT EXISTS allowed_menus TEXT;
-            ALTER TABLE users ADD COLUMN IF NOT EXISTS allowed_projects TEXT;
-        """)
+
+        # Self-service password change requires verifying current_password
+        if new_password and is_self and not is_admin:
+            current_password = data.get('current_password') or ''
+            if not current_password:
+                cursor.close()
+                conn.close()
+                return jsonify({'error': 'กรุณาระบุรหัสผ่านปัจจุบันเพื่อยืนยันการเปลี่ยนรหัสผ่าน'}), 400
+            cursor.execute(
+                "SELECT user_id FROM users WHERE user_id = %s AND password_hash = crypt(%s, password_hash);",
+                (user_id, current_password)
+            )
+            if not cursor.fetchone():
+                cursor.close()
+                conn.close()
+                return jsonify({'error': 'รหัสผ่านปัจจุบันไม่ถูกต้อง'}), 400
         
         update_fields = []
         params = []
+        should_revoke = False
         
         if 'display_name' in data:
             update_fields.append("display_name = %s")
             params.append(data['display_name'])
-        if 'role' in data:
+        if is_admin and 'role' in data:
+            if data['role'] not in ('admin', 'user'):
+                cursor.close()
+                conn.close()
+                return jsonify({'error': 'Invalid role specified'}), 400
             update_fields.append("role = %s")
             params.append(data['role'])
-        if 'is_active' in data:
+            should_revoke = True
+        if is_admin and 'is_active' in data:
             update_fields.append("is_active = %s")
-            params.append(data['is_active'])
-        if 'password' in data and data['password']:
+            params.append(bool(data['is_active']))
+            if not data['is_active']:
+                should_revoke = True
+        if new_password:
             update_fields.append("password_hash = crypt(%s, gen_salt('bf'))")
-            params.append(data['password'])
+            params.append(new_password)
+            should_revoke = True
         if 'phone' in data:
             update_fields.append("phone = %s")
             params.append(data['phone'])
@@ -626,10 +811,10 @@ def update_user(user_id):
         if 'department' in data:
             update_fields.append("department = %s")
             params.append(data['department'])
-        if 'allowed_menus' in data:
+        if is_admin and 'allowed_menus' in data:
             update_fields.append("allowed_menus = %s")
             params.append(json.dumps(data['allowed_menus'], ensure_ascii=False) if isinstance(data['allowed_menus'], list) else data['allowed_menus'])
-        if 'allowed_projects' in data:
+        if is_admin and 'allowed_projects' in data:
             update_fields.append("allowed_projects = %s")
             params.append(json.dumps(data['allowed_projects'], ensure_ascii=False) if isinstance(data['allowed_projects'], list) else data['allowed_projects'])
         if 'avatar_path' in data:
@@ -660,6 +845,9 @@ def update_user(user_id):
         conn.commit()
         cursor.close()
         conn.close()
+
+        if should_revoke and not is_self:
+            revoke_user_sessions(user_id)
         
         u_role = updated_user[4] or 'user'
         default_menus = DEFAULT_ADMIN_MENUS if u_role == 'admin' else DEFAULT_USER_MENUS
@@ -685,15 +873,12 @@ def update_user(user_id):
         })
     except Exception as e:
         logger.error(f"Error updating user: {e}")
-        return jsonify({'error': str(e)}), 500
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': 'Failed to update user profile'}), 500
 
 @app.route('/api/users/<int:user_id>', methods=['DELETE'])
-@token_required
+@admin_required
 def delete_user(user_id):
-    auth_header = request.headers.get('Authorization')
-    token = auth_header.split(' ')[1]
-    payload = decode_jwt(token)
+    payload = get_request_user_payload() or {}
     
     if str(payload.get('user_id')) == str(user_id):
         return jsonify({'error': 'Cannot delete your own account'}), 403
@@ -715,15 +900,22 @@ def delete_user(user_id):
         conn.commit()
         cursor.close()
         conn.close()
+        revoke_user_sessions(user_id)
         
         return jsonify({'success': True, 'message': 'User deleted successfully'})
     except Exception as e:
         logger.error(f"Error deleting user: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': 'Failed to delete user'}), 500
 
 @app.route('/api/users/<int:user_id>/avatar', methods=['POST'])
 @token_required
 def upload_avatar(user_id):
+    req_payload = get_request_user_payload() or {}
+    is_admin = req_payload.get('role') == 'admin'
+    is_self = str(req_payload.get('user_id', '')) == str(user_id)
+    if not (is_admin or is_self):
+        return jsonify({'error': 'Forbidden: You can only update your own avatar'}), 403
+
     if 'avatar' not in request.files:
         return jsonify({'error': 'No avatar file provided'}), 400
         
@@ -732,9 +924,27 @@ def upload_avatar(user_id):
         return jsonify({'error': 'No file selected'}), 400
         
     if file:
-        ext = file.filename.rsplit('.', 1)[-1].lower()
+        ext = file.filename.rsplit('.', 1)[-1].lower() if '.' in file.filename else ''
         if ext not in {'png', 'jpg', 'jpeg', 'gif', 'webp'}:
             return jsonify({'error': 'Invalid image format'}), 400
+
+        header_bytes = file.stream.read(16)
+        file.stream.seek(0)
+        is_valid_magic = (
+            header_bytes.startswith(b'\x89PNG\r\n\x1a\n') or
+            header_bytes.startswith(b'\xff\xd8\xff') or
+            header_bytes.startswith(b'GIF87a') or
+            header_bytes.startswith(b'GIF89a') or
+            (header_bytes[:4] == b'RIFF' and header_bytes[8:12] == b'WEBP')
+        )
+        if not is_valid_magic:
+            return jsonify({'error': 'Invalid image file signature'}), 400
+
+        file.stream.seek(0, os.SEEK_END)
+        file_size = file.stream.tell()
+        file.stream.seek(0)
+        if file_size > 5 * 1024 * 1024:
+            return jsonify({'error': 'Avatar image must not exceed 5 MB'}), 400
             
         filename = secure_filename(f"avatar_{user_id}_{int(time.time())}.{ext}")
         filepath = AVATARS_FOLDER / filename
@@ -759,7 +969,7 @@ def upload_avatar(user_id):
             return jsonify({'success': True, 'avatar_path': avatar_path})
         except Exception as e:
             logger.error(f"Error saving avatar: {e}")
-            return jsonify({'error': str(e)}), 500
+            return jsonify({'error': 'Failed to save avatar'}), 500
 
 @app.route('/api/avatars/<path:filename>')
 @app.route('/uploads/avatars/<path:filename>')
@@ -6115,9 +6325,9 @@ def update_screen_wireframe():
         for m in mockups:
             if m.get('screen_id') == screen_id:
                 m['wireframe_type'] = wireframe_type
-                if figma_url is not None:
+                if figma_url is not None and 'figma_url' in data:
                     m['figma_url'] = figma_url
-                if image_url is not None:
+                if image_url is not None and 'image_url' in data:
                     m['image_url'] = image_url
                 break
                 
@@ -6136,6 +6346,71 @@ def update_screen_wireframe():
     except Exception as e:
         logger.error(f"Error updating screen wireframe: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
+
+
+def _persist_stitch_api_key(new_key: str):
+    """Persists STITCH_API_KEY in memory and .env file."""
+    clean_key = (new_key or '').strip()
+    if not clean_key:
+        return
+    os.environ['STITCH_API_KEY'] = clean_key
+    try:
+        env_file = BASE_DIR / '.env'
+        existing = env_file.read_text(encoding='utf-8') if env_file.exists() else ''
+        lines = [l for l in existing.splitlines() if not l.strip().startswith(('STITCH_API_KEY=', 'STITCH_MCP_URL='))]
+        lines.append(f'STITCH_API_KEY={clean_key}')
+        lines.append('STITCH_MCP_URL=https://stitch.googleapis.com/mcp')
+        env_file.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+    except Exception as err:
+        logger.warning(f"Could not write STITCH_API_KEY to .env: {err}")
+
+
+@app.route('/api/agent/stitch/save_key', methods=['POST'])
+def save_stitch_api_key():
+    data = request.json or {}
+    api_key = (data.get('stitch_api_key') or '').strip()
+    if not api_key:
+        return jsonify({'error': 'กรุณาระบุ Stitch API Key'}), 400
+    _persist_stitch_api_key(api_key)
+    from agent_7_flow_analyzer import _call_stitch_mcp
+    ok, res = _call_stitch_mcp('list_projects', {'pageSize': 1}, api_key, timeout=15)
+    return jsonify({
+        'success': True,
+        'stitch_verified': ok,
+        'stitch_status': 'เชื่อมต่อ Google Stitch MCP สำเร็จ!' if ok else f'บันทึกคีย์แล้ว แต่ Stitch ตอบกลับ: {res} (ระบบจะใช้ Gemini Live HTML เป็น Fallback อัตโนมัติ)',
+        'masked_key': f"...{api_key[-10:]}" if len(api_key) > 10 else "***"
+    })
+
+
+@app.route('/api/agent/stitch/generate_screen', methods=['POST'])
+def generate_stitch_screen_endpoint():
+    """
+    Generates a High-Fidelity interactive screen UI via Google Stitch MCP
+    (isolated 1-to-1 per project) with automatic fallback to Gemini Live HTML/Tailwind.
+    """
+    data = request.json or {}
+    project_id = data.get('project_id')
+    screen_id = data.get('screen_id')
+    device_type = data.get('device_type', 'DESKTOP')
+    custom_prompt = (data.get('custom_prompt') or '').strip()
+    engine = (data.get('engine') or 'auto').strip().lower()
+    stitch_api_key = (data.get('stitch_api_key') or '').strip()
+
+    if stitch_api_key:
+        _persist_stitch_api_key(stitch_api_key)
+
+    from agent_7_flow_analyzer import generate_highfi_screen_ui
+    ok, result = generate_highfi_screen_ui(
+        project_id=project_id,
+        screen_id=screen_id,
+        device_type=device_type,
+        custom_prompt=custom_prompt,
+        engine=engine,
+        stitch_api_key=stitch_api_key
+    )
+    if not ok:
+        return jsonify({'success': False, 'error': str(result)}), 400
+    return jsonify({'success': True, **result})
 
 
 @app.route('/api/agent/figma/sync_frame', methods=['POST'])

@@ -219,15 +219,15 @@
     }
   }
 
-  async function handleExtensionSynced(event) {
+  function handleExtensionSynced(event) {
     const syncedList = event.detail || [];
     if (syncedList.length === 0) return;
 
     const newEndpoints = syncedList.map((item, idx) => ({
       id: apiEndpoints.length + idx + 1,
       method: (item.method || "GET").toUpperCase(),
-      path: item.path || "",
-      name: item.summary || item.name || `${item.method} ${item.path}`,
+      path: item.path || item.url || "",
+      name: item.summary || item.name || `${item.method || "GET"} ${item.path || item.url || ""}`,
       source: "Chrome Extension"
     }));
 
@@ -237,26 +237,6 @@
       selectedEndpointIds = [filtered[0].id];
     }
     toast(`📥 นำเข้า API จาก Chrome Extension เพิ่มเติม ${filtered.length} รายการแล้ว`, "success");
-
-    if (selectedProjectId && filtered.length > 0) {
-      try {
-        await fetch("/api/api-collections/save-sniffed", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            project_id: selectedProjectId,
-            endpoints: filtered.map(f => ({
-              method: f.method,
-              url: f.path,
-              name: f.name,
-              category: "Chrome Extension"
-            }))
-          })
-        });
-      } catch (e) {
-        console.warn("Failed to persist extension synced APIs", e);
-      }
-    }
   }
 
   let isLoadingEndpoints = false;
@@ -595,7 +575,7 @@
       generatedCode = `${httpImports}\n\n${optionsCode}\n\n${defaultFuncCode}`;
       isGenerating = false;
       
-      const projCode = projects.find(p => p.project_id === selectedProjectId)?.project_code || 'Project';
+      const projCode = projects.find(p => (p.id || p.project_id) === selectedProjectId)?.project_code || 'Project';
       addPerfHistory({
           id: Date.now(),
           name: testName,
@@ -626,7 +606,7 @@
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      const projCode = projects.find(p => p.project_id === selectedProjectId)?.project_code || 'test';
+      const projCode = projects.find(p => (p.id || p.project_id) === selectedProjectId)?.project_code || 'test';
       a.download = scriptFileName.trim() ? (scriptFileName.trim().endsWith('.js') ? scriptFileName.trim() : `${scriptFileName.trim()}.js`) : `k6_performance_test_${projCode}.js`;
       document.body.appendChild(a);
       a.click();
@@ -637,7 +617,19 @@
   function selectProject(p) {
     selectedProjectStore.set(p);
   }
+
+  function handleModalKeydown(e) {
+    if (e.key === "Escape") {
+      if (showSnifferModal) {
+        showSnifferModal = false;
+      } else if (showAnalyticModal && !isAnalyzing) {
+        showAnalyticModal = false;
+      }
+    }
+  }
 </script>
+
+<svelte:window on:keydown={handleModalKeydown} />
 
 <div class="perf-container" in:fade>
   {#if !$selectedProjectStore}
@@ -648,8 +640,8 @@
     />
   {:else}
   <!-- MAIN QA PERFORMANCE SCREEN -->
-  <div class="top-nav" style="margin-bottom: 20px;">
-    <button class="btn-back" style="background: transparent; border: none; color: #a78bfa; font-size: 14px; display: flex; align-items: center; gap: 8px; cursor: pointer;" on:click={() => { selectedProjectStore.set(null); }}>
+  <div class="top-nav">
+    <button type="button" class="btn-back" style="background: transparent; border: none; color: #a78bfa; font-size: 14px; display: flex; align-items: center; gap: 8px; cursor: pointer;" on:click={() => { selectedProjectStore.set(null); }}>
       <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
         <path fill-rule="evenodd" d="M11.354 1.646a.5.5 0 0 1 0 .708L5.707 8l5.647 5.646a.5.5 0 0 1-.708.708l-6-6a.5.5 0 0 1 0-.708l6-6a.5.5 0 0 1 .708 0z"/>
       </svg>
@@ -657,22 +649,22 @@
     </button>
   </div>
 
-  <div class="perf-header" style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
-    <div style="display: flex; align-items: center; gap: 16px;">
+  <div class="perf-header">
+    <div class="perf-header-main">
       <div class="header-icon">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path></svg>
       </div>
-      <div class="header-text" style="display: flex; flex-direction: column; justify-content: center;">
-        <div style="display: flex; align-items: center; gap: 16px;">
+      <div class="header-text">
+        <div class="header-title-row">
           <h2>Performance AIAgent</h2>
-          <div style="font-size: 13px; color: #cbd5e1; background: rgba(15, 23, 42, 0.4); padding: 4px 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05); display: flex; align-items: center;">
+          <div class="project-pill">
             โครงการปัจจุบัน: <strong style="color: #a78bfa; margin-left: 6px;">{$selectedProjectStore.project_code} - {$selectedProjectStore.name || $selectedProjectStore.project_name}</strong>
           </div>
         </div>
         <p style="margin-top: 4px;">สร้าง K6 Performance Test Script แบบอัตโนมัติจาก API Collection ของคุณ</p>
       </div>
     </div>
-    <button class="btn-primary analytic-btn" on:click={openAnalyticModal}>
+    <button type="button" class="btn-primary analytic-btn" on:click={openAnalyticModal}>
       <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
         <path d="M12.5 10a.5.5 0 0 1 .5.5v3a.5.5 0 0 1-1 0v-3a.5.5 0 0 1 .5-.5zm-4-4a.5.5 0 0 1 .5.5v7a.5.5 0 0 1-1 0v-7a.5.5 0 0 1 .5-.5zm-4 2a.5.5 0 0 1 .5.5v5a.5.5 0 0 1-1 0v-5a.5.5 0 0 1 .5-.5z"/>
         <path d="M0 2a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V2zm15 2h-4v3h4V4zm0 4h-4v3h4V8zm0 4h-4v3h3a1 1 0 0 0 1-1v-2zm-5 3v-3H6v3h4zm-5 0v-3H1v2a1 1 0 0 0 1 1h3zm-4-4h4V8H1v3zm0-4h4V4H1v3zm5-3v3h4V4H6z"/>
@@ -706,9 +698,9 @@
         </div>
 
         <div class="form-group" in:slide>
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+          <div class="api-toolbar-row">
             <label style="margin-bottom: 0;">เลือก API ที่ต้องการนำไปสร้าง Script</label>
-            <div style="display: flex; gap: 6px;">
+            <div class="api-toolbar-actions">
               <button type="button" class="btn-sm" style="background: rgba(168, 85, 247, 0.15); border: 1px solid rgba(168, 85, 247, 0.35); color: #c084fc; border-radius: 6px; padding: 3px 8px; font-size: 11px; cursor: pointer; display: flex; align-items: center; gap: 4px;" on:click={openSnifferModal}>
                 🔍 แกะ API จากเว็บ
               </button>
@@ -834,7 +826,7 @@
                       <input type="checkbox" bind:checked={rule.enabled} />
                       <span class="rule-num">เงื่อนไข #{index + 1}</span>
                     </label>
-                    <button type="button" class="btn-del-rule" on:click={() => removeThresholdRule(rule.id)} title="ลบเงื่อนไขนี้">
+                    <button type="button" class="btn-del-rule" on:click={() => removeThresholdRule(rule.id)} title="ลบเงื่อนไขนี้" aria-label="ลบเงื่อนไขนี้">
                       ✕
                     </button>
                   </div>
@@ -936,11 +928,17 @@
 </div>
 
 {#if showAnalyticModal}
-  <div class="modal-backdrop" transition:fade={{ duration: 150 }} on:click={() => { if (!isAnalyzing) showAnalyticModal = false; }}>
-    <div class="analytic-modal" on:click|stopPropagation>
+  <div class="modal-backdrop" transition:fade={{ duration: 150 }} on:click|self={() => { if (!isAnalyzing) showAnalyticModal = false; }}>
+    <div
+      class="analytic-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="analytic-modal-title"
+      on:click|stopPropagation
+    >
       <div class="modal-header">
-        <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg> Performance Analytic AI</h2>
-        <button class="btn-close" on:click={() => { if (!isAnalyzing) showAnalyticModal = false; }}>&times;</button>
+        <h2 id="analytic-modal-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg> Performance Analytic AI</h2>
+        <button type="button" class="btn-close" aria-label="ปิดหน้าต่าง" on:click={() => { if (!isAnalyzing) showAnalyticModal = false; }}>&times;</button>
       </div>
 
       <div class="modal-content">
@@ -972,8 +970,8 @@
             </div>
             
             <div class="modal-footer">
-              <button class="btn-outline" on:click={() => showAnalyticResult = false}>ย้อนกลับ</button>
-              <button class="btn-primary" on:click={saveAnalyticScripts}>บันทึก Script ({generatedAnalyticScripts.filter(s => s.selected).length})</button>
+              <button type="button" class="btn-outline" on:click={() => showAnalyticResult = false}>ย้อนกลับ</button>
+              <button type="button" class="btn-primary" on:click={saveAnalyticScripts}>บันทึก Script ({generatedAnalyticScripts.filter(s => s.selected).length})</button>
             </div>
           </div>
         {:else}
@@ -1005,7 +1003,7 @@
           </div>
           
           <div class="modal-footer" style="margin-top: 30px;">
-            <button class="btn-primary" style="width: 100%;" disabled={selectedDocs.length === 0 || !selectedAnalyticSkill} on:click={runAnalytic}>
+            <button type="button" class="btn-primary" style="width: 100%;" disabled={selectedDocs.length === 0 || !selectedAnalyticSkill} on:click={runAnalytic}>
               วิเคราะห์และสร้าง Script อัตโนมัติ
             </button>
           </div>
@@ -1019,20 +1017,27 @@
 
 <!-- Web API Sniffer Modal -->
 {#if showSnifferModal}
-<div class="modal-backdrop" transition:fade={{duration: 200}} style="position: fixed; inset: 0; background: rgba(0,0,0,0.7); backdrop-filter: blur(8px); z-index: 9999; display: flex; align-items: center; justify-content: center;">
-  <div class="modal-card glass-panel" transition:slide={{duration: 200}} style="text-align: left; max-width: 820px; width: 95%; background: rgba(15,23,42,0.95); border: 1px solid rgba(168,85,247,0.3); box-shadow: 0 20px 50px rgba(0,0,0,0.8); border-radius: 16px; padding: 24px;">
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-      <div>
-        <h3 style="margin: 0; font-size: 1.2rem; color: white;">🔍 แกะ API จากหน้าเว็บ (Web Network API Sniffer)</h3>
-        <p style="font-size: 0.85rem; color: #94a3b8; margin: 4px 0 0 0;">สแกน Network Calls บนหน้าเว็บและดึง Endpoints เพื่อนำมาสร้าง K6 Performance Script</p>
+<div class="modal-backdrop" transition:fade={{duration: 200}} on:click|self={() => showSnifferModal = false}>
+  <div
+    class="modal-card sniffer-modal-card"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="sniffer-modal-title"
+    transition:slide={{duration: 200}}
+    on:click|stopPropagation
+  >
+    <div class="sniffer-modal-header">
+      <div style="min-width: 0;">
+        <h3 id="sniffer-modal-title" style="margin: 0; font-size: 1.2rem; color: var(--text-main, #f8fafc);">🔍 แกะ API จากหน้าเว็บ (Web Network API Sniffer)</h3>
+        <p style="font-size: 0.85rem; color: var(--text-muted, #94a3b8); margin: 4px 0 0 0;">สแกน Network Calls บนหน้าเว็บและดึง Endpoints เพื่อนำมาสร้าง K6 Performance Script</p>
       </div>
-      <button style="background: transparent; border: none; color: #94a3b8; cursor: pointer; font-size: 1.2rem;" on:click={() => showSnifferModal = false}>✕</button>
+      <button type="button" class="btn-close" aria-label="ปิดหน้าต่าง" on:click={() => showSnifferModal = false}>✕</button>
     </div>
 
     <!-- URL Input & Scan Action -->
-    <div style="display: flex; gap: 10px; margin-bottom: 20px;">
-      <input type="text" style="flex: 1; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.15); border-radius: 8px; padding: 10px 14px; color: white;" bind:value={targetSniffUrl} placeholder="http://localhost:5173 หรือ URL ของหน้าเว็บที่ต้องการสแกน" />
-      <button class="btn-primary" style="background: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%); border: none; min-width: 140px; padding: 10px 16px; border-radius: 8px; color: white; font-weight: 600; cursor: pointer;" disabled={isSniffing} on:click={runWebSniffer}>
+    <div class="sniffer-url-row">
+      <input type="text" style="flex: 1; min-width: 200px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.15); border-radius: 8px; padding: 10px 14px; color: white;" bind:value={targetSniffUrl} placeholder="http://localhost:5173 หรือ URL ของหน้าเว็บที่ต้องการสแกน" />
+      <button type="button" class="btn-primary" style="background: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%); border: none; min-width: 140px; padding: 10px 16px; border-radius: 8px; color: white; font-weight: 600; cursor: pointer;" disabled={isSniffing} on:click={runWebSniffer}>
         {#if isSniffing}
           สแกน...
         {:else}
@@ -1043,12 +1048,12 @@
 
     <!-- Results Table -->
     {#if sniffedEndpoints.length > 0}
-      <div style="max-height: 320px; overflow-y: auto; background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; margin-bottom: 20px;">
+      <div class="sniffer-table-wrap">
         <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem; text-align: left;">
           <thead>
             <tr style="background: rgba(30, 41, 59, 0.8); border-bottom: 1px solid rgba(255,255,255,0.1); color: #cbd5e1;">
               <th style="padding: 10px 14px; width: 40px; text-align: center;">
-                <input type="checkbox" checked={selectedSniffIds.length === sniffedEndpoints.length} on:change={(e) => selectedSniffIds = e.target.checked ? sniffedEndpoints.map(item => item.id) : []} />
+                <input type="checkbox" aria-label="เลือกทั้งหมด" checked={selectedSniffIds.length === sniffedEndpoints.length} on:change={(e) => selectedSniffIds = e.target.checked ? sniffedEndpoints.map(item => item.id) : []} />
               </th>
               <th style="padding: 10px 14px;">Method</th>
               <th style="padding: 10px 14px;">API Name</th>
@@ -1058,16 +1063,20 @@
           </thead>
           <tbody>
             {#each sniffedEndpoints as item}
+              {@const mLower = (item.method || 'GET').toLowerCase()}
+              {@const statusCode = item.status || 200}
               <tr style="border-bottom: 1px solid rgba(255,255,255,0.04); color: #e2e8f0;">
                 <td style="padding: 10px 14px; text-align: center;">
                   <input type="checkbox" value={item.id} bind:group={selectedSniffIds} />
                 </td>
                 <td style="padding: 10px 14px;">
-                  <span style="font-weight: bold; padding: 2px 6px; border-radius: 4px; font-size: 11px; background: {item.method === 'POST' ? 'rgba(16,185,129,0.2)' : 'rgba(59,130,246,0.2)'}; color: {item.method === 'POST' ? '#34d399' : '#60a5fa'};">{item.method}</span>
+                  <span class="sniffer-method {mLower}">{(item.method || 'GET').toUpperCase()}</span>
                 </td>
                 <td style="padding: 10px 14px; font-weight: 500;">{item.name}</td>
                 <td style="padding: 10px 14px; font-family: monospace; color: #a78bfa;">{item.path}</td>
-                <td style="padding: 10px 14px; text-align: center; color: #34d399;">200 OK</td>
+                <td style="padding: 10px 14px; text-align: center; white-space: nowrap; font-weight: 600; color: {statusCode >= 400 ? '#f87171' : '#34d399'};">
+                  {statusCode}{statusCode < 400 ? ' OK' : ' ERR'}
+                </td>
               </tr>
             {/each}
           </tbody>
@@ -1078,14 +1087,14 @@
         <div>กำลังแกะ Network API Endpoints จากหน้าเว็บ...</div>
       </div>
     {:else}
-      <div style="padding: 30px 20px; text-align: center; color: #64748b; background: rgba(15,23,42,0.4); border-radius: 8px; border: 1px dashed rgba(255,255,255,0.08); margin-bottom: 20px;">
+      <div style="padding: 30px 20px; text-align: center; color: var(--text-dim, #8494aa); background: rgba(15,23,42,0.4); border-radius: 8px; border: 1px dashed rgba(255,255,255,0.08); margin-bottom: 20px;">
         กดปุ่ม "🔍 สแกนหา API" เพื่อดึง API Endpoints จากหน้าเว็บอัตโนมัติ
       </div>
     {/if}
 
-    <div style="display: flex; justify-content: flex-end; gap: 10px;">
-      <button class="btn-secondary" style="padding: 8px 16px; border-radius: 8px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: white; cursor: pointer;" on:click={() => showSnifferModal = false}>ปิด</button>
-      <button class="btn-primary" style="padding: 8px 20px; border-radius: 8px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); border: none; color: white; font-weight: 600; cursor: pointer;" disabled={selectedSniffIds.length === 0} on:click={importSelectedSniffedApis}>
+    <div style="display: flex; justify-content: flex-end; gap: 10px; flex-wrap: wrap;">
+      <button type="button" class="btn-outline" on:click={() => showSnifferModal = false}>ปิด</button>
+      <button type="button" class="btn-primary" style="padding: 10px 20px; border-radius: var(--radius-md); background: linear-gradient(135deg, #10b981 0%, #059669 100%); border: none; color: white; font-weight: 600; cursor: pointer;" disabled={selectedSniffIds.length === 0} on:click={importSelectedSniffedApis}>
         📥 นำเข้า ({selectedSniffIds.length}) API เข้าสู่ List
       </button>
     </div>
@@ -1121,14 +1130,28 @@
     cursor: pointer;
     box-shadow: 0 4px 12px rgba(124, 58, 237, 0.2);
     transition: all 0.2s ease;
+    flex-shrink: 0;
   }
   .analytic-btn:hover {
     transform: translateY(-2px);
     box-shadow: 0 6px 16px rgba(124, 58, 237, 0.3);
   }
-  
+
   .perf-header {
-    margin-bottom: 8px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    width: 100%;
+  }
+
+  .perf-header-main {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    min-width: 0;
+    flex: 1 1 320px;
   }
 
   .header-icon {
@@ -1141,6 +1164,7 @@
     align-items: center;
     justify-content: center;
     color: #facc15;
+    flex-shrink: 0;
   }
 
   .header-icon svg {
@@ -1148,11 +1172,38 @@
     height: 24px;
   }
 
+  .header-text {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-width: 0;
+  }
+
+  .header-title-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px 16px;
+  }
+
+  .project-pill {
+    font-size: 13px;
+    color: #cbd5e1;
+    background: rgba(15, 23, 42, 0.4);
+    padding: 4px 10px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    max-width: 100%;
+  }
+
   .header-text h2 {
-    margin: 0 0 4px 0;
+    margin: 0;
     font-size: 24px;
     font-weight: 600;
-    color: #fff;
+    color: var(--text-main, #f8fafc);
     font-family: var(--font-en);
   }
 
@@ -1162,9 +1213,24 @@
     color: var(--text-muted);
   }
 
+  .api-toolbar-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 4px;
+  }
+
+  .api-toolbar-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
   .perf-content {
     display: grid;
-    grid-template-columns: 380px 1fr;
+    grid-template-columns: minmax(340px, 410px) minmax(0, 1fr);
     gap: 24px;
     flex: 1;
     min-height: 0;
@@ -1184,6 +1250,7 @@
   .config-panel {
     overflow-y: auto;
     overflow-x: hidden;
+    min-width: 0;
   }
   
   .config-panel::-webkit-scrollbar {
@@ -1241,7 +1308,12 @@
   .form-group select:focus, .form-group input:focus {
     outline: none;
     border-color: #facc15;
-    box-shadow: 0 0 0 2px rgba(234, 179, 8, 0.1);
+    box-shadow: 0 0 0 2px rgba(234, 179, 8, 0.15);
+  }
+
+  .form-group select:focus-visible, .form-group input:focus-visible {
+    outline: 2px solid var(--primary, #6366f1);
+    outline-offset: 2px;
   }
 
   .help-text {
@@ -1339,6 +1411,11 @@
 
   input:checked + .slider:before {
     transform: translateX(16px);
+  }
+
+  .switch input:focus-visible + .slider {
+    outline: 2px solid var(--primary, #6366f1);
+    outline-offset: 2px;
   }
 
   .preset-badges {
@@ -1443,11 +1520,15 @@
 
   .rule-controls-grid {
     display: grid;
-    grid-template-columns: 2fr 1fr 1.2fr;
+    grid-template-columns: 1fr 1fr;
     gap: 8px;
   }
 
-  @media (max-width: 600px) {
+  .rule-controls-grid .metric-select {
+    grid-column: 1 / -1;
+  }
+
+  @media (max-width: 480px) {
     .rule-controls-grid {
       grid-template-columns: 1fr;
     }
@@ -1467,20 +1548,45 @@
     letter-spacing: 0.5px;
   }
 
-  .control-item select, .control-item input {
-    background: rgba(15, 23, 42, 0.7);
+  .rule-controls-grid select,
+  .rule-controls-grid input {
+    background-color: rgba(15, 23, 42, 0.7);
     border: 1px solid rgba(148, 163, 184, 0.2);
     color: #fff;
-    padding: 6px 8px;
-    border-radius: 6px;
-    font-size: 12px;
+    height: 36px;
+    padding: 0 10px;
+    border-radius: 8px;
+    font-size: 12.5px;
     width: 100%;
     box-sizing: border-box;
   }
 
-  .control-item select:focus, .control-item input:focus {
+  .rule-controls-grid select {
+    padding-right: 30px;
+  }
+
+  .rule-controls-grid input[type="number"] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
+
+  .rule-controls-grid input[type="number"]::-webkit-outer-spin-button,
+  .rule-controls-grid input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+    display: none;
+  }
+
+  .rule-controls-grid select:focus,
+  .rule-controls-grid input:focus {
     outline: none;
     border-color: #8b5cf6;
+  }
+
+  .rule-controls-grid select:focus-visible,
+  .rule-controls-grid input:focus-visible {
+    outline: 2px solid var(--primary, #6366f1);
+    outline-offset: 2px;
   }
 
   .input-with-unit {
@@ -1490,12 +1596,12 @@
   }
 
   .input-with-unit input {
-    padding-right: 32px;
+    padding-right: 34px;
   }
 
   .unit-tag {
     position: absolute;
-    right: 8px;
+    right: 10px;
     font-size: 11px;
     color: #a78bfa;
     font-weight: 600;
@@ -1506,9 +1612,9 @@
     font-size: 11px;
     color: #cbd5e1;
     background: rgba(0, 0, 0, 0.25);
-    padding: 4px 8px;
-    border-radius: 4px;
-    border-left: 2px solid #8b5cf6;
+    padding: 5px 10px;
+    border-radius: 6px;
+    border: 1px solid rgba(139, 92, 246, 0.3);
   }
 
   .rule-preview-badge strong {
@@ -1662,6 +1768,7 @@
     margin: 0;
     width: auto;
     cursor: pointer;
+    flex-shrink: 0;
   }
 
   .badge-source {
@@ -1673,6 +1780,7 @@
     color: #94a3b8;
     border: 1px solid rgba(148, 163, 184, 0.15);
     white-space: nowrap;
+    flex-shrink: 0;
   }
 
   .method {
@@ -1683,6 +1791,7 @@
     color: #fff;
     min-width: 42px;
     text-align: center;
+    flex-shrink: 0;
   }
   .method.get { background: #3b82f6; }
   .method.post { background: #10b981; }
@@ -1695,15 +1804,21 @@
     font-family: monospace;
     font-size: 13px;
     color: #e2e8f0;
+    min-width: 0;
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .name {
     font-size: 12px;
     color: #94a3b8;
+    min-width: 0;
+    flex: 0 1 160px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    max-width: 250px;
   }
 
   .spinner-sm {
@@ -1716,8 +1831,9 @@
   }
 
   .result-panel {
-    padding: 20px;
+    padding: 20px 24px;
     overflow: hidden;
+    min-width: 0;
   }
 
   .result-header {
@@ -1824,19 +1940,26 @@
   @media (max-width: 900px) {
     .perf-content {
       grid-template-columns: 1fr;
+      flex: none;
     }
-    
+
+    .config-panel,
+    .result-panel {
+      overflow: visible;
+      height: auto;
+    }
+
     .code-container {
-      min-height: 400px;
+      min-height: 320px;
     }
   }
   .custom-select {
     width: 100%;
-    background: rgba(15, 23, 42, 0.6);
+    background-color: rgba(15, 23, 42, 0.6);
     border: 1px solid var(--glass-border);
     border-radius: 8px;
     color: #fff;
-    padding: 10px 16px;
+    padding: 10px 34px 10px 16px;
     font-size: 14px;
     appearance: none;
     outline: none;
@@ -1845,37 +1968,109 @@
     border-color: #a855f7;
   }
 
-  /* Analytic Modal Styles */
+  .btn-outline {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--glass-border-light);
+    color: var(--text-main);
+    padding: 10px 20px;
+    border-radius: var(--radius-md);
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    transition: background 0.2s, border-color 0.2s;
+  }
+  .btn-outline:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.28);
+  }
+
+  /* Analytic & Sniffer Modal Styles */
   .modal-backdrop {
     position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
+    inset: 0;
+    padding: 16px;
+    overflow-y: auto;
     background: rgba(0, 0, 0, 0.75);
     backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 1000;
+    z-index: var(--z-modal, 10000);
   }
   .analytic-modal {
-    background: var(--surface);
-    border: 1px solid var(--border);
+    background: var(--bg2, #12141c);
+    border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.08));
     border-radius: 16px;
     width: 100%;
     max-width: 600px;
+    max-height: 90vh;
     box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
     display: flex;
     flex-direction: column;
-    overflow: hidden;
+    overflow-y: auto;
   }
+  .sniffer-modal-card {
+    text-align: left;
+    max-width: 820px;
+    width: 100%;
+    max-height: 88vh;
+    overflow-y: auto;
+    background: rgba(15, 23, 42, 0.96);
+    border: 1px solid rgba(168, 85, 247, 0.3);
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.8);
+    border-radius: 16px;
+    padding: 24px;
+  }
+  .sniffer-modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .sniffer-url-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 20px;
+  }
+  .sniffer-table-wrap {
+    max-height: 320px;
+    overflow-y: auto;
+    overflow-x: auto;
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.08));
+    border-radius: 8px;
+    margin-bottom: 20px;
+  }
+  .sniffer-method {
+    font-weight: 700;
+    padding: 2px 7px;
+    border-radius: 4px;
+    font-size: 11px;
+    display: inline-block;
+    white-space: nowrap;
+  }
+  .sniffer-method.get { background: rgba(59, 130, 246, 0.2); color: #60a5fa; }
+  .sniffer-method.post { background: rgba(16, 185, 129, 0.2); color: #34d399; }
+  .sniffer-method.put { background: rgba(245, 158, 11, 0.2); color: #fbbf24; }
+  .sniffer-method.patch { background: rgba(168, 85, 247, 0.2); color: #c084fc; }
+  .sniffer-method.delete { background: rgba(239, 68, 68, 0.2); color: #f87171; }
+  .sniffer-method.options,
+  .sniffer-method.head { background: rgba(148, 163, 184, 0.2); color: #cbd5e1; }
+
   .modal-header {
     padding: 20px 24px;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--glass-border, rgba(255, 255, 255, 0.08));
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 12px;
     background: rgba(255, 255, 255, 0.02);
   }
   .modal-header h2 {
@@ -1887,15 +2082,23 @@
     color: #c084fc;
   }
   .btn-close {
-    background: none;
-    border: none;
+    background: transparent;
+    border: 1px solid transparent;
     color: var(--text-muted);
-    font-size: 24px;
+    font-size: 20px;
     cursor: pointer;
     line-height: 1;
-    padding: 0;
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: background 0.15s, color 0.15s;
   }
   .btn-close:hover {
+    background: rgba(255, 255, 255, 0.08);
     color: #fff;
   }
   .modal-content {
@@ -1905,7 +2108,7 @@
     max-height: 200px;
     overflow-y: auto;
     background: rgba(0, 0, 0, 0.2);
-    border: 1px solid var(--border);
+    border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.08));
     border-radius: 8px;
     padding: 12px;
     display: flex;
@@ -1972,7 +2175,7 @@
     gap: 16px;
     padding: 16px;
     background: rgba(255, 255, 255, 0.03);
-    border: 1px solid var(--border);
+    border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.08));
     border-radius: 8px;
     cursor: pointer;
     transition: all 0.2s;

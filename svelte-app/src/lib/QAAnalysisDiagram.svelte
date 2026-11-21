@@ -30,7 +30,7 @@
   let selectedSitemapNode = null;
   let selectedNodeId = null;
 
-  // Wireframe / Mockup Source Modes: 'ai' | 'figma' | 'image'
+  // Wireframe / Mockup Source Modes: 'stitch' | 'ai' | 'figma' | 'image'
   let activeWireframeTab = 'ai';
   let figmaUrlInput = '';
   let figmaTokenInput = localStorage.getItem('figma_token') || '';
@@ -39,6 +39,15 @@
   let isUploadingImage = false;
   let fileInputRef = null;
   let lightboxImage = null;
+
+  // Google Stitch MCP + Gemini Live HTML UI Generator state
+  let stitchPromptInput = '';
+  let stitchEngine = 'auto'; // 'auto' | 'stitch' | 'gemini'
+  let stitchApiKeyInput = localStorage.getItem('stitch_api_key') || '';
+  let showStitchKeyInput = false;
+  let showStitchCodeInspector = false;
+  let isGeneratingStitch = false;
+  let isSavingStitchKey = false;
 
 
   // Diagram zoom/pan state
@@ -64,7 +73,7 @@
 
   // Reactive update when current selected screen changes
   $: if (currentScreenMockup) {
-    activeWireframeTab = currentScreenMockup.wireframe_type || (currentScreenMockup.image_url ? 'image' : (currentScreenMockup.figma_url ? 'figma' : 'ai'));
+    activeWireframeTab = currentScreenMockup.wireframe_type || (currentScreenMockup.stitch_html ? 'stitch' : (currentScreenMockup.image_url ? 'image' : (currentScreenMockup.figma_url ? 'figma' : 'ai')));
     figmaUrlInput = currentScreenMockup.figma_url || '';
   }
 
@@ -224,6 +233,96 @@
     }
   }
 
+  async function handleSaveStitchKey() {
+    if (!stitchApiKeyInput.trim()) {
+      toast('กรุณาวาง Stitch API Key ก่อนกดบันทึก', 'warning');
+      return;
+    }
+    isSavingStitchKey = true;
+    try {
+      localStorage.setItem('stitch_api_key', stitchApiKeyInput.trim());
+      const res = await fetch('/api/agent/stitch/save_key', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stitch_api_key: stitchApiKeyInput.trim() })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        toast(data.stitch_status || 'บันทึก Stitch API Key สำเร็จ', data.stitch_verified ? 'success' : 'info');
+        if (data.stitch_verified) showStitchKeyInput = false;
+      } else {
+        toast(data.error || 'ไม่สามารถบันทึก Stitch API Key ได้', 'error');
+      }
+    } catch (e) {
+      console.error(e);
+      toast('เกิดข้อผิดพลาดในการบันทึก Stitch API Key', 'error');
+    } finally {
+      isSavingStitchKey = false;
+    }
+  }
+
+  async function handleGenerateStitchScreen() {
+    if (!currentScreenMockup || !$selectedProjectStore) return;
+    isGeneratingStitch = true;
+    try {
+      const deviceMap = { desktop: 'DESKTOP', tablet: 'TABLET', mobile: 'MOBILE' };
+      const res = await fetch('/api/agent/stitch/generate_screen', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_id: $selectedProjectStore.id || $selectedProjectStore.project_id,
+          screen_id: currentScreenMockup.screen_id,
+          device_type: deviceMap[prototypeDevice] || 'DESKTOP',
+          custom_prompt: stitchPromptInput.trim(),
+          engine: stitchEngine,
+          stitch_api_key: stitchApiKeyInput.trim()
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        currentScreenMockup.stitch_html = data.stitch_html;
+        currentScreenMockup.stitch_screen_id = data.stitch_screen_id;
+        currentScreenMockup.stitch_project_id = data.stitch_project_id;
+        currentScreenMockup.stitch_engine = data.stitch_engine;
+        currentScreenMockup.stitch_device = data.stitch_device;
+        currentScreenMockup.stitch_updated_at = data.stitch_updated_at;
+        currentScreenMockup.wireframe_type = 'stitch';
+        if (data.image_url) {
+          currentScreenMockup.image_url = data.image_url;
+        }
+        activeWireframeTab = 'stitch';
+        flowData = { ...flowData };
+        const engineLabel = data.stitch_engine === 'google_stitch_mcp' ? 'Google Stitch MCP' : 'Gemini Live HTML/Tailwind';
+        toast(`สร้าง High-Fi UI สำหรับ ${currentScreenMockup.screen_id} ด้วย ${engineLabel} สำเร็จ!`, 'success');
+      } else {
+        toast(data.error || 'ไม่สามารถสร้าง High-Fi UI ได้', 'error');
+      }
+    } catch (e) {
+      console.error(e);
+      toast('เกิดข้อผิดพลาดในการเชื่อมต่อระบบสร้าง UI', 'error');
+    } finally {
+      isGeneratingStitch = false;
+    }
+  }
+
+  function copyStitchHtml() {
+    if (!currentScreenMockup?.stitch_html) return;
+    navigator.clipboard.writeText(currentScreenMockup.stitch_html);
+    toast('คัดลอกโค้ด HTML/Tailwind เรียบร้อยแล้ว', 'success');
+  }
+
+  function downloadStitchHtml() {
+    if (!currentScreenMockup?.stitch_html) return;
+    const blob = new Blob([currentScreenMockup.stitch_html], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${(currentScreenMockup.screen_id || 'screen').toLowerCase()}_ui.html`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast('ดาวน์โหลดไฟล์ HTML สำเร็จ', 'success');
+  }
+
   let lastLoadedProjectId = null;
 
   $: {
@@ -279,7 +378,6 @@
           selectedScreenId = flowData.screen_mockups[0].screen_id;
           selectedNodeId = flowData.screen_mockups[0].screen_id;
         }
-        await renderCurrentDiagram();
       } else {
         flowData = null;
       }
@@ -315,7 +413,6 @@
           selectedScreenId = flowData.screen_mockups[0].screen_id;
           selectedNodeId = flowData.screen_mockups[0].screen_id;
         }
-        await renderCurrentDiagram();
       } else {
         toast(data.error || 'ไม่สามารถวิเคราะห์ Flow ได้', 'error');
       }
@@ -406,7 +503,6 @@
         updated.updated_at = new Date().toISOString();
         flowData = updated;
         showMermaidEditor = false;
-        await renderCurrentDiagram();
         toast('บันทึกการแก้ไข Diagram ลงฐานข้อมูลโครงการแล้ว (ซิงค์กับ Agent ทุกตัวอัตโนมัติ)', 'success', 4000);
       } else {
         throw new Error(data.error || 'ไม่สามารถบันทึก Diagram ได้');
@@ -502,6 +598,7 @@
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
     toast('ดาวน์โหลด Diagram (SVG) เรียบร้อย', 'success');
   }
 
@@ -521,13 +618,18 @@
     toast(`รันการทดสอบหน้าจอสำเร็จ: ${result.verdict}`, result.is_passed ? 'success' : 'warning');
   }
 
-  $: if (activeTab && flowData) {
+  const DIAGRAM_TABS = new Set(['flowchart', 'usecase', 'activity', 'sequence']);
+  let diagramRenderSeq = 0;
+
+  $: if (flowData && DIAGRAM_TABS.has(activeTab)) {
     renderCurrentDiagram();
   }
 
   async function renderCurrentDiagram() {
+    if (!DIAGRAM_TABS.has(activeTab) || !flowData) return;
+    const seq = ++diagramRenderSeq;
     await tick();
-    if (!diagramContainer || !flowData) return;
+    if (seq !== diagramRenderSeq || !diagramContainer || !flowData || !DIAGRAM_TABS.has(activeTab)) return;
 
     let diagramCode = "";
     if (activeTab === 'flowchart') diagramCode = flowData.system_flowchart || flowData.activity_diagram;
@@ -543,13 +645,16 @@
     const cleanCode = sanitizeMermaidCode(diagramCode);
 
     try {
-      const id = `mermaid-svg-${Date.now()}`;
+      const id = `mermaid-svg-${Date.now()}-${seq}`;
       diagramContainer.innerHTML = '<div class="diagram-loading"><span class="spinner-small"></span> กำลัง Render Flowchart...</div>';
       const { svg } = await mermaid.render(id, cleanCode);
+      if (seq !== diagramRenderSeq || !diagramContainer) return;
       diagramContainer.innerHTML = svg;
       await tick();
+      if (seq !== diagramRenderSeq) return;
       fitView();
     } catch (err) {
+      if (seq !== diagramRenderSeq || !diagramContainer) return;
       console.error('Mermaid render error:', err);
       diagramContainer.innerHTML = `<div class="diagram-error"><div style="font-weight: bold; margin-bottom: 6px;">❌ เกิดข้อผิดพลาดในการ Render Diagram:</div><pre style="font-size: 11px; white-space: pre-wrap; background: rgba(0,0,0,0.3); padding: 10px; border-radius: 6px;">${cleanCode || diagramCode}</pre></div>`;
     }
@@ -778,6 +883,68 @@
   let currentFormValues = {};
   let isSimulatingSubmit = false;
   let activePrototypeModal = null; // null | { title: '...', content: '...', type: '...' }
+  let revealedPasswords = {};
+  let tableSearchQuery = '';
+  let mutatedTableRows = {}; // key: `${screen_id}_${secIdx}` -> rows array
+  let interactiveRating = 5;
+  let discoveryCategory = 'ทั้งหมด';
+  let showSimulatedMap = true;
+
+  function cleanMockupLabel(raw) {
+    if (!raw) return '';
+    return String(raw)
+      .replace(/^[\p{Emoji}\p{Emoji_Presentation}\p{Extended_Pictographic}\uFE0F\u200D\s•·\-]+/gu, '')
+      .trim() || String(raw).trim();
+  }
+
+  function detectScreenArchetype(mockup) {
+    if (!mockup) return 'standard';
+    const text = `${mockup.screen_id || ''} ${mockup.screen_name || ''} ${mockup.route || ''} ${mockup.header?.title || ''} ${mockup.layout_type || ''}`.toLowerCase();
+    if (/login|signin|sign-in|register|signup|auth|forgot|otp|sso|เข้าสู่ระบบ|สมัครสมาชิก|ยืนยันตัวตน/.test(text) && !/pdpa|consent|account|profile|setting|จัดการบัญชี/.test(text)) {
+      return 'auth';
+    }
+    if (/review|rating|รีวิว|ให้คะแนน|ความคิดเห็น/.test(text)) {
+      return 'review';
+    }
+    if (/home|map|search|explore|favorite|discover|restaurant|catalog|menu|ค้นหา|แผนที่|ร้านอาหาร|รายการโปรด/.test(text)) {
+      return 'discovery';
+    }
+    return 'standard';
+  }
+
+  function detectAuthTabMode(tabName) {
+    const t = String(tabName || '').toLowerCase();
+    if (/register|sign up|signup|สมัครสมาชิก|สร้างบัญชี/.test(t)) return 'register';
+    if (/forgot|reset|recover|otp|ลืมรหัส|กู้คืน/.test(t)) return 'forgot';
+    if (/policy|sso|security|2fa|นโยบาย|ความปลอดภัย/.test(t)) return 'security';
+    return 'signin';
+  }
+
+  function classifyActionButton(btn, isAuthScreen = false) {
+    const rawLabel = String(btn?.label || btn || '').toLowerCase();
+    if (rawLabel.includes('line')) return 'brand-line';
+    if (rawLabel.includes('google')) return 'brand-google';
+    if (/ลบ|delete|remove|ยกเลิกบัญชี|ระงับ|ออกจากระบบ/.test(rawLabel)) return 'danger';
+    if (/นำทาง|แผนที่|map|gps/.test(rawLabel)) return 'map';
+    if (btn?.variant === 'primary' || /เข้าสู่ระบบทันที|sign in|login|บันทึก|ยืนยัน|ส่ง|สมัคร|สร้าง/.test(rawLabel)) {
+      return isAuthScreen ? 'primary auth-submit-full' : 'primary';
+    }
+    if (btn?.variant === 'outline') return 'outline';
+    return btn?.variant || 'secondary';
+  }
+
+  function togglePasswordVisibility(key) {
+    revealedPasswords = { ...revealedPasswords, [key]: !revealedPasswords[key] };
+  }
+
+  function getInteractiveTableRows(sec, secIdx) {
+    const sid = currentScreenMockup?.screen_id || 'DEFAULT';
+    const key = `${sid}_${secIdx}`;
+    const baseRows = mutatedTableRows[key] || sec?.table_rows || [];
+    const q = tableSearchQuery.trim().toLowerCase();
+    if (!q) return baseRows;
+    return baseRows.filter(r => Array.isArray(r) && r.some(c => String(c).toLowerCase().includes(q)));
+  }
 
   function handleSelectSitemapNode(node) {
     if (!node) return;
@@ -894,8 +1061,37 @@
     const mockId = currentScreenMockup.screen_id || 'DEFAULT';
     formValues[mockId] = {};
     currentFormValues = {};
+    mutatedTableRows = {};
+    tableSearchQuery = '';
+    revealedPasswords = {};
     isFavorite = false;
-    toast('รีเซ็ตค่าฟอร์ม Prototype สำเร็จ', 'info');
+    toast('รีเซ็ตค่าฟอร์มและตาราง Prototype กลับเป็นค่าเริ่มต้นสำเร็จ', 'info');
+  }
+
+  function handleTableActionClick(cellText, row, secIdx = 0, rowIdx = -1) {
+    const sid = currentScreenMockup?.screen_id || 'DEFAULT';
+    const key = `${sid}_${secIdx}`;
+    const sec = currentScreenMockup?.sections?.[secIdx];
+    const currentRows = (mutatedTableRows[key] || sec?.table_rows || []).map(r => [...r]);
+    const act = cleanMockupLabel(cellText).toLowerCase();
+
+    if (rowIdx >= 0 && rowIdx < currentRows.length) {
+      if (act.includes('ลบ') || act.includes('delete') || act.includes('remove')) {
+        currentRows.splice(rowIdx, 1);
+        mutatedTableRows = { ...mutatedTableRows, [key]: currentRows };
+        toast(`ลบรายการ "${row[0]}" ออกจากตารางแล้ว (กดรีเซ็ตเพื่อกู้คืน)`, 'info');
+        return;
+      }
+      if (act.includes('ออกจากระบบ') || act.includes('logout') || act.includes('revoke')) {
+        currentRows[rowIdx] = currentRows[rowIdx].map((c, idx) =>
+          idx === currentRows[rowIdx].length - 2 ? 'ออกจากระบบแล้ว' : (idx === currentRows[rowIdx].length - 1 ? 'ลบประวัติ' : c)
+        );
+        mutatedTableRows = { ...mutatedTableRows, [key]: currentRows };
+        toast(`บังคับออกจากระบบสำหรับอุปกรณ์ "${row[0]}" เรียบร้อย`, 'success');
+        return;
+      }
+    }
+    toast(`ดำเนินการ "${cleanMockupLabel(cellText)}" สำหรับ "${row[1] || row[0]}" สำเร็จ`, 'success');
   }
 
   function handlePrototypeButtonAction(btn) {
@@ -955,10 +1151,6 @@
     }
   }
 
-  function handleTableActionClick(cellText, row) {
-    toast(`ดำเนินการ Action: "${cellText}" สำหรับรายการ "${row[1] || row[0]}" สำเร็จ`, 'success');
-  }
-
 </script>
 
 <svelte:window on:keydown={handleDiagramKeydown} />
@@ -975,7 +1167,7 @@
   {:else}
     <!-- Top Nav & Breadcrumb -->
     <div class="top-nav">
-      <button class="btn-back" on:click={() => selectedProjectStore.set(null)}>
+      <button type="button" class="btn-back" on:click={() => selectedProjectStore.set(null)}>
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true">
           <path fill-rule="evenodd" d="M11.354 1.646a.5.5 0 0 1 0 .708L5.707 8l5.647 5.646a.5.5 0 0 1-.708.708l-6-6a.5.5 0 0 1 0-.708l6-6a.5.5 0 0 1 .708 0z"/>
         </svg>
@@ -1010,7 +1202,7 @@
         </div>
 
         <div class="action-buttons">
-          <button class="btn-generate-ai" on:click={handleGenerateAnalysis} disabled={isAnalyzing}>
+          <button type="button" class="btn-generate-ai" on:click={handleGenerateAnalysis} disabled={isAnalyzing}>
             {#if isAnalyzing}
               <div class="spinner-small"></div> กำลังวิเคราะห์ Flow & Diagrams...
             {:else}
@@ -1053,7 +1245,7 @@
 
       <!-- Optional Instruction Dropdown -->
       <div class="instructions-accordion">
-        <button class="accordion-toggle" on:click={() => showInstructions = !showInstructions} aria-expanded={showInstructions}>
+        <button type="button" class="accordion-toggle" on:click={() => showInstructions = !showInstructions} aria-expanded={showInstructions}>
           <svg class="accordion-chevron" class:rotated={showInstructions} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <polyline points="9 18 15 12 9 6"></polyline>
           </svg>
@@ -1148,7 +1340,7 @@
 
     <!-- Main Navigation Tabs -->
     <div class="tabs-header" role="tablist" aria-label="หมวดหมู่ผัง Flow และ Diagram" on:keydown={handleTabsKeydown}>
-      <button class="nav-tab" role="tab" id="qa-tab-sitemap" aria-controls="qa-tabpanel" tabindex={activeTab === 'sitemap' ? 0 : -1} aria-selected={activeTab === 'sitemap'} class:active={activeTab === 'sitemap'} on:click={() => activeTab = 'sitemap'}>
+      <button type="button" class="nav-tab" role="tab" id="qa-tab-sitemap" aria-controls="qa-tabpanel" tabindex={activeTab === 'sitemap' ? 0 : -1} aria-selected={activeTab === 'sitemap'} class:active={activeTab === 'sitemap'} on:click={() => activeTab = 'sitemap'}>
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <rect x="3" y="3" width="18" height="18" rx="2"></rect>
           <line x1="3" y1="9" x2="21" y2="9"></line>
@@ -1156,7 +1348,7 @@
         </svg>
         <span>Flow Sitemap & Wireframes</span>
       </button>
-      <button class="nav-tab" role="tab" id="qa-tab-flowchart" aria-controls="qa-tabpanel" tabindex={activeTab === 'flowchart' ? 0 : -1} aria-selected={activeTab === 'flowchart'} class:active={activeTab === 'flowchart'} on:click={() => activeTab = 'flowchart'}>
+      <button type="button" class="nav-tab" role="tab" id="qa-tab-flowchart" aria-controls="qa-tabpanel" tabindex={activeTab === 'flowchart' ? 0 : -1} aria-selected={activeTab === 'flowchart'} class:active={activeTab === 'flowchart'} on:click={() => activeTab = 'flowchart'}>
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <rect x="3" y="3" width="6" height="6" rx="1"></rect>
           <rect x="15" y="15" width="6" height="6" rx="1"></rect>
@@ -1165,7 +1357,7 @@
         </svg>
         <span>System Flowchart</span>
       </button>
-      <button class="nav-tab" role="tab" id="qa-tab-usecase" aria-controls="qa-tabpanel" tabindex={activeTab === 'usecase' ? 0 : -1} aria-selected={activeTab === 'usecase'} class:active={activeTab === 'usecase'} on:click={() => activeTab = 'usecase'}>
+      <button type="button" class="nav-tab" role="tab" id="qa-tab-usecase" aria-controls="qa-tabpanel" tabindex={activeTab === 'usecase' ? 0 : -1} aria-selected={activeTab === 'usecase'} class:active={activeTab === 'usecase'} on:click={() => activeTab = 'usecase'}>
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
           <circle cx="9" cy="7" r="4"></circle>
@@ -1174,13 +1366,13 @@
         </svg>
         <span>Use Case Diagram</span>
       </button>
-      <button class="nav-tab" role="tab" id="qa-tab-activity" aria-controls="qa-tabpanel" tabindex={activeTab === 'activity' ? 0 : -1} aria-selected={activeTab === 'activity'} class:active={activeTab === 'activity'} on:click={() => activeTab = 'activity'}>
+      <button type="button" class="nav-tab" role="tab" id="qa-tab-activity" aria-controls="qa-tabpanel" tabindex={activeTab === 'activity' ? 0 : -1} aria-selected={activeTab === 'activity'} class:active={activeTab === 'activity'} on:click={() => activeTab = 'activity'}>
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
         </svg>
         <span>Activity & Process Flow</span>
       </button>
-      <button class="nav-tab" role="tab" id="qa-tab-sequence" aria-controls="qa-tabpanel" tabindex={activeTab === 'sequence' ? 0 : -1} aria-selected={activeTab === 'sequence'} class:active={activeTab === 'sequence'} on:click={() => activeTab = 'sequence'}>
+      <button type="button" class="nav-tab" role="tab" id="qa-tab-sequence" aria-controls="qa-tabpanel" tabindex={activeTab === 'sequence' ? 0 : -1} aria-selected={activeTab === 'sequence'} class:active={activeTab === 'sequence'} on:click={() => activeTab = 'sequence'}>
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <polyline points="17 1 21 5 17 9"></polyline>
           <path d="M3 11V9a4 4 0 0 1 4-4h14"></path>
@@ -1189,7 +1381,7 @@
         </svg>
         <span>Sequence & Architecture</span>
       </button>
-      <button class="nav-tab" role="tab" id="qa-tab-matrix" aria-controls="qa-tabpanel" tabindex={activeTab === 'matrix' ? 0 : -1} aria-selected={activeTab === 'matrix'} class:active={activeTab === 'matrix'} on:click={() => activeTab = 'matrix'}>
+      <button type="button" class="nav-tab" role="tab" id="qa-tab-matrix" aria-controls="qa-tabpanel" tabindex={activeTab === 'matrix' ? 0 : -1} aria-selected={activeTab === 'matrix'} class:active={activeTab === 'matrix'} on:click={() => activeTab = 'matrix'}>
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M9 11l3 3L22 4"></path>
           <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
@@ -1246,7 +1438,9 @@
                       {#if node.category}
                         <span class="node-category">{node.category}</span>
                       {/if}
-                      {#if flowData.screen_mockups?.find(s => s.screen_id === node.screen_id)?.figma_url}
+                      {#if flowData.screen_mockups?.find(s => s.screen_id === node.screen_id)?.stitch_html}
+                        <span class="node-source-badge stitch" title="สร้าง High-Fi UI (Stitch / Live HTML) แล้ว">Stitch UI</span>
+                      {:else if flowData.screen_mockups?.find(s => s.screen_id === node.screen_id)?.figma_url}
                         <span class="node-source-badge figma" title="เชื่อมต่อ Figma Frame แล้ว">Figma</span>
                       {:else if flowData.screen_mockups?.find(s => s.screen_id === node.screen_id)?.image_url}
                         <span class="node-source-badge img" title="มีรูปภาพ Mockup แล้ว">Image</span>
@@ -1273,7 +1467,9 @@
                               <span class="child-title">{child.title}</span>
                               <span class="child-path">{child.path}</span>
                             </div>
-                            {#if flowData.screen_mockups?.find(s => s.screen_id === child.screen_id)?.figma_url}
+                            {#if flowData.screen_mockups?.find(s => s.screen_id === child.screen_id)?.stitch_html}
+                              <span class="node-source-badge stitch-sm" title="High-Fi UI">Stitch</span>
+                            {:else if flowData.screen_mockups?.find(s => s.screen_id === child.screen_id)?.figma_url}
                               <span class="node-source-badge figma-sm" title="Figma">Figma</span>
                             {:else if flowData.screen_mockups?.find(s => s.screen_id === child.screen_id)?.image_url}
                               <span class="node-source-badge img-sm" title="Image">Img</span>
@@ -1302,12 +1498,24 @@
               {#if currentScreenMockup}
                 <div class="wf-mode-tabs-header">
                   <button 
+                    type="button"
+                    class="wf-mode-tab-btn" 
+                    class:active={activeWireframeTab === 'stitch'} 
+                    on:click={() => handleSwitchWireframeTab('stitch')}>
+                    <QAIcon name="zap" /> Stitch / Live UI
+                    {#if currentScreenMockup.stitch_html}
+                      <span class="dot-live cyan"></span>
+                    {/if}
+                  </button>
+                  <button 
+                    type="button"
                     class="wf-mode-tab-btn" 
                     class:active={activeWireframeTab === 'ai'} 
                     on:click={() => handleSwitchWireframeTab('ai')}>
                     <QAIcon name="sparkles" /> AI Wireframe
                   </button>
                   <button 
+                    type="button"
                     class="wf-mode-tab-btn" 
                     class:active={activeWireframeTab === 'figma'} 
                     on:click={() => handleSwitchWireframeTab('figma')}>
@@ -1317,6 +1525,7 @@
                     {/if}
                   </button>
                   <button 
+                    type="button"
                     class="wf-mode-tab-btn" 
                     class:active={activeWireframeTab === 'image'} 
                     on:click={() => handleSwitchWireframeTab('image')}>
@@ -1340,6 +1549,7 @@
               <div class="prototype-control-bar">
                 <div class="device-switch-group">
                   <button 
+                    type="button"
                     class="btn-device-switch" 
                     class:active={prototypeDevice === 'desktop'} 
                     on:click={() => prototypeDevice = 'desktop'}
@@ -1347,6 +1557,7 @@
                     <QAIcon name="monitor" /> Desktop
                   </button>
                   <button 
+                    type="button"
                     class="btn-device-switch" 
                     class:active={prototypeDevice === 'tablet'} 
                     on:click={() => prototypeDevice = 'tablet'}
@@ -1354,6 +1565,7 @@
                     <QAIcon name="tablet" /> Tablet
                   </button>
                   <button 
+                    type="button"
                     class="btn-device-switch" 
                     class:active={prototypeDevice === 'mobile'} 
                     on:click={() => prototypeDevice = 'mobile'}
@@ -1363,10 +1575,10 @@
                 </div>
 
                 <div class="prototype-quick-actions">
-                  <button class="btn-proto-action fill" on:click={fillSampleData} title="เติมข้อมูลจำลองอัตโนมัติลงในทุกช่องเพื่อทดสอบ">
+                  <button type="button" class="btn-proto-action fill" on:click={fillSampleData} title="เติมข้อมูลจำลองอัตโนมัติลงในทุกช่องเพื่อทดสอบ">
                     <QAIcon name="zap" /> เติมข้อมูลตัวอย่าง (Sample Data)
                   </button>
-                  <button class="btn-proto-action reset" on:click={resetPrototype} title="ล้างค่าฟอร์มกลับเป็นค่าเริ่มต้น">
+                  <button type="button" class="btn-proto-action reset" on:click={resetPrototype} title="ล้างค่าฟอร์มกลับเป็นค่าเริ่มต้น">
                     <QAIcon name="refresh" /> รีเซ็ต
                   </button>
                   <div class="prototype-badge-live">
@@ -1401,16 +1613,18 @@
                       <button type="button" class="btn-nav-arrow" on:click={resetPrototype} title="รีเซ็ตค่า Prototype" aria-label="รีเซ็ตค่า Prototype"><QAIcon name="undo" size={14} /></button>
                       <button type="button" class="btn-nav-arrow" on:click={fillSampleData} title="เติมข้อมูลตัวอย่าง" aria-label="เติมข้อมูลตัวอย่าง"><QAIcon name="refresh" size={14} /></button>
                     </div>
-                    <div class="browser-url-input">
+                    <div class="browser-url-input" title={activeWireframeTab === 'figma' && currentScreenMockup.figma_url ? currentScreenMockup.figma_url : `https://${($selectedProjectStore.project_code || 'project').toLowerCase()}.app${currentScreenMockup.route || '/'}`}>
                       <span class="lock-icon" aria-hidden="true"><QAIcon name="lock" size={12} /></span>
-                      {#if activeWireframeTab === 'figma' && currentScreenMockup.figma_url}
-                        {currentScreenMockup.figma_url}
-                      {:else}
-                        https://{($selectedProjectStore.project_code || 'project').toLowerCase()}.app{currentScreenMockup.route || '/'}
-                      {/if}
+                      <span class="browser-url-text">
+                        {#if activeWireframeTab === 'figma' && currentScreenMockup.figma_url}
+                          {currentScreenMockup.figma_url}
+                        {:else}
+                          https://{($selectedProjectStore.project_code || 'project').toLowerCase()}.app{currentScreenMockup.route || '/'}
+                        {/if}
+                      </span>
                     </div>
                     <div class="browser-right-actions">
-                      <button class="btn-run-agent-screen" on:click={() => handleTestScreenWithAgent(currentScreenMockup)} title="เปิดระบบ AI Test Agent เพื่อทดสอบหน้าจอนี้">
+                      <button type="button" class="btn-run-agent-screen" on:click={() => handleTestScreenWithAgent(currentScreenMockup)} title="เปิดระบบ AI Test Agent เพื่อทดสอบหน้าจอนี้">
                         <QAIcon name="play" /> ทดสอบด้วย AI
                       </button>
                       {#if activeWireframeTab === 'figma' && currentScreenMockup.figma_url}
@@ -1418,15 +1632,133 @@
                           <QAIcon name="external" /> Figma
                         </a>
                       {:else if activeWireframeTab === 'image' && currentScreenMockup.image_url}
-                        <button class="browser-ext-link" on:click={() => lightboxImage = currentScreenMockup.image_url}>
+                        <button type="button" class="browser-ext-link" on:click={() => lightboxImage = currentScreenMockup.image_url}>
                           <QAIcon name="search" /> Fullscreen
                         </button>
                       {/if}
                     </div>
                   </div>
 
+                  <!-- MODE 0: GOOGLE STITCH MCP & GEMINI LIVE HTML/TAILWIND UI -->
+                  {#if activeWireframeTab === 'stitch'}
+                    <div class="stitch-container">
+                      <div class="stitch-config-panel">
+                        <div class="stitch-top-meta-row">
+                          <div class="stitch-isolation-badges">
+                            <span class="stitch-space-pill" title="แยก Container และ Design DNA แบบ 1-ต่อ-1 ตามโครงการ">
+                              <QAIcon name="folder" size={12} />
+                              Project Space: {currentScreenMockup.stitch_project_id || flowData?.summary_stats?.stitch_project_id || ($selectedProjectStore.project_code || 'Isolated')}
+                            </span>
+                            {#if currentScreenMockup.stitch_engine}
+                              <span class="stitch-engine-pill {currentScreenMockup.stitch_engine}">
+                                {currentScreenMockup.stitch_engine === 'google_stitch_mcp' ? 'Google Stitch MCP' : 'Gemini Live HTML/Tailwind'}
+                              </span>
+                            {/if}
+                          </div>
+
+                          <div class="stitch-utility-btns">
+                            <select bind:value={stitchEngine} class="stitch-engine-select" aria-label="เลือก Engine สร้าง UI">
+                              <option value="auto">Auto (Stitch MCP + Gemini Fallback)</option>
+                              <option value="stitch">Google Stitch MCP เท่านั้น</option>
+                              <option value="gemini">Gemini Live HTML/Tailwind (ฟรีทันที)</option>
+                            </select>
+
+                            {#if currentScreenMockup.stitch_html}
+                              <button type="button" class="btn-figma-action token" on:click={() => showStitchCodeInspector = !showStitchCodeInspector} title="ดูหรือคัดลอกโค้ด HTML/Tailwind">
+                                <QAIcon name="code" /> {showStitchCodeInspector ? 'ซ่อนโค้ด' : 'โค้ด HTML'}
+                              </button>
+                              <button type="button" class="btn-figma-action token" on:click={downloadStitchHtml} title="ดาวน์โหลดไฟล์ HTML">
+                                <QAIcon name="download" /> .html
+                              </button>
+                            {/if}
+
+                            <button type="button" class="btn-figma-action token" on:click={() => showStitchKeyInput = !showStitchKeyInput} title="ตั้งค่า Google Stitch API Key">
+                              <QAIcon name="key" /> Stitch Key
+                            </button>
+                          </div>
+                        </div>
+
+                        <div class="figma-input-row">
+                          <span class="figma-icon-tag stitch-tag"><QAIcon name="sparkles" /> Design Prompt:</span>
+                          <input
+                            type="text"
+                            bind:value={stitchPromptInput}
+                            placeholder="สั่งปรับดีไซน์เพิ่มเติม (เว้นว่างได้ ระบบจะออกแบบตามโดเมนโครงการและ Requirements อัตโนมัติ)..."
+                            class="figma-text-input"
+                            aria-label="คำสั่งออกแบบ UI สำหรับ Google Stitch หรือ Gemini"
+                            on:keydown={(e) => { if (e.key === 'Enter' && !isGeneratingStitch) handleGenerateStitchScreen(); }}
+                          />
+                          <button type="button" class="btn-figma-action stitch-gen" on:click={handleGenerateStitchScreen} disabled={isGeneratingStitch}>
+                            {#if isGeneratingStitch}
+                              <span class="spinner-small"></span> กำลังสร้าง High-Fi UI...
+                            {:else}
+                              <QAIcon name="zap" /> {currentScreenMockup.stitch_html ? 'สร้างใหม่ / ปรับดีไซน์' : 'สร้าง High-Fi UI'}
+                            {/if}
+                          </button>
+                        </div>
+
+                        {#if showStitchKeyInput}
+                          <div class="figma-token-box" transition:slide>
+                            <div class="token-title">
+                              <QAIcon name="key" /> Google Stitch API Key (`X-Goog-Api-Key` จาก stitch.withgoogle.com &gt; Setup MCP &gt; กดปุ่ม Copy key):
+                            </div>
+                            <div class="token-form-row">
+                              <input
+                                type="password"
+                                bind:value={stitchApiKeyInput}
+                                placeholder="วาง Stitch API Key ที่กด Copy key มาจากหน้า Setup MCP..."
+                                class="figma-token-field"
+                                aria-label="Google Stitch API Key"
+                              />
+                              <button type="button" class="btn-save-token" on:click={handleSaveStitchKey} disabled={isSavingStitchKey}>
+                                {isSavingStitchKey ? 'กำลังตรวจสอบ...' : 'บันทึก & ตรวจสอบคีย์'}
+                              </button>
+                            </div>
+                          </div>
+                        {/if}
+
+                        {#if showStitchCodeInspector && currentScreenMockup.stitch_html}
+                          <div class="stitch-code-drawer" transition:slide>
+                            <div class="stitch-code-header">
+                              <span>Generated Standalone HTML5 + Tailwind CSS ({currentScreenMockup.stitch_html.length.toLocaleString()} chars)</span>
+                              <button type="button" class="btn-save-token" on:click={copyStitchHtml}>คัดลอกโค้ด HTML</button>
+                            </div>
+                            <pre class="stitch-code-pre">{currentScreenMockup.stitch_html}</pre>
+                          </div>
+                        {/if}
+                      </div>
+
+                      {#if isGeneratingStitch}
+                        <div class="stitch-empty-guide">
+                          <div class="spinner-small" style="width: 32px; height: 32px; border-width: 3px;"></div>
+                          <h4>กำลังออกแบบ High-Fidelity UI สำหรับ "{currentScreenMockup.screen_name}"</h4>
+                          <p>ระบบกำลังสร้างหน้าจอที่ตรงตามธุรกิจของโครงการ ({$selectedProjectStore.name || $selectedProjectStore.project_code}) พร้อมผูก Requirements และบันทึกแยกตามโครงการ...</p>
+                        </div>
+                      {:else if currentScreenMockup.stitch_html}
+                        <div class="stitch-iframe-box">
+                          <iframe
+                            srcdoc={currentScreenMockup.stitch_html}
+                            title={`High-Fidelity UI — ${currentScreenMockup.screen_name}`}
+                            class="stitch-live-iframe"
+                            sandbox="allow-scripts allow-forms allow-modals"
+                          ></iframe>
+                        </div>
+                      {:else}
+                        <div class="stitch-empty-guide">
+                          <div class="figma-watermark-icon" style="color: #06b6d4;"><QAIcon name="zap" size={38} /></div>
+                          <h4>สร้างหน้าจอ High-Fidelity UI เฉพาะทางของโครงการ ({$selectedProjectStore.project_code || 'Project'})</h4>
+                          <p>
+                            เชื่อมต่อกับ <strong>Google Stitch MCP</strong> (`stitch.googleapis.com/mcp`) พร้อมระบบ <strong>Gemini Live HTML/Tailwind</strong> อัตโนมัติ — แยกดีไซน์และชุดสีแบบ 1-ต่อ-1 ตามโครงการ และเรนเดอร์เป็นหน้าเว็บที่คลิกโต้ตอบได้จริง
+                          </p>
+                          <button type="button" class="btn-figma-action stitch-gen" style="margin-top: 8px; padding: 9px 18px; font-size: 13px;" on:click={handleGenerateStitchScreen}>
+                            <QAIcon name="zap" /> สร้าง High-Fi UI สำหรับหน้าจอนี้ทันที
+                          </button>
+                        </div>
+                      {/if}
+                    </div>
+
                   <!-- MODE 1: FIGMA EMBED / MCP SYNC -->
-                  {#if activeWireframeTab === 'figma'}
+                  {:else if activeWireframeTab === 'figma'}
                     <div class="figma-container">
                       <div class="figma-config-panel">
                         <div class="figma-input-row">
@@ -1437,17 +1769,17 @@
                             placeholder="https://www.figma.com/design/.../...?node-id=..." 
                             class="figma-text-input" aria-label="Figma Frame URL" 
                           />
-                          <button class="btn-figma-action connect" on:click={handleSaveFigmaUrl}>
+                          <button type="button" class="btn-figma-action connect" on:click={handleSaveFigmaUrl}>
                             <QAIcon name="link" /> Connect & Save
                           </button>
-                          <button class="btn-figma-action sync" on:click={handleSyncFigmaImage} disabled={isSyncingFigma}>
+                          <button type="button" class="btn-figma-action sync" on:click={handleSyncFigmaImage} disabled={isSyncingFigma}>
                             {#if isSyncingFigma}
                               <span class="spinner-small"></span> Syncing...
                             {:else}
                               <QAIcon name="refresh" /> Sync MCP / API
                             {/if}
                           </button>
-                          <button class="btn-figma-action token" on:click={() => showFigmaTokenInput = !showFigmaTokenInput} title="Figma Personal Access Token">
+                          <button type="button" class="btn-figma-action token" on:click={() => showFigmaTokenInput = !showFigmaTokenInput} title="Figma Personal Access Token">
                             <QAIcon name="settings" /> Token
                           </button>
                         </div>
@@ -1462,7 +1794,7 @@
                                 placeholder="figd_xxxxxxxxx" 
                                 class="figma-token-field" aria-label="Figma Personal Access Token"
                               />
-                              <button class="btn-save-token" on:click={() => { localStorage.setItem('figma_token', figmaTokenInput.trim()); toast('บันทึก Figma Token แล้ว', 'success'); showFigmaTokenInput = false; }}>
+                              <button type="button" class="btn-save-token" on:click={() => { localStorage.setItem('figma_token', figmaTokenInput.trim()); toast('บันทึก Figma Token แล้ว', 'success'); showFigmaTokenInput = false; }}>
                                 บันทึก
                               </button>
                             </div>
@@ -1502,15 +1834,15 @@
                       {#if currentScreenMockup.image_url}
                         <div class="image-viewport-box">
                           <div class="image-action-toolbar">
-                            <span class="img-name-tag"><QAIcon name="camera" /> {currentScreenMockup.image_filename || 'Mockup Screenshot'}</span>
+                            <span class="img-name-tag" title={currentScreenMockup.image_filename || 'Mockup Screenshot'}><QAIcon name="camera" /><span class="img-name-text">{currentScreenMockup.image_filename || 'Mockup Screenshot'}</span></span>
                             <div class="img-btn-group">
-                              <button class="btn-img-ctrl zoom" on:click={() => lightboxImage = currentScreenMockup.image_url}>
+                              <button type="button" class="btn-img-ctrl zoom" on:click={() => lightboxImage = currentScreenMockup.image_url}>
                                 <QAIcon name="search" /> ขยายเต็มจอ
                               </button>
-                              <button class="btn-img-ctrl replace" on:click={() => fileInputRef?.click()} disabled={isUploadingImage}>
+                              <button type="button" class="btn-img-ctrl replace" on:click={() => fileInputRef?.click()} disabled={isUploadingImage}>
                                 <QAIcon name="refresh" /> เปลี่ยนภาพ
                               </button>
-                              <button class="btn-img-ctrl delete" on:click={handleRemoveImage}>
+                              <button type="button" class="btn-img-ctrl delete" on:click={handleRemoveImage}>
                                 <QAIcon name="trash" /> ลบภาพ
                               </button>
                             </div>
@@ -1549,7 +1881,7 @@
                               <span class="spinner-small"></span> กำลังอัปโหลดภาพ...
                             </div>
                           {:else}
-                            <button class="btn-upload-browse"><QAIcon name="folder" /> เลือกไฟล์ภาพจากเครื่อง</button>
+                            <button type="button" class="btn-upload-browse"><QAIcon name="folder" /> เลือกไฟล์ภาพจากเครื่อง</button>
                           {/if}
                         </div>
                       {/if}
@@ -1557,319 +1889,752 @@
 
                   <!-- MODE 3: AI HIGH-FIDELITY INTERACTIVE PROTOTYPE -->
                   {:else}
+                  {@const screenArchetype = detectScreenArchetype(currentScreenMockup)}
+                  {@const authTabMode = detectAuthTabMode(activePrototypeTab)}
 
                   <!-- Mockup Screen Body -->
-                  <div class="mockup-screen-content interactive-proto">
-                    
-                    <!-- Screen Hero / Header Bar -->
-                    <div class="proto-hero-card">
-                      <div class="proto-hero-main">
-                        <div class="proto-title-badge-row">
-                          <h3 class="proto-screen-title">
-                            {currentScreenMockup.header?.title || currentScreenMockup.screen_name}
-                          </h3>
-                          {#if currentScreenMockup.header?.badge}
-                            <span class="proto-verified-badge {currentScreenMockup.header.badge_color || 'emerald'}">
-                              <QAIcon name="sparkles" /> {currentScreenMockup.header.badge}
-                            </span>
-                          {:else}
-                            <span class="proto-verified-badge emerald">
-                              <QAIcon name="sparkles" /> Production Ready
-                            </span>
-                          {/if}
-                        </div>
-                        <p class="proto-desc-text">
-                          {currentScreenMockup.description || 'Interactive prototype screen wired with live form inputs, dynamic state management, and functional UI components.'}
-                        </p>
-                      </div>
+                  <div class="mockup-screen-content interactive-proto archetype-{screenArchetype}">
 
-                      <div class="proto-header-action-toolbar">
-                        {#if currentScreenMockup.header?.actions && currentScreenMockup.header.actions.length > 0}
-                          {#each currentScreenMockup.header.actions as act}
-                            <button 
-                              class="btn-proto-header-action" 
-                              class:favorited={isFavorite && (act.includes('โปรด') || act.includes('favorite') || act.includes('like'))}
-                              on:click={() => handlePrototypeHeaderAction(act)}>
-                              {#if act.includes('แชร์') || act.includes('share')}
-                                <QAIcon name="link" /> {act}
-                              {:else if act.includes('โปรด') || act.includes('favorite') || act.includes('like')}
-                                <QAIcon name="star" size={14} filled={isFavorite} /> {isFavorite ? 'บันทึกเป็นรายการโปรดแล้ว' : act}
-                              {:else if act.includes('ย้อน') || act.includes('back')}
-                                <QAIcon name="back" /> {act}
-                              {:else if act.includes('เข้าสู่ระบบ') || act.includes('login') || act.includes('sign in')}
-                                <QAIcon name="play" /> {act}
-                              {:else if act.includes('ค้นหา') || act.includes('search')}
-                                <QAIcon name="search" /> {act}
-                              {:else if act.includes('บันทึก') || act.includes('save')}
-                                <QAIcon name="save" /> {act}
-                              {:else}
-                                <QAIcon name="settings" /> {act}
-                              {/if}
-                            </button>
-                          {/each}
-                        {:else}
-                          <button class="btn-proto-header-action" on:click={() => handlePrototypeHeaderAction('รีเฟรช')}>
-                            <QAIcon name="refresh" /> รีเฟรช
-                          </button>
-                        {/if}
-                      </div>
-                    </div>
-
-                    <!-- KPI / Summary Metric Cards Grid -->
-                    {#if currentScreenMockup.stats && currentScreenMockup.stats.length > 0}
-                      <div class="proto-stats-grid">
-                        {#each currentScreenMockup.stats as st}
-                          <div class="proto-stat-card {st.color || 'blue'}">
-                            <div class="stat-card-label">{st.label}</div>
-                            <div class="stat-card-value">{st.value}</div>
-                            {#if st.sub}
-                              <div class="stat-card-sub">{st.sub}</div>
-                            {/if}
-                          </div>
-                        {/each}
-                      </div>
-                    {/if}
-
-                    <!-- Interactive Tabs Bar -->
-                    {#if currentScreenMockup.tabs && currentScreenMockup.tabs.length > 0}
-                      <div class="proto-tabs-navbar">
-                        {#each currentScreenMockup.tabs as tb}
-                          <button 
-                            class="proto-nav-tab-btn" 
-                            class:active={activePrototypeTab === tb} 
-                            on:click={() => { activePrototypeTab = tb; toast(`สลับไปยังแท็บ: ${tb}`, 'info'); }}>
-                            {tb}
-                          </button>
-                        {/each}
-                      </div>
-                    {/if}
-
-                    <!-- Dynamic Sections Stack -->
-                    <div class="mockup-sections-stack">
-                      {#if currentScreenMockup.sections}
-                        {#each currentScreenMockup.sections as sec, secIdx}
-                          
-                          <!-- SECTION: GALLERY / BANNER -->
-                          {#if (sec.type === 'gallery' || sec.images) && sec.images && sec.images.length > 0}
-                            <div class="proto-section-card gallery">
-                              <div class="proto-sec-header">
-                                <div class="mock-sec-title"><QAIcon name="image" /> {sec.section_name || 'Image Gallery & Highlights'}</div>
-                                {#if sec.banner_tag}
-                                  <span class="proto-tag-highlight">{sec.banner_tag}</span>
-                                {/if}
+                    {#if screenArchetype === 'auth'}
+                      <!-- ── ARCHETYPE A: DEDICATED SPLIT AUTHENTICATION UX ── -->
+                      <div class="auth-ux-layout">
+                        <!-- Left: Brand Identity & Security Trust Panel -->
+                        <div class="auth-brand-showcase">
+                          <div class="auth-brand-top">
+                            <div class="auth-app-logo-row">
+                              <div class="auth-app-emblem"><QAIcon name="shield" size={18} /></div>
+                              <div>
+                                <div class="auth-app-name">{$selectedProjectStore.name || $selectedProjectStore.project_code || 'Application'}</div>
+                                <div class="auth-app-route">{currentScreenMockup.route || '/auth/login'}</div>
                               </div>
-                              <div class="proto-gallery-grid">
-                                {#each sec.images as img, idx}
-                                  <div
-                                    class="gallery-photo-card"
-                                    role="button"
-                                    tabindex="0"
-                                    on:click={() => toast(`ดูภาพขยาย: ${img.title}`, 'info')}
-                                    on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toast(`ดูภาพขยาย: ${img.title}`, 'info'); } }}
-                                  >
-                                    <div class="photo-visual-placeholder grad-{idx % 4}">
-                                      <span class="photo-cam-icon"><QAIcon name="camera" /></span>
-                                      <span class="photo-badge">HD View</span>
-                                    </div>
-                                    <div class="photo-card-info">
-                                      <div class="photo-title">{img.title}</div>
-                                      <div class="photo-desc">{img.desc}</div>
-                                    </div>
-                                  </div>
-                                {/each}
-                              </div>
+                              <span class="proto-verified-badge emerald" style="margin-left: auto;">
+                                <QAIcon name="sparkles" /> {cleanMockupLabel(currentScreenMockup.header?.badge || 'Security & Auth')}
+                              </span>
                             </div>
 
-                          <!-- SECTION: INTERACTIVE FORM -->
-                          {:else if sec.type === 'form' || sec.fields}
-                            <div class="proto-section-card form">
-                              <div class="proto-sec-header">
-                                <div class="mock-sec-title"><QAIcon name="edit" /> {sec.section_name || 'Interactive Form Details'}</div>
+                            <h3 class="auth-showcase-title">
+                              {cleanMockupLabel(currentScreenMockup.header?.title || currentScreenMockup.screen_name)}
+                            </h3>
+                            <p class="auth-showcase-desc">
+                              {currentScreenMockup.description || 'ระบบยืนยันตัวตนและจัดการสิทธิ์การเข้าถึง รองรับผู้ใช้งานทั่วไป ร้านค้าพาร์ทเนอร์ และ Social Login มาตรฐานความปลอดภัยระดับสากล'}
+                            </p>
+                          </div>
+
+                          {#if currentScreenMockup.stats && currentScreenMockup.stats.length > 0}
+                            <div class="auth-trust-grid">
+                              {#each currentScreenMockup.stats as st}
+                                <div class="auth-trust-item {st.color || 'blue'}">
+                                  <div class="trust-lbl">{st.label}</div>
+                                  <div class="trust-val">{st.value}</div>
+                                  {#if st.sub}<div class="trust-sub">{st.sub}</div>{/if}
+                                </div>
+                              {/each}
+                            </div>
+                          {/if}
+                        </div>
+
+                        <!-- Right: Focused Single-Column Auth Card -->
+                        <div class="auth-card-panel">
+                          {#if currentScreenMockup.tabs && currentScreenMockup.tabs.length > 0}
+                            <div class="auth-segmented-tabs" role="tablist">
+                              {#each currentScreenMockup.tabs as tb}
+                                <button
+                                  type="button"
+                                  role="tab"
+                                  aria-selected={activePrototypeTab === tb}
+                                  class="auth-seg-tab-btn"
+                                  class:active={activePrototypeTab === tb}
+                                  on:click={() => { activePrototypeTab = tb; }}>
+                                  {cleanMockupLabel(tb)}
+                                </button>
+                              {/each}
+                            </div>
+                          {/if}
+
+                          {#if authTabMode === 'register'}
+                            <!-- Dynamic Register Tab UX -->
+                            <div class="auth-card-head">
+                              <h4>สร้างบัญชีผู้ใช้งานใหม่ (Create Account)</h4>
+                              <p>กรอกข้อมูลเพื่อสมัครสมาชิกและเริ่มใช้งานระบบ {$selectedProjectStore.name || ''}</p>
+                            </div>
+                            <div class="auth-vertical-form">
+                              <div class="mock-form-item">
+                                <label class="mock-label" for="auth-reg-name">ชื่อ-นามสกุล หรือ ชื่อร้านค้า (Full Name / Store) <span class="req-star">*</span></label>
+                                <input id="auth-reg-name" type="text" class="proto-real-input" placeholder="เช่น คุณสมชาย ใจดี" bind:value={currentFormValues['reg_name']} />
+                              </div>
+                              <div class="mock-form-item">
+                                <label class="mock-label" for="auth-reg-email">อีเมล หรือ เบอร์โทรศัพท์ (Email / Phone) <span class="req-star">*</span></label>
+                                <input id="auth-reg-email" type="text" class="proto-real-input" placeholder="name@example.com หรือ 08x-xxx-xxxx" bind:value={currentFormValues['reg_email']} />
+                              </div>
+                              <div class="auth-2col-row">
+                                <div class="mock-form-item">
+                                  <label class="mock-label" for="auth-reg-pw">รหัสผ่าน (Password) <span class="req-star">*</span></label>
+                                  <input id="auth-reg-pw" type="password" class="proto-real-input" placeholder="อย่างน้อย 8 ตัวอักษร" bind:value={currentFormValues['reg_pw']} />
+                                </div>
+                                <div class="mock-form-item">
+                                  <label class="mock-label" for="auth-reg-pw2">ยืนยันรหัสผ่าน <span class="req-star">*</span></label>
+                                  <input id="auth-reg-pw2" type="password" class="proto-real-input" placeholder="ยืนยันรหัสผ่านอีกครั้ง" bind:value={currentFormValues['reg_pw2']} />
+                                </div>
+                              </div>
+                              <label class="proto-real-checkbox">
+                                <input type="checkbox" checked />
+                                <span>ยอมรับข้อกำหนดการใช้งานและนโยบายคุ้มครองข้อมูลส่วนบุคคล (PDPA)</span>
+                              </label>
+                              <button type="button" class="proto-action-btn primary auth-submit-full" on:click={() => handlePrototypeButtonAction({ label: 'สมัครสมาชิกใหม่ (Create Account)', variant: 'primary' })}>
+                                <QAIcon name="check" /> สมัครสมาชิกใหม่ (Create Account)
+                              </button>
+                            </div>
+
+                          {:else if authTabMode === 'forgot'}
+                            <!-- Dynamic Forgot Password / OTP Tab UX -->
+                            <div class="auth-card-head">
+                              <h4>กู้คืนรหัสผ่านด้วย OTP (Password Recovery)</h4>
+                              <p>ระบุอีเมลหรือเบอร์โทรศัพท์ที่ลงทะเบียนไว้เพื่อรับรหัส OTP 6 หลัก</p>
+                            </div>
+                            <div class="auth-vertical-form">
+                              <div class="mock-form-item">
+                                <label class="mock-label" for="auth-forgot-id">อีเมล หรือ เบอร์โทรศัพท์ที่ลงทะเบียน <span class="req-star">*</span></label>
+                                <input id="auth-forgot-id" type="text" class="proto-real-input" placeholder="user@foodsmile.app หรือ 081-234-5678" bind:value={currentFormValues['forgot_identity']} />
+                              </div>
+                              <div class="mock-form-item">
+                                <label class="mock-label" for="auth-forgot-otp">รหัสยืนยัน OTP (6 หลัก)</label>
+                                <input id="auth-forgot-otp" type="text" maxlength="6" class="proto-real-input" placeholder="• • • • • •" bind:value={currentFormValues['forgot_otp']} />
+                              </div>
+                              <button type="button" class="proto-action-btn primary auth-submit-full" on:click={() => handlePrototypeButtonAction({ label: 'ส่งรหัสยืนยัน OTP (Send Recovery Code)', variant: 'primary' })}>
+                                <QAIcon name="zap" /> ส่งรหัสยืนยัน OTP (Send Recovery Code)
+                              </button>
+                              <button type="button" class="proto-action-btn outline auth-submit-full" on:click={() => { activePrototypeTab = currentScreenMockup.tabs?.[0] || ''; }}>
+                                <QAIcon name="back" /> กลับไปหน้าเข้าสู่ระบบ (Back to Sign In)
+                              </button>
+                            </div>
+
+                          {:else}
+                            <!-- Primary Sign In Tab UX (Single-Column Clean Auth Flow) -->
+                            {@const authFormSec = (currentScreenMockup.sections || []).find(s => s.type === 'form' || s.fields) || { fields: [], buttons: [] }}
+                            {@const textFields = (authFormSec.fields || []).filter(f => f.type !== 'toggle' && f.type !== 'checkbox')}
+                            {@const toggleFields = (authFormSec.fields || []).filter(f => f.type === 'toggle' || f.type === 'checkbox')}
+                            {@const allBtns = authFormSec.buttons || []}
+                            {@const primaryAuthBtns = allBtns.filter(b => !/google|line|facebook|apple/i.test(String(b.label || '')))}
+                            {@const socialAuthBtns = allBtns.filter(b => /google|line|facebook|apple/i.test(String(b.label || '')))}
+
+                            <div class="auth-card-head">
+                              <div class="auth-card-title-row">
+                                <h4>{cleanMockupLabel(authFormSec.section_name || 'เข้าสู่ระบบ (Sign In)')}</h4>
                                 <span class="proto-interactive-tag"><QAIcon name="zap" /> Live Editable</span>
                               </div>
+                              <p>กรอกข้อมูลบัญชีของคุณเพื่อเข้าใช้งานระบบ</p>
+                            </div>
 
-                              <div class="mock-form-grid">
-                                {#each (sec.fields || []) as f, fIdx}
-                                  <div class="mock-form-item" class:full-width={f.type === 'textarea' || (f.label && f.label.includes('ที่อยู่'))}>
-                                    <label class="mock-label" for="fld-{secIdx}-{fIdx}">
-                                      {f.label} {#if f.required}<span class="req-star">*</span>{/if}
-                                    </label>
-
-                                    {#if f.type === 'toggle' || (f.label && f.label.includes('เปิดรับ'))}
-                                      <div class="proto-toggle-wrap">
-                                        <label class="proto-switch">
-                                          <input 
-                                            type="checkbox" 
-                                            bind:checked={currentFormValues[f.label]}
-                                          />
-                                          <span class="switch-slider"></span>
-                                        </label>
-                                        <span class="toggle-status-text">
-                                          {currentFormValues[f.label] ? 'เปิดใช้งาน (Active)' : 'ปิดใช้งาน (Disabled)'}
-                                        </span>
-                                      </div>
-
-                                    {:else if f.type === 'select' || f.options}
-                                      <div class="proto-input-wrapper">
-                                        <select 
-                                          id="fld-{secIdx}-{fIdx}"
-                                          class="proto-real-select"
-                                          bind:value={currentFormValues[f.label]}
-                                        >
-                                          {#each (f.options || ['ตัวเลือก 1', 'ตัวเลือก 2', 'ตัวเลือก 3']) as opt}
-                                            <option value={opt}>{opt}</option>
-                                          {/each}
-                                        </select>
-                                        <span class="select-chevron">▼</span>
-                                      </div>
-
-                                    {:else if f.type === 'textarea' || (f.label && f.label.includes('ที่อยู่'))}
-                                      <textarea 
-                                        id="fld-{secIdx}-{fIdx}"
-                                        class="proto-real-textarea"
-                                        rows="3"
-                                        placeholder={f.placeholder || f.label}
-                                        bind:value={currentFormValues[f.label]}
-                                      ></textarea>
-
-                                    {:else if f.type === 'checkbox'}
-                                      <label class="proto-real-checkbox">
-                                        <input 
-                                          type="checkbox" 
-                                          bind:checked={currentFormValues[f.label]} 
-                                        />
-                                        <span>{f.label}</span>
-                                      </label>
-
-                                    {:else}
-                                      <div class="proto-input-wrapper">
-                                        <input 
-                                          type={f.type === 'password' ? 'password' : 'text'}
-                                          id="fld-{secIdx}-{fIdx}"
-                                          class="proto-real-input"
-                                          placeholder={f.placeholder || f.label}
-                                          bind:value={currentFormValues[f.label]}
-                                        />
-                                        {#if currentFormValues[f.label]}
-                                          <button 
-                                            class="btn-input-clear" 
-                                            on:click={() => currentFormValues[f.label] = ''} 
-                                            title="ล้างข้อมูล" aria-label="ล้างข้อมูล"><QAIcon name="close" size={12} /></button>
-                                        {/if}
-                                      </div>
+                            <div class="auth-vertical-form">
+                              {#each textFields as f, fIdx}
+                                {@const pwKey = `auth_${fIdx}`}
+                                {@const isPw = f.type === 'password' || /password|รหัสผ่าน/i.test(f.label || '')}
+                                <div class="mock-form-item">
+                                  <label class="mock-label" for="auth-fld-{fIdx}">
+                                    {cleanMockupLabel(f.label)} {#if f.required}<span class="req-star">*</span>{/if}
+                                  </label>
+                                  <div class="proto-input-wrapper">
+                                    <input
+                                      type={isPw && !revealedPasswords[pwKey] ? 'password' : 'text'}
+                                      id="auth-fld-{fIdx}"
+                                      class="proto-real-input"
+                                      class:has-two-icons={isPw}
+                                      placeholder={f.placeholder || cleanMockupLabel(f.label)}
+                                      bind:value={currentFormValues[f.label]}
+                                    />
+                                    {#if isPw}
+                                      <button
+                                        type="button"
+                                        class="btn-input-eye"
+                                        on:click={() => togglePasswordVisibility(pwKey)}
+                                        title={revealedPasswords[pwKey] ? 'ซ่อนรหัสผ่าน' : 'แสดงรหัสผ่าน'}
+                                        aria-label={revealedPasswords[pwKey] ? 'ซ่อนรหัสผ่าน' : 'แสดงรหัสผ่าน'}>
+                                        <QAIcon name="eye" size={13} />
+                                      </button>
+                                    {/if}
+                                    {#if currentFormValues[f.label]}
+                                      <button
+                                        type="button"
+                                        class="btn-input-clear"
+                                        on:click={() => currentFormValues[f.label] = ''}
+                                        title="ล้างข้อมูล" aria-label="ล้างข้อมูล">
+                                        <QAIcon name="close" size={12} />
+                                      </button>
                                     {/if}
                                   </div>
-                                {/each}
+                                </div>
+                              {/each}
+
+                              <div class="auth-utility-row">
+                                {#if toggleFields.length > 0}
+                                  {#each toggleFields as tf}
+                                    <label class="proto-switch-inline">
+                                      <span class="proto-switch">
+                                        <input type="checkbox" bind:checked={currentFormValues[tf.label]} />
+                                        <span class="switch-slider"></span>
+                                      </span>
+                                      <span class="toggle-status-text">{cleanMockupLabel(tf.label)}</span>
+                                    </label>
+                                  {/each}
+                                {:else}
+                                  <label class="proto-switch-inline">
+                                    <span class="proto-switch">
+                                      <input type="checkbox" checked />
+                                      <span class="switch-slider"></span>
+                                    </span>
+                                    <span class="toggle-status-text">จดจำการเข้าสู่ระบบ</span>
+                                  </label>
+                                {/if}
+
+                                <button
+                                  type="button"
+                                  class="auth-forgot-link"
+                                  on:click={() => {
+                                    const forgotTab = (currentScreenMockup.tabs || []).find(t => /forgot|ลืมรหัส/i.test(t));
+                                    if (forgotTab) activePrototypeTab = forgotTab;
+                                    else handlePrototypeHeaderAction('ลืมรหัสผ่าน');
+                                  }}>
+                                  ลืมรหัสผ่าน?
+                                </button>
                               </div>
 
-                              <!-- Action Buttons Row -->
-                              {#if sec.buttons && sec.buttons.length > 0}
-                                <div class="mock-btn-row">
-                                  {#each sec.buttons as btn}
-                                    <button 
-                                      class="proto-action-btn {btn.variant || 'primary'}"
-                                      disabled={isSimulatingSubmit}
-                                      on:click={() => handlePrototypeButtonAction(btn)}>
-                                      {#if isSimulatingSubmit && (btn.variant === 'primary' || (btn.label && btn.label.includes('สั่ง')))}
-                                        <span class="spinner-small"></span> กำลังประมวลผล...
+                              {#each (primaryAuthBtns.length > 0 ? primaryAuthBtns : [{ label: 'เข้าสู่ระบบทันที (Sign In)', variant: 'primary' }]) as btn}
+                                <button
+                                  type="button"
+                                  class="proto-action-btn primary auth-submit-full"
+                                  disabled={isSimulatingSubmit}
+                                  on:click={() => handlePrototypeButtonAction(btn)}>
+                                  {#if isSimulatingSubmit}
+                                    <span class="spinner-small"></span> กำลังตรวจสอบสิทธิ์...
+                                  {:else}
+                                    <QAIcon name="lock" size={14} />
+                                    <span>{cleanMockupLabel(btn.label)}</span>
+                                  {/if}
+                                </button>
+                              {/each}
+
+                              {#if socialAuthBtns.length > 0}
+                                <div class="auth-social-divider">
+                                  <span>หรือเชื่อมต่อด้วยบัญชีโซเชียล (Social Login)</span>
+                                </div>
+                                <div class="auth-social-grid">
+                                  {#each socialAuthBtns as sbtn}
+                                    {@const sClass = classifyActionButton(sbtn, true)}
+                                    <button
+                                      type="button"
+                                      class="proto-action-btn {sClass}"
+                                      on:click={() => handlePrototypeButtonAction(sbtn)}>
+                                      {#if sClass === 'brand-google'}
+                                        <svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true">
+                                          <path fill="#EA4335" d="M12 10.2v3.9h5.4c-.2 1.3-1.6 3.8-5.4 3.8-3.3 0-6-2.7-6-6s2.7-6 6-6c1.9 0 3.1.8 3.8 1.5l2.6-2.5C16.8 3.4 14.6 2.5 12 2.5 6.8 2.5 2.5 6.8 2.5 12s4.3 9.5 9.5 9.5c5.5 0 9.1-3.9 9.1-9.3 0-.6-.1-1.1-.2-1.6H12z"/>
+                                          <path fill="#34A853" d="M3.6 7.4l3.2 2.4C7.7 7.6 9.7 6 12 6c1.9 0 3.1.8 3.8 1.5l2.6-2.5C16.8 3.4 14.6 2.5 12 2.5 8.3 2.5 5.1 4.6 3.6 7.4z"/>
+                                          <path fill="#FBBC05" d="M12 21.5c2.5 0 4.7-.8 6.2-2.3l-2.9-2.4c-.8.6-1.9 1-3.3 1-2.5 0-4.7-1.7-5.4-4l-3.2 2.5c1.5 3.1 4.8 5.2 8.6 5.2z"/>
+                                          <path fill="#4285F4" d="M21.1 12.2c0-.6-.1-1.1-.2-1.6H12v3.9h5.4c-.3 1.3-1 2.3-2.1 3l2.9 2.4c1.7-1.6 2.9-4.1 2.9-7.7z"/>
+                                        </svg>
+                                      {:else if sClass === 'brand-line'}
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                                          <path d="M19.365 9.863c.349 0 .63.285.63.631 0 .345-.281.63-.63.63H17.61v1.125h1.755c.349 0 .63.283.63.63 0 .344-.281.629-.63.629h-2.386c-.345 0-.627-.285-.627-.629V8.108c0-.345.282-.63.63-.63h2.386c.346 0 .627.285.627.63 0 .349-.281.63-.63.63H17.61v1.125h1.755zm-3.855 3.016c0 .27-.174.51-.432.596-.064.021-.133.031-.199.031-.211 0-.391-.09-.51-.25l-2.443-3.317v2.94c0 .344-.279.629-.631.629-.346 0-.626-.285-.626-.629V8.108c0-.27.173-.51.43-.595.06-.023.136-.033.194-.033.195 0 .375.104.495.254l2.462 3.33V8.108c0-.345.282-.63.63-.63.345 0 .63.285.63.63v4.771zm-5.741 0c0 .344-.282.629-.631.629-.345 0-.627-.285-.627-.629V8.108c0-.345.282-.63.63-.63.346 0 .628.285.628.63v4.771zm-2.466.629H4.917c-.345 0-.63-.285-.63-.629V8.108c0-.345.285-.63.63-.63.348 0 .63.285.63.63v4.141h1.756c.348 0 .629.283.629.63 0 .344-.282.629-.629.629M24 10.314C24 4.943 18.615.572 12 .572S0 4.943 0 10.314c0 4.811 4.27 8.842 10.035 9.608.391.082.923.258 1.058.59.12.301.079.766.038 1.08l-.164 1.02c-.045.301-.24 1.186 1.049.645 1.291-.539 6.916-4.078 9.436-6.975C23.176 14.393 24 12.458 24 10.314"/>
+                                        </svg>
                                       {:else}
-                                        {#if btn.icon}<span>{btn.icon}</span>{/if}
-                                        <span>{btn.label}</span>
+                                        <QAIcon name="key" size={14} />
                                       {/if}
+                                      <span>{cleanMockupLabel(sbtn.label)}</span>
                                     </button>
                                   {/each}
                                 </div>
                               {/if}
                             </div>
+                          {/if}
+                        </div>
+                      </div>
 
-                          <!-- SECTION: DATA TABLE -->
-                          {:else if sec.type === 'table' || sec.table_headers}
-                            <div class="proto-section-card table">
-                              <div class="proto-sec-header">
-                                <div class="mock-sec-title"><QAIcon name="chart" /> {sec.section_name || 'Data Table Overview'}</div>
-                                <span class="proto-count-badge">{(sec.table_rows || []).length} รายการ</span>
-                              </div>
-
-                              <div class="mock-table-wrap">
-                                <table class="mock-table proto-table">
-                                  <thead>
-                                    <tr>
-                                      {#each (sec.table_headers || ['รหัส', 'ชื่อรายการ', 'หมวดหมู่', 'ราคา', 'สถานะ', 'จัดการ']) as th}
-                                        <th>{th}</th>
-                                      {/each}
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {#each (sec.table_rows || []) as row}
-                                      <tr class="proto-table-row">
-                                        {#each row as cell, cellIdx}
-                                          <td>
-                                            {#if String(cell).includes('พร้อม') || String(cell).includes('Active') || String(cell).includes('สำเร็จ')}
-                                              <span class="table-pill success"><QAIcon name="dot" size={10} /> {cell}</span>
-                                            {:else if String(cell).includes('รอ') || String(cell).includes('Pending')}
-                                              <span class="table-pill warning"><QAIcon name="clock" size={12} /> {cell}</span>
-                                            {:else if String(cell).startsWith('#')}
-                                              <span class="table-code-badge">{cell}</span>
-                                            {:else if cellIdx === row.length - 1}
-                                              <button class="btn-table-action" on:click={() => handleTableActionClick(cell, row)}>
-                                                <QAIcon name="zap" /> {cell}
-                                              </button>
-                                            {:else}
-                                              <span class="table-cell-text">{cell}</span>
-                                            {/if}
-                                          </td>
-                                        {/each}
-                                      </tr>
-                                    {/each}
-                                  </tbody>
-                                </table>
-                              </div>
+                      <!-- Secondary Audit / Active Sessions Tables on Auth Screen -->
+                      {#each (currentScreenMockup.sections || []).filter(s => s.type === 'table' || s.table_headers) as sec, tIdx}
+                        {@const realSecIdx = (currentScreenMockup.sections || []).indexOf(sec)}
+                        {@const rowsList = getInteractiveTableRows(sec, realSecIdx)}
+                        <div class="proto-section-card table">
+                          <div class="proto-sec-header">
+                            <div class="mock-sec-title"><QAIcon name="shield" /> {cleanMockupLabel(sec.section_name || 'Active Sessions & Security Log')}</div>
+                            <div class="table-header-tools">
+                              <input
+                                type="text"
+                                class="proto-table-search"
+                                placeholder="ค้นหาอุปกรณ์ / IP / สถานะ..."
+                                bind:value={tableSearchQuery}
+                                aria-label="ค้นหาในตาราง"
+                              />
+                              <span class="proto-count-badge">{rowsList.length} รายการ</span>
                             </div>
+                          </div>
+                          <div class="mock-table-wrap">
+                            <table class="mock-table proto-table">
+                              <thead>
+                                <tr>
+                                  {#each (sec.table_headers || ['อุปกรณ์', 'ระบบปฏิบัติการ', 'IP / ที่ตั้ง', 'สถานะ', 'การจัดการ']) as th}
+                                    <th>{th}</th>
+                                  {/each}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {#each rowsList as row, rIdx}
+                                  <tr class="proto-table-row">
+                                    {#each row as cell, cellIdx}
+                                      <td>
+                                        {#if /ออนไลน์|ใช้งานเมื่อ|พร้อม|Active|สำเร็จ/i.test(String(cell))}
+                                          <span class="table-pill success"><QAIcon name="dot" size={10} /> {cleanMockupLabel(cell)}</span>
+                                        {:else if /ออกจากระบบแล้ว|หมดอายุ|ปิด/i.test(String(cell))}
+                                          <span class="table-pill muted">{cleanMockupLabel(cell)}</span>
+                                        {:else if /รอ|Pending/i.test(String(cell))}
+                                          <span class="table-pill warning"><QAIcon name="clock" size={12} /> {cleanMockupLabel(cell)}</span>
+                                        {:else if cellIdx === row.length - 1}
+                                          <button type="button" class="btn-table-action" on:click={() => handleTableActionClick(cell, row, realSecIdx, rIdx)}>
+                                            <QAIcon name="zap" /> {cleanMockupLabel(cell)}
+                                          </button>
+                                        {:else}
+                                          <span class="table-cell-text">{cell}</span>
+                                        {/if}
+                                      </td>
+                                    {/each}
+                                  </tr>
+                                {/each}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      {/each}
 
-                          <!-- SECTION: REVIEWS & FEEDBACK -->
-                          {:else if sec.type === 'reviews' || sec.reviews}
-                            <div class="proto-section-card reviews">
-                              <div class="proto-sec-header">
-                                <div class="mock-sec-title">{sec.section_name || 'User Feedback & Notes'}</div>
-                                <button type="button" class="btn-write-review-sm" on:click={() => handlePrototypeButtonAction({ label: 'เพิ่มความคิดเห็น' })}>
-                                  + เพิ่มความคิดเห็น
+                    {:else}
+                      <!-- ── ARCHETYPES B/C/D: DISCOVERY, REVIEW & STANDARD APP SCREENS ── -->
+                      <!-- Screen Hero / Header Bar -->
+                      <div class="proto-hero-card">
+                        <div class="proto-hero-top-flex">
+                          <div class="proto-hero-main">
+                            <div class="proto-title-badge-row">
+                              <h3 class="proto-screen-title">
+                                {cleanMockupLabel(currentScreenMockup.header?.title || currentScreenMockup.screen_name)}
+                              </h3>
+                              {#if currentScreenMockup.header?.badge}
+                                <span class="proto-verified-badge {currentScreenMockup.header.badge_color || 'emerald'}">
+                                  <QAIcon name="sparkles" /> {cleanMockupLabel(currentScreenMockup.header.badge)}
+                                </span>
+                              {:else}
+                                <span class="proto-verified-badge emerald">
+                                  <QAIcon name="sparkles" /> Production Ready
+                                </span>
+                              {/if}
+                            </div>
+                            <p class="proto-desc-text">
+                              {currentScreenMockup.description || 'Interactive prototype screen wired with live form inputs, dynamic state management, and functional UI components.'}
+                            </p>
+                          </div>
+
+                          <div class="proto-header-action-toolbar">
+                            {#if currentScreenMockup.header?.actions && currentScreenMockup.header.actions.length > 0}
+                              {#each currentScreenMockup.header.actions as rawAct}
+                                {@const act = cleanMockupLabel(rawAct)}
+                                <button 
+                                  type="button"
+                                  class="btn-proto-header-action" 
+                                  class:fav={act.includes('โปรด') || act.includes('favorite') || act.includes('like')}
+                                  class:favorited={isFavorite && (act.includes('โปรด') || act.includes('favorite') || act.includes('like'))}
+                                  on:click={() => handlePrototypeHeaderAction(act)}>
+                                  {#if act.includes('แชร์') || act.includes('share')}
+                                    <QAIcon name="link" /> {act}
+                                  {:else if act.includes('โปรด') || act.includes('favorite') || act.includes('like')}
+                                    <QAIcon name="star" size={14} filled={isFavorite} /> {isFavorite ? 'บันทึกเป็นรายการโปรดแล้ว' : act}
+                                  {:else if act.includes('ย้อน') || act.includes('back')}
+                                    <QAIcon name="back" /> {act}
+                                  {:else if act.includes('เข้าสู่ระบบ') || act.includes('login') || act.includes('sign in')}
+                                    <QAIcon name="play" /> {act}
+                                  {:else if act.includes('ค้นหา') || act.includes('search')}
+                                    <QAIcon name="search" /> {act}
+                                  {:else if act.includes('บันทึก') || act.includes('save')}
+                                    <QAIcon name="save" /> {act}
+                                  {:else if act.includes('แผนที่') || act.includes('นำทาง') || act.includes('map')}
+                                    <QAIcon name="compass" /> {act}
+                                  {:else}
+                                    <QAIcon name="zap" /> {act}
+                                  {/if}
                                 </button>
-                              </div>
+                              {/each}
+                            {:else}
+                              <button type="button" class="btn-proto-header-action" on:click={() => handlePrototypeHeaderAction('รีเฟรช')}>
+                                <QAIcon name="refresh" /> รีเฟรช
+                              </button>
+                            {/if}
+                          </div>
+                        </div>
 
-                              <div class="proto-reviews-list">
-                                {#each (sec.reviews || [{ user: 'QA Reviewer', rating: 5, comment: 'ตรวจสอบการแสดงผลและ Flow การทำงานของหน้าจอนี้เรียบร้อย', time: '1 ชม. ที่แล้ว' }, { user: 'Product Owner', rating: 5, comment: 'โครงสร้างข้อมูลและ Validation สอดคล้องกับ Requirement ของโครงการ', time: 'เมื่อวานนี้' }]) as rev}
-                                  <div class="review-comment-card">
-                                    <div class="rev-user-header">
-                                      <div class="rev-avatar" aria-hidden="true"><QAIcon name="user" size={16} /></div>
-                                      <div class="rev-user-meta">
-                                        <div class="rev-name">{rev.user}</div>
-                                        <div class="rev-time">{rev.time || 'เมื่อสักครู่'}</div>
+                        {#if screenArchetype === 'discovery'}
+                          <!-- Discovery Category & Map/List Filter Bar -->
+                          <div class="discovery-filter-strip">
+                            <div class="discovery-chips">
+                              {#each ['ทั้งหมด', 'ยอดนิยม ★ 4.5+', 'ใกล้ฉัน (< 3 กม.)', 'เปิดอยู่ตอนนี้', 'โปรโมชันพิเศษ'] as cat}
+                                <button
+                                  type="button"
+                                  class="discovery-chip"
+                                  class:active={discoveryCategory === cat}
+                                  on:click={() => { discoveryCategory = cat; toast(`กรองหมวดหมู่: ${cat}`, 'info'); }}>
+                                  {cat}
+                                </button>
+                              {/each}
+                            </div>
+                            <button
+                              type="button"
+                              class="btn-proto-header-action"
+                              on:click={() => showSimulatedMap = !showSimulatedMap}>
+                              <QAIcon name="compass" /> {showSimulatedMap ? 'ซ่อนแผนที่ GPS' : 'แสดงแผนที่ GPS'}
+                            </button>
+                          </div>
+                        {:else if screenArchetype === 'review'}
+                          <!-- Interactive Live 5-Star Rating Picker Banner -->
+                          <div class="live-rating-banner">
+                            <span class="rating-banner-label">ให้คะแนนความพึงพอใจ (คลิกเลือกดาว):</span>
+                            <div class="interactive-stars-row">
+                              {#each [1, 2, 3, 4, 5] as starNum}
+                                <button
+                                  type="button"
+                                  class="star-pick-btn"
+                                  class:active={starNum <= interactiveRating}
+                                  aria-label={`ให้คะแนน ${starNum} ดาว`}
+                                  on:click={() => { interactiveRating = starNum; toast(`เลือกคะแนน ${starNum}.0 ดาว`, 'info'); }}>
+                                  <QAIcon name="star" size={18} filled={starNum <= interactiveRating} />
+                                </button>
+                              {/each}
+                              <span class="rating-score-pill">{interactiveRating}.0 / 5.0</span>
+                            </div>
+                          </div>
+                        {/if}
+                      </div>
+
+                      <!-- KPI / Summary Metric Cards Grid -->
+                      {#if currentScreenMockup.stats && currentScreenMockup.stats.length > 0}
+                        <div class="proto-stats-grid">
+                          {#each currentScreenMockup.stats as st}
+                            <div class="proto-stat-card {st.color || 'blue'}">
+                              <div class="stat-card-label">{st.label}</div>
+                              <div class="stat-card-value">{st.value}</div>
+                              {#if st.sub}
+                                <div class="stat-card-sub">{st.sub}</div>
+                              {/if}
+                            </div>
+                          {/each}
+                        </div>
+                      {/if}
+
+                      {#if screenArchetype === 'discovery' && showSimulatedMap}
+                        <!-- Interactive GPS Map Radar Strip for Discovery / Home & Map Search -->
+                        <div class="discovery-map-card">
+                          <div class="discovery-map-header">
+                            <span><QAIcon name="compass" /> แผนที่พิกัดและการค้นหาในพื้นที่ ({discoveryCategory})</span>
+                            <span class="proto-interactive-tag">GPS Live Radar</span>
+                          </div>
+                          <div class="discovery-map-canvas">
+                            <div class="map-grid-lines"></div>
+                            <button type="button" class="map-pin-chip p1" on:click={() => toast('เลือกพิกัด: สาขาสยามพารากอน (★ 4.9 • 0.8 กม.)', 'info')}>
+                              📍 สาขาสยาม (★ 4.9)
+                            </button>
+                            <button type="button" class="map-pin-chip p2" on:click={() => toast('เลือกพิกัด: สาขาอารีย์ (★ 4.7 • 1.5 กม.)', 'info')}>
+                              📍 สาขาอารีย์ (★ 4.7)
+                            </button>
+                            <button type="button" class="map-pin-chip p3" on:click={() => toast('เลือกพิกัด: สาขาทองหล่อ (★ 4.8 • 2.4 กม.)', 'info')}>
+                              📍 สาขาทองหล่อ (★ 4.8)
+                            </button>
+                            <div class="map-user-you">ตำแหน่งของคุณ</div>
+                          </div>
+                        </div>
+                      {/if}
+
+                      <!-- Interactive Tabs Bar -->
+                      {#if currentScreenMockup.tabs && currentScreenMockup.tabs.length > 0}
+                        <div class="proto-tabs-navbar" role="tablist">
+                          {#each currentScreenMockup.tabs as tb}
+                            <button 
+                              type="button"
+                              role="tab"
+                              aria-selected={activePrototypeTab === tb}
+                              class="proto-nav-tab-btn" 
+                              class:active={activePrototypeTab === tb} 
+                              on:click={() => { activePrototypeTab = tb; }}>
+                              {cleanMockupLabel(tb)}
+                            </button>
+                          {/each}
+                        </div>
+                      {/if}
+
+                      <!-- Dynamic Sections Stack -->
+                      <div class="mockup-sections-stack">
+                        {#if currentScreenMockup.sections}
+                          {#each currentScreenMockup.sections as sec, secIdx}
+                            
+                            <!-- SECTION: GALLERY / BANNER -->
+                            {#if (sec.type === 'gallery' || sec.images) && sec.images && sec.images.length > 0}
+                              <div class="proto-section-card gallery">
+                                <div class="proto-sec-header">
+                                  <div class="mock-sec-title"><QAIcon name="image" /> {cleanMockupLabel(sec.section_name || 'Image Gallery & Highlights')}</div>
+                                  {#if sec.banner_tag}
+                                    <span class="proto-tag-highlight">{sec.banner_tag}</span>
+                                  {/if}
+                                </div>
+                                <div class="proto-gallery-grid">
+                                  {#each sec.images as img, idx}
+                                    <div
+                                      class="gallery-photo-card"
+                                      role="button"
+                                      tabindex="0"
+                                      on:click={() => toast(`ดูภาพขยาย: ${img.title}`, 'info')}
+                                      on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toast(`ดูภาพขยาย: ${img.title}`, 'info'); } }}
+                                    >
+                                      <div class="photo-visual-placeholder grad-{idx % 4}">
+                                        <span class="photo-cam-icon"><QAIcon name="camera" /></span>
+                                        <span class="photo-badge">HD View</span>
                                       </div>
-                                      <div class="rev-stars">
-                                        {#each Array(Math.max(0, Math.min(5, Number(rev.rating) || 5))) as _}<QAIcon name="star" size={12} filled />{/each}
+                                      <div class="photo-card-info">
+                                        <div class="photo-title">{img.title}</div>
+                                        <div class="photo-desc">{img.desc}</div>
                                       </div>
                                     </div>
-                                    <p class="rev-comment-text">{rev.comment}</p>
+                                  {/each}
+                                </div>
+                              </div>
+
+                            <!-- SECTION: INTERACTIVE FORM -->
+                            {:else if sec.type === 'form' || sec.fields}
+                              {@const fieldCount = (sec.fields || []).length}
+                              <div class="proto-section-card form">
+                                <div class="proto-sec-header">
+                                  <div class="mock-sec-title"><QAIcon name="edit" /> {cleanMockupLabel(sec.section_name || 'Interactive Form Details')}</div>
+                                  <span class="proto-interactive-tag"><QAIcon name="zap" /> Live Editable</span>
+                                </div>
+
+                                <div class="mock-form-grid" class:single-col-form={fieldCount <= 2}>
+                                  {#each (sec.fields || []) as f, fIdx}
+                                    {@const pwKey = `${secIdx}_${fIdx}`}
+                                    {@const isPw = f.type === 'password' || /password|รหัสผ่าน/i.test(f.label || '')}
+                                    <div
+                                      class="mock-form-item"
+                                      class:full-width={f.type === 'textarea' || f.type === 'toggle' || f.type === 'checkbox' || (f.label && /ที่อยู่|รายละเอียด|หมายเหตุ|ความเห็น/.test(f.label)) || (fieldCount % 2 === 1 && fIdx === fieldCount - 1)}
+                                    >
+                                      <label class="mock-label" for="fld-{secIdx}-{fIdx}">
+                                        {cleanMockupLabel(f.label)} {#if f.required}<span class="req-star">*</span>{/if}
+                                      </label>
+
+                                      {#if f.type === 'toggle' || (f.label && f.label.includes('เปิดรับ'))}
+                                        <div class="proto-toggle-wrap">
+                                          <label class="proto-switch">
+                                            <input 
+                                              type="checkbox" 
+                                              bind:checked={currentFormValues[f.label]}
+                                            />
+                                            <span class="switch-slider"></span>
+                                          </label>
+                                          <span class="toggle-status-text">
+                                            {currentFormValues[f.label] ? 'เปิดใช้งาน (Active)' : 'ปิดใช้งาน (Disabled)'}
+                                          </span>
+                                        </div>
+
+                                      {:else if f.type === 'select' || f.options}
+                                        <div class="proto-input-wrapper">
+                                          <select 
+                                            id="fld-{secIdx}-{fIdx}"
+                                            class="proto-real-select"
+                                            bind:value={currentFormValues[f.label]}
+                                          >
+                                            {#each (f.options || ['ตัวเลือก 1', 'ตัวเลือก 2', 'ตัวเลือก 3']) as opt}
+                                              <option value={opt}>{opt}</option>
+                                            {/each}
+                                          </select>
+                                        </div>
+
+                                      {:else if f.type === 'textarea' || (f.label && f.label.includes('ที่อยู่'))}
+                                        <textarea 
+                                          id="fld-{secIdx}-{fIdx}"
+                                          class="proto-real-textarea"
+                                          rows="3"
+                                          placeholder={f.placeholder || cleanMockupLabel(f.label)}
+                                          bind:value={currentFormValues[f.label]}
+                                        ></textarea>
+
+                                      {:else if f.type === 'checkbox'}
+                                        <label class="proto-real-checkbox">
+                                          <input 
+                                            type="checkbox" 
+                                            bind:checked={currentFormValues[f.label]} 
+                                          />
+                                          <span>{cleanMockupLabel(f.label)}</span>
+                                        </label>
+
+                                      {:else}
+                                        <div class="proto-input-wrapper">
+                                          <input 
+                                            type={isPw && !revealedPasswords[pwKey] ? 'password' : 'text'}
+                                            id="fld-{secIdx}-{fIdx}"
+                                            class="proto-real-input"
+                                            class:has-two-icons={isPw}
+                                            placeholder={f.placeholder || cleanMockupLabel(f.label)}
+                                            bind:value={currentFormValues[f.label]}
+                                          />
+                                          {#if isPw}
+                                            <button
+                                              type="button"
+                                              class="btn-input-eye"
+                                              on:click={() => togglePasswordVisibility(pwKey)}
+                                              title={revealedPasswords[pwKey] ? 'ซ่อนรหัสผ่าน' : 'แสดงรหัสผ่าน'}
+                                              aria-label={revealedPasswords[pwKey] ? 'ซ่อนรหัสผ่าน' : 'แสดงรหัสผ่าน'}>
+                                              <QAIcon name="eye" size={13} />
+                                            </button>
+                                          {/if}
+                                          {#if currentFormValues[f.label]}
+                                            <button 
+                                              type="button"
+                                              class="btn-input-clear" 
+                                              on:click={() => currentFormValues[f.label] = ''} 
+                                              title="ล้างข้อมูล" aria-label="ล้างข้อมูล"><QAIcon name="close" size={12} /></button>
+                                          {/if}
+                                        </div>
+                                      {/if}
+                                    </div>
+                                  {/each}
+                                </div>
+
+                                <!-- Action Buttons Row (Zero Duplicate Emojis!) -->
+                                {#if sec.buttons && sec.buttons.length > 0}
+                                  <div class="mock-btn-row">
+                                    {#each sec.buttons as btn}
+                                      {@const btnVariant = classifyActionButton(btn, false)}
+                                      {@const cleanBtnText = cleanMockupLabel(btn.label)}
+                                      <button 
+                                        type="button"
+                                        class="proto-action-btn {btnVariant}"
+                                        disabled={isSimulatingSubmit}
+                                        on:click={() => handlePrototypeButtonAction(btn)}>
+                                        {#if isSimulatingSubmit && (btnVariant.includes('primary') || cleanBtnText.includes('สั่ง'))}
+                                          <span class="spinner-small"></span> กำลังประมวลผล...
+                                        {:else}
+                                          {#if btnVariant === 'brand-google'}
+                                            <QAIcon name="globe" size={14} />
+                                          {:else if btnVariant === 'brand-line'}
+                                            <QAIcon name="send" size={14} />
+                                          {:else if btnVariant === 'danger'}
+                                            <QAIcon name="trash" size={14} />
+                                          {:else if btnVariant === 'map'}
+                                            <QAIcon name="compass" size={14} />
+                                          {:else if btnVariant.includes('primary')}
+                                            <QAIcon name="check" size={14} />
+                                          {:else}
+                                            <QAIcon name="zap" size={14} />
+                                          {/if}
+                                          <span>{cleanBtnText}</span>
+                                        {/if}
+                                      </button>
+                                    {/each}
                                   </div>
-                                {/each}
+                                {/if}
                               </div>
-                            </div>
 
-                          <!-- FALLBACK SECTION CARD -->
-                          {:else}
-                            <div class="proto-section-card generic">
-                              {#if sec.section_name}
-                                <div class="mock-sec-title"><QAIcon name="package" /> {sec.section_name}</div>
-                              {/if}
-                              <div class="proto-generic-content">
-                                <p style="color: #cbd5e1; font-size: 12px; margin: 0 0 10px 0;">{sec.description || 'Interactive section component with dynamic controls.'}</p>
+                            <!-- SECTION: DATA TABLE -->
+                            {:else if sec.type === 'table' || sec.table_headers}
+                              {@const rowsList = getInteractiveTableRows(sec, secIdx)}
+                              <div class="proto-section-card table">
+                                <div class="proto-sec-header">
+                                  <div class="mock-sec-title"><QAIcon name="chart" /> {cleanMockupLabel(sec.section_name || 'Data Table Overview')}</div>
+                                  <div class="table-header-tools">
+                                    {#if (sec.table_rows || []).length > 1}
+                                      <input
+                                        type="text"
+                                        class="proto-table-search"
+                                        placeholder="ค้นหาในตาราง..."
+                                        bind:value={tableSearchQuery}
+                                        aria-label="ค้นหาในตาราง"
+                                      />
+                                    {/if}
+                                    <span class="proto-count-badge">{rowsList.length} รายการ</span>
+                                  </div>
+                                </div>
+
+                                <div class="mock-table-wrap">
+                                  <table class="mock-table proto-table">
+                                    <thead>
+                                      <tr>
+                                        {#each (sec.table_headers || ['รหัส', 'ชื่อรายการ', 'หมวดหมู่', 'ราคา', 'สถานะ', 'จัดการ']) as th}
+                                          <th>{th}</th>
+                                        {/each}
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {#each rowsList as row, rIdx}
+                                        <tr class="proto-table-row">
+                                          {#each row as cell, cellIdx}
+                                            <td>
+                                              {#if /ออนไลน์|ใช้งานเมื่อ|พร้อม|Active|สำเร็จ/i.test(String(cell))}
+                                                <span class="table-pill success"><QAIcon name="dot" size={10} /> {cleanMockupLabel(cell)}</span>
+                                              {:else if /ออกจากระบบแล้ว|หมดอายุ|ปิด/i.test(String(cell))}
+                                                <span class="table-pill muted">{cleanMockupLabel(cell)}</span>
+                                              {:else if /รอ|Pending/i.test(String(cell))}
+                                                <span class="table-pill warning"><QAIcon name="clock" size={12} /> {cleanMockupLabel(cell)}</span>
+                                              {:else if String(cell).startsWith('#')}
+                                                <span class="table-code-badge">{cell}</span>
+                                              {:else if cellIdx === row.length - 1}
+                                                <button type="button" class="btn-table-action" on:click={() => handleTableActionClick(cell, row, secIdx, rIdx)}>
+                                                  <QAIcon name="zap" /> {cleanMockupLabel(cell)}
+                                                </button>
+                                              {:else}
+                                                <span class="table-cell-text">{cell}</span>
+                                              {/if}
+                                            </td>
+                                          {/each}
+                                        </tr>
+                                      {/each}
+                                    </tbody>
+                                  </table>
+                                </div>
                               </div>
-                            </div>
-                          {/if}
 
-                        {/each}
-                      {/if}
-                    </div>
+                            <!-- SECTION: REVIEWS & FEEDBACK -->
+                            {:else if sec.type === 'reviews' || sec.reviews}
+                              <div class="proto-section-card reviews">
+                                <div class="proto-sec-header">
+                                  <div class="mock-sec-title">{cleanMockupLabel(sec.section_name || 'User Feedback & Notes')}</div>
+                                  <button type="button" class="btn-write-review-sm" on:click={() => handlePrototypeButtonAction({ label: 'เพิ่มความคิดเห็น' })}>
+                                    + เพิ่มความคิดเห็น
+                                  </button>
+                                </div>
+
+                                <div class="proto-reviews-list">
+                                  {#each (sec.reviews || [{ user: 'QA Reviewer', rating: 5, comment: 'ตรวจสอบการแสดงผลและ Flow การทำงานของหน้าจอนี้เรียบร้อย', time: '1 ชม. ที่แล้ว' }, { user: 'Product Owner', rating: 5, comment: 'โครงสร้างข้อมูลและ Validation สอดคล้องกับ Requirement ของโครงการ', time: 'เมื่อวานนี้' }]) as rev}
+                                    <div class="review-comment-card">
+                                      <div class="rev-user-header">
+                                        <div class="rev-avatar" aria-hidden="true"><QAIcon name="user" size={16} /></div>
+                                        <div class="rev-user-meta">
+                                          <div class="rev-name">{rev.user}</div>
+                                          <div class="rev-time">{rev.time || 'เมื่อสักครู่'}</div>
+                                        </div>
+                                        <div class="rev-stars">
+                                          {#each Array(Math.max(0, Math.min(5, Number(rev.rating) || 5))) as _}<QAIcon name="star" size={12} filled />{/each}
+                                        </div>
+                                      </div>
+                                      <p class="rev-comment-text">{rev.comment}</p>
+                                    </div>
+                                  {/each}
+                                </div>
+                              </div>
+
+                            <!-- FALLBACK SECTION CARD -->
+                            {:else}
+                              <div class="proto-section-card generic">
+                                {#if sec.section_name}
+                                  <div class="mock-sec-title"><QAIcon name="package" /> {cleanMockupLabel(sec.section_name)}</div>
+                                {/if}
+                                <div class="proto-generic-content">
+                                  <p style="color: #cbd5e1; font-size: 12px; margin: 0 0 10px 0;">{sec.description || 'Interactive section component with dynamic controls.'}</p>
+                                </div>
+                              </div>
+                            {/if}
+
+                          {/each}
+                        {/if}
+                      </div>
+                    {/if}
 
                     <!-- Connected Entities Footbar -->
                     <div class="mockup-footbar">
@@ -1939,7 +2704,7 @@
                 {/if}
               </div>
               <div class="proto-dialog-footer">
-                <button class="proto-btn-dialog-close" on:click={() => { toast('บันทึกการดำเนินการเรียบร้อย', 'success'); activePrototypeModal = null; }}>
+                <button type="button" class="proto-btn-dialog-close" on:click={() => { toast('บันทึกการดำเนินการเรียบร้อย', 'success'); activePrototypeModal = null; }}>
                   ตกลง / ดำเนินการต่อ
                 </button>
               </div>
@@ -1968,6 +2733,7 @@
             <div class="diagram-toolbar-actions">
               {#if activeTab === 'flowchart'}
                 <button 
+                  type="button"
                   class="btn-ctrl-action grid" 
                   class:active={showDrawioGrid} 
                   on:click={() => showDrawioGrid = !showDrawioGrid} 
@@ -1977,6 +2743,7 @@
               {/if}
 
               <button 
+                type="button"
                 class="btn-ctrl-action edit-code" 
                 class:active={showMermaidEditor} 
                 on:click={toggleMermaidEditor} 
@@ -1988,22 +2755,22 @@
                 {showMermaidEditor ? 'ปิดตัวแก้ไข' : 'แก้ไขโค้ด Mermaid'}
               </button>
 
-              <button class="btn-ctrl-action copy" on:click={copyCurrentMermaidCode} title="คัดลอกโค้ด Mermaid">
+              <button type="button" class="btn-ctrl-action copy" on:click={copyCurrentMermaidCode} title="คัดลอกโค้ด Mermaid">
                 Copy Code
               </button>
 
-              <button class="btn-ctrl-action svg" on:click={exportDiagramSVG} title="บันทึกรูปภาพ SVG">
+              <button type="button" class="btn-ctrl-action svg" on:click={exportDiagramSVG} title="บันทึกรูปภาพ SVG">
                 Export SVG
               </button>
 
               <div class="zoom-controls">
-                <button class="btn-ctrl" on:click={zoomIn} title="ขยาย (Zoom In)">+</button>
-                <button class="btn-ctrl" on:click={zoomOut} title="ย่อ (Zoom Out)">−</button>
-                <button class="btn-ctrl" on:click={fitView} title="ปรับขนาดให้พอดีหน้าจอ (Fit to Screen)">Fit</button>
-                <button class="btn-ctrl" on:click={zoomReset} title="ขนาด 100%">{Math.round(zoomLevel * 100)}%</button>
+                <button type="button" class="btn-ctrl" on:click={zoomIn} title="ขยาย (Zoom In)" aria-label="ขยาย (Zoom In)">+</button>
+                <button type="button" class="btn-ctrl" on:click={zoomOut} title="ย่อ (Zoom Out)" aria-label="ย่อ (Zoom Out)">−</button>
+                <button type="button" class="btn-ctrl" on:click={fitView} title="ปรับขนาดให้พอดีหน้าจอ (Fit to Screen)">Fit</button>
+                <button type="button" class="btn-ctrl" on:click={zoomReset} title="ขนาด 100%">{Math.round(zoomLevel * 100)}%</button>
               </div>
 
-              <button class="btn-ctrl-action fs" on:click={() => { isFullscreenDiagram = !isFullscreenDiagram; setTimeout(fitView, 200); }} title="ขยายเต็มหน้าจอ (กด Esc เพื่อออก)">
+              <button type="button" class="btn-ctrl-action fs" on:click={() => { isFullscreenDiagram = !isFullscreenDiagram; setTimeout(fitView, 200); }} title="ขยายเต็มหน้าจอ (กด Esc เพื่อออก)">
                 <QAIcon name={isFullscreenDiagram ? 'close' : 'maximize'} size={13} /> {isFullscreenDiagram ? 'ย่อจอ' : 'เต็มจอ'}
               </button>
             </div>
@@ -2018,10 +2785,10 @@
                   <span class="editor-hint">แก้ไขโค้ด Mermaid แล้วกดบันทึกเพื่อ Render ใหม่และซิงค์ลงฐานข้อมูลโครงการให้ Agent ทุกตัวใช้งานร่วมกัน</span>
                 </div>
                 <div class="editor-drawer-actions">
-                  <button class="btn-editor-cancel" on:click={() => showMermaidEditor = false} disabled={isSavingDiagram}>
+                  <button type="button" class="btn-editor-cancel" on:click={() => showMermaidEditor = false} disabled={isSavingDiagram}>
                     ยกเลิก
                   </button>
-                  <button class="btn-editor-save" on:click={saveEditedDiagram} disabled={isSavingDiagram}>
+                  <button type="button" class="btn-editor-save" on:click={saveEditedDiagram} disabled={isSavingDiagram}>
                     {#if isSavingDiagram}
                       <span class="spinner-small"></span> กำลังบันทึก...
                     {:else}
@@ -2612,7 +3379,8 @@
   /* ── SITEMAP & WIREFRAME LAYOUT ── */
   .sitemap-workspace {
     display: grid;
-    grid-template-columns: 380px 1fr;
+    grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+    align-items: stretch;
     gap: 18px;
     flex: 1;
     min-height: 550px;
@@ -2622,7 +3390,8 @@
     display: flex;
     flex-direction: column;
     gap: 12px;
-    max-height: 750px;
+    min-width: 0;
+    max-height: 780px;
     overflow-y: auto;
   }
 
@@ -2630,6 +3399,8 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
   }
 
   .panel-title-row h3 { margin: 0; font-size: 1.05rem; color: var(--qa-text-strong); font-weight: 600; }
@@ -2744,6 +3515,7 @@
     display: flex;
     flex-direction: column;
     gap: 12px;
+    min-width: 0;
   }
 
   .empty-mockup {
@@ -2756,6 +3528,7 @@
   }
 
   .mockup-viewport {
+    width: 100%;
     background: var(--qa-surface-deep);
     border: 1px solid var(--qa-surface-raised);
     border-radius: 10px;
@@ -2763,6 +3536,7 @@
     display: flex;
     flex-direction: column;
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+    transition: max-width 0.3s ease, border-radius 0.3s ease;
   }
 
   .mockup-browser-bar {
@@ -2770,11 +3544,41 @@
     padding: 8px 14px;
     display: flex;
     align-items: center;
-    gap: 14px;
+    flex-wrap: wrap;
+    gap: 8px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.05);
   }
 
-  .browser-dots { display: flex; gap: 6px; }
+  .browser-dots { display: flex; gap: 6px; flex-shrink: 0; }
+
+  .browser-nav-arrows {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+
+  .btn-nav-arrow {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: var(--qa-text-soft);
+    border-radius: 6px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    min-width: 28px;
+    min-height: 28px;
+    padding: 0;
+    flex-shrink: 0;
+    transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+  }
+
+  .btn-nav-arrow:hover {
+    background: rgba(255, 255, 255, 0.14);
+    border-color: rgba(255, 255, 255, 0.24);
+    color: #ffffff;
+  }
 
   .dot { width: 10px; height: 10px; border-radius: 50%; }
 
@@ -2786,6 +3590,8 @@
 
   .browser-url-input {
     flex: 1;
+    min-width: 120px;
+    overflow: hidden;
     background: var(--qa-surface-deep);
     border-radius: 6px;
     padding: 4px 10px;
@@ -2795,6 +3601,19 @@
     display: flex;
     align-items: center;
     gap: 6px;
+  }
+
+  .lock-icon {
+    display: inline-flex;
+    align-items: center;
+    flex-shrink: 0;
+  }
+
+  .browser-url-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   /* ── INTERACTIVE PROTOTYPE & WIREFRAME WORKSPACE ── */
@@ -2841,9 +3660,10 @@
     box-shadow: 0 2px 8px rgba(99, 102, 241, 0.4);
   }
 
-  .proto-actions-group {
+  .prototype-quick-actions {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 8px;
   }
 
@@ -2854,19 +3674,20 @@
     font-weight: 600;
     cursor: pointer;
     border: 1px solid rgba(255, 255, 255, 0.12);
-    display: flex;
+    display: inline-flex;
     align-items: center;
     gap: 5px;
+    white-space: nowrap;
     transition: background-color 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s, transform 0.2s, opacity 0.2s;
   }
 
-  .btn-proto-action.fill-data {
+  .btn-proto-action.fill {
     background: rgba(234, 179, 8, 0.15);
     border-color: rgba(234, 179, 8, 0.4);
     color: #fde047;
   }
 
-  .btn-proto-action.fill-data:hover {
+  .btn-proto-action.fill:hover {
     background: rgba(234, 179, 8, 0.3);
     box-shadow: 0 0 10px rgba(234, 179, 8, 0.3);
   }
@@ -2887,12 +3708,13 @@
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.5px;
-    display: flex;
+    display: inline-flex;
     align-items: center;
     gap: 6px;
+    white-space: nowrap;
   }
 
-  .prototype-badge-live .pulse-dot {
+  .prototype-badge-live .live-dot.pulse {
     width: 6px;
     height: 6px;
     border-radius: 50%;
@@ -2922,19 +3744,19 @@
     padding: 16px;
   }
 
-  .prototype-outer-canvas.desktop .mockup-screen-content {
+  .prototype-outer-canvas.desktop .mockup-viewport {
     width: 100%;
     max-width: 100%;
-    border-radius: 8px;
+    border-radius: 10px;
   }
 
   .prototype-outer-canvas.tablet {
     padding: 24px 16px;
   }
 
-  .prototype-outer-canvas.tablet .mockup-screen-content {
-    width: 768px;
-    max-width: 100%;
+  .prototype-outer-canvas.tablet .mockup-viewport {
+    width: 100%;
+    max-width: 768px;
     border-radius: 16px;
     box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
     border: 1px solid rgba(255, 255, 255, 0.12);
@@ -2944,13 +3766,16 @@
     padding: 24px 12px;
   }
 
-  .prototype-outer-canvas.mobile .mockup-screen-content {
-    width: 390px;
-    max-width: 100%;
+  .prototype-outer-canvas.mobile .mockup-viewport {
+    width: 100%;
+    max-width: 390px;
     border-radius: 36px;
     box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.8), 0 0 0 8px var(--qa-surface-raised);
     border: 2px solid rgba(255, 255, 255, 0.18);
-    overflow: hidden;
+  }
+
+  .prototype-outer-canvas.mobile .mock-form-grid {
+    grid-template-columns: 1fr;
   }
 
   .mobile-phone-notch-bar {
@@ -2972,15 +3797,15 @@
     margin: 0 auto;
   }
 
-  .phone-status-icons { font-size: 11px; font-weight: 600; color: var(--qa-text-soft); }
+  .phone-icons { font-size: 11px; font-weight: 600; color: var(--qa-text-soft); }
 
   .mockup-screen-content {
+    width: 100%;
     background: var(--qa-surface-deep);
     display: flex;
     flex-direction: column;
     gap: 16px;
     padding: 20px;
-    transition: width 0.3s ease;
     box-sizing: border-box;
   }
 
@@ -2992,18 +3817,16 @@
     padding: 16px 18px;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 12px;
   }
 
   .proto-hero-main {
     display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 12px;
-    flex-wrap: wrap;
+    flex-direction: column;
+    gap: 6px;
   }
 
-  .proto-title-row {
+  .proto-title-badge-row {
     display: flex;
     align-items: center;
     gap: 10px;
@@ -3018,11 +3841,14 @@
   }
 
   .proto-verified-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
     background: linear-gradient(135deg, #059669, #10b981);
     color: white;
     font-size: 11px;
     font-weight: 700;
-    padding: 2px 7px;
+    padding: 2px 8px;
     border-radius: 20px;
     box-shadow: 0 2px 6px rgba(16, 185, 129, 0.3);
   }
@@ -3030,6 +3856,7 @@
   .proto-header-action-toolbar {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 8px;
   }
 
@@ -3043,7 +3870,7 @@
     font-weight: 600;
     cursor: pointer;
     transition: background-color 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s;
-    display: flex;
+    display: inline-flex;
     align-items: center;
     gap: 4px;
   }
@@ -3053,13 +3880,14 @@
     color: #ffffff;
   }
 
-  .btn-proto-header-action.fav.active {
-    background: rgba(239, 68, 68, 0.2);
-    border-color: rgba(239, 68, 68, 0.5);
-    color: #fca5a5;
+  .btn-proto-header-action.fav.favorited,
+  .btn-proto-header-action.favorited {
+    background: rgba(245, 158, 11, 0.2);
+    border-color: rgba(245, 158, 11, 0.5);
+    color: #fcd34d;
   }
 
-  .mockup-desc {
+  .proto-desc-text {
     margin: 0;
     font-size: 12.5px;
     color: var(--qa-text-muted);
@@ -3069,7 +3897,7 @@
   /* ── STATS KPI CARDS ── */
   .proto-stats-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
     gap: 10px;
   }
 
@@ -3079,23 +3907,43 @@
     border-radius: 8px;
     padding: 10px 12px;
     display: flex;
-    align-items: center;
-    gap: 10px;
-    transition: transform 0.15s;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    min-width: 0;
+    transition: transform 0.15s, border-color 0.15s;
   }
 
   .proto-stat-card:hover {
     transform: translateY(-2px);
-    border-color: rgba(129, 140, 248, 0.3);
+    border-color: rgba(129, 140, 248, 0.35);
   }
 
-  .proto-stat-icon-wrap { font-size: 20px; }
+  .proto-stat-card.blue { border-color: rgba(99, 102, 241, 0.28); }
+  .proto-stat-card.purple { border-color: rgba(168, 85, 247, 0.28); }
+  .proto-stat-card.emerald { border-color: rgba(16, 185, 129, 0.28); }
+  .proto-stat-card.amber { border-color: rgba(245, 158, 11, 0.28); }
 
-  .proto-stat-body { display: flex; flex-direction: column; }
+  .stat-card-label {
+    font-size: 11px;
+    color: var(--qa-text-muted);
+    font-weight: 500;
+  }
 
-  .proto-stat-num { font-size: 1.15rem; font-weight: 700; color: var(--qa-text-strong); }
+  .stat-card-value {
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--qa-text-strong);
+    line-height: 1.25;
+    word-break: break-word;
+  }
 
-  .proto-stat-lbl { font-size: 11px; color: var(--qa-text-muted); font-weight: 500; }
+  .stat-card-sub {
+    font-size: 11px;
+    color: var(--qa-iris-text);
+    opacity: 0.85;
+    word-break: break-word;
+  }
 
   /* ── NAVIGATION TABS ── */
   .proto-tabs-navbar {
@@ -3274,15 +4122,31 @@
 
   .proto-real-input, .proto-real-select, .proto-real-textarea {
     width: 100%;
-    background: #030712;
+    background-color: #030712;
     border: 1px solid #374151;
     color: var(--qa-text-strong);
-    padding: 7px 10px;
-    border-radius: 6px;
+    border-radius: 8px;
     font-size: 12.5px;
     box-sizing: border-box;
     outline: none;
     transition: border-color 0.2s, box-shadow 0.2s;
+  }
+
+  .proto-real-input, .proto-real-select {
+    height: 36px;
+  }
+
+  .proto-real-input {
+    padding: 0 30px 0 10px;
+  }
+
+  .proto-real-select {
+    padding: 0 32px 0 10px;
+    cursor: pointer;
+  }
+
+  .proto-real-textarea {
+    padding: 8px 10px;
   }
 
   .proto-real-input:focus, .proto-real-select:focus, .proto-real-textarea:focus {
@@ -3290,29 +4154,18 @@
     box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.25);
   }
 
-  .proto-real-select {
-    appearance: none;
-    cursor: pointer;
-    padding-right: 28px;
-  }
-
-  .select-chevron {
-    position: absolute;
-    right: 10px;
-    font-size: 11px;
-    color: var(--qa-text-muted);
-    pointer-events: none;
-  }
-
   .btn-input-clear {
     position: absolute;
-    right: 8px;
+    right: 6px;
     background: none;
     border: none;
     color: var(--qa-text-muted);
     font-size: 11px;
     cursor: pointer;
-    padding: 2px 4px;
+    padding: 4px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
 
   .btn-input-clear:hover { color: var(--qa-text-strong); }
@@ -3411,12 +4264,517 @@
 
   .proto-action-btn.secondary:hover { background: rgba(255, 255, 255, 0.15); color: white; }
 
+  .proto-action-btn.outline {
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--qa-text-soft);
+    border: 1px solid rgba(255, 255, 255, 0.22);
+  }
+
+  .proto-action-btn.outline:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.36);
+    color: #ffffff;
+  }
+
   .proto-action-btn.map {
     background: linear-gradient(135deg, #059669, #10b981);
     color: white;
   }
 
+  .proto-action-btn.brand-line {
+    background: #06c755;
+    color: #ffffff;
+    border: 1px solid #05b34c;
+    box-shadow: 0 3px 10px rgba(6, 199, 85, 0.25);
+  }
+
+  .proto-action-btn.brand-line:hover:not(:disabled) {
+    background: #05b34c;
+    transform: translateY(-1px);
+  }
+
+  .proto-action-btn.brand-google {
+    background: #181f32;
+    color: #f8fafc;
+    border: 1px solid rgba(148, 163, 184, 0.3);
+  }
+
+  .proto-action-btn.brand-google:hover:not(:disabled) {
+    background: #232d47;
+    border-color: rgba(148, 163, 184, 0.5);
+  }
+
+  .proto-action-btn.danger {
+    background: rgba(244, 63, 94, 0.14);
+    color: #fda4af;
+    border: 1px solid rgba(244, 63, 94, 0.38);
+  }
+
+  .proto-action-btn.danger:hover:not(:disabled) {
+    background: rgba(244, 63, 94, 0.25);
+    color: #ffffff;
+  }
+
+  .proto-action-btn.auth-submit-full {
+    width: 100%;
+    justify-content: center;
+    padding: 10px 18px;
+    font-size: 13px;
+    border-radius: 10px;
+  }
+
+  /* ── DEDICATED AUTHENTICATION ARCHETYPE UX ── */
+  .auth-ux-layout {
+    display: grid;
+    grid-template-columns: minmax(260px, 0.92fr) minmax(300px, 1.08fr);
+    gap: 18px;
+    align-items: stretch;
+  }
+
+  .prototype-outer-canvas.mobile .auth-ux-layout,
+  .prototype-outer-canvas.tablet .auth-ux-layout {
+    grid-template-columns: 1fr;
+  }
+
+  @media (max-width: 980px) {
+    .auth-ux-layout {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .auth-brand-showcase {
+    background: linear-gradient(155deg, rgba(67, 56, 202, 0.28), rgba(15, 23, 42, 0.85));
+    border: 1px solid rgba(129, 140, 248, 0.24);
+    border-radius: 14px;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 16px;
+  }
+
+  .auth-app-logo-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+  }
+
+  .auth-app-emblem {
+    width: 38px;
+    height: 38px;
+    border-radius: 10px;
+    background: linear-gradient(135deg, #6366f1, #a855f7);
+    color: #ffffff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.35);
+  }
+
+  .auth-app-name {
+    font-size: 13px;
+    font-weight: 700;
+    color: #f8fafc;
+  }
+
+  .auth-app-route {
+    font-size: 11px;
+    color: #94a3b8;
+    font-family: monospace;
+  }
+
+  .auth-showcase-title {
+    margin: 0 0 8px 0;
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: #f8fafc;
+    line-height: 1.3;
+  }
+
+  .auth-showcase-desc {
+    margin: 0;
+    font-size: 12.5px;
+    color: #cbd5e1;
+    line-height: 1.55;
+  }
+
+  .auth-trust-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .auth-trust-item {
+    background: rgba(11, 13, 21, 0.72);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .auth-trust-item.blue { border-color: rgba(99, 102, 241, 0.3); }
+  .auth-trust-item.purple { border-color: rgba(168, 85, 247, 0.3); }
+  .auth-trust-item.emerald { border-color: rgba(16, 185, 129, 0.3); }
+  .auth-trust-item.amber { border-color: rgba(245, 158, 11, 0.3); }
+
+  .trust-lbl { font-size: 10.5px; color: #94a3b8; }
+  .trust-val { font-size: 13px; font-weight: 700; color: #f8fafc; }
+  .trust-sub { font-size: 10.5px; color: #a5b4fc; }
+
+  .auth-card-panel {
+    background: rgba(17, 21, 34, 0.92);
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    border-radius: 14px;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+  }
+
+  .auth-segmented-tabs {
+    display: flex;
+    background: #070a12;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
+    padding: 4px;
+    gap: 4px;
+    overflow-x: auto;
+  }
+
+  .auth-seg-tab-btn {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: #94a3b8;
+    padding: 7px 10px;
+    border-radius: 7px;
+    font-size: 11.5px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background-color 0.18s, color 0.18s;
+  }
+
+  .auth-seg-tab-btn:hover { color: #f8fafc; }
+  .auth-seg-tab-btn.active {
+    background: rgba(99, 102, 241, 0.24);
+    color: #ffffff;
+    box-shadow: 0 2px 8px rgba(99, 102, 241, 0.25);
+  }
+
+  .auth-card-head h4 {
+    margin: 0 0 4px 0;
+    font-size: 15px;
+    font-weight: 700;
+    color: #f8fafc;
+  }
+
+  .auth-card-head p {
+    margin: 0;
+    font-size: 12px;
+    color: #94a3b8;
+  }
+
+  .auth-card-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .auth-vertical-form {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .auth-2col-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  .auth-utility-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .proto-switch-inline {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+  }
+
+  .auth-forgot-link {
+    background: none;
+    border: none;
+    color: #a5b4fc;
+    font-size: 11.5px;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 2px 4px;
+  }
+
+  .auth-forgot-link:hover {
+    color: #c7d2fe;
+    text-decoration: underline;
+  }
+
+  .auth-social-divider {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: #94a3b8;
+    font-size: 11px;
+    margin: 2px 0;
+  }
+
+  .auth-social-divider::before,
+  .auth-social-divider::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  .auth-social-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 8px;
+  }
+
+  .auth-social-grid .proto-action-btn {
+    justify-content: center;
+    padding: 9px 12px;
+    border-radius: 9px;
+  }
+
+  /* ── PASSWORD EYE & DISCOVERY / REVIEW ARCHETYPE HELPERS ── */
+  .proto-real-input.has-two-icons {
+    padding-right: 54px;
+  }
+
+  .btn-input-eye {
+    position: absolute;
+    right: 26px;
+    background: none;
+    border: none;
+    color: var(--qa-text-muted);
+    cursor: pointer;
+    padding: 4px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .btn-input-eye:hover { color: var(--qa-text-strong); }
+
+  .proto-hero-top-flex {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+
+  .discovery-filter-strip {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .discovery-chips {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .discovery-chip {
+    background: rgba(11, 13, 21, 0.65);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: #cbd5e1;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: 20px;
+    cursor: pointer;
+    transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+  }
+
+  .discovery-chip.active {
+    background: rgba(99, 102, 241, 0.25);
+    border-color: #818cf8;
+    color: #ffffff;
+  }
+
+  .discovery-map-card {
+    background: rgba(15, 23, 42, 0.85);
+    border: 1px solid rgba(56, 189, 248, 0.25);
+    border-radius: 10px;
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .discovery-map-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 12px;
+    font-weight: 600;
+    color: #bae6fd;
+  }
+
+  .discovery-map-canvas {
+    position: relative;
+    height: 125px;
+    border-radius: 8px;
+    background: radial-gradient(circle at 40% 50%, rgba(14, 116, 144, 0.35), rgba(7, 10, 18, 0.95));
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    overflow: hidden;
+  }
+
+  .map-grid-lines {
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(255,255,255,0.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.04) 1px, transparent 1px);
+    background-size: 24px 24px;
+  }
+
+  .map-pin-chip {
+    position: absolute;
+    background: rgba(15, 23, 42, 0.92);
+    border: 1px solid rgba(56, 189, 248, 0.5);
+    color: #f8fafc;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 9px;
+    border-radius: 16px;
+    cursor: pointer;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.45);
+    transition: transform 0.15s, border-color 0.15s;
+  }
+
+  .map-pin-chip:hover { transform: scale(1.05); border-color: #38bdf8; }
+  .map-pin-chip.p1 { top: 20px; left: 16%; }
+  .map-pin-chip.p2 { top: 68px; left: 48%; }
+  .map-pin-chip.p3 { top: 26px; right: 14%; }
+
+  .map-user-you {
+    position: absolute;
+    bottom: 14px;
+    left: 24%;
+    font-size: 10.5px;
+    font-weight: 700;
+    color: #6ee7b7;
+    background: rgba(16, 185, 129, 0.18);
+    border: 1px solid rgba(16, 185, 129, 0.45);
+    padding: 2px 8px;
+    border-radius: 12px;
+  }
+
+  .live-rating-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .rating-banner-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #fde68a;
+  }
+
+  .interactive-stars-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .star-pick-btn {
+    background: transparent;
+    border: none;
+    color: #475569;
+    cursor: pointer;
+    padding: 3px;
+    display: inline-flex;
+    transition: transform 0.15s, color 0.15s;
+  }
+
+  .star-pick-btn.active { color: #fbbf24; }
+  .star-pick-btn:hover { transform: scale(1.15); }
+
+  .rating-score-pill {
+    margin-left: 6px;
+    font-size: 11.5px;
+    font-weight: 700;
+    color: #fde68a;
+    background: rgba(245, 158, 11, 0.18);
+    border: 1px solid rgba(245, 158, 11, 0.4);
+    padding: 2px 8px;
+    border-radius: 12px;
+  }
+
+  .mock-form-grid.single-col-form {
+    grid-template-columns: 1fr;
+  }
+
+  .table-header-tools {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .proto-table-search {
+    background: #030712;
+    border: 1px solid rgba(148, 163, 184, 0.25);
+    color: #f8fafc;
+    border-radius: 6px;
+    padding: 4px 9px;
+    font-size: 11.5px;
+    width: 170px;
+    outline: none;
+  }
+
+  .proto-table-search:focus {
+    border-color: var(--qa-iris);
+  }
+
+  .table-pill.muted {
+    background: rgba(148, 163, 184, 0.14);
+    color: #94a3b8;
+  }
+
   .proto-action-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
 
   .spinner-small {
     width: 12px;
@@ -3424,6 +4782,8 @@
     border: 2px solid rgba(255, 255, 255, 0.3);
     border-radius: 50%;
     border-top-color: white;
+    display: inline-block;
+    flex-shrink: 0;
     animation: spin 0.8s linear infinite;
   }
 
@@ -3542,7 +4902,13 @@
 
   .rev-time { font-size: 11px; color: var(--qa-text-muted); }
 
-  .rev-stars { font-size: 11px; letter-spacing: 1px; }
+  .rev-stars {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    color: #fbbf24;
+    font-size: 11px;
+  }
 
   .rev-comment-text { margin: 0; font-size: 11.5px; color: var(--qa-text-soft); line-height: 1.4; }
 
@@ -3668,7 +5034,7 @@
     justify-content: center;
     gap: 4px;
     font-size: 22px;
-    cursor: pointer;
+    cursor: default;
   }
 
   .star-score-tag {
@@ -3715,16 +5081,21 @@
     left: 0;
     right: 0;
     bottom: 0;
-    z-index: 9999;
+    z-index: var(--z-modal, 10000);
     background: var(--qa-surface-deep);
     padding: 18px 24px;
     gap: 12px;
+    display: flex;
+    flex-direction: column;
     height: 100vh;
+    overflow: hidden;
+    box-sizing: border-box;
   }
 
   .diagram-workspace.fullscreen-diagram .diagram-canvas-panel {
-    height: calc(100vh - 120px);
+    flex: 1;
     min-height: 0;
+    height: auto;
   }
 
   .diagram-toolbar {
@@ -3902,21 +5273,34 @@
     pointer-events: auto;
   }
 
-  .diagram-render-area svg {
+  .diagram-render-area :global(svg) {
     max-width: none !important;
     height: auto;
     filter: drop-shadow(0 8px 24px rgba(0, 0, 0, 0.5));
     display: block;
   }
 
-  .diagram-loading, .diagram-empty, .diagram-error {
-    color: var(--qa-text-muted); 
-    font-size: 13px; 
-    padding: 40px; 
+  .diagram-render-area :global(.diagram-loading),
+  .diagram-render-area :global(.diagram-empty),
+  .diagram-render-area :global(.diagram-error) {
+    color: var(--qa-text-muted);
+    font-size: 13px;
+    padding: 40px;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
+    gap: 10px;
+  }
+
+  .diagram-render-area :global(.spinner-small) {
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-radius: 50%;
+    border-top-color: #ffffff;
+    display: inline-block;
+    animation: spin 0.8s linear infinite;
   }
 
   /* ── DRAW.IO NOTATION LEGEND BAR ── */
@@ -3970,24 +5354,11 @@
 
   .shape-sample.group { border: 1.5px dashed #a855f7; background: rgba(168, 85, 247, 0.1); border-radius: 3px; }
 
-  /* ── TRACEABILITY MATRIX ── */
-
-
-  .defect-pill.open {
-    background: rgba(239, 68, 68, 0.15);
-    border: 1px solid rgba(239, 68, 68, 0.4);
-    color: #fca5a5;
-  }
-
-
-
-
-
-
   /* ── Figma & Image Wireframe Extension Styles ── */
   .panel-title-group {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 10px;
   }
 
@@ -4011,9 +5382,184 @@
     color: var(--qa-iris-text);
   }
 
-  .node-source-badge.figma-sm, .node-source-badge.img-sm {
+  .node-source-badge.stitch,
+  .node-source-badge.stitch-sm {
+    background: rgba(6, 182, 212, 0.18);
+    border: 1px solid rgba(6, 182, 212, 0.5);
+    color: #67e8f9;
+  }
+
+  .node-source-badge.figma-sm, .node-source-badge.img-sm, .node-source-badge.stitch-sm {
     margin-left: auto;
     font-size: 11px;
+  }
+
+  .dot-live.cyan {
+    background: #06b6d4;
+    box-shadow: 0 0 6px #06b6d4;
+  }
+
+  /* ── STITCH / LIVE HTML HIGH-FI UI CONTAINER ── */
+  .stitch-container {
+    display: flex;
+    flex-direction: column;
+    background: #0b0f19;
+    min-height: 620px;
+  }
+
+  .stitch-config-panel {
+    background: var(--qa-surface-raised, #161b2a);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    padding: 10px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .stitch-top-meta-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .stitch-isolation-badges {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .stitch-space-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 9px;
+    border-radius: 6px;
+    background: rgba(99, 102, 241, 0.14);
+    border: 1px solid rgba(99, 102, 241, 0.35);
+    color: #c7d2fe;
+  }
+
+  .stitch-engine-pill {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 9px;
+    border-radius: 6px;
+    background: rgba(6, 182, 212, 0.15);
+    border: 1px solid rgba(6, 182, 212, 0.4);
+    color: #67e8f9;
+  }
+
+  .stitch-utility-btns {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .stitch-engine-select {
+    height: 30px;
+    padding: 0 28px 0 10px;
+    border-radius: 6px;
+    font-size: 11.5px;
+    background-color: #030712;
+    border: 1px solid rgba(148, 163, 184, 0.28);
+    color: #e2e8f0;
+  }
+
+  .figma-icon-tag.stitch-tag {
+    color: #67e8f9;
+  }
+
+  .btn-figma-action.stitch-gen {
+    background: linear-gradient(135deg, #06b6d4, #6366f1);
+    color: #ffffff;
+    box-shadow: 0 2px 10px rgba(6, 182, 212, 0.28);
+  }
+
+  .btn-figma-action.stitch-gen:hover:not(:disabled) {
+    filter: brightness(1.08);
+  }
+
+  .btn-figma-action.stitch-gen:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  .stitch-iframe-box {
+    flex: 1;
+    width: 100%;
+    min-height: 640px;
+    background: #ffffff;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .stitch-live-iframe {
+    width: 100%;
+    height: 680px;
+    border: none;
+    display: block;
+    background: #ffffff;
+  }
+
+  .stitch-empty-guide {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    gap: 10px;
+    padding: 64px 24px;
+    min-height: 520px;
+    color: #94a3b8;
+  }
+
+  .stitch-empty-guide h4 {
+    color: #f8fafc;
+    font-size: 15px;
+    font-weight: 600;
+    margin: 0;
+  }
+
+  .stitch-empty-guide p {
+    font-size: 12.5px;
+    max-width: 56ch;
+    line-height: 1.6;
+    margin: 0;
+  }
+
+  .stitch-code-drawer {
+    background: #030712;
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    border-radius: 8px;
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .stitch-code-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 11.5px;
+    color: #94a3b8;
+  }
+
+  .stitch-code-pre {
+    max-height: 200px;
+    overflow: auto;
+    font-size: 11px;
+    line-height: 1.45;
+    color: #cbd5e1;
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-all;
   }
 
   .wf-mode-tabs-header {
@@ -4103,18 +5649,26 @@
   .figma-input-row {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 8px;
   }
 
   .figma-icon-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
     font-size: 12px;
     font-weight: 600;
     color: #c084fc;
     white-space: nowrap;
+    flex-shrink: 0;
   }
 
   .figma-text-input {
     flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
     background: #030712;
     border: 1px solid #374151;
     color: #f3f4f6;
@@ -4239,11 +5793,29 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
   }
 
-  .img-name-tag { font-size: 12px; color: var(--qa-text-soft); font-weight: 500; }
+  .img-name-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    max-width: 100%;
+    font-size: 12px;
+    color: var(--qa-text-soft);
+    font-weight: 500;
+  }
 
-  .img-btn-group { display: flex; gap: 8px; }
+  .img-name-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .img-btn-group { display: flex; flex-wrap: wrap; gap: 8px; flex-shrink: 0; }
 
   .btn-img-ctrl {
     padding: 4px 10px;
@@ -4401,11 +5973,39 @@
     border-radius: 8px;
   }
 
-  /* ── EMPTY STATE ICON RING ── */
+  /* ── EMPTY ANALYSIS CARD & ICON RING ── */
+  .empty-analysis-card {
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 48px 28px;
+    background: rgba(18, 20, 28, 0.72);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 20px;
+  }
+
+  .empty-analysis-card h3 {
+    margin: 0;
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: var(--qa-text-strong);
+  }
+
+  .empty-analysis-card p {
+    margin: 0;
+    max-width: 560px;
+    font-size: 13px;
+    color: var(--qa-text-muted);
+    line-height: 1.6;
+  }
+
   .empty-icon-ring {
     width: 68px;
     height: 68px;
-    margin: 0 auto 14px;
+    margin: 0 auto 6px;
     border-radius: 20px;
     display: flex;
     align-items: center;
@@ -4550,6 +6150,15 @@
     }
   }
 
+  @media (max-width: 1080px) {
+    .sitemap-workspace {
+      grid-template-columns: 1fr;
+    }
+    .sitemap-panel {
+      max-height: 380px;
+    }
+  }
+
   @media (max-width: 960px) {
     .panel-container {
       padding: 14px 14px 28px;
@@ -4557,15 +6166,21 @@
     .stats-grid {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
-    .sitemap-workspace {
-      grid-template-columns: 1fr;
-    }
-    .sitemap-panel {
-      max-height: 380px;
-    }
     .executive-summary-bar {
       flex-direction: column;
       align-items: flex-start;
+    }
+  }
+
+  @media (max-width: 640px) {
+    .mock-form-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  @media (max-width: 520px) {
+    .stats-grid {
+      grid-template-columns: 1fr;
     }
   }
 
@@ -4588,12 +6203,6 @@
     justify-content: center;
   }
 
-  .rev-stars {
-    display: inline-flex;
-    gap: 2px;
-    color: #fbbf24;
-  }
-
   /* ── KEYBOARD FOCUS & TOUCH TARGETS (a11y) ── */
   .panel-container :is(button, [role="button"], a, input, textarea, select, [tabindex="0"]):focus-visible,
   .lightbox-modal:focus-visible,
@@ -4609,11 +6218,6 @@
   .image-upload-dropzone[role="button"],
   .gallery-photo-card[role="button"] {
     cursor: pointer;
-  }
-
-  .btn-nav-arrow {
-    min-width: 28px;
-    min-height: 28px;
   }
 
   @media (pointer: coarse) {

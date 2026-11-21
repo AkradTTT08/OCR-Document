@@ -18,7 +18,7 @@
       colorSecondary: "#ec4899",
       positionClass: "pos-top-left",
       beamStart: { x: 335, y: 165 },
-      beamEnd: { x: 145, y: 120 },
+      beamEnd: { x: 215, y: 88 },
       relayFromCore: { x: 335, y: 165 },
       roleDesc: "วิเคราะห์ Flow, Sequence & Architecture Diagram จาก Requirement",
       promptTemplate: "ช่วยวิเคราะห์และออกแบบ Sequence Diagram และ System Flow สำหรับระบบ Authentication & Token Refresh",
@@ -35,7 +35,7 @@
       colorSecondary: "#f43f5e",
       positionClass: "pos-mid-left",
       beamStart: { x: 500, y: 245 },
-      beamEnd: { x: 155, y: 255 },
+      beamEnd: { x: 215, y: 250 },
       relayFromCore: null,
       roleDesc: "สร้างและปรับปรุงเอกสาร SRS, Test Case, UAT & Exit Criteria",
       promptTemplate: "ช่วยร่างเอกสาร SRS และตาราง Test Case มาตรฐานสำหรับฟีเจอร์ชำระเงินผ่าน QR PromptPay",
@@ -52,7 +52,7 @@
       colorSecondary: "#eab308",
       positionClass: "pos-bottom-left",
       beamStart: { x: 390, y: 295 },
-      beamEnd: { x: 150, y: 405 },
+      beamEnd: { x: 215, y: 412 },
       relayFromCore: { x: 390, y: 295 },
       roleDesc: "ตรวจสอบเอกสารเทียบ Knowledge Base & ประเมิน Exit Criteria Gate",
       promptTemplate: "ช่วยตรวจสอบความครบถ้วนของ Requirement เทียบกับเกณฑ์ Exit Criteria Review Gate และหา Gap Analysis",
@@ -67,9 +67,9 @@
       color: "#10b981",
       colorLight: "#a7f3d0",
       colorSecondary: "#06b6d4",
-      positionClass: "pos-bottom-center",
-      beamStart: { x: 500, y: 275 },
-      beamEnd: { x: 465, y: 435 },
+      positionClass: "pos-mid-right",
+      beamStart: { x: 500, y: 255 },
+      beamEnd: { x: 785, y: 250 },
       relayFromCore: null,
       roleDesc: "สร้างและรัน Automated Test Script (Playwright / Robot / API)",
       promptTemplate: "ช่วยเขียน Automated Test Script ด้วย Playwright สำหรับทดสอบ Login, Session Timeout และ Error Handling",
@@ -86,7 +86,7 @@
       colorSecondary: "#3b82f6",
       positionClass: "pos-top-right",
       beamStart: { x: 665, y: 165 },
-      beamEnd: { x: 850, y: 135 },
+      beamEnd: { x: 785, y: 88 },
       relayFromCore: { x: 665, y: 165 },
       roleDesc: "วิเคราะห์ Load Testing, Stress Test, SLA & สร้างสคริปต์ k6",
       promptTemplate: "ช่วยวางแผนทดสอบ Load Testing 1,000 Concurrent Users ด้วย k6 และกำหนดเกณฑ์ SLA P95 < 400ms",
@@ -102,14 +102,22 @@
       colorLight: "#c7d2fe",
       colorSecondary: "#a855f7",
       positionClass: "pos-bottom-right",
-      beamStart: { x: 500, y: 255 },
-      beamEnd: { x: 850, y: 345 },
+      beamStart: { x: 500, y: 265 },
+      beamEnd: { x: 785, y: 412 },
       relayFromCore: null,
       roleDesc: "ตรวจสอบช่องโหว่ OWASP Top 10, Pen-Test & Deep QA Research",
       promptTemplate: "ช่วยตรวจสอบช่องโหว่ Security ตามมาตรฐาน OWASP Top 10 (SQLi, XSS, Broken Auth) และแนวทางป้องกัน",
       keywords: ["security", "owasp", "vulnerability", "pentest", "sql", "xss", "jwt", "auth", "research", "ความปลอดภัย", "ช่องโหว่", "วิจัย"]
     }
   ];
+
+  // Symmetric 3-left / 3-right columns for collision-free Prism Arena grid
+  const LEFT_AGENTS = ["diagram", "doc_creation", "consult"]
+    .map(id => SPECTRUM_AGENTS.find(a => a.id === id))
+    .filter(Boolean);
+  const RIGHT_AGENTS = ["performance", "automation", "security"]
+    .map(id => SPECTRUM_AGENTS.find(a => a.id === id))
+    .filter(Boolean);
 
   // Input Conduit Types (White Beam Source)
   const INPUT_SOURCES = [
@@ -143,14 +151,29 @@
   let isLoading = false;
   let chatContainer;
   let copiedIndex = null;
+  let prevMessageCount = messages.length;
+  let prevLoadingState = false;
 
   function getFormattedTime() {
     const now = new Date();
     return now.toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" });
   }
 
+  function isNearBottom() {
+    if (!chatContainer) return true;
+    return chatContainer.scrollHeight - chatContainer.scrollTop - chatContainer.clientHeight < 120;
+  }
+
   afterUpdate(() => {
-    scrollToBottom();
+    const messageAdded = messages.length > prevMessageCount;
+    const loadingStarted = isLoading && !prevLoadingState;
+    if (messageAdded) {
+      scrollToBottom();
+    } else if (loadingStarted && isNearBottom()) {
+      scrollToBottom();
+    }
+    prevMessageCount = messages.length;
+    prevLoadingState = isLoading;
   });
 
   function scrollToBottom() {
@@ -568,23 +591,19 @@
         <!-- SVG Optical Laser & Refraction Engine -->
         <svg class="prism-optical-svg" viewBox="0 0 1000 500" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
           <defs>
-            <!-- Pure White Command Glow Filter -->
-            <filter id="whiteBeamGlow" x="-40%" y="-40%" width="180%" height="180%">
-              <feGaussianBlur stdDeviation="6" result="blur1" />
-              <feGaussianBlur stdDeviation="14" result="blur2" />
+            <!-- Lightweight Single-Pass White Command Glow Filter -->
+            <filter id="whiteBeamGlow" x="-30%" y="-30%" width="160%" height="160%">
+              <feGaussianBlur stdDeviation="4.5" result="blur1" />
               <feMerge>
-                <feMergeNode in="blur2" />
                 <feMergeNode in="blur1" />
                 <feMergeNode in="SourceGraphic" />
               </feMerge>
             </filter>
 
-            <!-- Spectrum Laser Glow Filter -->
-            <filter id="spectrumLaserGlow" x="-35%" y="-35%" width="170%" height="170%">
-              <feGaussianBlur stdDeviation="5" result="specBlur1" />
-              <feGaussianBlur stdDeviation="11" result="specBlur2" />
+            <!-- Lightweight Single-Pass Spectrum Laser Glow Filter -->
+            <filter id="spectrumLaserGlow" x="-25%" y="-25%" width="150%" height="150%">
+              <feGaussianBlur stdDeviation="3.5" result="specBlur1" />
               <feMerge>
-                <feMergeNode in="specBlur2" />
                 <feMergeNode in="specBlur1" />
                 <feMergeNode in="SourceGraphic" />
               </feMerge>
@@ -646,10 +665,9 @@
               x1="500" y1="8"
               x2="500" y2="255"
               stroke="#bae6fd"
-              stroke-width={isWhiteCommandFiring || isLoading ? "24" : "10"}
+              stroke-width={isWhiteCommandFiring || isLoading ? "22" : "10"}
               stroke-linecap="round"
-              opacity={isWhiteCommandFiring || isLoading ? "0.45" : "0.18"}
-              filter="url(#whiteBeamGlow)"
+              opacity={isWhiteCommandFiring || isLoading ? "0.35" : "0.14"}
             />
             <line
               x1="500" y1="8"
@@ -677,14 +695,12 @@
               stroke="#ffffff"
               stroke-width={previewTargetAgents.includes("diagram") ? "4.5" : "2"}
               opacity={previewTargetAgents.includes("diagram") ? "0.9" : "0.25"}
-              filter="url(#whiteBeamGlow)"
             />
             <line
               x1="500" y1="255" x2="335" y2="165"
               stroke="#ec4899"
               stroke-width={previewTargetAgents.includes("diagram") ? "3.5" : "1.5"}
               opacity={previewTargetAgents.includes("diagram") ? "0.75" : "0.2"}
-              filter="url(#spectrumLaserGlow)"
             />
 
             <line
@@ -692,14 +708,12 @@
               stroke="#ffffff"
               stroke-width={previewTargetAgents.includes("performance") ? "4.5" : "2"}
               opacity={previewTargetAgents.includes("performance") ? "0.9" : "0.25"}
-              filter="url(#whiteBeamGlow)"
             />
             <line
               x1="500" y1="255" x2="665" y2="165"
               stroke="#06b6d4"
               stroke-width={previewTargetAgents.includes("performance") ? "3.5" : "1.5"}
               opacity={previewTargetAgents.includes("performance") ? "0.75" : "0.2"}
-              filter="url(#spectrumLaserGlow)"
             />
 
             <line
@@ -707,7 +721,6 @@
               stroke="#ffffff"
               stroke-width={previewTargetAgents.includes("consult") ? "4.5" : "2"}
               opacity={previewTargetAgents.includes("consult") ? "0.9" : "0.25"}
-              filter="url(#whiteBeamGlow)"
             />
           </g>
 
@@ -723,10 +736,9 @@
                 x2={agent.beamEnd.x}
                 y2={agent.beamEnd.y}
                 stroke={agent.color}
-                stroke-width={isFiringNow ? "22" : isTargeted ? "12" : "4"}
+                stroke-width={isFiringNow ? "20" : isTargeted ? "10" : "4"}
                 stroke-linecap="round"
-                opacity={isFiringNow ? "0.35" : isTargeted ? "0.2" : "0.06"}
-                filter="url(#spectrumLaserGlow)"
+                opacity={isFiringNow ? "0.26" : isTargeted ? "0.14" : "0.05"}
               />
 
               <!-- Secondary Spectrum Harmonic Ray -->
@@ -736,10 +748,9 @@
                 x2={agent.beamEnd.x}
                 y2={agent.beamEnd.y - 8}
                 stroke={agent.colorSecondary}
-                stroke-width={isFiringNow ? "6" : isTargeted ? "3" : "1"}
+                stroke-width={isFiringNow ? "5" : isTargeted ? "2.5" : "1"}
                 stroke-linecap="round"
-                opacity={isFiringNow ? "0.75" : isTargeted ? "0.4" : "0.1"}
-                filter="url(#spectrumLaserGlow)"
+                opacity={isFiringNow ? "0.6" : isTargeted ? "0.32" : "0.1"}
               />
 
               <!-- Primary Colored Spectrum Beam -->
@@ -752,7 +763,7 @@
                 stroke-width={isFiringNow ? "8" : isTargeted ? "4" : "1.5"}
                 stroke-linecap="round"
                 opacity={isFiringNow ? "0.98" : isTargeted ? "0.68" : "0.18"}
-                filter="url(#spectrumLaserGlow)"
+                filter={isTargeted ? "url(#spectrumLaserGlow)" : undefined}
               />
 
               <!-- PURE WHITE COMMAND CORE INSIDE THE ACTIVE BEAM ("เมื่อ Agent มีการใช้งาน แสดงสีขาวเปรียบเหมือนคำสั่ง") -->
@@ -766,7 +777,6 @@
                 stroke-width={isFiringNow ? "3.8" : isTargeted ? "1.8" : "0"}
                 stroke-linecap="round"
                 opacity={isFiringNow ? "1" : isTargeted ? "0.75" : "0"}
-                filter="url(#whiteBeamGlow)"
               />
 
               {#if isTargeted}
@@ -789,8 +799,7 @@
                 cy={agent.beamEnd.y}
                 r={isFiringNow ? "14" : isTargeted ? "8" : "4"}
                 fill={agent.color}
-                opacity={isFiringNow ? "0.65" : isTargeted ? "0.35" : "0.15"}
-                filter="url(#spectrumLaserGlow)"
+                opacity={isFiringNow ? "0.55" : isTargeted ? "0.28" : "0.12"}
               />
               <circle
                 cx={agent.beamEnd.x}
@@ -864,112 +873,185 @@
           </g>
         </svg>
 
-        <!-- Center Floating Input Beam Badge -->
-        <div class="white-conduit-floating-badge" class:active={isWhiteCommandFiring || isLoading}>
-          <span class="beam-spark"></span>
-          <span class="conduit-title">
-            WHITE COMMAND INPUT: <strong>{INPUT_SOURCES.find(s => s.id === selectedInputSource)?.label}</strong>
-          </span>
-        </div>
-
-        <!-- Center Prism Core Label Pill -->
-        <div class="prism-core-center-label" class:active={isWhiteCommandFiring || isLoading}>
-          <span class="core-badge-title">PRISM CORE ORCHESTRATOR</span>
-          <span class="core-badge-sub">
-            {isLoading ? "⚡ กำลังหักเหคำสั่งสีขาวสู่ Agent..." : isWhiteCommandFiring ? "🌈 กระจายลำแสงสเปกตรัม Real-time" : "ศูนย์กลางปริซึม • คลิก Agent เพื่อล็อกเป้าหมาย"}
-          </span>
-        </div>
-
-        <!-- ── 6 INTERACTIVE SPECIALIST AGENT STATION CARDS ── -->
-        <div class="agent-stations-layer">
-          {#each SPECTRUM_AGENTS as agent}
-            {@const isTargeted = previewTargetAgents.includes(agent.id)}
-            {@const isFiringNow = isTargeted && (isWhiteCommandFiring || isLoading)}
-            <div
-              class="agent-station-card {agent.positionClass}"
-              class:is-targeted={isTargeted}
-              class:is-firing={isFiringNow}
-              style="--agent-color: {agent.color}; --agent-light: {agent.colorLight}; --agent-sec: {agent.colorSecondary};"
-              role="button"
-              tabindex="0"
-              on:click={() => handleStationClick(agent)}
-              on:keydown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), handleStationClick(agent))}
-            >
-              <div class="station-command-bar">
-                <span class="wavelength-tag">{agent.wavelength}</span>
-                <span class="station-live-pill" class:firing={isFiringNow} class:targeted={isTargeted}>
-                  {#if isFiringNow}
-                    <span class="white-cmd-dot"></span> CMD ACTIVE
-                  {:else if isTargeted}
-                    <span class="spec-ready-dot"></span> READY
-                  {:else}
-                    STANDBY
-                  {/if}
-                </span>
-              </div>
-
-              <div class="station-main-row">
-                <div class="station-avatar-orb">
-                  {#if agent.id === "diagram"}
-                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
-                      <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
-                      <polyline points="2 17 12 22 22 17"></polyline>
-                      <polyline points="2 12 12 17 22 12"></polyline>
-                    </svg>
-                  {:else if agent.id === "doc_creation"}
-                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
-                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                      <polyline points="14 2 14 8 20 8"></polyline>
-                      <line x1="12" y1="18" x2="12" y2="12"></line>
-                      <line x1="9" y1="15" x2="15" y2="15"></line>
-                    </svg>
-                  {:else if agent.id === "consult"}
-                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
-                      <path d="M9 11l3 3L22 4"></path>
-                      <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
-                    </svg>
-                  {:else if agent.id === "automation"}
-                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
-                      <polyline points="16 18 22 12 16 6"></polyline>
-                      <polyline points="8 6 2 12 8 18"></polyline>
-                    </svg>
-                  {:else if agent.id === "performance"}
-                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
-                      <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
-                    </svg>
-                  {:else}
-                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
-                      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
-                    </svg>
-                  {/if}
-                </div>
-                <div class="station-info">
-                  <h4 class="station-title">{agent.name}</h4>
-                  <p class="station-desc">{agent.roleDesc}</p>
-                </div>
-              </div>
-
-              <div class="station-actions-row">
+        <!-- ── SYMMETRIC 3-COLUMN ARENA: 3 LEFT STATIONS | PRISM CORE | 3 RIGHT STATIONS ── -->
+        <div class="arena-symmetric-grid">
+          <!-- Left Column: 3 Stacked Specialist Agent Cards -->
+          <div class="agent-stations-column col-left">
+            {#each LEFT_AGENTS as agent}
+              {@const isTargeted = previewTargetAgents.includes(agent.id)}
+              {@const isFiringNow = isTargeted && (isWhiteCommandFiring || isLoading)}
+              <div
+                class="agent-station-card {agent.positionClass}"
+                class:is-targeted={isTargeted}
+                class:is-firing={isFiringNow}
+                style="--agent-color: {agent.color}; --agent-light: {agent.colorLight}; --agent-sec: {agent.colorSecondary};"
+              >
                 <button
                   type="button"
-                  class="btn-station-prompt"
-                  on:click|stopPropagation={() => dispatchAgentPrompt(agent)}
-                  disabled={isLoading}
-                  title="ยิงลำแสงคำสั่งไปยัง {agent.name}"
+                  class="station-select-body"
+                  aria-pressed={isTargeted}
+                  on:click={() => handleStationClick(agent)}
                 >
-                  ⚡ สั่งงาน Agent
+                  <div class="station-command-bar">
+                    <span class="wavelength-tag">{agent.wavelength}</span>
+                    <span class="station-live-pill" class:firing={isFiringNow} class:targeted={isTargeted}>
+                      {#if isFiringNow}
+                        <span class="white-cmd-dot"></span> CMD ACTIVE
+                      {:else if isTargeted}
+                        <span class="spec-ready-dot"></span> READY
+                      {:else}
+                        STANDBY
+                      {/if}
+                    </span>
+                  </div>
+
+                  <div class="station-main-row">
+                    <div class="station-avatar-orb" aria-hidden="true">
+                      {#if agent.id === "diagram"}
+                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                          <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+                          <polyline points="2 17 12 22 22 17"></polyline>
+                          <polyline points="2 12 12 17 22 12"></polyline>
+                        </svg>
+                      {:else if agent.id === "doc_creation"}
+                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                          <polyline points="14 2 14 8 20 8"></polyline>
+                          <line x1="12" y1="18" x2="12" y2="12"></line>
+                          <line x1="9" y1="15" x2="15" y2="15"></line>
+                        </svg>
+                      {:else}
+                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                          <path d="M9 11l3 3L22 4"></path>
+                          <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
+                        </svg>
+                      {/if}
+                    </div>
+                    <div class="station-info">
+                      <h4 class="station-title">{agent.name}</h4>
+                      <p class="station-desc">{agent.roleDesc}</p>
+                    </div>
+                  </div>
                 </button>
-                <button
-                  type="button"
-                  class="btn-station-open"
-                  on:click|stopPropagation={() => navigateToAgentModule(agent)}
-                  title="เปิดหน้าเมนู {agent.name}"
-                >
-                  เปิดโมดูล &nearr;
-                </button>
+
+                <div class="station-actions-row">
+                  <button
+                    type="button"
+                    class="btn-station-prompt"
+                    on:click={() => dispatchAgentPrompt(agent)}
+                    disabled={isLoading}
+                    title="ยิงลำแสงคำสั่งไปยัง {agent.name}"
+                  >
+                    ⚡ สั่งงาน Agent
+                  </button>
+                  <button
+                    type="button"
+                    class="btn-station-open"
+                    on:click={() => navigateToAgentModule(agent)}
+                    title="เปิดหน้าเมนู {agent.name}"
+                  >
+                    เปิดโมดูล &nearr;
+                  </button>
+                </div>
               </div>
+            {/each}
+          </div>
+
+          <!-- Center Column: Input Conduit Badge + Open Prism Core Visual + Core Label -->
+          <div class="arena-core-column">
+            <div class="white-conduit-floating-badge" class:active={isWhiteCommandFiring || isLoading}>
+              <span class="beam-spark"></span>
+              <span class="conduit-title">
+                WHITE COMMAND INPUT: <strong>{INPUT_SOURCES.find(s => s.id === selectedInputSource)?.label}</strong>
+              </span>
             </div>
-          {/each}
+
+            <div class="core-visual-spacer" aria-hidden="true"></div>
+
+            <div class="prism-core-center-label" class:active={isWhiteCommandFiring || isLoading}>
+              <span class="core-badge-title">PRISM CORE ORCHESTRATOR</span>
+              <span class="core-badge-sub">
+                {isLoading ? "⚡ กำลังหักเหคำสั่งสีขาวสู่ Agent..." : isWhiteCommandFiring ? "🌈 กระจายลำแสงสเปกตรัม Real-time" : "ศูนย์กลางปริซึม • คลิก Agent เพื่อล็อกเป้าหมาย"}
+              </span>
+            </div>
+          </div>
+
+          <!-- Right Column: 3 Stacked Specialist Agent Cards -->
+          <div class="agent-stations-column col-right">
+            {#each RIGHT_AGENTS as agent}
+              {@const isTargeted = previewTargetAgents.includes(agent.id)}
+              {@const isFiringNow = isTargeted && (isWhiteCommandFiring || isLoading)}
+              <div
+                class="agent-station-card {agent.positionClass}"
+                class:is-targeted={isTargeted}
+                class:is-firing={isFiringNow}
+                style="--agent-color: {agent.color}; --agent-light: {agent.colorLight}; --agent-sec: {agent.colorSecondary};"
+              >
+                <button
+                  type="button"
+                  class="station-select-body"
+                  aria-pressed={isTargeted}
+                  on:click={() => handleStationClick(agent)}
+                >
+                  <div class="station-command-bar">
+                    <span class="wavelength-tag">{agent.wavelength}</span>
+                    <span class="station-live-pill" class:firing={isFiringNow} class:targeted={isTargeted}>
+                      {#if isFiringNow}
+                        <span class="white-cmd-dot"></span> CMD ACTIVE
+                      {:else if isTargeted}
+                        <span class="spec-ready-dot"></span> READY
+                      {:else}
+                        STANDBY
+                      {/if}
+                    </span>
+                  </div>
+
+                  <div class="station-main-row">
+                    <div class="station-avatar-orb" aria-hidden="true">
+                      {#if agent.id === "automation"}
+                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                          <polyline points="16 18 22 12 16 6"></polyline>
+                          <polyline points="8 6 2 12 8 18"></polyline>
+                        </svg>
+                      {:else if agent.id === "performance"}
+                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                          <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+                        </svg>
+                      {:else}
+                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                        </svg>
+                      {/if}
+                    </div>
+                    <div class="station-info">
+                      <h4 class="station-title">{agent.name}</h4>
+                      <p class="station-desc">{agent.roleDesc}</p>
+                    </div>
+                  </div>
+                </button>
+
+                <div class="station-actions-row">
+                  <button
+                    type="button"
+                    class="btn-station-prompt"
+                    on:click={() => dispatchAgentPrompt(agent)}
+                    disabled={isLoading}
+                    title="ยิงลำแสงคำสั่งไปยัง {agent.name}"
+                  >
+                    ⚡ สั่งงาน Agent
+                  </button>
+                  <button
+                    type="button"
+                    class="btn-station-open"
+                    on:click={() => navigateToAgentModule(agent)}
+                    title="เปิดหน้าเมนู {agent.name}"
+                  >
+                    เปิดโมดูล &nearr;
+                  </button>
+                </div>
+              </div>
+            {/each}
+          </div>
         </div>
       </div>
     </section>
@@ -1086,13 +1168,14 @@
                 <button
                   type="button"
                   class="btn-copy-msg"
+                  aria-label="คัดลอกข้อความ"
                   on:click={() => copyToClipboard(msg.content, i)}
                   title="คัดลอกข้อความ"
                 >
                   {#if copiedIndex === i}
-                    <svg viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2" width="14" height="14"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2" width="14" height="14" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>
                   {:else}
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                   {/if}
                 </button>
               {/if}
@@ -1142,6 +1225,7 @@
           <textarea
             bind:value={currentInput}
             on:keydown={handleKeydown}
+            aria-label="พิมพ์คำสั่งถึง Master Agent"
             placeholder="พิมพ์คำสั่ง ({INPUT_SOURCES.find(s => s.id === selectedInputSource)?.label}) เพื่อยิงลำแสงสีขาวเข้าสู่ Prism Core..."
             disabled={isLoading}
             rows="2"
@@ -1181,7 +1265,13 @@
     flex-direction: column;
     gap: 12px;
     min-height: 0;
-    overflow-y: auto;
+    overflow: hidden;
+  }
+
+  @media (max-width: 1220px) {
+    .spectra-orchestration-shell {
+      overflow-y: auto;
+    }
   }
 
   /* ── TOP COMMAND HEADER BAR ── */
@@ -1295,6 +1385,7 @@
   .input-conduit-selector {
     display: inline-flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 4px;
     background: rgba(9, 11, 19, 0.72);
     border: 1px solid rgba(255, 255, 255, 0.1);
@@ -1382,7 +1473,9 @@
     border-radius: 18px;
     padding: 12px 14px;
     box-shadow: inset 0 0 60px rgba(0, 0, 0, 0.65), 0 12px 32px rgba(0, 0, 0, 0.4);
-    min-height: 540px;
+    min-height: 0;
+    min-width: 0;
+    height: 100%;
     overflow: hidden;
     position: relative;
   }
@@ -1390,9 +1483,10 @@
   /* Top Dual Holographic HUD Monitors */
   .hud-monitors-row {
     display: grid;
-    grid-template-columns: 1.15fr 1fr;
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
     gap: 12px;
     z-index: 3;
+    flex-shrink: 0;
   }
   @media (max-width: 860px) {
     .hud-monitors-row {
@@ -1401,12 +1495,16 @@
   }
 
   .hud-monitor {
+    min-width: 0;
     background: rgba(11, 15, 28, 0.82);
     border: 1px solid rgba(148, 163, 184, 0.22);
     border-radius: 12px;
     padding: 8px 12px;
     backdrop-filter: blur(10px);
     box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
+  }
+  .hud-monitor-body {
+    min-width: 0;
   }
   .left-monitor {
     border-color: rgba(56, 189, 248, 0.3);
@@ -1419,6 +1517,7 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+    flex-wrap: wrap;
     gap: 8px;
     padding-bottom: 6px;
     margin-bottom: 6px;
@@ -1430,6 +1529,7 @@
     font-weight: 800;
     letter-spacing: 0.06em;
     color: #cbd5e1;
+    min-width: 0;
   }
   .hud-tag {
     font-family: var(--font-en, 'Outfit', sans-serif);
@@ -1437,6 +1537,7 @@
     font-weight: 700;
     padding: 1.5px 7px;
     border-radius: 6px;
+    flex-shrink: 0;
   }
   .white-beam-tag {
     background: rgba(255, 255, 255, 0.14);
@@ -1453,6 +1554,7 @@
     display: flex;
     align-items: center;
     gap: 7px;
+    min-width: 0;
     padding: 4px 8px;
     border-radius: 7px;
     background: rgba(255, 255, 255, 0.04);
@@ -1479,8 +1581,11 @@
     flex-shrink: 0;
   }
   .readout-text {
+    min-width: 0;
+    flex: 1;
     overflow: hidden;
     text-overflow: ellipsis;
+    white-space: nowrap;
     font-family: var(--font-en, 'Outfit', sans-serif);
     font-weight: 600;
     font-size: 10.5px;
@@ -1488,19 +1593,20 @@
 
   .hud-spectrum-bars {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 4px;
   }
   .hud-spec-bar {
     display: flex;
     align-items: center;
     gap: 5px;
+    min-width: 0;
     padding: 3px 6px;
     border-radius: 5px;
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid rgba(255, 255, 255, 0.06);
     font-size: 10px;
-    color: #64748b;
+    color: #94a3b8;
     transition: all 0.2s ease;
   }
   .hud-spec-bar.active {
@@ -1518,6 +1624,7 @@
   }
   .spec-name {
     flex: 1;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1528,12 +1635,23 @@
     font-size: 9px;
     font-weight: 700;
     color: var(--ag-color);
+    flex-shrink: 0;
   }
 
   .hud-kpi-grid {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 6px;
+  }
+  @media (max-width: 1024px) {
+    .hud-kpi-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @media (max-width: 640px) {
+    .hud-spectrum-bars {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
   }
   .hud-kpi-box {
     background: rgba(15, 23, 42, 0.75);
@@ -1584,8 +1702,7 @@
     border: 1px solid rgba(255, 255, 255, 0.08);
     overflow: hidden;
     display: flex;
-    align-items: center;
-    justify-content: center;
+    flex-direction: column;
   }
   .prism-arena-viewport.command-blazing {
     border-color: rgba(255, 255, 255, 0.35);
@@ -1642,6 +1759,11 @@
   .secondary-prism.right-prism {
     animation: prismFloatRight 5.2s ease-in-out infinite;
   }
+  .shockwave-ring {
+    transform-box: fill-box;
+    transform-origin: center;
+    will-change: transform, opacity;
+  }
   .shockwave-ring.r1 {
     animation: shockwaveExpand 1.5s cubic-bezier(0.16, 1, 0.3, 1) infinite;
   }
@@ -1674,20 +1796,52 @@
     50% { transform: translate(665px, 165px) translateY(5px); }
   }
   @keyframes shockwaveExpand {
-    0% { r: 16; opacity: 0.95; }
-    100% { r: 78; opacity: 0; }
+    0% { transform: scale(0.7); opacity: 0.95; }
+    100% { transform: scale(3.25); opacity: 0; }
   }
 
-  /* Center Floating Badges on Arena */
+  /* ── SYMMETRIC 3-COLUMN ARENA GRID (ZERO OVERLAP) ── */
+  .arena-symmetric-grid {
+    position: relative;
+    z-index: 2;
+    flex: 1;
+    display: grid;
+    grid-template-columns: minmax(195px, 228px) minmax(160px, 1fr) minmax(195px, 228px);
+    gap: 12px;
+    padding: 12px;
+    align-items: stretch;
+    min-height: 0;
+  }
+
+  .agent-stations-column {
+    display: grid;
+    grid-template-rows: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  .arena-core-column {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: space-between;
+    min-width: 0;
+    padding: 2px 4px;
+    pointer-events: none;
+  }
+
+  .core-visual-spacer {
+    flex: 1;
+    min-height: 180px;
+  }
+
+  /* Center Badges on Arena */
   .white-conduit-floating-badge {
-    position: absolute;
-    top: 8px;
-    left: 50%;
-    transform: translateX(-50%);
-    z-index: 3;
     display: inline-flex;
     align-items: center;
     gap: 7px;
+    max-width: 100%;
     padding: 4px 12px;
     border-radius: 999px;
     background: rgba(15, 23, 42, 0.85);
@@ -1710,20 +1864,17 @@
     border-radius: 50%;
     background: #ffffff;
     box-shadow: 0 0 10px #ffffff;
+    flex-shrink: 0;
   }
 
   .prism-core-center-label {
-    position: absolute;
-    top: 63%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    z-index: 3;
     display: flex;
     flex-direction: column;
     align-items: center;
-    padding: 5px 14px;
+    max-width: 100%;
+    padding: 6px 14px;
     border-radius: 10px;
-    background: rgba(10, 14, 26, 0.86);
+    background: rgba(10, 14, 26, 0.88);
     border: 1px solid rgba(186, 230, 253, 0.38);
     backdrop-filter: blur(10px);
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
@@ -1746,58 +1897,45 @@
     color: #bae6fd;
   }
 
-  /* ── 6 SPECIALIST AGENT STATIONS LAYER ── */
-  .agent-stations-layer {
-    position: absolute;
-    inset: 0;
-    z-index: 2;
-    pointer-events: none;
-  }
-
+  /* ── 6 SPECIALIST AGENT STATION CARDS ── */
   .agent-station-card {
-    position: absolute;
-    width: 220px;
-    background: rgba(13, 17, 30, 0.86);
+    width: 100%;
+    min-width: 0;
+    background: rgba(13, 17, 30, 0.88);
     border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: 13px;
     padding: 8px 10px;
     backdrop-filter: blur(12px);
     box-shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
     pointer-events: auto;
-    cursor: pointer;
     transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1),
                 border-color 0.25s ease,
                 box-shadow 0.25s ease,
                 background-color 0.25s ease;
     display: flex;
     flex-direction: column;
+    justify-content: space-between;
     gap: 6px;
   }
 
-  .agent-station-card.pos-top-left {
-    top: 10px;
-    left: 12px;
+  .station-select-body {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: 100%;
+    min-width: 0;
+    background: transparent;
+    border: none;
+    padding: 0;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    border-radius: 8px;
   }
-  .agent-station-card.pos-mid-left {
-    top: 38%;
-    left: 12px;
-  }
-  .agent-station-card.pos-bottom-left {
-    bottom: 10px;
-    left: 12px;
-  }
-  .agent-station-card.pos-bottom-center {
-    bottom: 8px;
-    left: 50%;
-    transform: translateX(-50%);
-  }
-  .agent-station-card.pos-top-right {
-    top: 10px;
-    right: 12px;
-  }
-  .agent-station-card.pos-bottom-right {
-    bottom: 22%;
-    right: 12px;
+  .station-select-body:focus-visible {
+    outline: 2px solid var(--agent-color, #ffffff);
+    outline-offset: 2px;
   }
 
   .agent-station-card.is-targeted {
@@ -1811,13 +1949,8 @@
   }
   .agent-station-card:hover {
     border-color: #ffffff;
+    transform: translateY(-2px);
     z-index: 5;
-  }
-  .agent-station-card:not(.pos-bottom-center):hover {
-    transform: translateY(-2px) scale(1.02);
-  }
-  .agent-station-card.pos-bottom-center:hover {
-    transform: translateX(-50%) translateY(-2px) scale(1.02);
   }
 
   .station-command-bar {
@@ -1825,6 +1958,7 @@
     justify-content: space-between;
     align-items: center;
     gap: 4px;
+    width: 100%;
     padding-bottom: 4px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.07);
   }
@@ -1834,18 +1968,23 @@
     font-weight: 700;
     color: var(--agent-light);
     letter-spacing: 0.04em;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .station-live-pill {
     display: inline-flex;
     align-items: center;
     gap: 4px;
+    flex-shrink: 0;
     font-family: var(--font-en, 'Outfit', sans-serif);
     font-size: 8.5px;
     font-weight: 800;
     padding: 1.5px 6px;
     border-radius: 999px;
     background: rgba(255, 255, 255, 0.06);
-    color: #64748b;
+    color: #94a3b8;
   }
   .station-live-pill.targeted {
     background: rgba(255, 255, 255, 0.1);
@@ -1957,29 +2096,37 @@
     color: #ffffff;
   }
 
-  @media (max-width: 900px) {
+  @media (max-width: 1180px) {
     .prism-arena-viewport {
-      flex-direction: column;
-      padding: 12px;
       min-height: auto;
     }
-    .prism-optical-svg,
-    .white-conduit-floating-badge,
-    .prism-core-center-label {
+    .prism-optical-svg {
       display: none;
     }
-    .agent-stations-layer {
-      position: static;
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    .arena-symmetric-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 10px;
-      width: 100%;
     }
-    .agent-station-card,
-    .agent-station-card.pos-bottom-center {
-      position: static;
-      width: 100%;
-      transform: none !important;
+    .arena-core-column {
+      grid-column: 1 / -1;
+      order: -1;
+      flex-direction: row;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 8px;
+      padding: 2px 0 4px;
+    }
+    .core-visual-spacer {
+      display: none;
+    }
+    .agent-stations-column {
+      display: contents;
+    }
+  }
+
+  @media (max-width: 768px) {
+    .arena-symmetric-grid {
+      grid-template-columns: 1fr;
     }
   }
 
@@ -1994,9 +2141,20 @@
     border-radius: 18px;
     backdrop-filter: blur(18px);
     box-shadow: 0 12px 32px rgba(0, 0, 0, 0.42);
-    min-height: 540px;
-    max-height: calc(100vh - 150px);
+    min-height: 0;
+    min-width: 0;
+    height: 100%;
     overflow: hidden;
+  }
+
+  @media (max-width: 1220px) {
+    .prism-stage-card {
+      height: auto;
+    }
+    .prism-prompt-dock {
+      height: 560px;
+      min-height: 460px;
+    }
   }
 
   .dock-header {
@@ -2112,7 +2270,7 @@
     border-radius: 999px;
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid rgba(255, 255, 255, 0.08);
-    color: #64748b;
+    color: #94a3b8;
     font-size: 10.5px;
     font-weight: 600;
     cursor: pointer;
@@ -2134,6 +2292,8 @@
   /* Chat Messages Feed */
   .dock-chat-messages {
     flex: 1;
+    min-height: 0;
+    min-width: 0;
     overflow-y: auto;
     padding: 14px;
     display: flex;
@@ -2186,7 +2346,7 @@
     color: #c084fc;
   }
   .msg-time {
-    color: #64748b;
+    color: #94a3b8;
   }
 
   .dock-msg-bubble {
@@ -2204,6 +2364,7 @@
   .dock-msg-bubble.assistant {
     border-top-left-radius: 4px;
     border-color: rgba(168, 85, 247, 0.24);
+    padding-right: 38px;
   }
   .dock-msg-bubble.user {
     border-top-right-radius: 4px;
@@ -2247,8 +2408,8 @@
     border: 1px solid rgba(255, 255, 255, 0.12);
     color: #94a3b8;
     border-radius: 6px;
-    width: 24px;
-    height: 24px;
+    width: 26px;
+    height: 26px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -2256,12 +2417,23 @@
     opacity: 0;
     transition: all 0.2s ease;
   }
-  .dock-msg-bubble:hover .btn-copy-msg {
+  .dock-msg-bubble:hover .btn-copy-msg,
+  .dock-msg-bubble:focus-within .btn-copy-msg,
+  .btn-copy-msg:focus-visible {
     opacity: 1;
   }
   .btn-copy-msg:hover {
     background: rgba(255, 255, 255, 0.15);
     color: #ffffff;
+  }
+  .btn-copy-msg:focus-visible {
+    outline: 2px solid var(--primary, #6366f1);
+    outline-offset: 2px;
+  }
+  @media (hover: none), (pointer: coarse) {
+    .btn-copy-msg {
+      opacity: 1;
+    }
   }
 
   /* Quick Prompt Chips Bar */
@@ -2363,7 +2535,7 @@
     border-radius: 9px;
     border: 1px solid rgba(255, 255, 255, 0.12);
     background: rgba(255, 255, 255, 0.06);
-    color: #64748b;
+    color: #94a3b8;
     font-size: 12px;
     font-weight: 700;
     cursor: not-allowed;

@@ -91,6 +91,7 @@
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
     toast('ดาวน์โหลดตาราง Traceability Matrix (CSV) เรียบร้อย', 'success');
   }
 </script>
@@ -128,7 +129,7 @@
           </select>
         </div>
 
-        <button class="btn-export-csv" on:click={exportMatrixCSV}>
+        <button type="button" class="btn-export-csv" on:click={exportMatrixCSV}>
           <QAIcon name="download" /> Export CSV
         </button>
       </div>
@@ -141,14 +142,14 @@
           <thead>
             <tr>
               <th style="width: 7%;">Req Code</th>
-              <th style="width: 15%;">Requirement Title</th>
-              <th style="width: 11%;">Source Document</th>
+              <th style="width: 14%;">Requirement Title</th>
+              <th style="width: 10%;">Source Document</th>
               <th style="width: 10%;">Sitemap / Menu</th>
               <th style="width: 10%;">Use Case</th>
               <th style="width: 10%;">Screen Mockup</th>
               <th style="width: 10%;">Test Scenarios</th>
               <th style="width: 10%;">Defect Log</th>
-              <th style="width: 13%;">ข้อเอกสาร UAT (UAT Reference)</th>
+              <th style="width: 11%;">ข้อเอกสาร UAT (UAT Reference)</th>
               <th style="width: 8%; text-align: center;">Coverage</th>
             </tr>
           </thead>
@@ -173,7 +174,12 @@
                   <td><span class="sitemap-pill">{row.sitemap_node_title || '-'}</span></td>
                   <td><span class="usecase-pill">{row.use_case_id || '-'}</span></td>
                   <td>
-                    <button class="screen-link-btn" on:click={() => dispatch('openscreen', { screen_id: row.screen_id })}>
+                    <button
+                      type="button"
+                      class="screen-link-btn"
+                      disabled={!row.screen_id}
+                      on:click={() => row.screen_id && dispatch('openscreen', { screen_id: row.screen_id })}
+                    >
                       <QAIcon name="monitor" /> {row.screen_name || row.screen_id || '-'}
                     </button>
                   </td>
@@ -192,21 +198,21 @@
                     {#if Array.isArray(row.defect_log) && row.defect_log.length > 0}
                       <div class="defect-list">
                         {#each row.defect_log as d}
-                          <span class="defect-pill open" title={d}><QAIcon name="bug" /> {d}</span>
+                          <span class="defect-pill open" title={d}><QAIcon name="bug" /><span class="defect-text">{d}</span></span>
                         {/each}
                       </div>
                     {:else if row.defect_log && String(row.defect_log).trim() && row.defect_log !== '-'}
-                      <span class="defect-pill open" title={row.defect_log}><QAIcon name="bug" /> {row.defect_log}</span>
+                      <span class="defect-pill open" title={row.defect_log}><QAIcon name="bug" /><span class="defect-text">{row.defect_log}</span></span>
                     {:else if Array.isArray(row.defects) && row.defects.length > 0}
                       <div class="defect-list">
                         {#each row.defects as d}
-                          <span class="defect-pill open" title={d}><QAIcon name="bug" /> {d}</span>
+                          <span class="defect-pill open" title={d}><QAIcon name="bug" /><span class="defect-text">{d}</span></span>
                         {/each}
                       </div>
                     {:else if row.defects && String(row.defects).trim() && row.defects !== '-'}
-                      <span class="defect-pill open" title={row.defects}><QAIcon name="bug" /> {row.defects}</span>
+                      <span class="defect-pill open" title={row.defects}><QAIcon name="bug" /><span class="defect-text">{row.defects}</span></span>
                     {:else}
-                      <span class="defect-pill clean" title="ไม่มี Defect ค้าง"><QAIcon name="checkCircle" size={12} /> No Defects</span>
+                      <span class="defect-pill clean" title="ไม่มี Defect ค้าง"><QAIcon name="checkCircle" size={12} /><span class="defect-text">No Defects</span></span>
                     {/if}
                   </td>
                   <td>
@@ -225,7 +231,7 @@
                     </div>
                   </td>
                   <td style="text-align: center;">
-                    <span class="status-badge {String(row.status || '').toLowerCase().replace(' ', '-')}">
+                    <span class="status-badge {String(row.status || 'covered').trim().toLowerCase().replace(/\s+/g, '-')}">
                       {row.status || 'Covered'}
                     </span>
                   </td>
@@ -244,6 +250,8 @@
     flex-direction: column;
     gap: 14px;
     flex: 1;
+    min-width: 0;
+    min-height: 0;
   }
 
   .glass-panel {
@@ -261,35 +269,45 @@
   .matrix-filter-row {
       display: flex;
       align-items: center;
-      gap: 16px;
+      gap: 12px;
       flex-wrap: wrap;
     }
 
   .search-box {
       position: relative;
       flex: 1;
-      min-width: 250px;
+      min-width: 240px;
     }
 
   .search-icon {
       position: absolute;
-      left: 10px;
+      left: 11px;
       top: 50%;
       transform: translateY(-50%);
-      font-size: 12px;
-      opacity: 0.6;
+      display: inline-flex;
+      align-items: center;
+      color: var(--text-muted, #94a3b8);
+      pointer-events: none;
     }
 
   .matrix-search-input {
       width: 100%;
+      height: 36px;
       background: rgba(11, 13, 21, 0.8);
-      border: 1px solid var(--qa-border-strong);
-      color: white;
-      padding: 7px 10px 7px 30px;
-      border-radius: 6px;
-      font-size: 13px;
+      border: 1px solid var(--qa-border-strong, rgba(255, 255, 255, 0.14));
+      color: var(--text-main, #f8fafc);
+      padding: 0 12px 0 32px;
+      border-radius: 8px;
+      font-size: 12.5px;
       outline: none;
       box-sizing: border-box;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+  .matrix-search-input:focus-visible {
+      border-color: var(--primary, #6366f1);
+      box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.25);
+      outline: none;
     }
 
   .filter-select-group {
@@ -297,27 +315,45 @@
       align-items: center;
       gap: 8px;
       font-size: 12.5px;
-      color: var(--qa-text-soft);
+      color: var(--qa-text-soft, #cbd5e1);
+      min-width: 0;
+    }
+
+  .filter-select-group label {
+      white-space: nowrap;
+      flex-shrink: 0;
     }
 
   .filter-select {
-      background: rgba(11, 13, 21, 0.8);
-      border: 1px solid var(--qa-border-strong);
-      color: white;
-      padding: 6px 10px;
-      border-radius: 6px;
+      height: 36px;
+      background-color: rgba(11, 13, 21, 0.8);
+      border: 1px solid var(--qa-border-strong, rgba(255, 255, 255, 0.14));
+      color: var(--text-main, #f8fafc);
+      padding: 0 32px 0 12px;
+      border-radius: 8px;
       font-size: 12.5px;
-      outline: none;
+      box-sizing: border-box;
+    }
+
+  #matrix-doc-filter {
+      max-width: 240px;
     }
 
   .btn-export-csv {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      height: 36px;
       background: rgba(16, 185, 129, 0.2);
       border: 1px solid rgba(16, 185, 129, 0.4);
       color: #6ee7b7;
-      padding: 6px 14px;
-      border-radius: 6px;
+      padding: 0 14px;
+      border-radius: 8px;
       font-size: 12.5px;
       font-weight: 600;
+      white-space: nowrap;
+      flex-shrink: 0;
       cursor: pointer;
       transition: background-color 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s, transform 0.2s, opacity 0.2s;
     }
@@ -330,10 +366,11 @@
   .matrix-table-panel {
       padding: 0;
       overflow: hidden;
+      min-width: 0;
     }
 
   .table-container {
-      overflow-x: auto;
+      overflow: auto;
       max-height: 600px;
     }
 
@@ -344,13 +381,14 @@
     }
 
   .matrix-table th {
-      background: var(--qa-surface-raised);
+      background: var(--qa-surface-raised, #161b2a);
       padding: 12px 14px;
-      color: var(--qa-text-muted);
+      color: var(--qa-text-muted, #94a3b8);
       font-weight: 600;
       border-bottom: 1px solid rgba(255, 255, 255, 0.1);
       position: sticky;
       top: 0;
+      z-index: 3;
       text-align: left;
       white-space: nowrap;
     }
@@ -366,7 +404,7 @@
   .code-badge {
       background: rgba(99, 102, 241, 0.2);
       border: 1px solid rgba(99, 102, 241, 0.4);
-      color: var(--qa-iris-text);
+      color: var(--qa-iris-text, #a5b4fc);
       padding: 2px 6px;
       border-radius: 4px;
       font-family: monospace;
@@ -374,32 +412,41 @@
       font-size: 11px;
     }
 
-  .doc-cell { display: flex; align-items: center; gap: 6px; }
+  .doc-cell { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .doc-icon { display: inline-flex; flex-shrink: 0; }
 
-  .doc-name { font-size: 12px; color: var(--qa-text-soft); max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .doc-name { font-size: 12px; color: var(--qa-text-soft, #cbd5e1); max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   .sitemap-pill, .usecase-pill {
       font-size: 11.5px;
-      color: var(--qa-text);
+      color: var(--qa-text, #f1f5f9);
     }
 
   .screen-link-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      white-space: nowrap;
       background: rgba(139, 92, 246, 0.15);
       border: 1px solid rgba(139, 92, 246, 0.35);
       color: #c4b5fd;
-      padding: 3px 8px;
-      border-radius: 5px;
+      padding: 4px 8px;
+      border-radius: 6px;
       font-size: 11.5px;
       cursor: pointer;
       transition: background-color 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s;
       text-align: left;
     }
 
-  .screen-link-btn:hover { background: rgba(139, 92, 246, 0.3); color: white; }
+  .screen-link-btn:hover:not(:disabled) { background: rgba(139, 92, 246, 0.3); color: white; }
+  .screen-link-btn:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
 
   .testcases-list { display: flex; flex-direction: column; gap: 2px; }
 
-  .tc-item { font-size: 11px; color: var(--qa-text-muted); }
+  .tc-item { font-size: 11px; color: var(--qa-text-muted, #94a3b8); }
 
   /* Defect & UAT Badges in Matrix */
     .defect-list { display: flex; flex-direction: column; gap: 3px; }
@@ -413,9 +460,14 @@
       font-size: 11px;
       font-weight: 600;
       max-width: 170px;
+      vertical-align: middle;
+    }
+
+  .defect-text {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+      min-width: 0;
     }
 
   .defect-pill.open {
@@ -450,9 +502,12 @@
     }
 
   .uat-code-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
       font-size: 11px;
       font-weight: 700;
-      color: var(--qa-iris-soft);
+      color: var(--qa-iris-soft, #c7d2fe);
       white-space: nowrap;
       background: rgba(99, 102, 241, 0.18);
       padding: 1px 4px;
@@ -462,24 +517,54 @@
 
   .uat-title-text {
       font-size: 11px;
-      color: var(--qa-text);
+      color: var(--qa-text, #f1f5f9);
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+      min-width: 0;
     }
 
   .uat-status-sub {
       margin-top: 2px;
     }
 
-
-
   .status-badge {
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 3px 9px;
+    border-radius: 999px;
     font-size: 11px;
     font-weight: 700;
+    white-space: nowrap;
+    background: rgba(148, 163, 184, 0.14);
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    color: #cbd5e1;
+  }
+
+  .status-badge.covered {
+    background: rgba(16, 185, 129, 0.16);
+    border-color: rgba(16, 185, 129, 0.42);
+    color: #6ee7b7;
+  }
+
+  .status-badge.partially-covered {
+    background: rgba(245, 158, 11, 0.16);
+    border-color: rgba(245, 158, 11, 0.42);
+    color: #fcd34d;
+  }
+
+  .status-badge.pending {
+    background: rgba(148, 163, 184, 0.14);
+    border-color: rgba(148, 163, 184, 0.35);
+    color: #cbd5e1;
+  }
+
+  .status-badge.gap,
+  .status-badge.missing {
+    background: rgba(244, 63, 94, 0.16);
+    border-color: rgba(244, 63, 94, 0.42);
+    color: #fda4af;
   }
 
   .uat-pill {
@@ -502,7 +587,7 @@
   .uat-pill.ready {
     background: rgba(99, 102, 241, 0.2);
     border: 1px solid rgba(99, 102, 241, 0.5);
-    color: var(--qa-iris-text);
+    color: var(--qa-iris-text, #a5b4fc);
   }
 
   .uat-pill.pending {
@@ -515,5 +600,34 @@
     background: rgba(239, 68, 68, 0.2);
     border: 1px solid rgba(239, 68, 68, 0.5);
     color: #fca5a5;
+  }
+
+  @media (max-width: 768px) {
+    .matrix-filter-row {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 10px;
+    }
+
+    .search-box {
+      min-width: 0;
+      width: 100%;
+    }
+
+    .filter-select-group {
+      width: 100%;
+      justify-content: space-between;
+    }
+
+    .filter-select,
+    #matrix-doc-filter {
+      flex: 1;
+      max-width: none;
+      min-width: 0;
+    }
+
+    .btn-export-csv {
+      width: 100%;
+    }
   }
 </style>

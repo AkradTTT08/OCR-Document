@@ -1,5 +1,5 @@
 <script>
-  import { fade, fly } from "svelte/transition";
+  import { fade, fly, scale, slide } from "svelte/transition";
   import UploadPanel from "./lib/UploadPanel.svelte";
   import ResultsPanel from "./lib/ResultsPanel.svelte";
   import KnowledgeBase from "./lib/KnowledgeBase.svelte";
@@ -188,12 +188,15 @@
 
   function handleGlobalKeydown(e) {
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
-      e.preventDefault();
-      globalSearchInputEl?.focus();
+      if (globalSearchInputEl) {
+        e.preventDefault();
+        globalSearchInputEl.focus();
+      }
       return;
     }
     if (e.key === 'Escape') {
-      if (showMyProfileModal) requestCloseProfileModal();
+      if (showSidebarDeleteModal && !isSidebarDeleting) cancelSidebarDelete();
+      else if (showMyProfileModal) requestCloseProfileModal();
       else if (showProfileMenu) showProfileMenu = false;
       else if (showNotifications) showNotifications = false;
       else if (showNotificationConfigModal) showNotificationConfigModal = false;
@@ -365,6 +368,7 @@
   let legalModalType = null;
   let myProfileFormData = { 
     display_name: '', 
+    current_password: '',
     password: '',
     password_confirm: '',
     phone: '',
@@ -378,6 +382,7 @@
   let isLoadingMyProfile = false;
   let profileLoadError = null;
   let isSavingMyProfile = false;
+  let showMyCurrentPassword = false;
   let showMyPassword = false;
   let showMyPasswordConfirm = false;
   let profileValidationError = '';
@@ -418,7 +423,7 @@
     (myProfileFormData.line_id || '') !== (initialProfileSnapshot.line_id || '')
   ));
 
-  $: securityTabDirty = !!(myProfileFormData.password || myProfileFormData.password_confirm);
+  $: securityTabDirty = !!(myProfileFormData.current_password || myProfileFormData.password || myProfileFormData.password_confirm);
 
   $: passwordMismatch = !!(
     myProfileFormData.password &&
@@ -429,7 +434,7 @@
   $: passwordTooShort = !!(
     myProfileFormData.password &&
     myProfileFormData.password.length > 0 &&
-    myProfileFormData.password.length < 6
+    myProfileFormData.password.length < 8
   );
   
   function getUserIdFromToken() {
@@ -477,6 +482,7 @@
       profileLoadError = null;
       avatarRemovalPending = false;
       previousAvatarBeforeRemove = null;
+      showMyCurrentPassword = false;
       showMyPassword = false;
       showMyPasswordConfirm = false;
 
@@ -484,6 +490,7 @@
       let currentAvatar = localStorage.getItem('auth_avatar_path') || '';
       myProfileFormData = { 
         display_name: currentDisplayName, 
+        current_password: '',
         password: '',
         password_confirm: '',
         phone: '',
@@ -522,6 +529,7 @@
           if (data.user) {
             myProfileFormData = {
               display_name: data.user.display_name || fallbackName,
+              current_password: '',
               password: '',
               password_confirm: '',
               phone: data.user.phone || '',
@@ -608,9 +616,19 @@
       }
 
       if (myProfileFormData.password || myProfileFormData.password_confirm) {
-          if (myProfileFormData.password.length < 6) {
+          if ($authRole !== 'admin' && !myProfileFormData.current_password) {
               activeProfileTab = 'security';
-              profileValidationError = 'รหัสผ่านใหม่ต้องมีความยาวอย่างน้อย 6 ตัวอักษร';
+              profileValidationError = 'กรุณาระบุรหัสผ่านปัจจุบันเพื่อยืนยันการเปลี่ยนรหัสผ่าน';
+              return;
+          }
+          if (myProfileFormData.password.length < 8) {
+              activeProfileTab = 'security';
+              profileValidationError = 'รหัสผ่านใหม่ต้องมีความยาวอย่างน้อย 8 ตัวอักษร';
+              return;
+          }
+          if (myProfileFormData.password.length > 72) {
+              activeProfileTab = 'security';
+              profileValidationError = 'รหัสผ่านใหม่ต้องมีความยาวไม่เกิน 72 ตัวอักษร';
               return;
           }
           if (myProfileFormData.password !== myProfileFormData.password_confirm) {
@@ -660,6 +678,9 @@
               line_id: myProfileFormData.line_id.trim(),
               password: myProfileFormData.password || ''
           };
+          if (myProfileFormData.password && myProfileFormData.current_password) {
+              payload.current_password = myProfileFormData.current_password;
+          }
           if (newAvatarPath !== undefined) {
               payload.avatar_path = newAvatarPath;
           }
@@ -835,7 +856,7 @@
       <div class="sidebar-logo">
         <div class="logo-brand-group">
           <div class="logo-icon">
-            <img src="/spectra-favicon.svg" alt="Spectra QA Logo" />
+            <img src="/spectra-logo.png" alt="Spectra QA Logo" />
           </div>
           {#if !isSidebarCollapsed}
             <div class="logo-text-wrap">
@@ -1446,12 +1467,14 @@
           {/if}
         </div>
         <div class="topbar-right">
-          <div class="search-box">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-            <input bind:this={globalSearchInputEl} type="text" bind:value={$globalSearchQuery} on:keydown={onGlobalSearchKey} placeholder="ค้นหา (Ctrl+K)..." />
-          </div>
+          {#if $authRole === 'admin'}
+            <div class="search-box">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+              <input bind:this={globalSearchInputEl} type="text" bind:value={$globalSearchQuery} on:keydown={onGlobalSearchKey} placeholder="ค้นหา (Ctrl+K)..." aria-label="ค้นหา Knowledge Base" />
+            </div>
+          {/if}
           <div style="position: relative;">
-            <button class="icon-btn" on:click={() => showNotifications = !showNotifications} title="การแจ้งเตือน">
+            <button type="button" class="icon-btn" on:click={() => showNotifications = !showNotifications} title="การแจ้งเตือน" aria-label="การแจ้งเตือน">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 01-3.46 0"></path></svg>
               {#if $unreadCount > 0}
                 <span class="noti-badge-count">{$unreadCount}</span>
@@ -1813,6 +1836,33 @@
 
                     {:else if activeProfileTab === 'security'}
                         <div class="security-grid">
+                            {#if $authRole !== 'admin'}
+                                <div class="form-group" style="grid-column: 1 / -1;">
+                                    <label for="my_current_password">รหัสผ่านปัจจุบัน (Current Password)</label>
+                                    <div class="input-with-icon">
+                                        <span class="field-icon" aria-hidden="true">
+                                            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                                        </span>
+                                        <input
+                                          id="my_current_password"
+                                          type={showMyCurrentPassword ? "text" : "password"}
+                                          bind:value={myProfileFormData.current_password}
+                                          maxlength="72"
+                                          placeholder="ระบุรหัสผ่านปัจจุบันเมื่อต้องการเปลี่ยนรหัสผ่าน"
+                                          autocomplete="current-password"
+                                          class="password-input"
+                                        />
+                                        <button type="button" class="eye-btn" on:click={() => (showMyCurrentPassword = !showMyCurrentPassword)} title={showMyCurrentPassword ? "ซ่อนรหัสผ่าน" : "แสดงรหัสผ่าน"} aria-label={showMyCurrentPassword ? "ซ่อนรหัสผ่าน" : "แสดงรหัสผ่าน"}>
+                                            {#if showMyCurrentPassword}
+                                                <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="1.75" fill="none"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>
+                                            {:else}
+                                                <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="1.75" fill="none"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                                            {/if}
+                                        </button>
+                                    </div>
+                                </div>
+                            {/if}
+
                             <div class="form-group">
                                 <label for="my_new_password">รหัสผ่านใหม่ (New Password)</label>
                                 <div class="input-with-icon">
@@ -1823,7 +1873,8 @@
                                       id="my_new_password"
                                       type={showMyPassword ? "text" : "password"}
                                       bind:value={myProfileFormData.password}
-                                      placeholder="อย่างน้อย 6 ตัวอักษร"
+                                      maxlength="72"
+                                      placeholder="อย่างน้อย 8 ตัวอักษร"
                                       autocomplete="new-password"
                                       class="password-input"
                                     />
@@ -1836,7 +1887,7 @@
                                     </button>
                                 </div>
                                 {#if passwordTooShort}
-                                    <span class="field-error-text">รหัสผ่านต้องมีความยาวอย่างน้อย 6 ตัวอักษร</span>
+                                    <span class="field-error-text">รหัสผ่านต้องมีความยาวอย่างน้อย 8 ตัวอักษร</span>
                                 {/if}
                             </div>
 
@@ -1850,6 +1901,7 @@
                                       id="my_confirm_password"
                                       type={showMyPasswordConfirm ? "text" : "password"}
                                       bind:value={myProfileFormData.password_confirm}
+                                      maxlength="72"
                                       placeholder="พิมพ์รหัสผ่านใหม่อีกครั้งเพื่อยืนยัน"
                                       autocomplete="new-password"
                                       class="password-input"
@@ -1904,8 +1956,8 @@
 
 <!-- Sidebar Delete Confirmation Modal -->
 {#if showSidebarDeleteModal && sidebarItemToDelete}
-<div class="modal-backdrop" transition:fade={{ duration: 150 }} on:click={cancelSidebarDelete}>
-  <div class="modal-delete-dialog" on:click|stopPropagation>
+<div class="modal-backdrop" role="presentation" transition:fade={{ duration: 150 }} on:click={cancelSidebarDelete}>
+  <div class="modal-delete-dialog" role="dialog" aria-modal="true" aria-labelledby="sidebar-delete-title" on:click|stopPropagation>
     <div class="modal-delete-icon-wrap">
       <div class="delete-icon-circle">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="28" height="28">
@@ -1918,7 +1970,7 @@
     </div>
 
     <div class="modal-delete-content">
-      <h3 class="modal-delete-title">
+      <h3 id="sidebar-delete-title" class="modal-delete-title">
         {sidebarItemToDelete.type === 'group' ? 'ยืนยันการลบกลุ่มการตรวจสอบ' : 'ยืนยันการลบประวัติการตรวจ'}
       </h3>
       <p class="modal-delete-desc">
@@ -1927,7 +1979,7 @@
       </p>
 
       <div class="delete-warning-box">
-        <div class="warning-icon">⚠️</div>
+        <div class="warning-icon" aria-hidden="true">!</div>
         <div class="warning-text">
           {sidebarItemToDelete.type === 'group'
             ? 'ประวัติการสแกนเอกสารและรายงานผล QA ทั้งหมดในกลุ่มนี้จะถูกลบอย่างถาวร'
@@ -1937,10 +1989,10 @@
     </div>
 
     <div class="modal-delete-actions">
-      <button class="btn-cancel-action" on:click={cancelSidebarDelete} disabled={isSidebarDeleting}>
+      <button type="button" class="btn-cancel-action" on:click={cancelSidebarDelete} disabled={isSidebarDeleting}>
         ยกเลิก
       </button>
-      <button class="btn-danger-confirm" on:click={executeSidebarDelete} disabled={isSidebarDeleting}>
+      <button type="button" class="btn-danger-confirm" on:click={executeSidebarDelete} disabled={isSidebarDeleting}>
         {#if isSidebarDeleting}
           <span>กำลังลบ...</span>
         {:else}
@@ -1965,41 +2017,25 @@
     overflow: hidden;
   }
 
-  /* ── Animated Spectrum Background ── */
+  /* ── Ambient Spectrum Background (Static GPU-friendly glow) ── */
   .spectrum-bg {
     position: absolute;
-    width: 150vw;
-    height: 150vh;
-    top: -25vh;
-    left: -25vw;
-    background: conic-gradient(
-        from 180deg at 50% 50%,
-        var(--bg-dark) 0deg,
-        var(--danger) 60deg,
-        var(--warning) 120deg,
-        var(--success) 180deg,
-        var(--primary) 240deg,
-        var(--secondary) 300deg,
-        var(--bg-dark) 360deg
-    );
-    filter: blur(140px);
-    opacity: 0.15;
-    animation: spin 30s linear infinite;
+    inset: 0;
+    background: radial-gradient(circle at 18% 22%, rgba(99, 102, 241, 0.14), transparent 45%),
+                radial-gradient(circle at 82% 76%, rgba(168, 85, 247, 0.14), transparent 45%);
+    opacity: 0.75;
     z-index: 0;
     pointer-events: none;
   }
-  
+
   .spectrum-bg.layer-2 {
-    background: radial-gradient(circle at 70% 30%, rgba(99, 102, 241, 0.25), transparent 40%),
-                radial-gradient(circle at 30% 70%, rgba(168, 85, 247, 0.25), transparent 40%);
-    filter: blur(90px);
-    opacity: 0.6;
-    animation: pulse 15s ease-in-out infinite alternate;
+    background: radial-gradient(circle at 70% 30%, rgba(99, 102, 241, 0.12), transparent 42%),
+                radial-gradient(circle at 30% 70%, rgba(168, 85, 247, 0.12), transparent 42%);
+    opacity: 0.65;
     z-index: 0;
   }
 
   @keyframes spin { 100% { transform: rotate(360deg); } }
-  @keyframes pulse { 0% { transform: scale(1); } 100% { transform: scale(1.1); } }
 
   .app-container {
     position: relative;
@@ -2054,22 +2090,25 @@
   }
 
   .logo-icon {
-    width: 36px;
-    height: 36px;
-    padding: 2px;
-    background: linear-gradient(135deg, var(--primary), var(--secondary));
-    border-radius: 8px;
+    width: 38px;
+    height: 38px;
+    padding: 0;
+    background: #080912;
+    border: 1px solid rgba(168, 85, 247, 0.35);
+    border-radius: 10px;
     display: flex;
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
+    overflow: hidden;
+    box-shadow: 0 2px 10px rgba(99, 102, 241, 0.22);
   }
 
   .logo-icon img {
     width: 100%;
     height: 100%;
-    object-fit: contain;
-    border-radius: 6px;
+    object-fit: cover;
+    display: block;
   }
 
   .logo-text-wrap {
@@ -2195,11 +2234,11 @@
 
   .sidebar-proj-select {
     width: 100%;
-    background: rgba(10, 11, 18, 0.85);
+    background-color: rgba(10, 11, 18, 0.85);
     color: var(--text-main);
     border: 1px solid rgba(168, 85, 247, 0.3);
     border-radius: 8px;
-    padding: 5px 8px;
+    padding: 6px 28px 6px 10px;
     font-family: var(--font-th);
     font-size: 12px;
     font-weight: 500;
@@ -2603,15 +2642,21 @@
     background: transparent;
     border: none;
     color: #94a3b8;
-    width: 24px;
-    height: 24px;
+    width: 28px;
+    height: 28px;
     border-radius: 8px;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: all 0.2s ease;
+    transition: opacity 0.2s ease, color 0.2s ease, background-color 0.2s ease;
     z-index: 2;
+  }
+
+  @media (hover: none), (pointer: coarse) {
+    .btn-sidebar-delete {
+      opacity: 0.78;
+    }
   }
 
   .sidebar-item-row:hover .btn-sidebar-delete,
@@ -2829,7 +2874,6 @@
     overflow: hidden;
     display: flex;
     flex-direction: column;
-    min-width: 0;
     position: relative;
     background: rgba(18, 20, 28, 0.2);
   }
@@ -2837,14 +2881,15 @@
   /* Topbar */
   .topbar {
     height: 70px;
-    padding: 0 32px;
+    padding: 0 28px;
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 16px;
     border-bottom: 1px solid var(--glass-border);
     background: var(--glass-bg);
     backdrop-filter: var(--glass-blur);
-    z-index: 999;
+    z-index: var(--z-topbar, 900);
   }
 
   .breadcrumb {
@@ -2852,14 +2897,19 @@
     font-size: 12px;
     font-weight: 600;
     color: var(--text-dim);
-    letter-spacing: 1.5px;
+    letter-spacing: 1.2px;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .bc-active { color: var(--text-muted); }
 
   .topbar-right {
     display: flex;
     align-items: center;
-    gap: 20px;
+    gap: 14px;
+    flex-shrink: 0;
   }
 
   .search-box {
@@ -2867,9 +2917,9 @@
     background: var(--glass-bg-hover);
     border: 1px solid var(--glass-border);
     border-radius: 20px;
-    padding: 8px 16px;
-    width: 260px;
-    transition: border-color 0.3s;
+    padding: 8px 14px;
+    width: clamp(160px, 18vw, 240px);
+    transition: border-color 0.2s ease;
   }
   .search-box:focus-within {
     border-color: rgba(99, 102, 241, 0.5);
@@ -3124,7 +3174,9 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 16px 32px;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    padding: 14px 28px;
     background: var(--glass-bg);
     backdrop-filter: var(--glass-blur);
     border-top: 1px solid var(--glass-border);
@@ -3135,7 +3187,17 @@
   }
   .footer-links {
     display: flex;
-    gap: 24px;
+    flex-wrap: wrap;
+    gap: 10px 20px;
+  }
+  @media (max-width: 680px) {
+    .app-footer {
+      padding: 12px 16px;
+      font-size: 11px;
+    }
+    .footer-links {
+      gap: 8px 14px;
+    }
   }
   .footer-links a {
     color: var(--text-dim);
@@ -3196,13 +3258,6 @@
     color: white; font-family: var(--font-th);
   }
 
-  @keyframes spin {
-    to { transform: rotate(360deg); }
-  }
-  @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.5; }
-  }
   .history-item.is-processing {
     background: rgba(59, 130, 246, 0.05);
     border-color: rgba(59, 130, 246, 0.3);
@@ -3587,6 +3642,9 @@
   /* Form Layout & Icon Inputs */
   .profile-form-body {
     min-height: 175px;
+  }
+  .profile-form-body .form-group {
+    margin-bottom: 0;
   }
   .profile-form-body label {
     font-family: var(--font-th);

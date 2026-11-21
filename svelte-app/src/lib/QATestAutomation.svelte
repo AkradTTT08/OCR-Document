@@ -1,6 +1,6 @@
 <script>
   import { onMount, createEventDispatcher } from 'svelte';
-  import { fade, slide } from 'svelte/transition';
+  import { slide } from 'svelte/transition';
   import { toast } from './toastStore.js';
   import { selectedProjectStore, qaRefinementFeedback } from './qaHistoryStore.js';
   import ProjectSelection from './ProjectSelection.svelte';
@@ -106,7 +106,31 @@
     const pid = $selectedProjectStore.id || $selectedProjectStore.project_id;
     if (pid && pid !== lastLoadedPid) {
       lastLoadedPid = pid;
+      // Reset transient workflow state so previous project results never bleed across projects
+      exploreResult = null;
+      exploreError = null;
+      alignResult = null;
+      alignError = null;
+      generateResult = null;
+      generateError = null;
+      selectedTestSuite = null;
+      runTestSuccess = null;
+      runTestOutput = null;
+      runTestError = null;
+      healResult = null;
+      healError = null;
+      accuracyReport = null;
+      expandedReqId = null;
+      selectedDocFilter = 'ALL';
+      exploreUrl = $selectedProjectStore?.default_base_url || '';
       loadProjectWorkspace(pid);
+    }
+  }
+
+  function handleActivateKeydown(event, callback) {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      callback();
     }
   }
 
@@ -760,8 +784,8 @@
     {:else}
       <!-- Top Bar: Back Button + Playwright MCP Bridge Status -->
       <div class="top-command-bar">
-        <button class="btn-back" on:click={() => selectedProjectStore.set(null)}>
-          <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" fill="currentColor" viewBox="0 0 16 16">
+        <button type="button" class="btn-back" on:click={() => selectedProjectStore.set(null)}>
+          <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true">
             <path fill-rule="evenodd" d="M11.354 1.646a.5.5 0 0 1 0 .708L5.707 8l5.647 5.646a.5.5 0 0 1-.708.708l-6-6a.5.5 0 0 1 0-.708l6-6a.5.5 0 0 1 .708 0z"/>
           </svg>
           <span>เปลี่ยนโครงการ</span>
@@ -774,14 +798,19 @@
             <span class="mcp-tag">@playwright/mcp • {mcpBrowserType.toUpperCase()}</span>
           </div>
 
-          <select bind:value={mcpBrowserType} class="mcp-browser-select" title="เลือก Browser Engine สำหรับ Playwright MCP">
+          <select
+            bind:value={mcpBrowserType}
+            class="mcp-browser-select"
+            title="เลือก Browser Engine สำหรับ Playwright MCP"
+            aria-label="เลือก Browser Engine สำหรับ Playwright MCP"
+          >
             <option value="chromium">🌐 Chromium Engine</option>
             <option value="firefox">🦊 Firefox Engine</option>
             <option value="webkit">🧭 WebKit Engine</option>
           </select>
 
           <button type="button" class="btn-mcp-config" on:click={() => (showMcpDrawer = !showMcpDrawer)}>
-            🔌 ตั้งค่า & ดู MCP Tools ({showMcpDrawer ? 'ซ่อน' : '8 Tools'})
+            🔌 ตั้งค่า & ดู MCP Tools ({showMcpDrawer ? 'ซ่อน' : '5 Tools'})
           </button>
         </div>
       </div>
@@ -809,7 +838,11 @@
                 <h4>🔌 Playwright MCP Architecture & External Agent Bridge</h4>
                 <p>เชื่อมต่อการทำงานทั้งภายในระบบ Spectra QA และเปิดให้ AI Agent ภายนอก (Claude Desktop / Cursor / Playwright MCP Client) เรียกใช้งานได้โดยตรง</p>
               </div>
-              <select bind:value={mcpTransportMode} class="mcp-browser-select">
+              <select
+                bind:value={mcpTransportMode}
+                class="mcp-browser-select"
+                aria-label="เลือกโหมดการเชื่อมต่อ Playwright MCP"
+              >
                 <option value="builtin_playwright_mcp">Built-in Playwright MCP Engine (Active)</option>
                 <option value="sse_endpoint">Spectra MCP SSE Server (Port 8000)</option>
               </select>
@@ -850,9 +883,11 @@
             <div class="eco-metric">
               {projectDocuments.length} เอกสาร • {requirements.length} Requirements • {ecosystemStatus?.qa_consult_audits_count || 0} ผลตรวจ
             </div>
-            <button type="button" class="eco-link-btn" on:click={() => navigateToOtherAgent('qa_consult')}>
-              เปิด QA Consult ↗
-            </button>
+            <div class="eco-btn-group">
+              <button type="button" class="eco-link-btn" on:click={() => navigateToOtherAgent('qa_consult')}>
+                เปิด QA Consult ↗
+              </button>
+            </div>
           </div>
 
           <div class="eco-card" class:linked={projectTestCases.length > 0}>
@@ -887,9 +922,11 @@
                 ยังไม่มีผัง Flowchart (คลิกเพื่อไปสร้างผังระบบ)
               {/if}
             </div>
-            <button type="button" class="eco-link-btn" on:click={() => navigateToOtherAgent('qa_analysis_diagram')}>
-              เปิด QA Diagram ↗
-            </button>
+            <div class="eco-btn-group">
+              <button type="button" class="eco-link-btn" on:click={() => navigateToOtherAgent('qa_analysis_diagram')}>
+                เปิด QA Diagram ↗
+              </button>
+            </div>
           </div>
 
           <div class="eco-card linked">
@@ -1003,7 +1040,7 @@
               {/if}
             </div>
             <div class="header-actions-cluster">
-              <button class="btn-secondary-sm" on:click={syncRequirementsFromProject} disabled={isSyncingReqs}>
+              <button type="button" class="btn-secondary-sm" on:click={syncRequirementsFromProject} disabled={isSyncingReqs}>
                 {#if isSyncingReqs}
                   <div class="spinner-small"></div> กำลังสกัด Requirement...
                 {:else}
@@ -1028,6 +1065,7 @@
                   type="text"
                   bind:value={strategyCustomFocus}
                   placeholder="ระบุโฟกัสเพิ่มเติม (เช่น เน้นระบบชำระเงิน, ลดเวลา Regression ก่อน UAT)..."
+                  aria-label="ระบุโฟกัสเพิ่มเติมสำหรับการวิเคราะห์กลยุทธ์ Automate"
                   class="strategy-focus-input"
                 />
                 <button
@@ -1143,7 +1181,11 @@
                     <div class="eval-item-card decision-{item.decision?.toLowerCase()}">
                       <div class="eval-item-top">
                         <label class="eval-checkbox-label">
-                          <input type="checkbox" bind:checked={item.selected_for_script} />
+                          <input
+                            type="checkbox"
+                            bind:checked={item.selected_for_script}
+                            on:change={() => { strategyData = strategyData; }}
+                          />
                           <span class="req-code">{item.req_code}</span>
                           <strong>{item.title}</strong>
                         </label>
@@ -1240,6 +1282,7 @@
                     type="text"
                     bind:value={reqSearchText}
                     placeholder="ค้นหา Requirement (รหัส, ชื่อหัวข้อ, รายละเอียด)..."
+                    aria-label="ค้นหา Requirement"
                     class="search-input"
                   />
                 </div>
@@ -1249,7 +1292,14 @@
                 {#each filteredRequirements as req (req.req_id)}
                   {@const docInfo = getReqDocInfo(req)}
                   <div class="req-card" class:expanded={expandedReqId === req.req_id}>
-                    <div class="req-header" on:click={() => toggleExpand(req.req_id)}>
+                    <div
+                      class="req-header"
+                      role="button"
+                      tabindex="0"
+                      aria-expanded={expandedReqId === req.req_id}
+                      on:click={() => toggleExpand(req.req_id)}
+                      on:keydown={(e) => handleActivateKeydown(e, () => toggleExpand(req.req_id))}
+                    >
                       <div class="req-title">
                         <span class="req-code">{req.req_code}</span>
                         <h4>{req.title}</h4>
@@ -1379,22 +1429,22 @@
                 <div class="add-tc-form" transition:slide>
                   <h5>+ เพิ่ม Test Case สำหรับสร้าง Automate Script</h5>
                   <div class="tc-form-grid">
-                    <input type="text" bind:value={newTcForm.tc_id} placeholder="รหัส TC (เช่น TC-LOGIN-01)" class="url-input" />
-                    <input type="text" bind:value={newTcForm.req_code} placeholder="รหัส Req (เช่น REQ-001)" class="url-input" />
-                    <input type="text" bind:value={newTcForm.module} placeholder="โมดูล/หน้าจอ" class="url-input" />
-                    <select bind:value={newTcForm.type} class="url-input">
+                    <input type="text" bind:value={newTcForm.tc_id} placeholder="รหัส TC (เช่น TC-LOGIN-01)" aria-label="รหัส Test Case" class="url-input" />
+                    <input type="text" bind:value={newTcForm.req_code} placeholder="รหัส Req (เช่น REQ-001)" aria-label="รหัส Requirement" class="url-input" />
+                    <input type="text" bind:value={newTcForm.module} placeholder="โมดูล/หน้าจอ" aria-label="โมดูลหรือหน้าจอ" class="url-input" />
+                    <select bind:value={newTcForm.type} aria-label="ประเภท Test Case" class="url-input">
                       <option value="Positive">Positive (Happy Path)</option>
                       <option value="Negative">Negative (Validation / Error)</option>
                       <option value="Boundary">Boundary Check</option>
                     </select>
                   </div>
-                  <input type="text" bind:value={newTcForm.title} placeholder="ชื่อกรณีทดสอบ (Test Case Title)..." class="url-input" style="margin-top: 8px; width: 100%;" />
-                  <textarea bind:value={newTcForm.test_steps_text} rows="3" placeholder="ขั้นตอนการทดสอบ (บรรทัดละ 1 ขั้นตอน)..." class="url-input" style="margin-top: 8px; width: 100%;"></textarea>
+                  <input type="text" bind:value={newTcForm.title} placeholder="ชื่อกรณีทดสอบ (Test Case Title)..." aria-label="ชื่อกรณีทดสอบ" class="url-input" style="margin-top: 8px; width: 100%;" />
+                  <textarea bind:value={newTcForm.test_steps_text} rows="3" placeholder="ขั้นตอนการทดสอบ (บรรทัดละ 1 ขั้นตอน)..." aria-label="ขั้นตอนการทดสอบ" class="url-input" style="margin-top: 8px; width: 100%;"></textarea>
                   <div class="tc-form-grid" style="margin-top: 8px;">
-                    <input type="text" bind:value={newTcForm.expected_result} placeholder="ผลลัพธ์ที่คาดหวัง (Expected Result)..." class="url-input" />
-                    <input type="text" bind:value={newTcForm.business_rule} placeholder="กฎทางธุรกิจของลูกค้า (Business Rule)..." class="url-input" />
+                    <input type="text" bind:value={newTcForm.expected_result} placeholder="ผลลัพธ์ที่คาดหวัง (Expected Result)..." aria-label="ผลลัพธ์ที่คาดหวัง" class="url-input" />
+                    <input type="text" bind:value={newTcForm.business_rule} placeholder="กฎทางธุรกิจของลูกค้า (Business Rule)..." aria-label="กฎทางธุรกิจของลูกค้า" class="url-input" />
                   </div>
-                  <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px;">
+                  <div style="display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; margin-top: 10px;">
                     <button type="button" class="btn-secondary-sm" on:click={() => (showAddTcModal = false)}>ยกเลิก</button>
                     <button type="button" class="btn-primary-action" on:click={addCustomTestCase}>บันทึก Test Case</button>
                   </div>
@@ -1406,8 +1456,9 @@
                   type="text"
                   bind:value={tcSearchText}
                   placeholder="ค้นหา Test Case (TC-ID, REQ-ID, ชื่อกรณีทดสอบ, กฎธุรกิจ)..."
+                  aria-label="ค้นหา Test Case"
                   class="search-input"
-                  style="flex: 1;"
+                  style="flex: 1; min-width: 220px;"
                 />
                 <div class="filter-pills">
                   <button type="button" class="pill-btn" class:active={tcTypeFilter === 'ALL'} on:click={() => (tcTypeFilter = 'ALL')}>ทั้งหมด ({projectTestCases.length})</button>
@@ -1440,7 +1491,11 @@
                     <div class="tc-item-card" class:selected={tc.selected}>
                       <div class="tc-item-top">
                         <label class="tc-check-wrap">
-                          <input type="checkbox" bind:checked={tc.selected} />
+                          <input
+                            type="checkbox"
+                            bind:checked={tc.selected}
+                            on:change={() => { projectTestCases = [...projectTestCases]; }}
+                          />
                           <span class="tc-id-badge">{tc.tc_id}</span>
                           <span class="req-code">{tc.req_code}</span>
                           <strong>{tc.title}</strong>
@@ -1491,6 +1546,7 @@
                     type="text"
                     bind:value={exploreUrl}
                     placeholder="Target Website URL (เช่น http://localhost:5173 หรือ https://example.com)"
+                    aria-label="Target Website URL"
                     class="url-input"
                     style="flex: 2.5;"
                   />
@@ -1498,6 +1554,7 @@
                     type="text"
                     bind:value={exploreUsername}
                     placeholder="Username สำหรับ Login (ถ้ามี)"
+                    aria-label="Username สำหรับ Login"
                     class="url-input"
                     style="flex: 1;"
                   />
@@ -1505,6 +1562,7 @@
                     type="password"
                     bind:value={explorePassword}
                     placeholder="Password (ถ้ามี)"
+                    aria-label="Password สำหรับ Login"
                     class="url-input"
                     style="flex: 1;"
                   />
@@ -1514,6 +1572,7 @@
                     type="text"
                     bind:value={playInstructions}
                     placeholder="สั่งให้ AI เล่น Flow อะไรบนเว็บ (เช่น ล็อกอินแล้วเข้าเมนูค้นหา กรอกข้อมูลทดสอบ และกดปุ่มตรวจสอบตาราง)..."
+                    aria-label="คำสั่งให้ AI เล่น Flow บนเว็บ"
                     class="url-input"
                     style="flex: 1;"
                   />
@@ -1539,7 +1598,7 @@
                       <span class="check-icon">✓</span>
                       <h4>Playwright MCP เล่นระบบบนเว็บจริงและบันทึก Locators สำเร็จ ({exploreResult.title})</h4>
                     </div>
-                    <div style="display: flex; gap: 8px; align-items: center;">
+                    <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
                       <span class="saved-tag">💾 {exploreResult.file_saved}</span>
                       <button
                         type="button"
@@ -1572,7 +1631,7 @@
                   </div>
 
                   <!-- Recorded Actions Timeline + Live Screenshot Grid -->
-                  <div class="mcp-evidence-split">
+                  <div class="mcp-evidence-split" class:single-col={!exploreResult.screenshot_url}>
                     <div class="recorded-timeline-box">
                       <h5>🎬 บันทึกลำดับการเล่นระบบบนเว็บจริง (Playwright MCP Recorded Actions & Locators)</h5>
                       <div class="recorded-steps-list">
@@ -1640,6 +1699,7 @@
 
           <div style="display: flex; gap: 12px; flex-wrap: wrap;">
             <button
+              type="button"
               class="btn-primary-action"
               on:click={startAlignment}
               disabled={isAligning || !exploreResult || !exploreResult.file_saved}
@@ -1651,6 +1711,7 @@
               {/if}
             </button>
             <button
+              type="button"
               class="btn-secondary-sm"
               on:click={() => (activePhase = 4)}
             >
@@ -1717,7 +1778,7 @@
               {/if}
             </div>
             {#if generateResult}
-              <button class="btn-secondary-sm" on:click={downloadAllTests}>
+              <button type="button" class="btn-secondary-sm" on:click={downloadAllTests}>
                 📦 ดาวน์โหลดสคริปต์ทั้งหมด (.zip)
               </button>
             {/if}
@@ -1762,7 +1823,11 @@
                     <div
                       class="suite-card"
                       class:active={selectedTestSuite === suite}
+                      role="button"
+                      tabindex="0"
+                      aria-pressed={selectedTestSuite === suite}
                       on:click={() => (selectedTestSuite = suite)}
+                      on:keydown={(e) => handleActivateKeydown(e, () => (selectedTestSuite = suite))}
                     >
                       <div class="suite-header">
                         <strong>{suite.menu_name}</strong>
@@ -1789,7 +1854,7 @@
                           <span style="color: #94a3b8; font-size: 12.5px; margin-left: 10px;">— {selectedTestSuite.business_flow_summary}</span>
                         {/if}
                       </div>
-                      <div style="display: flex; gap: 8px;">
+                      <div style="display: flex; gap: 8px; flex-wrap: wrap;">
                         <button type="button" class="btn-secondary-sm" on:click={saveEditedSuiteCode} disabled={isSavingCode}>
                           {isSavingCode ? 'กำลังบันทึก...' : '💾 บันทึกการแก้ไขโค้ด'}
                         </button>
@@ -1805,6 +1870,7 @@
                     <textarea
                       bind:value={selectedTestSuite.code}
                       rows="18"
+                      aria-label="โค้ดสคริปต์ Playwright (.spec.ts)"
                       class="code-editor-textarea"
                       spellcheck="false"
                     ></textarea>
@@ -2031,6 +2097,7 @@
     width: 100%;
     height: 100%;
     overflow-y: auto;
+    overflow-x: hidden;
   }
 
   .qa-automate-container {
@@ -2083,7 +2150,8 @@
     display: inline-flex;
     align-items: center;
     gap: 8px;
-    padding: 6px 12px;
+    min-height: 34px;
+    padding: 4px 12px;
     background: rgba(16, 185, 129, 0.12);
     border: 1px solid rgba(16, 185, 129, 0.35);
     border-radius: 999px;
@@ -2098,6 +2166,7 @@
     border-radius: 50%;
     background: #10b981;
     box-shadow: 0 0 8px #10b981;
+    flex-shrink: 0;
   }
 
   .mcp-tag {
@@ -2110,22 +2179,27 @@
   }
 
   .mcp-browser-select {
-    background: rgba(15, 23, 42, 0.75);
+    height: 34px;
+    background-color: rgba(15, 23, 42, 0.75);
     border: 1px solid rgba(148, 163, 184, 0.25);
     color: #e2e8f0;
-    padding: 6px 12px;
+    padding: 0 28px 0 10px;
     border-radius: 8px;
     font-size: 12.5px;
     cursor: pointer;
   }
 
   .btn-mcp-config {
+    min-height: 34px;
     background: rgba(99, 102, 241, 0.14);
     border: 1px solid rgba(99, 102, 241, 0.35);
     color: #c7d2fe;
-    padding: 6px 12px;
+    padding: 0 12px;
     border-radius: 8px;
     font-size: 12.5px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
     cursor: pointer;
     transition: all 0.2s ease;
   }
@@ -2164,6 +2238,9 @@
     font-size: 13px;
     color: #cbd5e1;
     white-space: nowrap;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .active-project-badge strong {
@@ -2202,7 +2279,7 @@
 
   .mcp-tools-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
     gap: 10px;
   }
 
@@ -2214,12 +2291,14 @@
     display: flex;
     flex-direction: column;
     gap: 4px;
+    min-width: 0;
   }
 
   .mcp-tool-chip code {
     color: #34d399;
     font-size: 12px;
     font-weight: 600;
+    overflow-wrap: anywhere;
   }
 
   .mcp-tool-chip span {
@@ -2230,7 +2309,7 @@
   /* Cross-Agent Ecosystem Bar */
   .ecosystem-hub-bar {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
     gap: 12px;
     margin-top: 14px;
   }
@@ -2295,6 +2374,7 @@
     border-radius: 6px;
     font-size: 11.5px;
     cursor: pointer;
+    align-self: flex-start;
     transition: all 0.18s ease;
   }
 
@@ -2353,6 +2433,10 @@
     padding: 22px;
     backdrop-filter: var(--glass-blur);
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+  }
+
+  .glass-panel.disabled {
+    opacity: 0.6;
   }
 
   .panel-header {
@@ -2440,13 +2524,13 @@
     gap: 10px;
     flex-wrap: wrap;
     flex: 1;
-    min-width: 300px;
+    min-width: 0;
     justify-content: flex-end;
   }
 
   .strategy-focus-input {
     flex: 1;
-    min-width: 220px;
+    min-width: min(220px, 100%);
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: 8px;
@@ -2458,7 +2542,8 @@
   .btn-primary-action {
     background: linear-gradient(90deg, #6366f1, #8b5cf6);
     border: 1px solid rgba(167, 139, 250, 0.4);
-    padding: 9px 16px;
+    min-height: 36px;
+    padding: 8px 16px;
     border-radius: 8px;
     color: #ffffff;
     font-weight: 600;
@@ -2466,6 +2551,7 @@
     cursor: pointer;
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     gap: 8px;
     transition: all 0.2s ease;
     white-space: nowrap;
@@ -2484,13 +2570,15 @@
     background: rgba(255, 255, 255, 0.06);
     border: 1px solid rgba(255, 255, 255, 0.14);
     color: #e2e8f0;
-    padding: 8px 13px;
+    min-height: 36px;
+    padding: 7px 13px;
     border-radius: 8px;
     font-size: 12.5px;
     font-weight: 500;
     cursor: pointer;
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     gap: 6px;
     transition: all 0.2s ease;
   }
@@ -2560,7 +2648,7 @@
 
   .strategy-kpi-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(210px, 100%), 1fr));
     gap: 12px;
   }
 
@@ -2630,7 +2718,7 @@
 
   .roadmap-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(250px, 100%), 1fr));
     gap: 12px;
   }
 
@@ -2822,6 +2910,10 @@
     gap: 12px;
   }
 
+  .pros-cons-grid > div {
+    min-width: 0;
+  }
+
   .pros-box,
   .cons-box {
     background: rgba(255, 255, 255, 0.025);
@@ -2876,7 +2968,7 @@
   /* Phase 2 Dual-Source Styles */
   .mode-selector-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(250px, 100%), 1fr));
     gap: 12px;
     margin-bottom: 18px;
   }
@@ -2965,8 +3057,22 @@
 
   .tc-form-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
     gap: 8px;
+  }
+
+  .tc-form-grid input.url-input,
+  .tc-form-grid select.url-input {
+    height: 38px;
+    border-radius: 8px;
+    font-size: 13px;
+    border: 1px solid var(--glass-border);
+    background-color: rgba(15, 23, 42, 0.7);
+    color: #ffffff;
+  }
+
+  .tc-form-grid select.url-input {
+    padding: 0 32px 0 12px;
   }
 
   .tc-filter-bar {
@@ -3064,6 +3170,10 @@
     color: #cbd5e1;
   }
 
+  .tc-details-grid > div {
+    min-width: 0;
+  }
+
   .tc-steps-ol {
     margin: 4px 0 0;
     padding-left: 18px;
@@ -3092,12 +3202,17 @@
     margin-top: 14px;
   }
 
+  .mcp-evidence-split.single-col {
+    grid-template-columns: 1fr;
+  }
+
   .recorded-timeline-box,
   .mcp-screenshot-box {
     background: rgba(15, 23, 42, 0.75);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 10px;
     padding: 14px;
+    min-width: 0;
   }
 
   .recorded-timeline-box h5,
@@ -3242,7 +3357,11 @@
     font-size: 12.5px;
     line-height: 1.55;
     resize: vertical;
-    outline: none;
+  }
+
+  .code-editor-textarea:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: -2px;
   }
 
   .execution-action-bar {
@@ -3256,13 +3375,15 @@
     background: linear-gradient(90deg, #f59e0b, #ef4444);
     border: none;
     color: #ffffff;
-    padding: 9px 16px;
+    min-height: 36px;
+    padding: 8px 16px;
     border-radius: 8px;
     font-weight: 600;
     font-size: 13px;
     cursor: pointer;
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     gap: 8px;
   }
 
@@ -3299,7 +3420,7 @@
 
   .accuracy-metrics-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(210px, 100%), 1fr));
     gap: 12px;
   }
 
@@ -3357,6 +3478,7 @@
 
   .trace-table-wrap {
     overflow-x: auto;
+    min-width: 0;
   }
 
   .trace-table {
@@ -3393,6 +3515,7 @@
     border-radius: 999px;
     font-size: 11px;
     font-weight: 600;
+    white-space: nowrap;
     background: rgba(245, 158, 11, 0.16);
     color: #fcd34d;
   }
@@ -3455,6 +3578,20 @@
     }
   }
 
+  .req-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+
+  .search-box {
+    flex: 1;
+    min-width: 220px;
+    display: flex;
+  }
+
   .requirements-list {
     display: flex;
     flex-direction: column;
@@ -3472,8 +3609,15 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
     padding: 12px 16px;
     cursor: pointer;
+  }
+
+  .req-header:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: -2px;
   }
 
   .req-title {
@@ -3529,6 +3673,10 @@
     margin-top: 10px;
   }
 
+  .req-lists > .list-box {
+    min-width: 0;
+  }
+
   .list-box {
     background: rgba(0, 0, 0, 0.22);
     padding: 12px;
@@ -3548,11 +3696,21 @@
     padding: 10px 14px;
     color: #ffffff;
     font-size: 13px;
-    outline: none;
+  }
+
+  .search-input {
+    width: 100%;
   }
 
   .url-input:focus,
   .search-input:focus {
+    border-color: #a78bfa;
+  }
+
+  .url-input:focus-visible,
+  .search-input:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
     border-color: #a78bfa;
   }
 
@@ -3563,6 +3721,131 @@
     background: rgba(15, 23, 42, 0.65);
     border: 1px solid rgba(16, 185, 129, 0.28);
     border-radius: 12px;
+  }
+
+  /* Phase 3 Alignment Report Styles */
+  .align-result h4 {
+    margin: 0 0 12px;
+    font-size: 15.5px;
+    color: #f8fafc;
+  }
+
+  .align-summary {
+    background: rgba(99, 102, 241, 0.08);
+    border: 1px solid rgba(99, 102, 241, 0.28);
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin-bottom: 14px;
+    font-size: 13.5px;
+    color: #e2e8f0;
+    line-height: 1.55;
+  }
+
+  .align-summary p {
+    margin: 0;
+  }
+
+  .matched-elements-box {
+    background: rgba(16, 185, 129, 0.07);
+    border: 1px solid rgba(16, 185, 129, 0.28);
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin-bottom: 14px;
+    font-size: 13px;
+    color: #cbd5e1;
+  }
+
+  .align-issues {
+    background: rgba(15, 23, 42, 0.72);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin-bottom: 14px;
+  }
+
+  .align-issues strong {
+    display: block;
+    color: #fbbf24;
+    font-size: 13.5px;
+    margin-bottom: 8px;
+  }
+
+  .align-issues ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .issue-item {
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.03);
+    font-size: 13px;
+    color: #e2e8f0;
+    line-height: 1.5;
+  }
+
+  .issue-item.severity-low {
+    background: rgba(56, 189, 248, 0.08);
+    border-color: rgba(56, 189, 248, 0.3);
+    color: #e0f2fe;
+  }
+
+  .issue-item.severity-medium {
+    background: rgba(245, 158, 11, 0.1);
+    border-color: rgba(245, 158, 11, 0.35);
+    color: #fef3c7;
+  }
+
+  .issue-item.severity-high {
+    background: rgba(244, 63, 94, 0.12);
+    border-color: rgba(244, 63, 94, 0.4);
+    color: #ffe4e6;
+  }
+
+  .issue-req {
+    display: inline-block;
+    font-family: monospace;
+    font-size: 11.5px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 4px;
+    margin-right: 6px;
+    background: rgba(15, 23, 42, 0.65);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: #c4b5fd;
+  }
+
+  .no-issue {
+    margin: 0;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: rgba(16, 185, 129, 0.1);
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    color: #6ee7b7;
+    font-size: 13px;
+  }
+
+  .align-recommendation {
+    background: rgba(56, 189, 248, 0.08);
+    border: 1px solid rgba(56, 189, 248, 0.28);
+    border-radius: 10px;
+    padding: 12px 14px;
+    font-size: 13px;
+    color: #e2e8f0;
+    line-height: 1.55;
+  }
+
+  .align-recommendation p {
+    margin: 0;
+  }
+
+  .align-recommendation strong {
+    color: #7dd3fc;
   }
 
   .result-header {
@@ -3604,7 +3887,7 @@
 
   .metrics-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr));
     gap: 12px;
   }
 
@@ -3668,6 +3951,7 @@
     color: #cbd5e1;
     font-size: 12.5px;
     cursor: pointer;
+    max-width: 100%;
   }
 
   .doc-chip-btn.active {
@@ -3676,12 +3960,20 @@
     color: #ffffff;
   }
 
+  .doc-name {
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .doc-type-tag {
     font-size: 10px;
     font-weight: 700;
     padding: 2px 6px;
     border-radius: 4px;
     background: rgba(148, 163, 184, 0.2);
+    flex-shrink: 0;
   }
 
   .doc-req-count {
@@ -3689,6 +3981,7 @@
     padding: 1px 7px;
     border-radius: 999px;
     background: rgba(15, 23, 42, 0.6);
+    flex-shrink: 0;
   }
 
   .doc-req-count.has-reqs {
@@ -3697,7 +3990,7 @@
 
   .suite-list {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(250px, 100%), 1fr));
     gap: 12px;
   }
 
@@ -3707,6 +4000,12 @@
     border-radius: 10px;
     padding: 14px;
     cursor: pointer;
+    min-width: 0;
+  }
+
+  .suite-card:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
   }
 
   .suite-card.active {
@@ -3718,6 +4017,8 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
     margin-bottom: 6px;
   }
 
@@ -3727,9 +4028,14 @@
     padding: 2px 8px;
     border-radius: 999px;
     font-size: 11.5px;
+    flex-shrink: 0;
   }
 
   .suite-meta {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
     font-size: 12px;
     color: #94a3b8;
   }
@@ -3742,6 +4048,7 @@
     padding: 14px;
     max-height: 360px;
     overflow-y: auto;
+    overflow-x: auto;
   }
 
   .code-preview {
@@ -3763,11 +4070,67 @@
   }
 
   @media (max-width: 900px) {
+    .qa-automate-container {
+      padding: 14px 16px 28px;
+    }
+
+    .glass-panel {
+      padding: 16px;
+    }
+
     .pros-cons-grid,
     .tc-details-grid,
     .mcp-evidence-split,
     .req-lists {
       grid-template-columns: 1fr;
+    }
+
+    .strategy-controls {
+      width: 100%;
+      justify-content: stretch;
+    }
+  }
+
+  @media (max-width: 640px) {
+    .qa-automate-container {
+      padding: 12px 12px 24px;
+      gap: 14px;
+    }
+
+    .glass-panel {
+      padding: 14px;
+      border-radius: 12px;
+    }
+
+    h2 {
+      font-size: 20px;
+    }
+
+    .panel-header h3 {
+      font-size: 16px;
+    }
+
+    .btn-primary-action {
+      white-space: normal;
+      text-align: center;
+      line-height: 1.35;
+    }
+
+    .mcp-form-row {
+      flex-direction: column;
+    }
+
+    .mcp-form-row .url-input {
+      width: 100%;
+    }
+
+    .search-box {
+      min-width: 0;
+      width: 100%;
+    }
+
+    .doc-name {
+      max-width: 150px;
     }
   }
 </style>

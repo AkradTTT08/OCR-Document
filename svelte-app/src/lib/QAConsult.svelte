@@ -1365,9 +1365,30 @@
       isReevaluatingExitCriteria = false;
     }
   }
+  function handleWindowKeydown(e) {
+    if (e.key !== 'Escape') return;
+    if (docTypeOpen || skillOpen || groupTypeOpen) {
+      docTypeOpen = false;
+      skillOpen = false;
+      groupTypeOpen = false;
+      return;
+    }
+    if (showCreateGroupModal) {
+      closeCreateGroupModal();
+    } else if (showDeleteGroupModal && !isDeletingGroup) {
+      cancelDeleteGroup();
+    } else if (showConfirmModal && !isSendingEmail) {
+      showConfirmModal = false;
+    } else if (showSuccessModal) {
+      showSuccessModal = false;
+    }
+  }
 </script>
 
-  <svelte:window on:click={() => { docTypeOpen = false; skillOpen = false; groupTypeOpen = false; }} />
+  <svelte:window
+    on:click={() => { docTypeOpen = false; skillOpen = false; groupTypeOpen = false; }}
+    on:keydown={handleWindowKeydown}
+  />
 
 <div class="qa-container" in:fade class:full-width={!!scanResult}>
   {#if !selectedProjectObj}
@@ -1441,13 +1462,16 @@
                 class="group-card-item"
                 style="--card-idx: {idx};"
                 data-gtype={gType.toLowerCase().includes('srs') ? 'srs' : gType.toLowerCase().includes('test') ? 'testcase' : 'plan'}
-                role="button"
-                tabindex="0"
-                on:click={() => selectExistingGroup(group)}
-                on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), selectExistingGroup(group))}
               >
+                <button
+                  type="button"
+                  class="group-card-hitarea"
+                  title={cleanGName}
+                  aria-label={`เลือกกลุ่ม ${cleanGName}`}
+                  on:click={() => selectExistingGroup(group)}
+                ></button>
                 <div class="group-card-top">
-                  <div class="group-icon-wrap">
+                  <div class="group-icon-wrap" aria-hidden="true">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="19" height="19">
                       <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
                       <polyline points="14 2 14 8 20 8"></polyline>
@@ -1463,7 +1487,6 @@
                     title="ลบกลุ่มนี้" 
                     aria-label={`ลบกลุ่ม ${cleanGName}`}
                     on:click|stopPropagation={() => requestDeleteGroup(group)}
-                    on:keydown|stopPropagation
                   >
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                       <polyline points="3 6 5 6 21 6"></polyline>
@@ -1486,10 +1509,10 @@
                       <span class="stat-date">{formatHistoryTime(group.latest_date)}</span>
                     {/if}
                   </div>
-                  <button type="button" class="btn-select-group" on:click|stopPropagation={() => selectExistingGroup(group)}>
+                  <span class="btn-select-group" aria-hidden="true">
                     <span>เลือกกลุ่มนี้</span>
-                    <span class="btn-arrow" aria-hidden="true">&rarr;</span>
-                  </button>
+                    <span class="btn-arrow">&rarr;</span>
+                  </span>
                 </div>
               </div>
             {/each}
@@ -1519,28 +1542,39 @@
 
       <!-- MODAL: CREATE NEW GROUP -->
       {#if showCreateGroupModal}
+        <!-- svelte-ignore a11y-click-events-have-key-events -->
+        <!-- svelte-ignore a11y-no-static-element-interactions -->
         <div class="modal-backdrop" transition:fade={{ duration: 150 }} on:click={closeCreateGroupModal}>
-          <div class="modal-group-dialog" on:click|stopPropagation>
+          <!-- svelte-ignore a11y-click-events-have-key-events -->
+          <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+          <div
+            class="modal-group-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="create-group-modal-title"
+            on:click|stopPropagation
+          >
             <div class="modal-dialog-header">
               <div class="modal-dialog-title-wrap">
-                <div class="modal-dialog-icon">
+                <div class="modal-dialog-icon" aria-hidden="true">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
                     <line x1="12" y1="5" x2="12" y2="19"></line>
                     <line x1="5" y1="12" x2="19" y2="12"></line>
                   </svg>
                 </div>
                 <div>
-                  <h3 class="modal-dialog-title">สร้างกลุ่มการตรวจสอบใหม่</h3>
+                  <h3 id="create-group-modal-title" class="modal-dialog-title">สร้างกลุ่มการตรวจสอบใหม่</h3>
                   <div class="modal-dialog-sub">โครงการ: <span class="sub-proj-name">{resolvedProjectLabel}</span></div>
                 </div>
               </div>
-              <button class="btn-dialog-close" title="ปิดหน้าต่าง" on:click={closeCreateGroupModal}>✕</button>
+              <button type="button" class="btn-dialog-close" title="ปิดหน้าต่าง" aria-label="ปิดหน้าต่าง" on:click={closeCreateGroupModal}>✕</button>
             </div>
 
             <div class="modal-dialog-body">
               <div class="setting-group relative">
-                <label>ชื่อการตรวจสอบ (Group Name) <span class="req-star">*</span></label>
+                <label for="qa-scan-group-name">ชื่อการตรวจสอบ (Group Name) <span class="req-star">*</span></label>
                 <input
+                  id="qa-scan-group-name"
                   type="text"
                   class="modal-form-input"
                   bind:value={scanGroupName}
@@ -1557,15 +1591,48 @@
               <div class="setting-group relative" style="margin-top: 16px;">
                 <label>ประเภทเอกสารหลัก (Group Type)</label>
                 <!-- Custom Dropdown for Group Type -->
+                <!-- svelte-ignore a11y-click-events-have-key-events -->
+                <!-- svelte-ignore a11y-no-static-element-interactions -->
                 <div class="custom-select" on:click|stopPropagation={() => { groupTypeOpen = !groupTypeOpen; }}>
-                  <div class="select-trigger" class:open={groupTypeOpen}>
-                    {scanGroupType}
-                    <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                  <div
+                    class="select-trigger"
+                    class:open={groupTypeOpen}
+                    role="button"
+                    tabindex="0"
+                    aria-haspopup="listbox"
+                    aria-expanded={groupTypeOpen}
+                    on:keydown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        groupTypeOpen = !groupTypeOpen;
+                      } else if (e.key === 'Escape' && groupTypeOpen) {
+                        e.stopPropagation();
+                        groupTypeOpen = false;
+                      }
+                    }}
+                  >
+                    <span class="select-trigger-label">{scanGroupType}</span>
+                    <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg>
                   </div>
                   {#if groupTypeOpen}
-                    <div class="options-menu" transition:fade={{duration: 100}}>
+                    <div class="options-menu" role="listbox" transition:fade={{duration: 100}}>
                       {#each masterGroupTypes as type}
-                        <div class="option-item" class:selected={scanGroupType === type} on:click|stopPropagation={() => { scanGroupType = type; groupTypeOpen = false; }}>
+                        <div
+                          class="option-item"
+                          class:selected={scanGroupType === type}
+                          role="option"
+                          aria-selected={scanGroupType === type}
+                          tabindex="0"
+                          on:click|stopPropagation={() => { scanGroupType = type; groupTypeOpen = false; }}
+                          on:keydown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              scanGroupType = type;
+                              groupTypeOpen = false;
+                            }
+                          }}
+                        >
                           {type}
                         </div>
                       {/each}
@@ -1608,8 +1675,9 @@
             </div>
 
             <div class="modal-dialog-footer">
-              <button class="btn-dialog-cancel" on:click={closeCreateGroupModal}>ยกเลิก</button>
+              <button type="button" class="btn-dialog-cancel" on:click={closeCreateGroupModal}>ยกเลิก</button>
               <button 
+                type="button"
                 class="btn-primary btn-dialog-submit" 
                 disabled={!scanGroupName.trim()}
                 on:click={confirmGroup}
@@ -1623,9 +1691,19 @@
 
       <!-- MODAL: DELETE GROUP CONFIRMATION -->
       {#if showDeleteGroupModal && groupToDelete}
-        <div class="modal-backdrop" transition:fade={{ duration: 150 }} on:click={cancelDeleteGroup}>
-          <div class="modal-delete-dialog" on:click|stopPropagation>
-            <div class="modal-delete-icon-wrap">
+        <!-- svelte-ignore a11y-click-events-have-key-events -->
+        <!-- svelte-ignore a11y-no-static-element-interactions -->
+        <div class="modal-backdrop" transition:fade={{ duration: 150 }} on:click={() => !isDeletingGroup && cancelDeleteGroup()}>
+          <!-- svelte-ignore a11y-click-events-have-key-events -->
+          <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+          <div
+            class="modal-delete-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-group-modal-title"
+            on:click|stopPropagation
+          >
+            <div class="modal-delete-icon-wrap" aria-hidden="true">
               <div class="delete-icon-circle">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="28" height="28">
                   <polyline points="3 6 5 6 21 6"></polyline>
@@ -1637,13 +1715,13 @@
             </div>
 
             <div class="modal-delete-content">
-              <h3 class="modal-delete-title">ยืนยันการลบกลุ่มการตรวจสอบ</h3>
+              <h3 id="delete-group-modal-title" class="modal-delete-title">ยืนยันการลบกลุ่มการตรวจสอบ</h3>
               <p class="modal-delete-desc">
                 คุณต้องการลบกลุ่ม <span class="delete-target-badge">[{groupToDelete.group_type || 'General'}] {groupToDelete.group_name}</span>
               </p>
 
               <div class="delete-warning-box">
-                <div class="warning-icon">⚠️</div>
+                <div class="warning-icon" aria-hidden="true">⚠️</div>
                 <div class="warning-text">
                   ประวัติการสแกนเอกสารและรายงานผล QA ทั้งหมดในกลุ่มนี้จะถูกลบอย่างถาวร
                 </div>
@@ -1651,10 +1729,10 @@
             </div>
 
             <div class="modal-delete-actions">
-              <button class="btn-dialog-cancel" on:click={cancelDeleteGroup} disabled={isDeletingGroup}>
+              <button type="button" class="btn-dialog-cancel" on:click={cancelDeleteGroup} disabled={isDeletingGroup}>
                 ยกเลิก
               </button>
-              <button class="btn-danger-confirm" on:click={executeDeleteGroup} disabled={isDeletingGroup}>
+              <button type="button" class="btn-danger-confirm" on:click={executeDeleteGroup} disabled={isDeletingGroup}>
                 {#if isDeletingGroup}
                   <span>กำลังลบ...</span>
                 {:else}
@@ -1841,7 +1919,7 @@
           >
             {#if file}
               <div class="file-info" on:click|stopPropagation on:keydown|stopPropagation role="group">
-                <div class="file-icon" class:excel-icon={isExcelFile(file.name)}>
+                <div class="file-icon" class:excel-icon={isExcelFile(file.name)} class:markdown-icon={isMarkdownFile(file.name)}>
                   {#if isExcelFile(file.name)}
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: #10b981; width: 28px; height: 28px;">
                       <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
@@ -1859,6 +1937,8 @@
                     <span>{file.name}</span>
                     {#if isExcelFile(file.name)}
                       <span class="file-kind-badge excel">Excel Test Case</span>
+                    {:else if isMarkdownFile(file.name)}
+                      <span class="file-kind-badge markdown">Markdown / Text</span>
                     {:else}
                       <span class="file-kind-badge pdf">PDF Document</span>
                     {/if}
@@ -1880,7 +1960,7 @@
                   <span class="fmt-pill pdf">.PDF</span>
                   <span class="fmt-pill excel">.XLSX</span>
                   <span class="fmt-pill excel">.XLS</span>
-                  <span class="fmt-pill pdf">.MD</span>
+                  <span class="fmt-pill markdown">.MD</span>
                 </div>
               </div>
             {/if}
@@ -1918,38 +1998,84 @@
               {/if}
             </div>
             <!-- Custom Dropdown for Doc Type -->
+            <!-- svelte-ignore a11y-click-events-have-key-events -->
+            <!-- svelte-ignore a11y-no-static-element-interactions -->
             <div class="custom-select" on:click|stopPropagation={() => { docTypeOpen = !docTypeOpen; skillOpen = false; }}>
-              <div class="select-trigger" class:open={docTypeOpen}>
-                {#if selectedDocTypes.length === 0}
-                  <span style="color: #c4b5fd; display: flex; align-items: center; gap: 6px;">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
-                    -- ไม่ระบุ (AI วิเคราะห์และตรวจเอกสาร MD ใน Project อัตโนมัติ) --
-                  </span>
-                {:else if selectedDocTypes.length <= 2}
-                  <span style="color: #6ee7b7; font-weight: 500;">
-                    🎯 {selectedDocTypes.join(", ")}
-                  </span>
-                {:else}
-                  <span style="color: #6ee7b7; font-weight: 500;">
-                    🎯 เลือกแล้ว {selectedDocTypes.length} รายการ
-                  </span>
-                {/if}
-                <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+              <div
+                class="select-trigger"
+                class:open={docTypeOpen}
+                role="button"
+                tabindex="0"
+                aria-haspopup="listbox"
+                aria-expanded={docTypeOpen}
+                on:keydown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    docTypeOpen = !docTypeOpen;
+                    skillOpen = false;
+                  } else if (e.key === 'Escape' && docTypeOpen) {
+                    e.stopPropagation();
+                    docTypeOpen = false;
+                  }
+                }}
+              >
+                <span class="select-trigger-label">
+                  {#if selectedDocTypes.length === 0}
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="color: #c4b5fd; flex-shrink: 0;" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+                    <span class="select-trigger-text" style="color: #c4b5fd;">
+                      -- ไม่ระบุ (AI วิเคราะห์และตรวจเอกสาร MD ใน Project อัตโนมัติ) --
+                    </span>
+                  {:else if selectedDocTypes.length <= 2}
+                    <span class="select-trigger-text" style="color: #6ee7b7; font-weight: 500;">
+                      🎯 {selectedDocTypes.join(", ")}
+                    </span>
+                  {:else}
+                    <span class="select-trigger-text" style="color: #6ee7b7; font-weight: 500;">
+                      🎯 เลือกแล้ว {selectedDocTypes.length} รายการ
+                    </span>
+                  {/if}
+                </span>
+                <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg>
               </div>
               {#if docTypeOpen}
-                <div class="options-menu" transition:fade={{duration: 100}}>
+                <div class="options-menu" role="listbox" aria-multiselectable="true" transition:fade={{duration: 100}}>
                   <div 
                     class="option-item" 
-                    class:selected={selectedDocTypes.length === 0} 
+                    class:selected={selectedDocTypes.length === 0}
+                    role="option"
+                    aria-selected={selectedDocTypes.length === 0}
+                    tabindex="0"
                     on:click|stopPropagation={() => { selectedDocTypes = []; docTypeOpen = false; }}
+                    on:keydown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        selectedDocTypes = [];
+                        docTypeOpen = false;
+                      }
+                    }}
                     style="color: #c4b5fd; font-style: italic; border-bottom: 1px solid rgba(255,255,255,0.08);"
                   >
-                    <span style="margin-right: 8px;">🤖</span>
+                    <span style="margin-right: 8px;" aria-hidden="true">🤖</span>
                     -- ไม่ระบุ (AI Agent วิเคราะห์เนื้อหาและดึงเอกสาร MD ในโครงการอัตโนมัติ) --
                   </div>
                   {#each docTypes as type}
-                    <div class="option-item" class:selected={selectedDocTypes.includes(type)} on:click|stopPropagation={() => toggleDocType(type)}>
-                      <input type="checkbox" checked={selectedDocTypes.includes(type)} style="margin-right: 8px; cursor: pointer;" />
+                    <div
+                      class="option-item"
+                      class:selected={selectedDocTypes.includes(type)}
+                      role="option"
+                      aria-selected={selectedDocTypes.includes(type)}
+                      tabindex="0"
+                      on:click|stopPropagation={() => toggleDocType(type)}
+                      on:keydown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          toggleDocType(type);
+                        }
+                      }}
+                    >
+                      <input type="checkbox" checked={selectedDocTypes.includes(type)} tabindex="-1" aria-hidden="true" style="margin-right: 8px; cursor: pointer;" />
                       {type}
                     </div>
                   {/each}
@@ -1960,12 +2086,12 @@
             <div style="font-size: 11px; margin-top: 5px; line-height: 1.4;">
               {#if selectedDocTypes.length > 0}
                 <span style="color: #34d399; display: flex; align-items: center; gap: 4px;">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12" style="flex-shrink: 0;" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>
                   กำหนด Flow ชัดเจน: AI จะตรวจเจาะจงตาม Flow และมาตรฐานเอกสาร {selectedDocTypes.join(", ")} เพื่อความแม่นยำสูงสุด
                 </span>
               {:else}
                 <span style="color: #94a3b8; display: flex; align-items: center; gap: 4px;">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12" style="flex-shrink: 0;" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
                   โหมดอัตโนมัติ: AI Agent จะวิเคราะห์ประเภทเอกสาร และดึงเอกสาร MD ในโครงการมา Cross-check อัตโนมัติ
                 </span>
               {/if}
@@ -1975,27 +2101,64 @@
           <div class="setting-group relative">
             <label>ทักษะ AI (AI Skill)</label>
             <!-- Custom Dropdown for Skill -->
+            <!-- svelte-ignore a11y-click-events-have-key-events -->
+            <!-- svelte-ignore a11y-no-static-element-interactions -->
             <div class="custom-select" on:click|stopPropagation={() => { skillOpen = !skillOpen; docTypeOpen = false; }}>
-              <div class="select-trigger" class:open={skillOpen}>
-                {#if selectedSkills.length === 0}
-                  <span style="color: #9ca3af;">-- ไม่ใช้ Skill --</span>
-                {:else if selectedSkills.length <= 2}
-                  {selectedSkills.map(id => skills.find(s => s.skill_id === id)?.skill_name).join(", ")}
-                {:else}
-                  เลือกแล้ว {selectedSkills.length} ทักษะ
-                {/if}
-                <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+              <div
+                class="select-trigger"
+                class:open={skillOpen}
+                role="button"
+                tabindex="0"
+                aria-haspopup="listbox"
+                aria-expanded={skillOpen}
+                on:keydown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    skillOpen = !skillOpen;
+                    docTypeOpen = false;
+                  } else if (e.key === 'Escape' && skillOpen) {
+                    e.stopPropagation();
+                    skillOpen = false;
+                  }
+                }}
+              >
+                <span class="select-trigger-label">
+                  {#if selectedSkills.length === 0}
+                    <span class="select-trigger-text" style="color: #9ca3af;">-- ไม่ใช้ Skill --</span>
+                  {:else if selectedSkills.length <= 2}
+                    <span class="select-trigger-text">
+                      {selectedSkills.map(id => skills.find(s => s.skill_id === id)?.skill_name).join(", ")}
+                    </span>
+                  {:else}
+                    <span class="select-trigger-text">เลือกแล้ว {selectedSkills.length} ทักษะ</span>
+                  {/if}
+                </span>
+                <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg>
               </div>
               {#if skillOpen}
-                <div class="options-menu" transition:fade={{duration: 100}}>
+                <div class="options-menu" role="listbox" aria-multiselectable="true" transition:fade={{duration: 100}}>
                   {#if filteredSkills.length === 0}
                     <div class="option-item" style="color: #9ca3af; justify-content: center; cursor: default;">
                       -- ไม่มีทักษะ AI ที่เกี่ยวข้อง --
                     </div>
                   {:else}
                     {#each filteredSkills as skill}
-                      <div class="option-item" class:selected={selectedSkills.includes(skill.skill_id)} on:click|stopPropagation={() => toggleSkill(skill.skill_id)}>
-                        <input type="checkbox" checked={selectedSkills.includes(skill.skill_id)} style="margin-right: 8px; cursor: pointer;" />
+                      <div
+                        class="option-item"
+                        class:selected={selectedSkills.includes(skill.skill_id)}
+                        role="option"
+                        aria-selected={selectedSkills.includes(skill.skill_id)}
+                        tabindex="0"
+                        on:click|stopPropagation={() => toggleSkill(skill.skill_id)}
+                        on:keydown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            toggleSkill(skill.skill_id);
+                          }
+                        }}
+                      >
+                        <input type="checkbox" checked={selectedSkills.includes(skill.skill_id)} tabindex="-1" aria-hidden="true" style="margin-right: 8px; cursor: pointer;" />
                         {skill.skill_name}
                       </div>
                     {/each}
@@ -2006,16 +2169,17 @@
           </div>
 
           <div class="setting-group">
-            <label>อีเมลผู้รับผลการตรวจสอบ</label>
+            <label for="qa-email-input">อีเมลผู้รับผลการตรวจสอบ</label>
             <div class="email-input-container">
               <input 
+                id="qa-email-input"
                 type="text" 
                 bind:value={emailInput} 
                 placeholder="ระบุอีเมลแล้วกด Enter หรือปุ่ม +" 
                 on:keydown={handleEmailKeydown}
               />
-              <button class="btn-add-email" on:click={addEmail} disabled={!emailInput} title="เพิ่มอีเมล">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+              <button type="button" class="btn-add-email" on:click={addEmail} disabled={!emailInput} title="เพิ่มอีเมล" aria-label="เพิ่มอีเมล">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
               </button>
             </div>
             
@@ -2024,8 +2188,8 @@
                 {#each emailList as e, i}
                   <div class="email-tag">
                     {e}
-                    <button class="remove-tag" on:click={() => removeEmail(i)}>
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                    <button type="button" class="remove-tag" aria-label="ลบอีเมล" title="ลบอีเมล" on:click={() => removeEmail(i)}>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
                     </button>
                   </div>
                 {/each}
@@ -2124,7 +2288,7 @@
 
         <div class="right-actions">
           {#if (scanResult.qa_findings && scanResult.qa_findings.length > 0) || (scanResult.exit_criteria_eval && scanResult.exit_criteria_eval.status !== 'PASSED')}
-            <button class="btn-auto-fix-glow" on:click={sendFindingsToDocCreation} disabled={isSendingToDocCreation} title="ส่งข้อบกพร่องที่พบไปยัง QA Document Creation เพื่อปรับปรุงเอกสารให้ผ่าน และบันทึก Rule ปรับปรุง Agent">
+            <button type="button" class="btn-auto-fix-glow" on:click={sendFindingsToDocCreation} disabled={isSendingToDocCreation} title="ส่งข้อบกพร่องที่พบไปยัง QA Document Creation เพื่อปรับปรุงเอกสารให้ผ่าน และบันทึก Rule ปรับปรุง Agent">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15">
                 <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
                 <path d="M12 8v4l3 3"/>
@@ -2134,7 +2298,7 @@
           {/if}
 
           {#if scanResult.exit_criteria_eval}
-            <button class="btn-outline-glow" on:click={() => { gateResultData = scanResult.exit_criteria_eval; showGateModal = true; }}>
+            <button type="button" class="btn-outline-glow" on:click={() => { gateResultData = scanResult.exit_criteria_eval; showGateModal = true; }}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15">
                 <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
               </svg>
@@ -2159,12 +2323,12 @@
             </a>
           {/if}
 
-          <button class="btn-outline-action" on:click={resetForm} disabled={isSendingEmail}>
+          <button type="button" class="btn-outline-action" on:click={resetForm} disabled={isSendingEmail}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><polyline points="1 4 1 10 7 10"></polyline><polyline points="23 20 23 14 17 14"></polyline><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"></path></svg>
             เริ่มใหม่
           </button>
 
-          <button class="btn-primary-action" on:click={sendEmail} disabled={isSendingEmail || scanResult.emailSent || !scanResult.email}>
+          <button type="button" class="btn-primary-action" on:click={sendEmail} disabled={isSendingEmail || scanResult.emailSent || !scanResult.email}>
             {#if isSendingEmail}
               กำลังส่ง...
             {:else if scanResult.emailSent}
@@ -2185,20 +2349,20 @@
           นำทางด่วน:
         </span>
         {#if scanResult.qa_findings && scanResult.qa_findings.length > 0}
-          <button class="btn-quick-nav" on:click={() => scrollToSection('qa-findings-section')}>
+          <button type="button" class="btn-quick-nav" on:click={() => scrollToSection('qa-findings-section')}>
             📊 QA Audit Findings ({scanResult.qa_findings.length})
           </button>
         {:else}
-          <button class="btn-quick-nav" on:click={() => scrollToSection('qa-findings-section')} style="border-color: rgba(52, 211, 153, 0.3);">
+          <button type="button" class="btn-quick-nav" on:click={() => scrollToSection('qa-findings-section')} style="border-color: rgba(52, 211, 153, 0.3);">
             ✅ QA Audit Findings (ผ่าน)
           </button>
         {/if}
         {#if scanResult.exit_criteria_eval}
-          <button class="btn-quick-nav" on:click={() => scrollToSection('exit-criteria-section')}>
+          <button type="button" class="btn-quick-nav" on:click={() => scrollToSection('exit-criteria-section')}>
             📋 Exit Criteria Gate ({scanResult.exit_criteria_eval.score_percentage}%)
           </button>
         {/if}
-        <button class="btn-quick-nav highlight-btn" on:click={() => scrollToSection('consult-report-section')}>
+        <button type="button" class="btn-quick-nav highlight-btn" on:click={() => scrollToSection('consult-report-section')}>
           📝 Spectra QA Consult Report (รายงานวิเคราะห์)
         </button>
       </div>
@@ -2219,7 +2383,7 @@
               <span class="gate-status-pill status-info">
                 พบ {scanResult.qa_findings.length} รายการ
               </span>
-              <button class="btn-mini-autofix" on:click={sendFindingsToDocCreation} disabled={isSendingToDocCreation}>
+              <button type="button" class="btn-mini-autofix" on:click={sendFindingsToDocCreation} disabled={isSendingToDocCreation}>
                 🔄 ส่งแก้ไขใน QA Doc Creation
               </button>
             {:else}
@@ -2227,7 +2391,7 @@
                 ✅ ไม่พบข้อผิดพลาด
               </span>
             {/if}
-            <button class="btn-table-toggle" on:click={() => isFindingsTableExpanded = !isFindingsTableExpanded}>
+            <button type="button" class="btn-table-toggle" on:click={() => isFindingsTableExpanded = !isFindingsTableExpanded}>
               {isFindingsTableExpanded ? '🔽 ย่อตาราง' : '🔼 ขยายเต็ม'}
             </button>
           </div>
@@ -2301,14 +2465,14 @@
                 {isReevaluatingExitCriteria ? '⏳ กำลังประเมินเกณฑ์ใหม่...' : '🔄 ประเมินเกณฑ์ใหม่'}
               </button>
               {#if activeTabStats.status !== 'PASSED'}
-                <button class="btn-mini-autofix" on:click={sendFindingsToDocCreation} disabled={isSendingToDocCreation}>
+                <button type="button" class="btn-mini-autofix" on:click={sendFindingsToDocCreation} disabled={isSendingToDocCreation}>
                   🔄 ส่งแก้ไขตามเกณฑ์ Gate
                 </button>
               {/if}
               <span class="gate-status-pill status-{activeTabStats.status.toLowerCase()}">
                 {activeTabStats.status}
               </span>
-              <button class="btn-table-toggle" on:click={() => isExitTableExpanded = !isExitTableExpanded}>
+              <button type="button" class="btn-table-toggle" on:click={() => isExitTableExpanded = !isExitTableExpanded}>
                 {isExitTableExpanded ? '🔽 ย่อตาราง' : '🔼 ขยายเต็ม'}
               </button>
             </div>
@@ -2318,6 +2482,7 @@
           {#if criteriaTabsList && criteriaTabsList.length > 1}
             <div class="criteria-nav-tabs">
               <button 
+                type="button"
                 class="criteria-tab-btn" 
                 class:active={selectedCriteriaTab === 'all'}
                 on:click={() => selectedCriteriaTab = 'all'}
@@ -2334,6 +2499,7 @@
 
               {#each criteriaTabsList as grp}
                 <button 
+                  type="button"
                   class="criteria-tab-btn" 
                   class:active={selectedCriteriaTab === grp.key}
                   on:click={() => selectedCriteriaTab = grp.key}
@@ -2446,12 +2612,12 @@
           </div>
           <div class="email-header-actions">
             {#if scanResult.report}
-              <button class="btn-report-action" on:click={copyReportText} title="คัดลอกข้อความรายงาน">
+              <button type="button" class="btn-report-action" on:click={copyReportText} title="คัดลอกข้อความรายงาน">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                 คัดลอกรายงาน
               </button>
             {/if}
-            <button class="btn-report-action" on:click={() => scrollToSection('qa-top-header')} title="เลื่อนกลับด้านบน">
+            <button type="button" class="btn-report-action" on:click={() => scrollToSection('qa-top-header')} title="เลื่อนกลับด้านบน">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="18 15 12 9 6 15"></polyline></svg>
               กลับด้านบน
             </button>
@@ -2479,24 +2645,34 @@
 </div>
 
 {#if showConfirmModal}
-  <div class="modal-backdrop" transition:fade={{duration: 200}}>
-    <div class="modal-card">
-      <div class="modal-icon warning">
+  <!-- svelte-ignore a11y-click-events-have-key-events -->
+  <!-- svelte-ignore a11y-no-static-element-interactions -->
+  <div class="modal-backdrop" transition:fade={{duration: 200}} on:click={() => !isSendingEmail && (showConfirmModal = false)}>
+    <!-- svelte-ignore a11y-click-events-have-key-events -->
+    <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+    <div
+      class="modal-card"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="confirm-email-modal-title"
+      on:click|stopPropagation
+    >
+      <div class="modal-icon warning" aria-hidden="true">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="32" height="32"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
       </div>
-      <h3>ยืนยันการส่งอีเมล</h3>
+      <h3 id="confirm-email-modal-title">ยืนยันการส่งอีเมล</h3>
       <p class="modal-desc">คุณต้องการส่งรายงานผลการตรวจสอบนี้ ไปยังอีเมลต่อไปนี้ใช่หรือไม่?</p>
       <div class="modal-email-preview">
         {#each ((scanResult?.email || email) ? (scanResult?.email || email).split(',') : []).map(e => e.trim()).filter(Boolean) as itemEmail}
           <span class="modal-email-chip">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13" style="flex-shrink: 0;"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13" style="flex-shrink: 0;" aria-hidden="true"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>
             <span class="modal-email-text">{itemEmail}</span>
           </span>
         {/each}
       </div>
       <div class="modal-actions">
-        <button class="btn-outline" on:click={() => showConfirmModal = false} disabled={isSendingEmail}>ยกเลิก</button>
-        <button class="btn-primary" on:click={executeSendEmail} disabled={isSendingEmail}>
+        <button type="button" class="btn-outline" on:click={() => showConfirmModal = false} disabled={isSendingEmail}>ยกเลิก</button>
+        <button type="button" class="btn-primary" on:click={executeSendEmail} disabled={isSendingEmail}>
           {#if isSendingEmail}กำลังส่ง...{:else}ยืนยันส่งอีเมล{/if}
         </button>
       </div>
@@ -2505,23 +2681,33 @@
 {/if}
 
 {#if showSuccessModal}
-  <div class="modal-backdrop" transition:fade={{duration: 200}}>
-    <div class="modal-card">
-      <div class="modal-icon success">
+  <!-- svelte-ignore a11y-click-events-have-key-events -->
+  <!-- svelte-ignore a11y-no-static-element-interactions -->
+  <div class="modal-backdrop" transition:fade={{duration: 200}} on:click={() => showSuccessModal = false}>
+    <!-- svelte-ignore a11y-click-events-have-key-events -->
+    <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+    <div
+      class="modal-card"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="success-email-modal-title"
+      on:click|stopPropagation
+    >
+      <div class="modal-icon success" aria-hidden="true">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="32" height="32"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
       </div>
-      <h3>ส่งอีเมลสำเร็จ</h3>
+      <h3 id="success-email-modal-title">ส่งอีเมลสำเร็จ</h3>
       <p class="modal-desc">รายงานถูกส่งเรียบร้อยแล้ว ไปยังอีเมล:</p>
       <div class="modal-email-preview">
         {#each ((scanResult?.email || email) ? (scanResult?.email || email).split(',') : []).map(e => e.trim()).filter(Boolean) as itemEmail}
           <span class="modal-email-chip success">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13" style="flex-shrink: 0;"><path d="M20 6L9 17l-5-5"></path></svg>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13" style="flex-shrink: 0;" aria-hidden="true"><path d="M20 6L9 17l-5-5"></path></svg>
             <span class="modal-email-text">{itemEmail}</span>
           </span>
         {/each}
       </div>
       <div class="modal-actions centered">
-        <button class="btn-primary" on:click={() => showSuccessModal = false}>ตกลง</button>
+        <button type="button" class="btn-primary" on:click={() => showSuccessModal = false}>ตกลง</button>
       </div>
     </div>
   </div>
@@ -2546,33 +2732,17 @@
     padding: 20px 24px 80px 24px;
   }
   .top-nav,
-  .header-text-local,
   .header-text,
   .group-management-section,
   .project-history-section,
-  .main-card,
-  .loading-card,
-  .analysis-controls {
+  .main-card {
     max-width: 100%;
     width: 100%;
     margin-left: 0;
     margin-right: 0;
     box-sizing: border-box;
   }
-  .header-text-local {
-    text-align: center;
-  }
-  .header-text-local h2 {
-    font-size: 28px;
-    font-weight: 700;
-    margin-bottom: 10px;
-    color: var(--text-main, #f8fafc);
-  }
-  .header-text-local p {
-    color: var(--text-muted, #94a3b8);
-    font-size: 16px;
-  }
-  .upload-top-nav {
+  .top-nav.upload-top-nav {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -2648,11 +2818,11 @@
   }
   .form-grid {
     display: grid;
-    grid-template-columns: minmax(340px, 1.05fr) minmax(380px, 1fr);
-    gap: 32px;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 24px;
     align-items: stretch;
   }
-  @media (max-width: 960px) {
+  @media (max-width: 1120px) {
     .form-grid {
       grid-template-columns: 1fr;
     }
@@ -2661,6 +2831,7 @@
     display: flex;
     flex-direction: column;
     gap: 16px;
+    min-width: 0;
   }
   .pane-header {
     display: flex;
@@ -2803,6 +2974,11 @@
     border: 1px solid rgba(16, 185, 129, 0.32);
     color: #6ee7b7;
   }
+  .fmt-pill.markdown {
+    background: rgba(6, 182, 212, 0.14);
+    border: 1px solid rgba(6, 182, 212, 0.35);
+    color: #67e8f9;
+  }
   .file-info {
     display: flex;
     align-items: center;
@@ -2831,6 +3007,11 @@
     background: rgba(16, 185, 129, 0.14);
     border-color: rgba(16, 185, 129, 0.35);
   }
+  .file-icon.markdown-icon {
+    background: rgba(6, 182, 212, 0.14);
+    border-color: rgba(6, 182, 212, 0.35);
+    color: #67e8f9;
+  }
   .file-details {
     flex: 1;
     min-width: 0;
@@ -2853,6 +3034,11 @@
     background: rgba(16, 185, 129, 0.18);
     color: #34d399;
     border: 1px solid rgba(16, 185, 129, 0.4);
+  }
+  .file-kind-badge.markdown {
+    background: rgba(6, 182, 212, 0.16);
+    color: #67e8f9;
+    border: 1px solid rgba(6, 182, 212, 0.38);
   }
   .file-kind-badge.pdf {
     background: rgba(244, 63, 94, 0.18);
@@ -2887,11 +3073,13 @@
     display: flex;
     flex-direction: column;
     gap: 20px;
+    min-width: 0;
   }
   .setting-group {
     display: flex;
     flex-direction: column;
     gap: 8px;
+    min-width: 0;
   }
   .setting-group label {
     font-size: 13.5px;
@@ -2908,10 +3096,11 @@
     border-radius: 10px;
     font-size: 14px;
     outline: none;
+    min-width: 0;
     transition: border-color 0.22s ease, box-shadow 0.22s ease;
   }
   .email-input-container input::placeholder {
-    color: var(--text-dim, #475569);
+    color: var(--text-dim, #8494aa);
   }
   .email-input-container input:focus {
     border-color: var(--secondary, #a855f7);
@@ -2926,6 +3115,7 @@
     position: relative;
     user-select: none;
     cursor: pointer;
+    min-width: 0;
   }
   .select-trigger {
     background: rgba(18, 20, 28, 0.85);
@@ -2938,10 +3128,28 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 8px;
+    min-width: 0;
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3), inset 0 1px 1px rgba(255, 255, 255, 0.08);
     transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .select-trigger-label {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .select-trigger-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .select-trigger:hover {
     border-color: rgba(168, 85, 247, 0.75);
@@ -2957,6 +3165,7 @@
     width: 18px;
     height: 18px;
     color: #a855f7;
+    flex-shrink: 0;
     transition: transform 0.25s ease-in-out;
   }
   .select-trigger.open .chevron {
@@ -2967,11 +3176,11 @@
     top: calc(100% + 6px);
     left: 0;
     width: 100%;
-    background: rgba(15, 17, 26, 0.95); /* deep dark glass background */
+    background: rgba(15, 17, 26, 0.96); /* deep dark glass background */
     border: 1px solid rgba(168, 85, 247, 0.35);
     border-radius: 12px;
     box-shadow: 0 16px 40px rgba(0, 0, 0, 0.8), 0 0 20px rgba(168, 85, 247, 0.15);
-    z-index: 100;
+    z-index: var(--z-dropdown, 500);
     max-height: 240px;
     overflow-y: auto;
     padding: 6px;
@@ -3014,9 +3223,11 @@
   .email-input-container {
     display: flex;
     gap: 8px;
+    min-width: 0;
   }
   .email-input-container input {
     flex: 1;
+    min-width: 0;
   }
   .btn-add-email {
     background: rgba(99, 102, 241, 0.16);
@@ -3024,6 +3235,7 @@
     border-radius: 10px;
     color: var(--text-main, #f8fafc);
     width: 44px;
+    flex-shrink: 0;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -3047,10 +3259,10 @@
   .email-tag {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 4px;
     background: rgba(168, 85, 247, 0.16);
     border: 1px solid rgba(168, 85, 247, 0.4);
-    padding: 5px 12px;
+    padding: 3px 6px 3px 12px;
     border-radius: 16px;
     font-size: 13px;
     color: #e9d5ff;
@@ -3060,12 +3272,17 @@
     border: none;
     color: #d8b4fe;
     cursor: pointer;
-    padding: 2px;
-    display: flex;
+    width: 24px;
+    height: 24px;
+    min-width: 24px;
+    min-height: 24px;
+    padding: 0;
+    flex-shrink: 0;
+    display: inline-flex;
     align-items: center;
     justify-content: center;
     border-radius: 50%;
-    transition: background 0.2s;
+    transition: background 0.2s, color 0.2s;
   }
   .remove-tag:hover {
     background: rgba(255, 255, 255, 0.1);
@@ -3144,30 +3361,6 @@
     border-radius: 18px;
     border: 1px solid rgba(255, 255, 255, 0.08);
     box-sizing: border-box;
-  }
-  .spinner-box {
-    margin-bottom: 30px;
-  }
-  .loading-state h2 {
-    font-size: 24px;
-    margin-bottom: 10px;
-  }
-  .status-msg {
-    color: var(--text-muted, #94a3b8);
-    margin-bottom: 30px;
-  }
-  .progress-bar-container {
-    width: 100%;
-    max-width: 400px;
-    height: 8px;
-    background: rgba(255,255,255,0.1);
-    border-radius: 4px;
-    overflow: hidden;
-  }
-  .progress-fill {
-    height: 100%;
-    background: linear-gradient(90deg, #9333ea, #3b82f6);
-    transition: width 0.3s ease;
   }
 
   /* Result State Top Command Bar */
@@ -3382,21 +3575,6 @@
     background: rgba(255, 255, 255, 0.05);
   }
 
-  /* Project Selection Styles Removed (Now in ProjectSelection.svelte) */
-  .active-project-badge {
-    margin-top: 15px;
-    font-size: 14px;
-    color: var(--text-muted, #94a3b8);
-    background: rgba(147, 51, 234, 0.1);
-    padding: 8px 16px;
-    border-radius: 8px;
-    display: inline-block;
-    border: 1px solid rgba(147, 51, 234, 0.3);
-  }
-  .active-project-badge strong {
-    color: #d8b4fe;
-    font-weight: 600;
-  }
   .btn-text-change {
     background: none;
     border: none;
@@ -3510,44 +3688,31 @@
     border-radius: 4px;
   }
 
-  .action-buttons {
-    display: flex;
-    justify-content: center;
-    gap: 16px;
-    margin-top: 10px;
-    width: 100%;
-  }
-  .action-buttons .btn-primary, .action-buttons .btn-outline {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    margin-top: 0;
-    min-width: 180px;
-    padding: 12px 24px;
-  }
-
   /* Modals */
   .modal-backdrop {
     position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.7);
+    inset: 0;
+    background: rgba(0, 0, 0, 0.72);
     backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
     display: flex;
-    align-items: center;
+    align-items: safe center;
     justify-content: center;
-    z-index: 1000;
+    overflow-y: auto;
+    padding: 24px 16px;
+    box-sizing: border-box;
+    z-index: var(--z-modal, 10000);
   }
   .modal-card {
     background: #1e1e2d;
     border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: 16px;
     padding: 28px 24px;
-    width: 92%;
+    width: 100%;
     max-width: 480px;
+    max-height: 90vh;
+    overflow-y: auto;
+    margin: auto;
     text-align: center;
     box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.6);
     box-sizing: border-box;
@@ -3629,26 +3794,37 @@
     word-break: break-word;
     overflow-wrap: anywhere;
   }
-  .modal-card b {
-    color: white;
-    word-break: break-all;
-    overflow-wrap: anywhere;
-  }
   .modal-actions {
     display: flex;
     gap: 12px;
     justify-content: stretch;
+    align-items: stretch;
+    flex-wrap: wrap;
   }
   .modal-actions.centered {
     justify-content: center;
   }
-  .modal-actions button {
-    flex: 1;
+  .modal-actions .btn-outline,
+  .modal-actions .btn-primary {
+    flex: 1 1 140px;
+    width: auto;
     margin: 0;
+    padding: 11px 20px;
+    min-height: 42px;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    box-sizing: border-box;
   }
-  .modal-actions.centered button {
+  .modal-actions.centered .btn-primary,
+  .modal-actions.centered .btn-outline {
     flex: none;
-    min-width: 120px;
+    min-width: 140px;
+    width: auto;
   }
 
   /* Excel Download Button */
@@ -4260,7 +4436,7 @@
     flex-direction: column;
     align-items: flex-start;
     gap: 8px;
-    flex: 1 1 420px;
+    flex: 1 1 320px;
     min-width: 0;
   }
 
@@ -4310,7 +4486,9 @@
     flex-direction: column;
     align-items: flex-end;
     gap: 7px;
-    flex-shrink: 0;
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 100%;
   }
   @media (max-width: 820px) {
     .banner-right {
@@ -4330,15 +4508,26 @@
     font-size: 13px;
     color: #cbd5e1;
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    box-sizing: border-box;
   }
   .active-project-pill .proj-lbl {
     color: #94a3b8;
     font-weight: 500;
+    flex-shrink: 0;
+    white-space: nowrap;
   }
   .active-project-pill strong {
     color: #e9d5ff;
     font-weight: 700;
     letter-spacing: 0.01em;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .proj-live-dot {
     width: 8px;
@@ -4495,13 +4684,15 @@
     background: rgba(15, 23, 42, 0.95);
     border: 1px solid rgba(168, 85, 247, 0.35);
     border-radius: 18px;
-    width: 90%;
+    width: 100%;
     max-width: 540px;
+    margin: auto;
     box-shadow: 0 25px 60px rgba(0, 0, 0, 0.8), 0 0 30px rgba(147, 51, 234, 0.2);
     backdrop-filter: blur(16px);
     -webkit-backdrop-filter: blur(16px);
-    overflow: hidden;
+    overflow: visible;
     animation: modalPop 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    box-sizing: border-box;
   }
   @keyframes modalPop {
     from { opacity: 0; transform: scale(0.95) translateY(10px); }
@@ -4511,8 +4702,10 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 12px;
     padding: 20px 24px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 18px 18px 0 0;
     background: rgba(30, 41, 59, 0.5);
   }
   .modal-dialog-title-wrap {
@@ -4594,30 +4787,45 @@
   .modal-dialog-footer {
     padding: 16px 24px;
     border-top: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 0 0 18px 18px;
     background: rgba(15, 23, 42, 0.8);
     display: flex;
     justify-content: flex-end;
+    align-items: center;
+    flex-wrap: wrap;
     gap: 12px;
   }
   .btn-dialog-cancel {
     background: rgba(255, 255, 255, 0.06);
     border: 1px solid rgba(255, 255, 255, 0.12);
     color: #cbd5e1;
-    padding: 9px 18px;
+    padding: 10px 18px;
+    min-height: 40px;
     font-size: 13.5px;
-    font-weight: 500;
+    font-weight: 600;
     border-radius: 10px;
     cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    white-space: nowrap;
     transition: all 0.2s;
   }
   .btn-dialog-cancel:hover {
     background: rgba(255, 255, 255, 0.12);
     color: white;
   }
-  .btn-dialog-submit {
+  .modal-dialog-footer .btn-dialog-submit {
+    width: auto;
     margin: 0;
-    padding: 9px 20px;
+    padding: 10px 20px;
+    min-height: 40px;
     font-size: 13.5px;
+    font-weight: 600;
+    border-radius: 10px;
+    flex-shrink: 0;
+    white-space: nowrap;
   }
 
   /* Delete Group Confirmation Modal */
@@ -4625,15 +4833,18 @@
     background: rgba(15, 23, 42, 0.96);
     border: 1px solid rgba(239, 68, 68, 0.35);
     border-radius: 18px;
-    width: 90%;
+    width: 100%;
     max-width: 440px;
+    max-height: 90vh;
+    overflow-y: auto;
+    margin: auto;
     box-shadow: 0 25px 60px rgba(0, 0, 0, 0.85), 0 0 35px rgba(239, 68, 68, 0.15);
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
-    overflow: hidden;
     text-align: center;
     padding: 28px 24px;
     animation: modalPop 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    box-sizing: border-box;
   }
   .modal-delete-icon-wrap {
     display: flex;
@@ -4778,16 +4989,31 @@
   .group-card-item[data-gtype="plan"]::before {
     background: linear-gradient(90deg, #10b981, #3b82f6, #6366f1);
   }
+  .group-card-hitarea {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    width: 100%;
+    height: 100%;
+    background: transparent;
+    border: none;
+    border-radius: inherit;
+    cursor: pointer;
+    padding: 0;
+  }
+  .group-card-hitarea:focus-visible {
+    outline: 2px solid var(--primary, #6366f1);
+    outline-offset: -2px;
+  }
   .group-card-item:hover,
-  .group-card-item:focus-visible {
+  .group-card-item:focus-within {
     background: linear-gradient(160deg, rgba(28, 32, 50, 0.92), rgba(18, 22, 36, 0.85));
     border-color: rgba(168, 85, 247, 0.62);
     transform: translateY(-4px);
-    box-shadow: 0 14px 30px -10px rgba(147, 51, 234, 0.32), 0 0 0 1px rgba(168, 85, 247, 0.18);
-    outline: none;
+    box-shadow: 0 14px 30px -10px rgba(147, 51, 234, 0.32), 0 0 0 2px rgba(99, 102, 241, 0.45);
   }
   .group-card-item:hover::before,
-  .group-card-item:focus-visible::before {
+  .group-card-item:focus-within::before {
     opacity: 1;
     transform: scaleX(1);
   }
@@ -4861,6 +5087,8 @@
     text-overflow: ellipsis;
   }
   .btn-card-delete {
+    position: relative;
+    z-index: 2;
     background: none;
     border: none;
     color: #ef4444;
@@ -4868,6 +5096,7 @@
     cursor: pointer;
     padding: 5px;
     border-radius: 6px;
+    flex-shrink: 0;
     transition: all 0.2s ease;
   }
   .btn-card-delete:hover {
@@ -5275,5 +5504,15 @@
     border-color: transparent;
     transform: translateY(-1px);
     box-shadow: 0 3px 10px rgba(245, 158, 11, 0.3);
+  }
+
+  @media (max-width: 720px) {
+    .gate-summary-bar {
+      grid-template-columns: repeat(2, 1fr);
+    }
+    .result-state .result-subtitle,
+    .result-meta-strip {
+      padding-left: 0;
+    }
   }
 </style>

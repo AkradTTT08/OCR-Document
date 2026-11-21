@@ -126,7 +126,7 @@
     nodes = [
       { id: 'start_1', type: 'input', position: { x: 60, y: 200 }, data: { text: "คำแนะนำสำหรับสร้างเอกสาร..." } },
       { id: 'debate_1', type: 'debate', position: { x: 380, y: 180 }, data: { generator: 'qa_doc_create', critic: 'qa_consult', max_loops: 2, project_id: pId } },
-      { id: 'out_1', type: 'output', position: { x: 740, y: 200 }, data: { label: 'ผลลัพธ์สุดท้าย' } },
+      { id: 'out_1', type: 'output', position: { x: 920, y: 200 }, data: { label: 'ผลลัพธ์สุดท้าย' } },
     ];
     edges = [
       { id: 'e1-2', source: 'start_1', target: 'debate_1' },
@@ -137,6 +137,7 @@
   }
 
   function handleConnect(connection) {
+    if (!connection) return;
     edges = addEdge(connection, edges);
   }
 
@@ -194,15 +195,45 @@
     }
   }
 
+  const NODE_CENTER_OFFSETS = {
+    input: { x: 125, y: 55 },
+    agent: { x: 160, y: 60 },
+    debate: { x: 225, y: 85 },
+    output: { x: 100, y: 50 }
+  };
+
   const onDrop = (event) => {
     event.preventDefault();
     const type = event.dataTransfer.getData('application/svelteflow');
     if (!type) return;
-    const bounds = event.currentTarget.getBoundingClientRect();
+    const container = event.currentTarget;
+    const bounds = container.getBoundingClientRect();
+    let zoom = 1;
+    let panX = 0;
+    let panY = 0;
+    const viewportEl = container.querySelector('.svelte-flow__viewport');
+    if (viewportEl && typeof DOMMatrix !== 'undefined') {
+      const transformStr = getComputedStyle(viewportEl).transform;
+      if (transformStr && transformStr !== 'none') {
+        try {
+          const matrix = new DOMMatrix(transformStr);
+          if (matrix.a > 0) {
+            zoom = matrix.a;
+            panX = matrix.e;
+            panY = matrix.f;
+          }
+        } catch {
+          // fallback to identity transform
+        }
+      }
+    }
+    const offset = NODE_CENTER_OFFSETS[type] || { x: 120, y: 50 };
+    const flowX = (event.clientX - bounds.left - panX) / zoom - offset.x;
+    const flowY = (event.clientY - bounds.top - panY) / zoom - offset.y;
     const newNode = {
       id: `node_${Date.now()}`,
       type,
-      position: { x: event.clientX - bounds.left - 100, y: event.clientY - bounds.top - 40 },
+      position: { x: Math.round(flowX), y: Math.round(flowY) },
       data: getDefaultDataForType(type)
     };
     nodes = [...nodes, newNode];
@@ -305,17 +336,17 @@
     </div>
   {:else if currentStep === 'pipeline'}
     <div class="top-nav">
-      <button class="btn-back" on:click={resetProject}>
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+      <button type="button" class="btn-back" on:click={resetProject}>
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true">
           <path fill-rule="evenodd" d="M11.354 1.646a.5.5 0 0 1 0 .708L5.707 8l5.647 5.646a.5.5 0 0 1-.708.708l-6-6a.5.5 0 0 1 0-.708l6-6a.5.5 0 0 1 .708 0z"/>
         </svg>
         เปลี่ยนโครงการ
       </button>
-      <div class="active-project-badge">
-        โครงการปัจจุบัน: <strong>{selectedProjectObj.project_code || selectedProjectObj.name}</strong>
+      <div class="active-project-badge" title={selectedProjectObj.project_code || selectedProjectObj.name}>
+        <span>โครงการปัจจุบัน:</span> <strong>{selectedProjectObj.project_code || selectedProjectObj.name}</strong>
       </div>
     </div>
-    <div class="pipeline-selection-wrapper" style="padding: 24px; max-width: 100%; margin: 0; width: 100%; overflow-y: auto; flex: 1; box-sizing: border-box;">
+    <div class="pipeline-selection-wrapper">
       <PipelineSelection 
         projectId={selectedProjectObj?.id || selectedProjectObj?.project_id}
         on:select={(e) => selectPipeline(e.detail)}
@@ -324,14 +355,14 @@
     </div>
   {:else if currentStep === 'canvas'}
     <div class="top-nav">
-      <button class="btn-back" on:click={backToPipeline}>
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+      <button type="button" class="btn-back" on:click={backToPipeline}>
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true">
           <path fill-rule="evenodd" d="M11.354 1.646a.5.5 0 0 1 0 .708L5.707 8l5.647 5.646a.5.5 0 0 1-.708.708l-6-6a.5.5 0 0 1 0-.708l6-6a.5.5 0 0 1 .708 0z"/>
         </svg>
         กลับไปเลือก Pipeline
       </button>
-      <div class="active-project-badge">
-        โครงการปัจจุบัน: <strong>{selectedProjectObj.project_code || selectedProjectObj.name}</strong>
+      <div class="active-project-badge" title={selectedProjectObj.project_code || selectedProjectObj.name}>
+        <span>โครงการปัจจุบัน:</span> <strong>{selectedProjectObj.project_code || selectedProjectObj.name}</strong>
       </div>
     </div>
 
@@ -339,7 +370,7 @@
       <!-- Left Node Palette -->
       <aside class="node-palette">
         <div class="palette-header">
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line></svg>
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line></svg>
           AI Workflow Builder
         </div>
 
@@ -399,7 +430,6 @@
           {nodeTypes} 
           fitView 
           onconnect={handleConnect}
-          on:connect={(e) => handleConnect(e.detail)}
         >
           <Background gap={20} size={1} color="#1f2937" />
           <Controls />
@@ -498,6 +528,8 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
     padding: 10px 16px;
     background: rgba(15, 20, 32, 0.8);
     border-bottom: 1px solid rgba(255, 255, 255, 0.1);
@@ -507,6 +539,7 @@
     display: flex;
     align-items: center;
     gap: 6px;
+    flex-shrink: 0;
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid var(--glass-border);
     color: var(--text-muted);
@@ -525,20 +558,42 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
+    min-width: 0;
+    max-width: 100%;
     background: rgba(99, 102, 241, 0.15);
     border: 1px solid rgba(99, 102, 241, 0.3);
     color: #a5b4fc;
     padding: 4px 12px;
     border-radius: 20px;
     font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+  }
+  .active-project-badge strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
-  .project-selection-scroll,
-  .project-selection-wrapper {
+  .project-selection-scroll {
     padding: 20px 24px;
     width: 100%;
     height: 100%;
+    min-height: 0;
+    min-width: 0;
     overflow-y: auto;
+    box-sizing: border-box;
+  }
+
+  .pipeline-selection-wrapper {
+    padding: 24px;
+    max-width: 100%;
+    margin: 0;
+    width: 100%;
+    min-height: 0;
+    min-width: 0;
+    overflow-y: auto;
+    flex: 1;
     box-sizing: border-box;
   }
 
@@ -557,6 +612,8 @@
   .workflow-container {
     display: flex;
     flex: 1;
+    min-height: 0;
+    min-width: 0;
     width: 100%;
     position: relative;
     overflow: hidden;
@@ -567,6 +624,8 @@
   .node-palette {
     width: 220px;
     flex-shrink: 0;
+    min-height: 0;
+    overflow-y: auto;
     background: rgba(17, 24, 39, 0.95);
     border-right: 1px solid #1f2937;
     display: flex;
@@ -588,7 +647,7 @@
 
   .palette-section-title {
     font-size: 10px;
-    color: #6b7280;
+    color: var(--text-muted, #94a3b8);
     text-transform: uppercase;
     letter-spacing: 0.08em;
     font-weight: 600;
@@ -661,6 +720,8 @@
   /* ── Canvas ── */
   .canvas-area {
     flex: 1;
+    min-height: 0;
+    min-width: 0;
     height: 100%;
     position: relative;
   }
@@ -727,6 +788,8 @@
 
   .chat-messages {
     flex: 1;
+    min-height: 0;
+    min-width: 0;
     overflow-y: auto;
     padding: 16px 12px;
     display: flex;
@@ -742,7 +805,7 @@
   .system-msg {
     text-align: center;
     font-size: 11px;
-    color: #6b7280;
+    color: var(--text-muted, #94a3b8);
     padding: 4px 12px;
     border-radius: 100px;
     background: #111827;
@@ -776,7 +839,7 @@
     border: 1px solid rgba(255,255,255,0.1);
   }
 
-  .bubble-wrap { display: flex; flex-direction: column; gap: 3px; max-width: 300px; }
+  .bubble-wrap { display: flex; flex-direction: column; gap: 3px; min-width: 0; max-width: min(300px, 85%); }
   .wrap-right { align-items: flex-end; }
   .bubble-name { font-size: 10px; font-weight: 700; padding: 0 4px; }
 
@@ -814,7 +877,7 @@
   }
   .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
   .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
-  .typing-text { font-size: 11px; color: #6b7280; margin-left: 4px; }
+  .typing-text { font-size: 11px; color: var(--text-muted, #94a3b8); margin-left: 4px; }
   @keyframes typingPulse { 0%,60%,100% { transform: translateY(0); } 30% { transform: translateY(-6px); } }
 
   /* Final output bar */
@@ -839,11 +902,11 @@
   }
   .copy-btn:hover { background: #047857; }
 
-  /* Floating chat toggle */
+  /* Floating chat toggle — placed top-right away from SvelteFlow MiniMap and Toast */
   .chat-toggle-btn {
     position: absolute;
-    bottom: 24px;
-    right: 24px;
+    top: 16px;
+    right: 16px;
     z-index: 10;
     width: 48px;
     height: 48px;
@@ -858,9 +921,12 @@
     align-items: center;
     justify-content: center;
     transition: transform 0.2s;
-    position: absolute;
   }
-  .chat-toggle-btn:hover { transform: scale(1.1); }
+  .chat-toggle-btn:hover { transform: scale(1.08); }
+  .chat-toggle-btn:focus-visible {
+    outline: 2px solid #ffffff;
+    outline-offset: 2px;
+  }
   
   .badge {
     position: absolute;
@@ -894,10 +960,16 @@
     }
     .node-palette {
       width: 100%;
+      max-height: 44%;
       border-right: none;
       border-bottom: 1px solid #1f2937;
       padding: 12px;
       gap: 10px;
+    }
+    .canvas-area {
+      flex: 1;
+      height: auto;
+      min-height: 360px;
     }
     .palette-nodes {
       flex-direction: row;

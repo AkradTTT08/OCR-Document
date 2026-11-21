@@ -584,15 +584,16 @@
 <!-- ── Backdrop ── -->
 <div
   class="tutorial-backdrop"
-  role="dialog"
-  aria-modal="true"
-  aria-labelledby="tutorial-step-title"
+  role="presentation"
   transition:fade={{ duration: 220 }}
   on:click|self={close}
 >
   <!-- ── 2-Pane Interactive Guide Deck ── -->
   <div
     class="tutorial-shell"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="tutorial-step-title"
     in:fly={{ y: 24, duration: 360, easing: cubicOut }}
     out:fade={{ duration: 160 }}
     style="--step-color: {step.color};"
@@ -687,24 +688,25 @@
         </div>
       </header>
 
-      {#if showMobileMenu}
-        <div class="mobile-chapter-drawer" transition:fly={{ y: -10, duration: 200, easing: cubicOut }}>
-          {#each steps as s, idx}
-            <button
-              type="button"
-              class="mobile-chapter-btn"
-              class:active={idx === currentStep}
-              on:click={() => goToStep(idx)}
-            >
-              <span class="mc-num">{idx + 1}.</span>
-              <span class="mc-title">{s.title}</span>
-            </button>
-          {/each}
-        </div>
-      {/if}
+      <div class="stage-content-wrap">
+        {#if showMobileMenu}
+          <div class="mobile-chapter-drawer" transition:fly={{ y: -10, duration: 200, easing: cubicOut }}>
+            {#each steps as s, idx}
+              <button
+                type="button"
+                class="mobile-chapter-btn"
+                class:active={idx === currentStep}
+                on:click={() => goToStep(idx)}
+              >
+                <span class="mc-num">{idx + 1}.</span>
+                <span class="mc-title">{s.title}</span>
+              </button>
+            {/each}
+          </div>
+        {/if}
 
-      <!-- Scrollable Animated Stage Body -->
-      <div class="stage-scroll-area">
+        <!-- Scrollable Animated Stage Body -->
+        <div class="stage-scroll-area">
         {#key currentStep}
           <div
             class="stage-body"
@@ -808,6 +810,7 @@
             {/if}
           </div>
         {/key}
+        </div>
       </div>
 
       <!-- Bottom Action Footer -->
@@ -849,7 +852,7 @@
   .tutorial-backdrop {
     position: fixed;
     inset: 0;
-    z-index: 9999;
+    z-index: var(--z-modal, 10000);
     background: rgba(5, 7, 14, 0.84);
     backdrop-filter: blur(12px);
     display: flex;
@@ -1010,7 +1013,7 @@
 
   .chapter-cat {
     font-size: 10px;
-    color: #64748b;
+    color: var(--text-muted, #94a3b8);
     line-height: 1.2;
   }
 
@@ -1064,6 +1067,7 @@
   .tutorial-stage {
     display: flex;
     flex-direction: column;
+    min-width: 0;
     min-height: 0;
     position: relative;
   }
@@ -1072,9 +1076,18 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 12px;
+    flex-wrap: wrap;
+    gap: 10px 12px;
     padding: 16px 26px 14px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  .stage-content-wrap {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
   }
 
   .stage-step-counter {
@@ -1144,7 +1157,7 @@
 
   .mobile-chapter-drawer {
     position: absolute;
-    top: 62px;
+    top: 8px;
     left: 16px;
     right: 16px;
     z-index: 30;
@@ -1287,7 +1300,7 @@
   }
 
   .flow-arrow {
-    color: #64748b;
+    color: var(--text-muted, #94a3b8);
     flex-shrink: 0;
   }
 
@@ -1428,7 +1441,7 @@
 
   .footer-hint {
     font-size: 11.5px;
-    color: #64748b;
+    color: var(--text-muted, #94a3b8);
     display: flex;
     align-items: center;
     gap: 5px;
