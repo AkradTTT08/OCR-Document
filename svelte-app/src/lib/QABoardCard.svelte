@@ -1,11 +1,21 @@
 <script>
   import { onMount } from "svelte";
-  import { fade, scale } from "svelte/transition";
+  import { fade } from "svelte/transition";
   import { selectedProjectStore } from "./qaHistoryStore.js";
   import ProjectSelection from "./ProjectSelection.svelte";
   import { toast } from "./toastStore.js";
   import SmartTestLauncherModal from "./SmartTestLauncherModal.svelte";
   import ConfirmModal from "./ConfirmModal.svelte";
+  import QABoardCardModal from "./QABoardCardModal.svelte";
+  import QABoardModals from "./QABoardModals.svelte";
+  import {
+    isHeaderCard,
+    getCleanLabels,
+    getLabelTextColor,
+    getCardVerdict,
+    getPriorityMeta,
+    resolveMemberName
+  } from "./qaBoardUtils.js";
 
   let projects = [];
   let isTestModalOpen = false;
@@ -14,6 +24,7 @@
   let confirmTitle = "";
   let confirmMessage = "";
   let confirmAction = null;
+  let cardModalRef = null;
 
   $: selectedProjectId = $selectedProjectStore ? ($selectedProjectStore.id || $selectedProjectStore.project_id) : "";
 
@@ -33,23 +44,24 @@
     }
   });
 
-  // Active Tab state: 'live' (Trello Board Selector) | 'saved' (Saved Project Cards & RAG)
-  let activeTab = 'live';
+  // Active Tab: 'live' | 'saved'
+  let activeTab = "live";
+  // Saved Tab View Mode: 'kanban' | 'table'
+  let savedViewMode = "kanban";
 
-  // Board columns
   let columns = [
-    { id: 'todo', title: 'To Do', color: '#64748b' },
-    { id: 'in_progress', title: 'In Progress', color: '#3b82f6' },
-    { id: 'testing', title: 'Testing (Agent)', color: '#a855f7' },
-    { id: 'done', title: 'Done', color: '#22c55e' }
+    { id: "todo", title: "To Do", color: "#64748b" },
+    { id: "in_progress", title: "In Progress", color: "#3b82f6" },
+    { id: "testing", title: "Testing (Agent)", color: "#a855f7" },
+    { id: "done", title: "Done", color: "#22c55e" }
   ];
 
-  // Cards data
   let liveCards = [];
   let savedCards = [];
   let isLoadingLive = false;
   let isLoadingSaved = false;
   let isSavingSelected = false;
+  let liveLoadError = "";
   let cardSearchQuery = "";
 
   // Selection state for Live Board
@@ -58,9 +70,8 @@
   // Detail Modal state
   let showDetailModal = false;
   let selectedCard = null;
-  let showComments = true;
 
-  // Image Lightbox Preview state
+  // Image Lightbox state
   let showImageModal = false;
   let previewModalImage = null;
   let previewModalAlt = "Image Preview";
@@ -74,15 +85,18 @@
   // Board integration configuration state
   let showConfigModal = false;
   let currentIntegration = null;
-  let configProvider = 'trello'; // 'trello' | 'github'
-  let trelloApiKey = '';
-  let trelloToken = '';
-  let trelloBoardId = '';
-  let githubToken = '';
-  let githubOwner = '';
-  let githubRepo = '';
+  let configProvider = "trello";
+  let trelloApiKey = "";
+  let trelloToken = "";
+  let trelloBoardId = "";
+  let githubToken = "";
+  let githubOwner = "";
+  let githubRepo = "";
   let isTestingConnection = false;
   let isSavingConfig = false;
+  let configErrors = {};
+
+  $: providerLabel = currentIntegration?.provider === "github" ? "GitHub" : "Trello";
 
   $: if (selectedProjectId) {
     fetchLiveCards();
@@ -98,6 +112,7 @@
   async function fetchLiveCards() {
     if (!selectedProjectId) return;
     isLoadingLive = true;
+    liveLoadError = "";
     try {
       const res = await fetch(`/api/projects/${selectedProjectId}/cards/live`);
       const data = await res.json();
@@ -112,13 +127,15 @@
         }
       } else {
         if (data.error && data.error.includes("ยังไม่ได้ตั้งค่า")) {
-          // Unconfigured board
+          liveCards = [];
         } else {
-          toast(data.error || "เกิดข้อผิดพลาดในการดึงข้อมูล Live Board", "error");
+          liveLoadError = data.error || "เกิดข้อผิดพลาดในการดึงข้อมูลบอร์ดสด";
+          toast(liveLoadError, "error");
         }
       }
     } catch (err) {
-      console.error("Error fetching live cards:", err);
+      liveLoadError = "ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์เพื่อดึงข้อมูลบอร์ดสดได้";
+      toast(liveLoadError, "error");
     } finally {
       isLoadingLive = false;
     }
@@ -139,9 +156,11 @@
           const updated = savedCards.find(c => c.id === selectedCard.id || (c.ext_card_id && c.ext_card_id === selectedCard.ext_card_id));
           if (updated) selectedCard = { ...selectedCard, ...updated };
         }
+      } else if (data.error) {
+        toast(data.error, "error");
       }
     } catch (err) {
-      console.error("Error fetching saved cards:", err);
+      toast("ไม่สามารถดึงข้อมูลการ์ดที่บันทึกไว้ได้", "error");
     } finally {
       isLoadingSaved = false;
     }
@@ -151,10 +170,19 @@
     await Promise.all([fetchLiveCards(), fetchSavedCards()]);
   }
 
+  // Visible non-header cards in Live & Saved
+  $: colTitleList = columns.map(c => c.title);
+  $: validLiveCards = liveCards.filter(c => !isHeaderCard(c.title, colTitleList));
+  $: validSavedCards = savedCards.filter(c => !isHeaderCard(c.title, colTitleList));
+
   // Selection handlers
+  function getCardKey(card) {
+    return card.ext_card_id || card.raw_ext_id || card.id;
+  }
+
   function toggleSelectCard(card, event) {
     if (event) event.stopPropagation();
-    const key = card.ext_card_id || card.raw_ext_id || card.id;
+    const key = getCardKey(card);
     if (selectedCardIds.has(key)) {
       selectedCardIds.delete(key);
     } else {
@@ -164,17 +192,14 @@
   }
 
   function isCardSelected(card, _tracker = null) {
-    const key = card.ext_card_id || card.raw_ext_id || card.id;
-    return selectedCardIds.has(key);
+    return selectedCardIds.has(getCardKey(card));
   }
 
+  // Select ONLY currently visible/filtered cards on Live Board
   function selectAllLiveCards() {
-    const colTitles = columns.map(c => c.title);
-    liveCards.forEach(c => {
-      if (!isHeaderCard(c.title, colTitles)) {
-        const key = c.ext_card_id || c.raw_ext_id || c.id;
-        selectedCardIds.add(key);
-      }
+    const visibleList = Object.values(liveCardsByCol).flat();
+    visibleList.forEach(c => {
+      selectedCardIds.add(getCardKey(c));
     });
     selectedCardIds = new Set(selectedCardIds);
   }
@@ -183,21 +208,20 @@
     selectedCardIds = new Set();
   }
 
-  // Save selected cards into project and ingest to RAG
   async function saveSelectedCardsToProject() {
     if (selectedCardIds.size === 0) {
-      toast("กรุณาเลือก Card ที่ต้องการบันทึกอย่างน้อย 1 ใบ", "warning");
+      toast("กรุณาเลือกการ์ดที่ต้องการบันทึกอย่างน้อย 1 ใบ", "warning");
       return;
     }
 
-    const chosenCards = liveCards.filter(c => isCardSelected(c));
+    const chosenCards = validLiveCards.filter(c => isCardSelected(c));
     if (chosenCards.length === 0) {
-      toast("ไม่พบข้อมูล Card ที่เลือก", "error");
+      toast("ไม่พบข้อมูลการ์ดที่เลือก", "error");
       return;
     }
 
     isSavingSelected = true;
-    toast(`กำลังบันทึก ${chosenCards.length} Card เข้าโครงการ & RAG...`, "info");
+    toast(`กำลังบันทึก ${chosenCards.length} การ์ดเข้าโครงการ & RAG...`, "info");
     try {
       const res = await fetch(`/api/projects/${selectedProjectId}/cards/save-selected`, {
         method: "POST",
@@ -206,11 +230,11 @@
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        toast(data.message || `บันทึก Card สำเร็จ ${chosenCards.length} ใบ!`, "success");
+        toast(data.message || `บันทึกสำเร็จ ${chosenCards.length} ใบ!`, "success");
         clearCardSelection();
         await fetchCards();
       } else {
-        toast(data.error || "บันทึก Card ไม่สำเร็จ", "error");
+        toast(data.error || "บันทึกการ์ดไม่สำเร็จ", "error");
       }
     } catch (err) {
       toast(`เกิดข้อผิดพลาดในการบันทึก: ${err.message}`, "error");
@@ -219,7 +243,6 @@
     }
   }
 
-  // Save single card from modal
   async function saveSingleCard(card) {
     isSavingSelected = true;
     toast(`กำลังบันทึก "${card.title}" เข้าโครงการ & RAG...`, "info");
@@ -231,13 +254,13 @@
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        toast(data.message || "บันทึก Card สำเร็จ!", "success");
+        toast(data.message || "บันทึกการ์ดสำเร็จ!", "success");
         await fetchCards();
         if (selectedCard) {
           selectedCard = { ...selectedCard, is_saved: true };
         }
       } else {
-        toast(data.error || "บันทึก Card ไม่สำเร็จ", "error");
+        toast(data.error || "บันทึกการ์ดไม่สำเร็จ", "error");
       }
     } catch (err) {
       toast(`เกิดข้อผิดพลาดในการบันทึก: ${err.message}`, "error");
@@ -246,12 +269,11 @@
     }
   }
 
-  // Unsave card from project and remove from RAG
   function unsaveCard(card, event) {
     if (event) event.stopPropagation();
-    const cTitle = card.title || 'Card นี้';
-    confirmTitle = 'ยืนยันการยกเลิกบันทึก Card';
-    confirmMessage = `คุณต้องการยกเลิกการบันทึก "${cTitle}" ออกจากโครงการนี้ใช่หรือไม่? (จะนำออกจาก RAG ด้วย)`;
+    const cTitle = card.title || "การ์ดใบนี้";
+    confirmTitle = "ยืนยันการยกเลิกบันทึกการ์ด";
+    confirmMessage = `ต้องการยกเลิกการบันทึก "${cTitle}" ออกจากโครงการนี้และลบออกจากดัชนี RAG ใช่หรือไม่?`;
     confirmAction = async () => {
       const cardId = card.saved_id || card.id;
       try {
@@ -260,7 +282,7 @@
         });
         const data = await res.json();
         if (res.ok && data.success) {
-          toast(data.message || "ยกเลิกการบันทึก Card สำเร็จ", "success");
+          toast(data.message || "ยกเลิกการบันทึกการ์ดสำเร็จ", "success");
           await fetchCards();
           if (selectedCard && (selectedCard.id === cardId || selectedCard.saved_id === cardId)) {
             selectedCard = { ...selectedCard, is_saved: false };
@@ -275,11 +297,10 @@
     confirmOpen = true;
   }
 
-  // Clear all saved cards from project and RAG
   function clearAllSavedCards() {
-    if (savedCards.length === 0) return;
-    confirmTitle = 'ยืนยันการล้าง Card ทั้งหมด';
-    confirmMessage = `คุณต้องการลบ Card ที่บันทึกไว้ทั้งหมด ${savedCards.length} ใบออกจากโครงการนี้และ RAG ใช่หรือไม่?`;
+    if (validSavedCards.length === 0) return;
+    confirmTitle = "ยืนยันการล้างการ์ดทั้งหมด";
+    confirmMessage = `ต้องการลบการ์ดที่บันทึกไว้ทั้งหมด ${validSavedCards.length} ใบออกจากโครงการนี้และ RAG ใช่หรือไม่?`;
     confirmAction = async () => {
       try {
         const res = await fetch(`/api/projects/${selectedProjectId}/cards/clear-all`, {
@@ -287,10 +308,10 @@
         });
         const data = await res.json();
         if (res.ok && data.success) {
-          toast(data.message || "ล้าง Card ที่บันทึกทั้งหมดเรียบร้อยแล้ว", "success");
+          toast(data.message || "ล้างการ์ดที่บันทึกทั้งหมดเรียบร้อยแล้ว", "success");
           await fetchCards();
         } else {
-          toast(data.error || "ล้าง Card ไม่สำเร็จ", "error");
+          toast(data.error || "ล้างการ์ดไม่สำเร็จ", "error");
         }
       } catch (err) {
         toast(`เกิดข้อผิดพลาด: ${err.message}`, "error");
@@ -299,28 +320,47 @@
     confirmOpen = true;
   }
 
-  // Smart AI Test Launcher handlers
   function handleAgentTest(cardOrId) {
-    if (typeof cardOrId === 'object' && cardOrId !== null) {
+    if (typeof cardOrId === "object" && cardOrId !== null) {
       testTargetCard = cardOrId;
     } else if (selectedCard) {
       testTargetCard = selectedCard;
     } else {
       testTargetCard = { title: "Feature Testing", description: "" };
     }
+    const targetId = testTargetCard.id || testTargetCard.raw_ext_id;
+    if (targetId) {
+      savedCards = savedCards.map(c => (c.id === targetId || c.raw_ext_id === targetId) ? { ...c, isTesting: true } : c);
+      if (selectedCard && (selectedCard.id === targetId || selectedCard.raw_ext_id === targetId)) {
+        selectedCard = { ...selectedCard, isTesting: true };
+      }
+    }
     isTestModalOpen = true;
+  }
+
+  function handleTestModalClose() {
+    isTestModalOpen = false;
+    if (testTargetCard) {
+      const targetId = testTargetCard.id || testTargetCard.raw_ext_id;
+      savedCards = savedCards.map(c => (c.id === targetId || c.raw_ext_id === targetId) ? { ...c, isTesting: false } : c);
+      if (selectedCard && (selectedCard.id === targetId || selectedCard.raw_ext_id === targetId)) {
+        selectedCard = { ...selectedCard, isTesting: false };
+      }
+    }
   }
 
   function handleTestCompleted(e) {
     const result = e.detail;
     if (selectedCard) {
-      selectedCard.test_result = result.test_result_markdown;
-      selectedCard.verdict = result.verdict;
-      selectedCard.isTesting = false;
-      selectedCard = { ...selectedCard };
+      selectedCard = {
+        ...selectedCard,
+        test_result: result.test_result_markdown,
+        verdict: result.verdict,
+        isTesting: false
+      };
     }
     fetchCards();
-    toast(`รันการทดสอบสำเร็จ: ${result.verdict}`, result.is_passed ? "success" : "warning");
+    toast(`รันการทดสอบเสร็จสิ้น: ${result.verdict}`, result.is_passed ? "success" : "warning");
   }
 
   async function fetchBoardIntegration() {
@@ -330,13 +370,13 @@
       const data = await res.json();
       if (data.success && data.integration) {
         currentIntegration = data.integration;
-        configProvider = data.integration.provider || 'trello';
-        trelloApiKey = data.integration.trello_api_key || '';
-        trelloToken = data.integration.trello_token || '';
-        trelloBoardId = data.integration.trello_board_id || '';
-        githubToken = data.integration.github_token || '';
-        githubOwner = data.integration.github_owner || '';
-        githubRepo = data.integration.github_repo || '';
+        configProvider = data.integration.provider || "trello";
+        trelloApiKey = data.integration.trello_api_key || "";
+        trelloToken = data.integration.trello_token || "";
+        trelloBoardId = data.integration.trello_board_id || "";
+        githubToken = data.integration.github_token || "";
+        githubOwner = data.integration.github_owner || "";
+        githubRepo = data.integration.github_repo || "";
       } else {
         currentIntegration = null;
       }
@@ -345,18 +385,33 @@
     }
   }
 
+  function validateConfigFields() {
+    const errs = {};
+    if (configProvider === "trello") {
+      if (!trelloApiKey.trim()) errs.trelloApiKey = "กรุณากรอก Trello API Key";
+      if (!trelloToken.trim()) errs.trelloToken = "กรุณากรอก Trello API Token";
+      if (!trelloBoardId.trim()) errs.trelloBoardId = "กรุณากรอก Trello Board ID หรือ URL";
+    } else {
+      if (!githubToken.trim()) errs.githubToken = "กรุณากรอก GitHub Personal Access Token";
+      if (!githubOwner.trim()) errs.githubOwner = "กรุณากรอกชื่อ Owner หรือ Organization";
+      if (!githubRepo.trim()) errs.githubRepo = "กรุณากรอกชื่อ Repository";
+    }
+    configErrors = errs;
+    return Object.keys(errs).length === 0;
+  }
+
   async function testConnection() {
-    if (!selectedProjectId) return;
+    if (!selectedProjectId || !validateConfigFields()) return;
     isTestingConnection = true;
     try {
       const payload = {
         provider: configProvider,
-        trello_api_key: trelloApiKey,
-        trello_token: trelloToken,
-        trello_board_id: trelloBoardId,
-        github_token: githubToken,
-        github_owner: githubOwner,
-        github_repo: githubRepo
+        trello_api_key: trelloApiKey.trim(),
+        trello_token: trelloToken.trim(),
+        trello_board_id: trelloBoardId.trim(),
+        github_token: githubToken.trim(),
+        github_owner: githubOwner.trim(),
+        github_repo: githubRepo.trim()
       };
       const res = await fetch(`/api/projects/${selectedProjectId}/board-integration/test`, {
         method: "POST",
@@ -364,7 +419,7 @@
         body: JSON.stringify(payload)
       });
       let data = {};
-      try { data = await res.json(); } catch(e) {}
+      try { data = await res.json(); } catch (e) {}
       if (res.ok && data.success) {
         toast(data.message || "เชื่อมต่อสำเร็จ!", "success");
       } else {
@@ -378,17 +433,17 @@
   }
 
   async function saveBoardIntegration() {
-    if (!selectedProjectId) return;
+    if (!selectedProjectId || !validateConfigFields()) return;
     isSavingConfig = true;
     try {
       const payload = {
         provider: configProvider,
-        trello_api_key: trelloApiKey,
-        trello_token: trelloToken,
-        trello_board_id: trelloBoardId,
-        github_token: githubToken,
-        github_owner: githubOwner,
-        github_repo: githubRepo
+        trello_api_key: trelloApiKey.trim(),
+        trello_token: trelloToken.trim(),
+        trello_board_id: trelloBoardId.trim(),
+        github_token: githubToken.trim(),
+        github_owner: githubOwner.trim(),
+        github_repo: githubRepo.trim()
       };
       const res = await fetch(`/api/projects/${selectedProjectId}/board-integration`, {
         method: "POST",
@@ -396,7 +451,7 @@
         body: JSON.stringify(payload)
       });
       let data = {};
-      try { data = await res.json(); } catch(e) {}
+      try { data = await res.json(); } catch (e) {}
       if (res.ok && data.success) {
         toast("บันทึกการตั้งค่าการเชื่อมต่อสำเร็จ!", "success");
         await fetchBoardIntegration();
@@ -412,33 +467,7 @@
     }
   }
 
-  function isHeaderCard(title, colTitles = []) {
-    const t = (title || '').trim().toLowerCase();
-    if (!t) return true;
-
-    const defaultHeaders = [
-      'deploy', 'review', 'to do', 'todo', 'doing', 'in progress', 'testing', 
-      'testing (agent)', 'template & plan', 'done', 'backlog', 'done back log',
-      'done (current sprint card)', 'done (back log card)'
-    ];
-    if (defaultHeaders.includes(t)) return true;
-
-    for (const c of colTitles) {
-      const cLow = (c || '').trim().toLowerCase();
-      if (cLow && (t === cLow || t.startsWith(cLow + ' (') || t.startsWith(cLow + '('))) {
-        return true;
-      }
-    }
-
-    const headerKeywords = ['sprint card', 'back log card', 'backlog card', 'header card', 'placeholder card', 'section header', 'separator'];
-    if (headerKeywords.some(kw => t.includes(kw))) {
-      return true;
-    }
-
-    return false;
-  }
-
-  // Filter & Agile Tools Modal state
+  // Filter & Agile Tools state
   let showFilterModal = false;
   let showAgileSummaryModal = false;
   let markUnestimated = false;
@@ -447,35 +476,26 @@
   let selectedMemberIds = new Set();
   let filterNoLabels = false;
   let selectedLabelNames = new Set();
-  let filterSavedStatus = 'all'; // 'all' | 'saved' | 'unsaved'
-  let filterCompletion = 'all'; // 'all' | 'complete' | 'incomplete'
+  let filterSavedStatus = "all";
+  let filterCompletion = "all";
   let filterTypes = new Set();
 
   function toggleMemberFilter(mId) {
-    if (selectedMemberIds.has(mId)) {
-      selectedMemberIds.delete(mId);
-    } else {
-      selectedMemberIds.add(mId);
-    }
+    if (selectedMemberIds.has(mId)) selectedMemberIds.delete(mId);
+    else selectedMemberIds.add(mId);
     selectedMemberIds = new Set(selectedMemberIds);
   }
 
   function toggleLabelFilter(lName) {
-    const lLow = (lName || '').toLowerCase();
-    if (selectedLabelNames.has(lLow)) {
-      selectedLabelNames.delete(lLow);
-    } else {
-      selectedLabelNames.add(lLow);
-    }
+    const lLow = (lName || "").toLowerCase();
+    if (selectedLabelNames.has(lLow)) selectedLabelNames.delete(lLow);
+    else selectedLabelNames.add(lLow);
     selectedLabelNames = new Set(selectedLabelNames);
   }
 
   function toggleTypeFilter(tName) {
-    if (filterTypes.has(tName)) {
-      filterTypes.delete(tName);
-    } else {
-      filterTypes.add(tName);
-    }
+    if (filterTypes.has(tName)) filterTypes.delete(tName);
+    else filterTypes.add(tName);
     filterTypes = new Set(filterTypes);
   }
 
@@ -485,41 +505,33 @@
     selectedMemberIds = new Set();
     filterNoLabels = false;
     selectedLabelNames = new Set();
-    filterSavedStatus = 'all';
-    filterCompletion = 'all';
+    filterSavedStatus = "all";
+    filterCompletion = "all";
     filterTypes = new Set();
   }
 
-  // Board members list with unique members from loaded cards
   $: boardMembersList = (() => {
     const map = new Map();
-    const source = liveCards.length > 0 ? liveCards : savedCards;
+    const source = [...liveCards, ...savedCards];
     source.forEach(c => {
       (c.members || []).forEach(m => {
         const id = m.id || m.username || m.name;
-        if (id && !map.has(id)) {
-          map.set(id, m);
-        }
+        if (id && !map.has(id)) map.set(id, m);
       });
     });
     return Array.from(map.values());
   })();
 
-  // Board labels list with colors & counts
   $: boardLabelsList = (() => {
     const map = new Map();
-    const source = liveCards.length > 0 ? liveCards : savedCards;
+    const source = activeTab === "live" ? validLiveCards : validSavedCards;
     source.forEach(c => {
       (c.labels || []).forEach(l => {
-        const rawName = typeof l === 'string' ? l : (l.name || '');
-        const cleanName = rawName.replace(/[*_`~#]/g, '').trim();
+        const rawName = typeof l === "string" ? l : (l.name || "");
+        const cleanName = rawName.replace(/[*_`~#]/g, "").trim();
         const lower = cleanName.toLowerCase();
         if (cleanName && !map.has(lower)) {
-          map.set(lower, {
-            name: cleanName,
-            color: l.color || '#38bdf8',
-            count: 0
-          });
+          map.set(lower, { name: cleanName, color: l.color || "#6366f1", count: 0 });
         }
         if (cleanName && map.has(lower)) {
           map.get(lower).count += 1;
@@ -529,7 +541,16 @@
     return Array.from(map.values()).sort((a, b) => b.count - a.count);
   })();
 
-  // Agile Tools Story Points summary calculation
+  $: boardTypesList = (() => {
+    const set = new Set();
+    const source = [...validLiveCards, ...validSavedCards];
+    source.forEach(c => {
+      const t = (c.type && c.type !== "Main Card") ? c.type : (c.priority || "");
+      if (t) set.add(t);
+    });
+    return Array.from(set);
+  })();
+
   $: agilePointsSummary = (() => {
     let totalPoints = 0;
     let totalCards = 0;
@@ -540,22 +561,17 @@
       byColumn[col.id] = { id: col.id, title: col.title, color: col.color, points: 0, count: 0 };
     });
 
-    const targetList = activeTab === 'live' ? liveCards : savedCards;
-    const colTitles = columns.map(c => c.title);
-
+    const targetList = activeTab === "live" ? validLiveCards : validSavedCards;
     targetList.forEach(c => {
-      if (isHeaderCard(c.title, colTitles)) return;
       const pts = parseFloat(c.story_points);
       const pointsVal = !isNaN(pts) ? pts : 0;
-      if (isNaN(pts) || pts === 0) {
-        unestimatedCards += 1;
-      }
+      if (isNaN(pts) || pts === 0) unestimatedCards += 1;
       totalPoints += pointsVal;
       totalCards += 1;
 
-      const colId = c.status && byColumn[c.status] ? c.status : (columns[0] ? columns[0].id : 'todo');
+      const colId = c.status && byColumn[c.status] ? c.status : (columns[0] ? columns[0].id : "todo");
       if (byColumn[colId]) {
-        byColumn[colId].points += pointsVal;
+        byColumn[colId].points = Math.round((byColumn[colId].points + pointsVal) * 10) / 10;
         byColumn[colId].count += 1;
       }
     });
@@ -564,43 +580,43 @@
       totalPoints: Math.round(totalPoints * 10) / 10,
       totalCards,
       unestimatedCards,
-      columnsSummary: Object.values(byColumn)
+      columnsSummary: Object.values(byColumn),
+      byColumn
     };
   })();
 
-  // Active filter count
-  $: activeFilterCount = (cardSearchQuery.trim() ? 1 : 0)
-    + (filterNoMembers ? 1 : 0)
-    + selectedMemberIds.size
-    + (filterNoLabels ? 1 : 0)
-    + selectedLabelNames.size
-    + (activeTab === 'live' && filterSavedStatus !== 'all' ? 1 : 0)
-    + (filterCompletion !== 'all' ? 1 : 0)
-    + filterTypes.size;
+  $: activeFilterCount =
+    (cardSearchQuery.trim() ? 1 : 0) +
+    (filterNoMembers ? 1 : 0) +
+    selectedMemberIds.size +
+    (filterNoLabels ? 1 : 0) +
+    selectedLabelNames.size +
+    (activeTab === "live" && filterSavedStatus !== "all" ? 1 : 0) +
+    (filterCompletion !== "all" ? 1 : 0) +
+    filterTypes.size;
 
   function isCardUnestimated(card) {
     const pts = parseFloat(card?.story_points);
     return isNaN(pts) || pts === 0;
   }
 
-  // Memoized card mapping by column with rich filters
   function computeCardsByColumn(cardsList, cols, query, noMembers, memberIds, noLabels, labelNames, savedStatus, completion, types) {
     const colTitles = cols.map(c => c.title);
-    const q = (query || '').trim().toLowerCase();
+    const q = (query || "").trim().toLowerCase();
     const result = {};
     cols.forEach(c => { result[c.id] = []; });
-    const defaultColId = cols.length > 0 ? cols[0].id : 'todo';
+    const defaultColId = cols.length > 0 ? cols[0].id : "todo";
 
     for (let i = 0; i < cardsList.length; i++) {
       const c = cardsList[i];
       if (isHeaderCard(c.title, colTitles)) continue;
 
       if (q) {
-        const matchTitle = (c.title || '').toLowerCase().includes(q);
-        const matchDesc = (c.description || '').toLowerCase().includes(q);
-        const matchId = (c.ext_card_id || '').toLowerCase().includes(q);
-        const matchLabels = (c.labels || []).some(l => ((typeof l === 'string' ? l : l.name) || '').toLowerCase().includes(q));
-        const matchMembers = (c.members || []).some(m => ((m.name || '') + ' ' + (m.username || '')).toLowerCase().includes(q));
+        const matchTitle = (c.title || "").toLowerCase().includes(q);
+        const matchDesc = (c.description || "").toLowerCase().includes(q);
+        const matchId = (c.ext_card_id || "").toLowerCase().includes(q);
+        const matchLabels = (c.labels || []).some(l => ((typeof l === "string" ? l : l.name) || "").toLowerCase().includes(q));
+        const matchMembers = (c.members || []).some(m => ((m.name || "") + " " + (m.username || "")).toLowerCase().includes(q));
         if (!matchTitle && !matchDesc && !matchId && !matchLabels && !matchMembers) continue;
       }
 
@@ -617,26 +633,27 @@
       } else if (labelNames && labelNames.size > 0) {
         if (!c.labels || c.labels.length === 0) continue;
         const hasMatch = c.labels.some(l => {
-          const rawName = typeof l === 'string' ? l : (l.name || '');
-          const cleanName = rawName.replace(/[*_`~#]/g, '').trim().toLowerCase();
+          const rawName = typeof l === "string" ? l : (l.name || "");
+          const cleanName = rawName.replace(/[*_`~#]/g, "").trim().toLowerCase();
           return labelNames.has(cleanName);
         });
         if (!hasMatch) continue;
       }
 
-      if (savedStatus === 'saved' && !c.is_saved) continue;
-      if (savedStatus === 'unsaved' && c.is_saved) continue;
+      if (savedStatus === "saved" && !c.is_saved) continue;
+      if (savedStatus === "unsaved" && c.is_saved) continue;
 
-      if (completion === 'complete') {
-        const isDone = c.status === 'done' || (c.status && c.status.toLowerCase().includes('done'));
+      if (completion === "complete") {
+        const isDone = c.status === "done" || (c.status && c.status.toLowerCase().includes("done"));
         if (!isDone) continue;
-      } else if (completion === 'incomplete') {
-        const isDone = c.status === 'done' || (c.status && c.status.toLowerCase().includes('done'));
+      } else if (completion === "incomplete") {
+        const isDone = c.status === "done" || (c.status && c.status.toLowerCase().includes("done"));
         if (isDone) continue;
       }
 
       if (types && types.size > 0) {
-        if (!types.has(c.type || 'Feature')) continue;
+        const cardTypeVal = (c.type && c.type !== "Main Card") ? c.type : (c.priority || "");
+        if (!types.has(cardTypeVal)) continue;
       }
 
       const colId = c.status && result[c.status] ? c.status : defaultColId;
@@ -647,148 +664,52 @@
   }
 
   $: liveCardsByCol = computeCardsByColumn(liveCards, columns, cardSearchQuery, filterNoMembers, selectedMemberIds, filterNoLabels, selectedLabelNames, filterSavedStatus, filterCompletion, filterTypes);
-  $: savedCardsByCol = computeCardsByColumn(savedCards, columns, cardSearchQuery, filterNoMembers, selectedMemberIds, filterNoLabels, selectedLabelNames, 'all', filterCompletion, filterTypes);
+  $: savedCardsByCol = computeCardsByColumn(savedCards, columns, cardSearchQuery, filterNoMembers, selectedMemberIds, filterNoLabels, selectedLabelNames, "all", filterCompletion, filterTypes);
 
   $: totalFilteredLiveCardsCount = Object.values(liveCardsByCol).reduce((acc, list) => acc + list.length, 0);
   $: totalFilteredSavedCardsCount = Object.values(savedCardsByCol).reduce((acc, list) => acc + list.length, 0);
-  $: totalFilteredCardsCount = activeTab === 'live' ? totalFilteredLiveCardsCount : totalFilteredSavedCardsCount;
+  $: totalFilteredCardsCount = activeTab === "live" ? totalFilteredLiveCardsCount : totalFilteredSavedCardsCount;
+  $: flatFilteredSavedCards = Object.values(savedCardsByCol).flat();
 
-  function getCleanLabels(labels) {
-    if (!labels || !Array.isArray(labels)) return [];
-    const seen = new Set();
-    const result = [];
-    for (const l of labels) {
-      const rawName = typeof l === 'string' ? l : (l.name || '');
-      const name = rawName.replace(/[*_`~#]/g, '').trim();
-      const lower = name.toLowerCase();
-      if (name && !seen.has(lower)) {
-        seen.add(lower);
-        result.push(typeof l === 'string' ? { name, color: '#38bdf8' } : { ...l, name });
-      }
+  function getColumnPoints(cardsInCol = []) {
+    let sum = 0;
+    for (const c of cardsInCol) {
+      const p = parseFloat(c.story_points);
+      if (!isNaN(p)) sum += p;
     }
-    return result;
+    return Math.round(sum * 10) / 10;
   }
 
-  function parseCommentSegments(rawText, pId) {
-    if (!rawText) return [];
-
-    const isVideoExt = (url) => {
-      const u = url.toLowerCase().split('?')[0];
-      return u.endsWith('.mp4') || u.endsWith('.webm') || u.endsWith('.mov') || u.endsWith('.mkv') || u.endsWith('.avi');
-    };
-
-    const isImageExt = (url) => {
-      const u = url.toLowerCase().split('?')[0];
-      return u.endsWith('.png') || u.endsWith('.jpg') || u.endsWith('.jpeg') || u.endsWith('.gif') || u.endsWith('.webp') || u.endsWith('.svg') || u.endsWith('.bmp');
-    };
-
-    const processUrl = (url) => {
-      if (url.includes('trello.com/') || url.includes('trello-attachments.s3.amazonaws.com/')) {
-        return `/api/projects/${pId}/attachment-proxy?url=${encodeURIComponent(url)}`;
-      }
-      return url;
-    };
-
-    // Master regex for Markdown Images ![], Markdown Links [], and raw URLs
-    const masterRegex = /!\[([^\]]*)\]\((https?:\/\/[^\s\)]+)\)|\[([^\]]+)\]\((https?:\/\/[^\s\)]+)\)|(https?:\/\/[^\s\)]+)/g;
-
-    const segments = [];
-    let lastIdx = 0;
-    let match;
-
-    while ((match = masterRegex.exec(rawText)) !== null) {
-      if (match.index > lastIdx) {
-        const textPart = rawText.slice(lastIdx, match.index);
-        if (textPart) {
-          segments.push({ type: 'text', content: textPart });
-        }
-      }
-
-      if (match[2]) {
-        // Markdown Image: ![alt](url)
-        const alt = match[1] || 'Attached image';
-        const rawUrl = match[2];
-        const finalUrl = processUrl(rawUrl);
-        if (isVideoExt(rawUrl)) {
-          segments.push({ type: 'video', alt: alt || 'Attached video', url: finalUrl, originalUrl: rawUrl });
-        } else {
-          segments.push({ type: 'image', alt, url: finalUrl, originalUrl: rawUrl });
-        }
-      } else if (match[4]) {
-        // Markdown Link: [text](url)
-        const linkText = match[3];
-        const rawUrl = match[4];
-        const finalUrl = processUrl(rawUrl);
-        if (isVideoExt(rawUrl)) {
-          segments.push({ type: 'video', alt: linkText || 'Attached video', url: finalUrl, originalUrl: rawUrl });
-        } else if (isImageExt(rawUrl)) {
-          segments.push({ type: 'image', alt: linkText || 'Attached image', url: finalUrl, originalUrl: rawUrl });
-        } else {
-          segments.push({ type: 'link', text: linkText, url: finalUrl, originalUrl: rawUrl });
-        }
-      } else if (match[5]) {
-        // Raw URL
-        const rawUrl = match[5];
-        const finalUrl = processUrl(rawUrl);
-        if (isVideoExt(rawUrl)) {
-          segments.push({ type: 'video', alt: 'Attached video', url: finalUrl, originalUrl: rawUrl });
-        } else if (isImageExt(rawUrl) || rawUrl.includes('trello-attachments.s3.amazonaws.com') || rawUrl.includes('trello.com/1/cards/')) {
-          segments.push({ type: 'image', alt: 'Attached image', url: finalUrl, originalUrl: rawUrl });
-        } else {
-          segments.push({ type: 'link', text: rawUrl, url: finalUrl, originalUrl: rawUrl });
-        }
-      }
-
-      lastIdx = masterRegex.lastIndex;
-    }
-
-    if (lastIdx < rawText.length) {
-      const remaining = rawText.slice(lastIdx);
-      if (remaining) {
-        segments.push({ type: 'text', content: remaining });
-      }
-    }
-
-    return segments.length > 0 ? segments : [{ type: 'text', content: rawText }];
-  }
-
+  // Comment & attachment handlers
   let newCommentText = "";
   let commentAttachments = [];
   let isSendingComment = false;
-  let commentFileInput;
-  let commentTextareaRef;
   let isUploadingAttachment = false;
 
-  async function uploadFileAttachment(file, fallbackFilename = 'attachment') {
+  async function uploadFileAttachment(file, fallbackFilename = "attachment") {
     if (!file || !selectedProjectId || isUploadingAttachment) return;
     isUploadingAttachment = true;
     try {
       const formData = new FormData();
-      formData.append('file', file, file.name || fallbackFilename);
-
+      formData.append("file", file, file.name || fallbackFilename);
       const res = await fetch(`/api/projects/${selectedProjectId}/cards/upload-attachment`, {
-        method: 'POST',
+        method: "POST",
         body: formData
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        const fileUrl = data.url;
         const newAtt = {
-          id: 'att_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
-          url: fileUrl,
-          filename: data.filename || fallbackFilename || (data.is_video ? 'video.mp4' : 'screenshot.png'),
-          type: data.type || (data.is_video ? 'video' : 'image')
+          id: "att_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8),
+          url: data.url,
+          filename: data.filename || fallbackFilename || (data.is_video ? "video.mp4" : "screenshot.png"),
+          type: data.type || (data.is_video ? "video" : "image")
         };
         commentAttachments = [...commentAttachments, newAtt];
-        toast(data.is_video ? "แนบวิดีโอเรียบร้อยแล้ว!" : "แนบรูปภาพจากการวาง/อัปโหลดเรียบร้อยแล้ว!", "success");
-        setTimeout(() => {
-          if (commentTextareaRef) commentTextareaRef.focus();
-        }, 50);
+        toast(data.is_video ? "แนบวิดีโอเรียบร้อยแล้ว!" : "แนบรูปภาพเรียบร้อยแล้ว!", "success");
       } else {
         toast(data.error || "เกิดข้อผิดพลาดในการอัปโหลดไฟล์", "error");
       }
     } catch (e) {
-      console.error(e);
       toast("เกิดข้อผิดพลาดในการเชื่อมต่อเซิร์ฟเวอร์", "error");
     } finally {
       isUploadingAttachment = false;
@@ -804,76 +725,43 @@
     if (items) {
       for (let i = 0; i < items.length; i++) {
         const item = items[i];
-        if (item.type.indexOf('image') !== -1) {
+        if (item.type.indexOf("image") !== -1) {
           e.preventDefault();
           const blob = item.getAsFile();
-          if (blob) {
-            uploadFileAttachment(blob, `screenshot_${Date.now()}.png`);
-            return;
-          }
-        } else if (item.type.indexOf('video') !== -1) {
+          if (blob) uploadFileAttachment(blob, `screenshot_${Date.now()}.png`);
+          return;
+        } else if (item.type.indexOf("video") !== -1) {
           e.preventDefault();
           const blob = item.getAsFile();
-          if (blob) {
-            uploadFileAttachment(blob, `video_${Date.now()}.mp4`);
-            return;
-          }
+          if (blob) uploadFileAttachment(blob, `video_${Date.now()}.mp4`);
+          return;
         }
       }
     }
-    
     const files = e.clipboardData?.files;
     if (files && files.length > 0) {
       const file = files[0];
-      if (file.type.startsWith('image/') || file.type.startsWith('video/')) {
+      if (file.type.startsWith("image/") || file.type.startsWith("video/")) {
         e.preventDefault();
         uploadFileAttachment(file, file.name);
-        return;
       }
     }
   }
 
   function handleFileInputChange(e) {
-    if (e.target && e.target.files && e.target.files.length > 0) {
+    if (e.target?.files?.length > 0) {
       const file = e.target.files[0];
       uploadFileAttachment(file, file.name);
-      e.target.value = '';
+      e.target.value = "";
     }
-  }
-
-  function triggerFileInput() {
-    if (commentFileInput) {
-      commentFileInput.click();
-    }
-  }
-
-  function insertLinkPrompt() {
-    const url = prompt("กรุณากรอก URL ลิงก์ (เช่น https://example.com):");
-    if (!url || !url.trim()) return;
-    const cleanUrl = url.trim();
-    const text = prompt("กรุณากรอกข้อความแสดงผลสำหรับลิงก์ (ไม่บังคับ):", cleanUrl);
-    const linkText = (text && text.trim()) ? text.trim() : cleanUrl;
-    const insertion = ` [${linkText}](${cleanUrl}) `;
-    
-    if (commentTextareaRef) {
-      const start = commentTextareaRef.selectionStart || newCommentText.length;
-      const end = commentTextareaRef.selectionEnd || newCommentText.length;
-      newCommentText = newCommentText.slice(0, start) + insertion + newCommentText.slice(end);
-    } else {
-      newCommentText = (newCommentText ? newCommentText + ' ' : '') + insertion;
-    }
-    setTimeout(() => {
-      if (commentTextareaRef) commentTextareaRef.focus();
-    }, 50);
   }
 
   async function postComment() {
     let fullComment = newCommentText.trim();
     if (commentAttachments.length > 0) {
-      const attsMd = commentAttachments.map(a => `![${a.type === 'video' ? 'Video' : 'Image'}](${a.url})`).join('\n\n');
+      const attsMd = commentAttachments.map(a => `![${a.type === "video" ? "Video" : "Image"}](${a.url})`).join("\n\n");
       fullComment = fullComment ? `${fullComment}\n\n${attsMd}` : attsMd;
     }
-
     if (!selectedCard || !fullComment || isSendingComment) return;
     const cardId = selectedCard.saved_id || selectedCard.id;
     isSendingComment = true;
@@ -881,7 +769,7 @@
       const res = await fetch(`/api/projects/${selectedProjectId}/cards/${cardId}/comments`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           comment: fullComment,
           raw_ext_id: selectedCard.raw_ext_id || selectedCard.ext_card_id || selectedCard.id,
           attachments: commentAttachments,
@@ -895,12 +783,11 @@
         liveCards = liveCards.map(c => (c.id === cardId || (c.raw_ext_id && c.raw_ext_id === selectedCard.raw_ext_id)) ? { ...c, actions: data.actions } : c);
         newCommentText = "";
         commentAttachments = [];
-        toast(data.message || "เพิ่มความคิดเห็นและอัปเดตไปยัง Trello เรียบร้อยแล้ว!", "success");
+        toast(data.message || `เพิ่มความคิดเห็นและซิงก์ไปยัง ${providerLabel} เรียบร้อยแล้ว!`, "success");
       } else {
         toast(data.error || "เกิดข้อผิดพลาดในการบันทึกความคิดเห็น", "error");
       }
     } catch (e) {
-      console.error("Error saving comment:", e);
       toast("เกิดข้อผิดพลาดในการส่งความคิดเห็น", "error");
     } finally {
       isSendingComment = false;
@@ -919,7 +806,52 @@
     commentAttachments = [];
   }
 
-  // --- Drag & Drop Cards Across Columns ---
+  // Move card (used by both Drag & Drop AND Keyboard/Select dropdown!)
+  async function moveCardToColumn(cardToMove, targetColumnId) {
+    if (!cardToMove || !targetColumnId || cardToMove.status === targetColumnId) return;
+
+    const prevStatus = cardToMove.status;
+    const cardId = cardToMove.saved_id || cardToMove.id;
+    const rawExtId = cardToMove.raw_ext_id || cardToMove.ext_card_id || cardToMove.id;
+
+    liveCards = liveCards.map(c => (c.id === cardId || c.raw_ext_id === rawExtId) ? { ...c, status: targetColumnId } : c);
+    savedCards = savedCards.map(c => (c.id === cardId || c.raw_ext_id === rawExtId) ? { ...c, status: targetColumnId } : c);
+    if (selectedCard && (selectedCard.id === cardId || selectedCard.raw_ext_id === rawExtId)) {
+      selectedCard = { ...selectedCard, status: targetColumnId };
+    }
+
+    try {
+      const res = await fetch(`/api/projects/${selectedProjectId}/cards/${cardId}/move`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status: targetColumnId,
+          raw_ext_id: rawExtId
+        })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        toast(data.error || "ไม่สามารถย้ายการ์ดได้", "error");
+        liveCards = liveCards.map(c => (c.id === cardId || c.raw_ext_id === rawExtId) ? { ...c, status: prevStatus } : c);
+        savedCards = savedCards.map(c => (c.id === cardId || c.raw_ext_id === rawExtId) ? { ...c, status: prevStatus } : c);
+        if (selectedCard && (selectedCard.id === cardId || selectedCard.raw_ext_id === rawExtId)) {
+          selectedCard = { ...selectedCard, status: prevStatus };
+        }
+      } else {
+        const destTitle = columns.find(c => c.id === targetColumnId)?.title || targetColumnId;
+        toast(`ย้ายการ์ดไปยัง "${destTitle}" เรียบร้อยแล้ว`, "success");
+      }
+    } catch (err) {
+      toast("เกิดข้อผิดพลาดในการเชื่อมต่อเซิร์ฟเวอร์", "error");
+      liveCards = liveCards.map(c => (c.id === cardId || c.raw_ext_id === rawExtId) ? { ...c, status: prevStatus } : c);
+      savedCards = savedCards.map(c => (c.id === cardId || c.raw_ext_id === rawExtId) ? { ...c, status: prevStatus } : c);
+      if (selectedCard && (selectedCard.id === cardId || selectedCard.raw_ext_id === rawExtId)) {
+        selectedCard = { ...selectedCard, status: prevStatus };
+      }
+    }
+  }
+
+  // Drag & Drop handlers
   let draggedCard = null;
   let sourceColumnId = null;
   let dragOverColumnId = null;
@@ -928,25 +860,19 @@
     draggedCard = card;
     sourceColumnId = colId;
     if (e.dataTransfer) {
-      e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('text/plain', card.id || card.raw_ext_id);
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", card.id || card.raw_ext_id);
     }
   }
 
   function handleDragOver(colId, e) {
     e.preventDefault();
-    if (e.dataTransfer) {
-      e.dataTransfer.dropEffect = 'move';
-    }
-    if (dragOverColumnId !== colId) {
-      dragOverColumnId = colId;
-    }
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+    if (dragOverColumnId !== colId) dragOverColumnId = colId;
   }
 
-  function handleDragLeave(colId, e) {
-    if (dragOverColumnId === colId) {
-      dragOverColumnId = null;
-    }
+  function handleDragLeave(colId) {
+    if (dragOverColumnId === colId) dragOverColumnId = null;
   }
 
   function handleDragEnd() {
@@ -961,62 +887,29 @@
       handleDragEnd();
       return;
     }
-
     const cardToMove = { ...draggedCard };
-    const prevStatus = cardToMove.status;
-    const cardId = cardToMove.saved_id || cardToMove.id;
-    const rawExtId = cardToMove.raw_ext_id || cardToMove.ext_card_id || cardToMove.id;
-
-    // Optimistic local update
-    liveCards = liveCards.map(c => (c.id === cardId || c.raw_ext_id === rawExtId) ? { ...c, status: targetColumnId } : c);
-    savedCards = savedCards.map(c => (c.id === cardId || c.raw_ext_id === rawExtId) ? { ...c, status: targetColumnId } : c);
-    if (selectedCard && (selectedCard.id === cardId || selectedCard.raw_ext_id === rawExtId)) {
-      selectedCard = { ...selectedCard, status: targetColumnId };
-    }
-
     handleDragEnd();
+    await moveCardToColumn(cardToMove, targetColumnId);
+  }
 
-    // Sync to backend & Trello / GitHub
-    try {
-      const res = await fetch(`/api/projects/${selectedProjectId}/cards/${cardId}/move`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          status: targetColumnId,
-          raw_ext_id: rawExtId
-        })
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        toast(data.error || "ไม่สามารถย้าย Card ได้", "error");
-        // Revert on failure
-        liveCards = liveCards.map(c => (c.id === cardId || c.raw_ext_id === rawExtId) ? { ...c, status: prevStatus } : c);
-        savedCards = savedCards.map(c => (c.id === cardId || c.raw_ext_id === rawExtId) ? { ...c, status: prevStatus } : c);
-      } else {
-        toast("ย้าย Card เรียบร้อยแล้ว!", "success");
-      }
-    } catch (err) {
-      console.error(err);
-      toast("เกิดข้อผิดพลาดในการเชื่อมต่อเซิร์ฟเวอร์", "error");
-      // Revert on error
-      liveCards = liveCards.map(c => (c.id === cardId || c.raw_ext_id === rawExtId) ? { ...c, status: prevStatus } : c);
-      savedCards = savedCards.map(c => (c.id === cardId || c.raw_ext_id === rawExtId) ? { ...c, status: prevStatus } : c);
+  function handleCardKeydown(card, e) {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      openCardDetail(card);
     }
   }
 
-  function getExternalUrl(card) {
-    if (!card || !currentIntegration) return null;
-    if (currentIntegration.provider === 'trello' && card.raw_ext_id) {
-      return `https://trello.com/c/${card.raw_ext_id}`;
+  function handleAvatarError(e) {
+    e.currentTarget.style.display = "none";
+    if (e.currentTarget.nextElementSibling) {
+      e.currentTarget.nextElementSibling.style.display = "inline-flex";
     }
-    if (currentIntegration.provider === 'github' && card.raw_ext_id) {
-      return `https://github.com/${currentIntegration.github_owner}/${currentIntegration.github_repo}/issues/${card.raw_ext_id}`;
-    }
-    return null;
   }
 
+  // Guarded Escape handler (does not collide with ConfirmModal or SmartTestLauncherModal!)
   function handleWindowKeydown(e) {
-    if (e.key !== 'Escape') return;
+    if (e.key !== "Escape") return;
+    if (confirmOpen || isTestModalOpen) return;
     if (showImageModal) {
       showImageModal = false;
     } else if (showFilterModal) {
@@ -1026,1270 +919,851 @@
     } else if (showConfigModal) {
       showConfigModal = false;
     } else if (showDetailModal) {
-      closeCardDetail();
+      if (cardModalRef?.requestClose) cardModalRef.requestClose();
+      else closeCardDetail();
     }
   }
 </script>
 
 <svelte:window on:keydown={handleWindowKeydown} />
 
-<div class="board-container" in:fade>
+<div class="board-container" in:fade={{ duration: 150 }}>
   {#if !$selectedProjectStore}
-    <ProjectSelection 
-      {projects} 
-      subtitle="กรุณาเลือกโครงการที่ต้องการ เพื่อดูและจัดการ QA Board Cards" 
-      on:select={(e) => selectProject(e.detail)} 
+    <ProjectSelection
+      {projects}
+      subtitle="กรุณาเลือกโครงการที่ต้องการ เพื่อดูและจัดการ QA Board Cards"
+      on:select={(e) => selectProject(e.detail)}
     />
   {:else}
-    <!-- Navigation Top Bar -->
-    <div class="top-nav">
-      <button class="btn-back" on:click={() => { selectedProjectStore.set(null); }}>
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
-          <path fill-rule="evenodd" d="M11.354 1.646a.5.5 0 0 1 0 .708L5.707 8l5.647 5.646a.5.5 0 0 1-.708.708l-6-6a.5.5 0 0 1 0-.708l6-6a.5.5 0 0 1 .708 0z"/>
-        </svg>
-        ย้อนกลับไปหน้าเลือกโครงการ
-      </button>
-    </div>
+    <!-- Distilled 2-Row Top Chrome -->
+    <header class="board-chrome-shell">
+      <!-- Row 1: Navigation + Project/Provider Identity + Main Tabs + Board Settings -->
+      <div class="chrome-row-primary">
+        <div class="chrome-brand-group">
+          <button
+            type="button"
+            class="btn-back-compact"
+            on:click={() => selectedProjectStore.set(null)}
+            title="ย้อนกลับไปหน้าเลือกโครงการ"
+          >
+            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="15" height="15">
+              <polyline points="15 18 9 12 15 6"></polyline>
+            </svg>
+            <span>เปลี่ยนโครงการ</span>
+          </button>
 
-    <!-- Header Section -->
-    <div class="header-section">
-      <div class="header-main-row">
-        <div>
-          <h2 class="title">SpectraQA Board & Knowledge Hub</h2>
-          <p class="subtitle">เลือกการ์ดจาก Trello Board เข้าสู่โครงการและระบบ RAG Vector Indexing อัตโนมัติ</p>
-          
-          <div class="project-info-row">
-            <div class="active-project-badge">
-              โครงการ: <strong>{$selectedProjectStore.project_code || ''} - {$selectedProjectStore.name || $selectedProjectStore.project_name || ''}</strong>
+          <div class="project-identity-block">
+            <div class="project-title-line">
+              <h2 class="board-title">QA Board & RAG Workspace</h2>
+              <span class="active-project-pill">
+                {$selectedProjectStore.project_code ? `${$selectedProjectStore.project_code} · ` : ""}{$selectedProjectStore.name || $selectedProjectStore.project_name || "Project"}
+              </span>
+              {#if currentIntegration}
+                <span class="integration-pill connected">
+                  <span class="status-dot"></span>
+                  {#if currentIntegration.provider === "github"}
+                    GitHub: {currentIntegration.github_owner}/{currentIntegration.github_repo}
+                  {:else}
+                    Trello: {currentIntegration.trello_board_id}
+                  {/if}
+                </span>
+              {:else}
+                <button
+                  type="button"
+                  class="integration-pill unconfigured"
+                  on:click={() => (showConfigModal = true)}
+                >
+                  ยังไม่ได้เชื่อมต่อบอร์ด — คลิกเพื่อตั้งค่า
+                </button>
+              {/if}
             </div>
-
-            {#if currentIntegration}
-              <div class="integration-status-badge {currentIntegration.provider}">
-                {#if currentIntegration.provider === 'trello'}
-                  <span class="provider-pill trello">🔵 Trello Board</span> 
-                  <span class="provider-detail">ID: {currentIntegration.trello_board_id}</span>
-                {:else if currentIntegration.provider === 'github'}
-                  <span class="provider-pill github">🐱 GitHub Repo</span> 
-                  <span class="provider-detail">{currentIntegration.github_owner}/{currentIntegration.github_repo}</span>
-                {/if}
-              </div>
-            {:else}
-              <div class="integration-status-badge unconfigured">
-                ⚠️ ยังไม่ได้เชื่อมต่อบอร์ด (คลิกปุ่มตั้งค่าเพื่อเชื่อมต่อ)
-              </div>
-            {/if}
           </div>
         </div>
 
-        <div class="header-actions">
-          <button class="btn-agile-tools" on:click={() => showAgileSummaryModal = true} title="ดูสรุปแต้ม Story Points (Agile Tools)">
-            <span class="agile-icon">⏱️</span>
-            <span>Agile Tools</span>
-            <span class="agile-pts-badge">{agilePointsSummary.totalPoints} pts</span>
+        <!-- Center/Right: Main Tab Switcher + Agile Tools + Board Config -->
+        <div class="chrome-primary-right">
+          <div class="main-tab-switcher" role="tablist" aria-label="สลับมุมมองบอร์ด">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === "live"}
+              class="main-tab-btn"
+              class:active={activeTab === "live"}
+              on:click={() => (activeTab = "live")}
+            >
+              <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15">
+                <rect x="3" y="3" width="18" height="18" rx="2"></rect>
+                <line x1="9" y1="3" x2="9" y2="21"></line>
+                <line x1="15" y1="3" x2="15" y2="21"></line>
+              </svg>
+              <span>บอร์ด {providerLabel} สด</span>
+              <span class="tab-count-pill">{validLiveCards.length}</span>
+            </button>
+
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === "saved"}
+              class="main-tab-btn"
+              class:active={activeTab === "saved"}
+              on:click={() => (activeTab = "saved")}
+            >
+              <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15">
+                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+              </svg>
+              <span>การ์ดในโครงการ & RAG</span>
+              <span class="tab-count-pill saved">{validSavedCards.length}</span>
+            </button>
+          </div>
+
+          <button
+            type="button"
+            class="btn-chrome-tool"
+            on:click={() => (showAgileSummaryModal = true)}
+            title="ดูสรุปแต้ม Story Points (Agile Tools)"
+          >
+            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15">
+              <circle cx="12" cy="12" r="10"></circle>
+              <polyline points="12 6 12 12 16 14"></polyline>
+            </svg>
+            <span>Agile</span>
+            <span class="pts-chip">{agilePointsSummary.totalPoints} pts</span>
           </button>
 
-          <button class="btn-filter-toggle" class:has-active-filters={activeFilterCount > 0} on:click={() => showFilterModal = true} title="กรองการ์ดตามเงื่อนไข (Keyword, สมาชิก, Label, สถานะ)">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon></svg>
-            <span>Filter</span>
-            {#if activeFilterCount > 0}
-              <span class="filter-count-badge">{activeFilterCount}</span>
-            {/if}
-          </button>
-
-          <button type="button" class="btn-config" on:click={() => showConfigModal = true} title="ตั้งค่าเชื่อมต่อกับ Trello หรือ GitHub">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
-            ตั้งค่า Board
+          <button
+            type="button"
+            class="btn-chrome-tool"
+            on:click={() => (showConfigModal = true)}
+            title="ตั้งค่าเชื่อมต่อ Trello หรือ GitHub"
+          >
+            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15">
+              <circle cx="12" cy="12" r="3"></circle>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+            </svg>
+            <span>ตั้งค่า Board</span>
           </button>
         </div>
       </div>
 
-      <!-- Main Tab Switcher -->
-      <div class="tab-switcher-container">
-        <button 
-          class="tab-btn" 
-          class:active={activeTab === 'live'} 
-          on:click={() => activeTab = 'live'}
-        >
-          <span class="tab-icon">🔵</span>
-          <span class="tab-label">บอร์ด Trello สด & เลือกบันทึกการ์ด</span>
-          <span class="tab-counter-badge">{liveCards.length}</span>
-        </button>
-
-        <button 
-          class="tab-btn" 
-          class:active={activeTab === 'saved'} 
-          on:click={() => activeTab = 'saved'}
-        >
-          <span class="tab-icon">📂</span>
-          <span class="tab-label">การ์ดที่บันทึกในโครงการนี้ & RAG</span>
-          <span class="tab-counter-badge saved">{savedCards.length}</span>
-        </button>
-      </div>
-    </div>
-
-    <!-- TAB 1: LIVE TRELLO BOARD & SELECTOR -->
-    {#if activeTab === 'live'}
-      <div class="live-board-wrapper" in:fade={{ duration: 150 }}>
-        <!-- Sticky Action Bar for Live Selection -->
-        <div class="sticky-action-bar glass-panel">
-          <div class="action-bar-left">
-            <div class="selection-status-badge">
-              <span class="selection-icon">📋</span>
-              <span>เลือกแล้ว: <strong>{selectedCardIds.size}</strong> / {liveCards.length} การ์ด</span>
-            </div>
-
-            <button class="btn-action-outline" on:click={selectAllLiveCards} title="เลือก Card ทั้งหมดในบอร์ด">
-              ☑️ เลือกทั้งหมด
+      <!-- Row 2: Contextual Action & Filter Toolbar -->
+      <div class="chrome-row-secondary">
+        <div class="secondary-left">
+          {#if activeTab === "live"}
+            <span class="selection-readout">
+              เลือกแล้ว <strong>{selectedCardIds.size}</strong> / {totalFilteredLiveCardsCount} การ์ด
+            </span>
+            <button
+              type="button"
+              class="btn-toolbar-sub"
+              on:click={selectAllLiveCards}
+              disabled={totalFilteredLiveCardsCount === 0}
+              title="เลือกการ์ดทั้งหมดที่แสดงอยู่ในขณะนี้"
+            >
+              เลือกทั้งหมดที่แสดง
             </button>
-            
             {#if selectedCardIds.size > 0}
-              <button class="btn-action-outline" on:click={clearCardSelection} title="ล้างการเลือกทั้งหมด">
-                ⬜ ล้างที่เลือก
+              <button
+                type="button"
+                class="btn-toolbar-sub"
+                on:click={clearCardSelection}
+              >
+                ล้างที่เลือก
               </button>
             {/if}
+          {:else}
+            <!-- Saved Tab: View Switcher (Kanban vs QA Execution Table) -->
+            <div class="view-mode-segmented" role="group" aria-label="รูปแบบการแสดงผลการ์ดที่บันทึก">
+              <button
+                type="button"
+                class="seg-btn"
+                class:active={savedViewMode === "kanban"}
+                on:click={() => (savedViewMode = "kanban")}
+              >
+                <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                  <rect x="3" y="3" width="18" height="18" rx="2"></rect>
+                  <line x1="9" y1="3" x2="9" y2="21"></line>
+                  <line x1="15" y1="3" x2="15" y2="21"></line>
+                </svg>
+                Kanban Board
+              </button>
+              <button
+                type="button"
+                class="seg-btn"
+                class:active={savedViewMode === "table"}
+                on:click={() => (savedViewMode = "table")}
+              >
+                <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                  <line x1="8" y1="6" x2="21" y2="6"></line>
+                  <line x1="8" y1="12" x2="21" y2="12"></line>
+                  <line x1="8" y1="18" x2="21" y2="18"></line>
+                  <line x1="3" y1="6" x2="3.01" y2="6"></line>
+                  <line x1="3" y1="12" x2="3.01" y2="12"></line>
+                  <line x1="3" y1="18" x2="3.01" y2="18"></line>
+                </svg>
+                QA Execution Table
+              </button>
+            </div>
+            <span class="rag-ready-hint">
+              พร้อมใช้งาน RAG Vector Search ({validSavedCards.length} ใบ)
+            </span>
+          {/if}
+        </div>
+
+        <div class="secondary-right">
+          <div class="search-box-compact">
+            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+            <input
+              type="text"
+              placeholder="ค้นหาชื่อการ์ด, รหัส, ป้ายกำกับ..."
+              aria-label="ค้นหาชื่อการ์ด, รหัส, ป้ายกำกับ"
+              bind:value={cardSearchQuery}
+            />
+            {#if cardSearchQuery}
+              <button type="button" class="btn-clear-query" aria-label="ล้างคำค้นหา" on:click={() => (cardSearchQuery = "")}>✕</button>
+            {/if}
           </div>
 
-          <div class="action-bar-right">
-            <div class="search-input-wrapper">
-              <span class="search-icon" aria-hidden="true">🔍</span>
-              <input 
-                type="text" 
-                placeholder="ค้นหาชื่อ Card, ID, Labels..." 
-                aria-label="ค้นหาชื่อ Card, ID, Labels"
-                bind:value={cardSearchQuery}
-                class="card-search-box"
-              />
-              {#if cardSearchQuery}
-                <button type="button" class="clear-search-btn" aria-label="ล้างคำค้นหา" on:click={() => cardSearchQuery = ''}>✕</button>
-              {/if}
-            </div>
+          <!-- Single Unified Filter Button -->
+          <button
+            type="button"
+            class="btn-toolbar-sub"
+            class:active-filter={activeFilterCount > 0}
+            on:click={() => (showFilterModal = true)}
+          >
+            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+              <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
+            </svg>
+            <span>ตัวกรอง</span>
+            {#if activeFilterCount > 0}
+              <span class="filter-badge-count">{activeFilterCount}</span>
+            {/if}
+          </button>
 
-            <button class="btn-filter-quick" class:active={activeFilterCount > 0} on:click={() => showFilterModal = true} title="เปิดแผงตัวกรอง">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon></svg>
-              <span>Filter</span>
-              {#if activeFilterCount > 0}
-                <span class="filter-count-badge small">{activeFilterCount}</span>
-              {/if}
+          {#if activeTab === "live"}
+            <button
+              type="button"
+              class="btn-toolbar-sub"
+              on:click={fetchLiveCards}
+              disabled={isLoadingLive}
+            >
+              <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" class:spinning={isLoadingLive}>
+                <path d="M23 4v6h-6"></path>
+                <path d="M1 20v-6h6"></path>
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+              </svg>
+              <span>{isLoadingLive ? "กำลังโหลด..." : "รีเฟรช"}</span>
             </button>
 
-            <button class="btn-refresh-live" on:click={fetchLiveCards} disabled={isLoadingLive}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15" class:spinning={isLoadingLive}><path d="M23 4v6h-6"></path><path d="M1 20v-6h6"></path><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
-              {isLoadingLive ? 'กำลังโหลด...' : 'รีเฟรชบอร์ดสด'}
-            </button>
-
-            <button 
-              class="btn-save-selected-rag" 
-              on:click={saveSelectedCardsToProject} 
+            <button
+              type="button"
+              class="btn-primary-cta"
+              on:click={saveSelectedCardsToProject}
               disabled={selectedCardIds.size === 0 || isSavingSelected}
-              title="บันทึกการ์ดที่เลือกลงในโครงการนี้ และสร้าง Vector Embedding เข้า RAG"
             >
               {#if isSavingSelected}
                 <span class="spinner-small"></span> กำลังบันทึก & Index RAG...
               {:else}
-                💾 บันทึก Card ที่เลือกลงโครงการ & RAG ({selectedCardIds.size})
+                <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15">
+                  <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                  <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                </svg>
+                <span>บันทึกเข้าโครงการ & RAG ({selectedCardIds.size})</span>
               {/if}
             </button>
+          {:else}
+            <button
+              type="button"
+              class="btn-toolbar-sub"
+              on:click={fetchSavedCards}
+              disabled={isLoadingSaved}
+            >
+              <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" class:spinning={isLoadingSaved}>
+                <path d="M23 4v6h-6"></path>
+                <path d="M1 20v-6h6"></path>
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+              </svg>
+              <span>{isLoadingSaved ? "กำลังโหลด..." : "รีเฟรช"}</span>
+            </button>
+
+            <button
+              type="button"
+              class="btn-toolbar-sub"
+              on:click={() => (activeTab = "live")}
+            >
+              + เลือกการ์ดเพิ่มจากบอร์ดสด
+            </button>
+
+            {#if validSavedCards.length > 0}
+              <button
+                type="button"
+                class="btn-toolbar-danger"
+                on:click={clearAllSavedCards}
+              >
+                ล้างทั้งหมด
+              </button>
+            {/if}
+          {/if}
+        </div>
+      </div>
+
+      <!-- Active Filter Strip (with human member names & types!) -->
+      {#if activeFilterCount > 0}
+        <div class="active-filters-strip">
+          <span class="strip-label">
+            กำลังกรอง ({totalFilteredCardsCount} / {activeTab === "live" ? validLiveCards.length : validSavedCards.length} การ์ด):
+          </span>
+          {#if cardSearchQuery}
+            <span class="filter-chip">คำค้น: "{cardSearchQuery}" <button type="button" aria-label="ลบคำค้น" on:click={() => (cardSearchQuery = "")}>✕</button></span>
+          {/if}
+          {#if filterNoMembers}
+            <span class="filter-chip">ไม่มีผู้รับผิดชอบ <button type="button" aria-label="ลบตัวกรองไม่มีผู้รับผิดชอบ" on:click={() => (filterNoMembers = false)}>✕</button></span>
+          {/if}
+          {#each Array.from(selectedMemberIds) as mId}
+            <span class="filter-chip">สมาชิก: {resolveMemberName(mId, boardMembersList)} <button type="button" aria-label="ลบตัวกรองสมาชิก" on:click={() => toggleMemberFilter(mId)}>✕</button></span>
+          {/each}
+          {#if filterNoLabels}
+            <span class="filter-chip">ไม่มีป้ายกำกับ <button type="button" aria-label="ลบตัวกรองไม่มีป้ายกำกับ" on:click={() => (filterNoLabels = false)}>✕</button></span>
+          {/if}
+          {#each Array.from(selectedLabelNames) as lName}
+            <span class="filter-chip">Label: {lName} <button type="button" aria-label="ลบตัวกรองป้ายกำกับ" on:click={() => toggleLabelFilter(lName)}>✕</button></span>
+          {/each}
+          {#each Array.from(filterTypes) as tName}
+            <span class="filter-chip">ประเภท: {tName} <button type="button" aria-label="ลบตัวกรองประเภท" on:click={() => toggleTypeFilter(tName)}>✕</button></span>
+          {/each}
+          {#if activeTab === "live" && filterSavedStatus !== "all"}
+            <span class="filter-chip">สถานะ: {filterSavedStatus === "saved" ? "บันทึกแล้ว" : "ยังไม่บันทึก"} <button type="button" aria-label="ลบตัวกรองสถานะบันทึก" on:click={() => (filterSavedStatus = "all")}>✕</button></span>
+          {/if}
+          {#if filterCompletion !== "all"}
+            <span class="filter-chip">ความคืบหน้า: {filterCompletion === "complete" ? "เสร็จสิ้น" : "กำลังดำเนินการ"} <button type="button" aria-label="ลบตัวกรองความคืบหน้า" on:click={() => (filterCompletion = "all")}>✕</button></span>
+          {/if}
+          <button type="button" class="btn-clear-all-filters" on:click={resetAllFilters}>ล้างตัวกรองทั้งหมด</button>
+        </div>
+      {/if}
+    </header>
+
+    <!-- MAIN BOARD WORKSPACE -->
+    {#if activeTab === "live"}
+      {#if isLoadingLive && validLiveCards.length === 0}
+        <!-- Loading Skeleton Grid -->
+        <div class="board-layout" aria-live="polite" aria-busy="true">
+          {#each columns as col}
+            <div class="board-column">
+              <div class="column-header">
+                <span class="column-dot" style="background-color: {col.color};"></span>
+                <span class="column-title">{col.title}</span>
+                <span class="column-count">...</span>
+              </div>
+              <div class="card-list">
+                {#each [1, 2, 3] as _}
+                  <div class="skeleton-card">
+                    <div class="sk-line sk-pill"></div>
+                    <div class="sk-line sk-title"></div>
+                    <div class="sk-line sk-meta"></div>
+                  </div>
+                {/each}
+              </div>
+            </div>
+          {/each}
+        </div>
+      {:else if !currentIntegration && validLiveCards.length === 0}
+        <!-- Unconfigured Board Onboarding Empty State -->
+        <div class="board-onboarding-state">
+          <div class="onboarding-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="32" height="32">
+              <rect x="3" y="3" width="18" height="18" rx="2"></rect>
+              <line x1="9" y1="3" x2="9" y2="21"></line>
+              <line x1="15" y1="3" x2="15" y2="21"></line>
+            </svg>
+          </div>
+          <h3>ยังไม่ได้เชื่อมต่อบอร์ดภายนอกสำหรับโครงการนี้</h3>
+          <p>เชื่อมต่อ <strong>Trello Board</strong> หรือ <strong>GitHub Issues</strong> เพื่อดึงการ์ดงานเข้ามาคัดเลือกจัดทำดัชนี RAG และรัน AI Agent Test อัตโนมัติ</p>
+          <button type="button" class="btn-primary-cta" on:click={() => (showConfigModal = true)}>
+            ตั้งค่าการเชื่อมต่อบอร์ด (Trello / GitHub)
+          </button>
+        </div>
+      {:else if liveLoadError && validLiveCards.length === 0}
+        <div class="board-onboarding-state">
+          <h3>ไม่สามารถโหลดข้อมูลบอร์ดสดได้</h3>
+          <p>{liveLoadError}</p>
+          <div style="display: flex; gap: 10px;">
+            <button type="button" class="btn-toolbar-sub" on:click={fetchLiveCards}>ลองใหม่อีกครั้ง</button>
+            <button type="button" class="btn-primary-cta" on:click={() => (showConfigModal = true)}>ตรวจสอบการตั้งค่า Board</button>
           </div>
         </div>
-
-        <!-- Active Filter Strip -->
-        {#if activeFilterCount > 0}
-          <div class="active-filters-strip glass-panel">
-            <span class="strip-label">⚡ กรองอยู่ ({totalFilteredLiveCardsCount} / {liveCards.length} การ์ด):</span>
-            {#if cardSearchQuery}
-              <span class="active-filter-tag">คำค้น: "{cardSearchQuery}" <button on:click={() => cardSearchQuery = ''}>✕</button></span>
-            {/if}
-            {#if filterNoMembers}
-              <span class="active-filter-tag">ไม่มีสมาชิก <button on:click={() => filterNoMembers = false}>✕</button></span>
-            {/if}
-            {#each Array.from(selectedMemberIds) as mId}
-              <span class="active-filter-tag">สมาชิก: {mId} <button on:click={() => toggleMemberFilter(mId)}>✕</button></span>
-            {/each}
-            {#if filterNoLabels}
-              <span class="active-filter-tag">ไม่มี Label <button on:click={() => filterNoLabels = false}>✕</button></span>
-            {/if}
-            {#each Array.from(selectedLabelNames) as lName}
-              <span class="active-filter-tag">Label: {lName} <button on:click={() => toggleLabelFilter(lName)}>✕</button></span>
-            {/each}
-            {#if filterSavedStatus !== 'all'}
-              <span class="active-filter-tag">สถานะ: {filterSavedStatus === 'saved' ? 'บันทึกแล้ว' : 'ยังไม่บันทึก'} <button on:click={() => filterSavedStatus = 'all'}>✕</button></span>
-            {/if}
-            {#if filterCompletion !== 'all'}
-              <span class="active-filter-tag">ความสมบูรณ์: {filterCompletion === 'complete' ? 'เสร็จแล้ว' : 'ยังไม่เสร็จ'} <button on:click={() => filterCompletion = 'all'}>✕</button></span>
-            {/if}
-            <button class="btn-clear-all-filters" on:click={resetAllFilters}>ล้างตัวกรองทั้งหมด</button>
-          </div>
-        {/if}
-
-        <!-- Live Columns Layout -->
+      {:else}
         <div class="board-layout">
           {#each columns as column}
-            <div 
-              class="board-column glass-panel"
+            {@const colCards = liveCardsByCol[column.id] || []}
+            {@const colPts = getColumnPoints(colCards)}
+            <div
+              class="board-column"
               class:drag-over={dragOverColumnId === column.id}
               on:dragover={(e) => handleDragOver(column.id, e)}
-              on:dragleave={(e) => handleDragLeave(column.id, e)}
+              on:dragleave={() => handleDragLeave(column.id)}
               on:drop={(e) => handleDrop(column.id, e)}
             >
               <div class="column-header">
                 <span class="column-dot" style="background-color: {column.color};"></span>
                 <span class="column-title">{column.title}</span>
-                <span class="column-count">{(liveCardsByCol[column.id] || []).length}</span>
+                <div class="column-metrics">
+                  <span class="column-pts-pill" title="แต้มรวม Story Points ในคอลัมน์นี้">{colPts} pts</span>
+                  <span class="column-count">{colCards.length}</span>
+                </div>
               </div>
-              
+
               <div class="card-list">
-                {#each (liveCardsByCol[column.id] || []) as card (card.id || card.ext_card_id)}
-                  <!-- svelte-ignore a11y-click-events-have-key-events -->
-                  <div 
-                    class="task-card live-card" 
-                    class:selected={isCardSelected(card, selectedCardIds)}
+                {#each colCards as card (card.id || card.ext_card_id)}
+                  {@const prio = getPriorityMeta(card)}
+                  {@const selected = isCardSelected(card, selectedCardIds)}
+                  <div
+                    class="task-card"
+                    class:selected
                     class:is-saved={card.is_saved}
                     class:is-unestimated={markUnestimated && isCardUnestimated(card)}
                     class:is-dragging={draggedCard && (draggedCard.id === card.id || draggedCard.raw_ext_id === card.raw_ext_id)}
+                    role="button"
+                    tabindex="0"
                     draggable="true"
                     on:dragstart={(e) => handleDragStart(card, column.id, e)}
                     on:dragend={handleDragEnd}
-                    on:click={() => openCardDetail(card)} 
-                    title="คลิกเพื่อดูรายละเอียด หรือลาก (Drag) เพื่อย้ายแถว"
+                    on:click={() => openCardDetail(card)}
+                    on:keydown={(e) => handleCardKeydown(card, e)}
+                    aria-label={`การ์ด ${card.title}`}
                   >
-                    <!-- Card Top Header: Labels on Left, Checkbox on Right -->
-                    <div class="card-top-control-row">
+                    <div class="card-top-row">
                       <div class="card-labels-group">
-                        {#if getCleanLabels(card.labels).length > 0}
-                          {#each getCleanLabels(card.labels) as label}
-                            <span class="trello-label-pill" style="background-color: {label.color || '#38bdf8'};">
-                              {label.name}
-                            </span>
-                          {/each}
-                        {/if}
+                        {#each getCleanLabels(card.labels) as label}
+                          <span
+                            class="label-pill"
+                            style="background-color: {label.color}; color: {label.textColor};"
+                          >
+                            {label.name}
+                          </span>
+                        {/each}
                         {#if card.is_saved}
-                          <span class="saved-status-badge" title="Card ใบนี้ถูกบันทึกและจัดทำดัชนี RAG ในโครงการนี้แล้ว">
-                            ✅ บันทึกแล้ว
+                          <span class="saved-status-pill" title="บันทึกและจัดทำดัชนี RAG แล้ว">
+                            บันทึกแล้ว (RAG)
                           </span>
                         {/if}
                       </div>
 
-                      <!-- svelte-ignore a11y-click-events-have-key-events -->
-                      <div 
-                        class="card-checkbox-hitbox" 
+                      <button
+                        type="button"
+                        role="checkbox"
+                        aria-checked={selected}
+                        aria-label={`เลือกการ์ด ${card.title}`}
+                        class="card-checkbox-btn"
+                        class:checked={selected}
                         on:click|stopPropagation={(e) => toggleSelectCard(card, e)}
-                        title={isCardSelected(card, selectedCardIds) ? "คลิกเพื่อยกเลิกการเลือก" : "คลิกเพื่อเลือก Card นี้เข้าโครงการ"}
                       >
-                        <span class="custom-checkbox-ui" class:checked={isCardSelected(card, selectedCardIds)}>
-                          {#if isCardSelected(card, selectedCardIds)}
-                            <svg viewBox="0 0 16 16" fill="currentColor" width="11" height="11">
-                              <path fill-rule="evenodd" d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z" clip-rule="evenodd"/>
-                            </svg>
-                          {/if}
-                        </span>
-                      </div>
+                        {#if selected}
+                          <svg aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" width="11" height="11">
+                            <path fill-rule="evenodd" d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z" clip-rule="evenodd"/>
+                          </svg>
+                        {/if}
+                      </button>
                     </div>
-                    
+
                     <h4 class="card-title">{card.title}</h4>
 
                     <div class="card-footer">
                       <div class="footer-left-meta">
                         {#if card.description}
-                          <span class="desc-icon" title="มีรายละเอียด">≡</span>
+                          <span class="desc-indicator" title="มีคำอธิบายรายละเอียด" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
+                              <line x1="17" y1="10" x2="3" y2="10"></line>
+                              <line x1="21" y1="6" x2="3" y2="6"></line>
+                              <line x1="21" y1="14" x2="3" y2="14"></line>
+                            </svg>
+                          </span>
                         {/if}
                         {#if markUnestimated && isCardUnestimated(card)}
-                          <span class="unestimated-pill" title="การ์ดนี้ยังไม่ได้ประเมิน Story Points">
-                            Unestimated
-                          </span>
+                          <span class="unestimated-pill">Unestimated</span>
                         {:else}
-                          <span class="story-points-pill" title="Story Points">
-                            P {card.story_points || '1'}
-                          </span>
+                          <span class="story-points-pill">{card.story_points || "1"} pts</span>
                         {/if}
-                        <span class="badge priority-{card.priority ? card.priority.toLowerCase() : 'medium'}">
-                          {card.priority === 'High' ? 'Main Card' : (card.type || 'Main Card')}
-                        </span>
+                        <span class="prio-badge prio-{prio.level}">{prio.label}</span>
                       </div>
 
                       <div class="footer-right-members">
-                        {#if card.members && card.members.length > 0}
-                          {#each card.members as member}
-                            {#if member.avatar}
-                              <img 
-                                src={member.avatar} 
-                                alt={member.name} 
-                                class="member-avatar" 
-                                loading="lazy"
-                                decoding="async"
-                                title="{member.name}{member.username ? ' (@' + member.username + ')' : ''}"
-                                on:error={(e) => {
-                                  e.currentTarget.style.display = 'none';
-                                  if (e.currentTarget.nextElementSibling) e.currentTarget.nextElementSibling.style.display = 'inline-flex';
-                                }}
-                              />
-                              <span class="member-initials" style="display: none;" title="{member.name}{member.username ? ' (@' + member.username + ')' : ''}">{member.initials || 'M'}</span>
-                            {:else}
-                              <span class="member-initials" title="{member.name}{member.username ? ' (@' + member.username + ')' : ''}">{member.initials || 'M'}</span>
-                            {/if}
-                          {/each}
-                        {/if}
+                        {#each (card.members || []) as member}
+                          {#if member.avatar}
+                            <img
+                              src={member.avatar}
+                              alt={member.name}
+                              class="member-avatar"
+                              loading="lazy"
+                              decoding="async"
+                              title="{member.name}{member.username ? ' (@' + member.username + ')' : ''}"
+                              on:error={handleAvatarError}
+                            />
+                            <span class="member-initials" style="display: none;" title={member.name}>{member.initials || "M"}</span>
+                          {:else}
+                            <span class="member-initials" title={member.name}>{member.initials || "M"}</span>
+                          {/if}
+                        {/each}
                       </div>
                     </div>
                   </div>
                 {/each}
-                {#if (liveCardsByCol[column.id] || []).length === 0}
-                  <div class="empty-column">ไม่มี Card ในสถานะนี้</div>
+
+                {#if colCards.length === 0}
+                  <div class="empty-column">ไม่มีการ์ดในสถานะนี้</div>
                 {/if}
               </div>
             </div>
           {/each}
         </div>
-      </div>
+      {/if}
 
-    <!-- TAB 2: SAVED PROJECT CARDS & RAG VIEW -->
-    {:else if activeTab === 'saved'}
-      <div class="saved-board-wrapper" in:fade={{ duration: 150 }}>
-        <!-- Saved Cards Top Bar -->
-        <div class="saved-top-bar glass-panel">
-          <div class="saved-bar-left">
-            <div class="rag-info-pill">
-              <span class="rag-sparkle">⚡</span>
-              <span>การ์ดในโครงการนี้: <strong>{savedCards.length}</strong> ใบ (พร้อมระบบ RAG Vector Search)</span>
+    {:else}
+      <!-- TAB 2: SAVED PROJECT CARDS & RAG WORKSPACE -->
+      {#if isLoadingSaved && validSavedCards.length === 0}
+        <div class="board-layout" aria-live="polite" aria-busy="true">
+          {#each columns as col}
+            <div class="board-column">
+              <div class="column-header">
+                <span class="column-dot" style="background-color: {col.color};"></span>
+                <span class="column-title">{col.title}</span>
+              </div>
+              <div class="card-list">
+                {#each [1, 2] as _}
+                  <div class="skeleton-card">
+                    <div class="sk-line sk-pill"></div>
+                    <div class="sk-line sk-title"></div>
+                    <div class="sk-line sk-meta"></div>
+                  </div>
+                {/each}
+              </div>
             </div>
-          </div>
-
-          <div class="saved-bar-right">
-            <div class="search-input-wrapper">
-              <span class="search-icon" aria-hidden="true">🔍</span>
-              <input 
-                type="text" 
-                placeholder="ค้นหาการ์ดที่บันทึกไว้..." 
-                aria-label="ค้นหาการ์ดที่บันทึกไว้"
-                bind:value={cardSearchQuery}
-                class="card-search-box"
-              />
-              {#if cardSearchQuery}
-                <button type="button" class="clear-search-btn" aria-label="ล้างคำค้นหา" on:click={() => cardSearchQuery = ''}>✕</button>
-              {/if}
-            </div>
-
-            <button class="btn-filter-quick" class:active={activeFilterCount > 0} on:click={() => showFilterModal = true} title="เปิดแผงตัวกรอง">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon></svg>
-              <span>Filter</span>
-              {#if activeFilterCount > 0}
-                <span class="filter-count-badge small">{activeFilterCount}</span>
-              {/if}
-            </button>
-
-            {#if savedCards.length > 0}
-              <button class="btn-action-outline btn-danger-outline" on:click={clearAllSavedCards} title="ลบ Card ที่บันทึกไว้ทั้งหมดออกจากโครงการนี้">
-                🗑️ ล้างการ์ดที่บันทึกทั้งหมด
-              </button>
-            {/if}
-
-            <button class="btn-action-outline" on:click={() => activeTab = 'live'} title="ไปเลือกการ์ดจาก Trello Board สด">
-              ➕ เลือก Card เพิ่มจากบอร์ดสด
-            </button>
-          </div>
+          {/each}
         </div>
-
-        <!-- Active Filter Strip for Saved Tab -->
-        {#if activeFilterCount > 0}
-          <div class="active-filters-strip glass-panel">
-            <span class="strip-label">⚡ กรองอยู่ ({totalFilteredSavedCardsCount} / {savedCards.length} การ์ด):</span>
-            {#if cardSearchQuery}
-              <span class="active-filter-tag">คำค้น: "{cardSearchQuery}" <button on:click={() => cardSearchQuery = ''}>✕</button></span>
-            {/if}
-            {#if filterNoMembers}
-              <span class="active-filter-tag">ไม่มีสมาชิก <button on:click={() => filterNoMembers = false}>✕</button></span>
-            {/if}
-            {#each Array.from(selectedMemberIds) as mId}
-              <span class="active-filter-tag">สมาชิก: {mId} <button on:click={() => toggleMemberFilter(mId)}>✕</button></span>
-            {/each}
-            {#if filterNoLabels}
-              <span class="active-filter-tag">ไม่มี Label <button on:click={() => filterNoLabels = false}>✕</button></span>
-            {/if}
-            {#each Array.from(selectedLabelNames) as lName}
-              <span class="active-filter-tag">Label: {lName} <button on:click={() => toggleLabelFilter(lName)}>✕</button></span>
-            {/each}
-            {#if filterCompletion !== 'all'}
-              <span class="active-filter-tag">ความสมบูรณ์: {filterCompletion === 'complete' ? 'เสร็จแล้ว' : 'ยังไม่เสร็จ'} <button on:click={() => filterCompletion = 'all'}>✕</button></span>
-            {/if}
-            <button class="btn-clear-all-filters" on:click={resetAllFilters}>ล้างตัวกรองทั้งหมด</button>
+      {:else if validSavedCards.length === 0}
+        <div class="board-onboarding-state">
+          <div class="onboarding-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="32" height="32">
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+            </svg>
           </div>
-        {/if}
-
-        <!-- Saved Cards List / Columns -->
-        {#if savedCards.length === 0}
-          <div class="empty-saved-state glass-panel">
-            <div class="empty-icon">📂</div>
-            <h3>ยังไม่มี Card ที่ถูกเลือกบันทึกในโครงการนี้</h3>
-            <p>คุณสามารถเข้าไปที่แท็บ <strong>"บอร์ด Trello สด"</strong> เพื่อติ๊ก Checkbox เลือกเฉพาะ Card ของโครงการนี้ แล้วกดบันทึก</p>
-            <button class="btn-primary" on:click={() => activeTab = 'live'}>
-              👉 ไปที่แท็บเลือก Card จากบอร์ดสด
-            </button>
-          </div>
-        {:else}
-          <div class="board-layout">
-            {#each columns as column}
-              <div 
-                class="board-column glass-panel"
-                class:drag-over={dragOverColumnId === column.id}
-                on:dragover={(e) => handleDragOver(column.id, e)}
-                on:dragleave={(e) => handleDragLeave(column.id, e)}
-                on:drop={(e) => handleDrop(column.id, e)}
-              >
-                <div class="column-header">
-                  <span class="column-dot" style="background-color: {column.color};"></span>
-                  <span class="column-title">{column.title}</span>
-                  <span class="column-count">{(savedCardsByCol[column.id] || []).length}</span>
-                </div>
-                
-                <div class="card-list">
-                  {#each (savedCardsByCol[column.id] || []) as card (card.id)}
-                    <!-- svelte-ignore a11y-click-events-have-key-events -->
-                    <div 
-                      class="task-card saved-card-item" 
-                      class:is-unestimated={markUnestimated && isCardUnestimated(card)}
-                      class:is-dragging={draggedCard && (draggedCard.id === card.id || draggedCard.raw_ext_id === card.raw_ext_id)}
-                      draggable="true"
-                      on:dragstart={(e) => handleDragStart(card, column.id, e)}
-                      on:dragend={handleDragEnd}
-                      on:click={() => openCardDetail(card)} 
-                      title="คลิกเพื่อดูรายละเอียด หรือลาก (Drag) เพื่อย้ายแถว"
-                    >
-                      <!-- Top Badges Row -->
-                      <div class="saved-top-badge-row">
-                        <span class="rag-indexed-badge">
-                          ⚡ RAG Indexed
-                        </span>
-                        {#if card.test_result}
-                          <span class="test-status-badge passed">✓ Tested</span>
-                        {/if}
-                      </div>
-
-                      <!-- Trello Tag Labels Row -->
-                      {#if getCleanLabels(card.labels).length > 0}
-                        <div class="trello-labels-bar">
-                          {#each getCleanLabels(card.labels) as label}
-                            <span class="trello-label-pill" style="background-color: {label.color || '#38bdf8'};">
-                              {label.name}
-                            </span>
-                          {/each}
-                        </div>
-                      {/if}
-                      
-                      <h4 class="card-title">{card.title}</h4>
-
-                      <div class="card-footer">
-                        <div class="footer-left-meta">
-                          {#if card.description}
-                            <span class="desc-icon" title="มีรายละเอียด">≡</span>
-                          {/if}
-                          {#if markUnestimated && isCardUnestimated(card)}
-                            <span class="unestimated-pill" title="การ์ดนี้ยังไม่ได้ประเมิน Story Points">
-                              Unestimated
-                            </span>
-                          {:else}
-                            <span class="story-points-pill" title="Story Points">
-                              P {card.story_points || '1'}
-                            </span>
-                          {/if}
-                          <span class="badge priority-{card.priority ? card.priority.toLowerCase() : 'medium'}">
-                            {card.priority === 'High' ? 'Main Card' : (card.type || 'Main Card')}
+          <h3>ยังไม่มีการ์ดที่บันทึกในโครงการนี้</h3>
+          <p>สลับไปที่แท็บ <strong>"บอร์ด {providerLabel} สด"</strong> เพื่อเลือกการ์ดที่เกี่ยวข้องกับโครงการนี้แล้วกดบันทึกเข้าสู่ระบบ RAG Vector Search</p>
+          <button type="button" class="btn-primary-cta" on:click={() => (activeTab = "live")}>
+            ไปยังแท็บเลือกการ์ดจากบอร์ด {providerLabel} สด
+          </button>
+        </div>
+      {:else if savedViewMode === "table"}
+        <!-- QA EXECUTION TABLE VIEW -->
+        <div class="qa-table-shell">
+          <table class="qa-exec-table">
+            <thead>
+              <tr>
+                <th>ชื่อการ์ด / ป้ายกำกับ</th>
+                <th>สถานะคอลัมน์</th>
+                <th>แต้ม / ความสำคัญ</th>
+                <th>สถานะ RAG</th>
+                <th>ผลทดสอบ AI Agent</th>
+                <th class="col-actions-head">การจัดการ</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each flatFilteredSavedCards as card (card.id)}
+                {@const verdict = getCardVerdict(card)}
+                {@const prio = getPriorityMeta(card)}
+                <tr>
+                  <td class="cell-title-col">
+                    <button type="button" class="table-card-title-btn" on:click={() => openCardDetail(card)}>
+                      {card.title}
+                    </button>
+                    {#if getCleanLabels(card.labels).length > 0}
+                      <div class="table-labels-row">
+                        {#each getCleanLabels(card.labels) as label}
+                          <span class="label-pill" style="background-color: {label.color}; color: {label.textColor};">
+                            {label.name}
                           </span>
-                        </div>
-
-                        <div class="footer-right-members">
-                          {#if card.members && card.members.length > 0}
-                            {#each card.members as member}
-                              {#if member.avatar}
-                                <img 
-                                  src={member.avatar} 
-                                  alt={member.name} 
-                                  class="member-avatar" 
-                                  loading="lazy"
-                                  decoding="async"
-                                  title="{member.name}{member.username ? ' (@' + member.username + ')' : ''}"
-                                  on:error={(e) => {
-                                    e.currentTarget.style.display = 'none';
-                                    if (e.currentTarget.nextElementSibling) e.currentTarget.nextElementSibling.style.display = 'inline-flex';
-                                  }}
-                                />
-                                <span class="member-initials" style="display: none;" title="{member.name}{member.username ? ' (@' + member.username + ')' : ''}">{member.initials || 'M'}</span>
-                              {:else}
-                                <span class="member-initials" title="{member.name}{member.username ? ' (@' + member.username + ')' : ''}">{member.initials || 'M'}</span>
-                              {/if}
-                            {/each}
-                          {/if}
-                        </div>
+                        {/each}
                       </div>
-
-                      <!-- Saved Card Actions Row -->
-                      <!-- svelte-ignore a11y-click-events-have-key-events -->
-                      <div class="saved-card-actions-bar" on:click|stopPropagation>
-                        <button type="button" class="btn-card-action test" on:click={() => handleAgentTest(card)} disabled={card.isTesting} title="ทดสอบอัตโนมัติด้วย AI Agent">
-                          {#if card.isTesting}
-                            <span class="spinner-small"></span> กำลังทดสอบ...
-                          {:else}
-                            🧪 Test Agent
-                          {/if}
-                        </button>
-                        <button type="button" class="btn-card-action unsave" on:click={(e) => unsaveCard(card, e)} title="ยกเลิกการบันทึก Card ออกจากโครงการนี้">
-                          🗑️ ยกเลิก
-                        </button>
-                      </div>
+                    {/if}
+                  </td>
+                  <td>
+                    <select
+                      class="table-status-select"
+                      value={card.status || (columns[0]?.id ?? "todo")}
+                      aria-label={`เปลี่ยนสถานะของ ${card.title}`}
+                      on:change={(e) => moveCardToColumn(card, e.currentTarget.value)}
+                    >
+                      {#each columns as col}
+                        <option value={col.id}>{col.title}</option>
+                      {/each}
+                    </select>
+                  </td>
+                  <td>
+                    <div class="table-pts-prio">
+                      <span class="story-points-pill">{card.story_points || "1"} pts</span>
+                      <span class="prio-badge prio-{prio.level}">{prio.label}</span>
                     </div>
-                  {/each}
-                  {#if (savedCardsByCol[column.id] || []).length === 0}
-                    <div class="empty-column">ไม่มี Card ในสถานะนี้</div>
-                  {/if}
+                  </td>
+                  <td>
+                    <span class="rag-indexed-pill">RAG Indexed</span>
+                  </td>
+                  <td>
+                    {#if verdict === "testing"}
+                      <span class="verdict-pill testing">กำลังทดสอบ...</span>
+                    {:else if verdict === "failed"}
+                      <span class="verdict-pill failed">FAILED</span>
+                    {:else if verdict === "passed"}
+                      <span class="verdict-pill passed">PASSED</span>
+                    {:else}
+                      <span class="verdict-pill untested">ยังไม่ทดสอบ</span>
+                    {/if}
+                  </td>
+                  <td class="cell-actions-col">
+                    <div class="table-action-btns">
+                      <button
+                        type="button"
+                        class="btn-card-action test"
+                        on:click={() => handleAgentTest(card)}
+                        disabled={verdict === "testing"}
+                      >
+                        Test Agent
+                      </button>
+                      <button
+                        type="button"
+                        class="btn-card-action view"
+                        on:click={() => openCardDetail(card)}
+                      >
+                        เปิดดู
+                      </button>
+                      <button
+                        type="button"
+                        class="btn-card-action unsave-table"
+                        on:click={(e) => unsaveCard(card, e)}
+                        title="ยกเลิกบันทึกออกจากโครงการ"
+                      >
+                        ยกเลิก
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      {:else}
+        <!-- SAVED KANBAN BOARD VIEW -->
+        <div class="board-layout">
+          {#each columns as column}
+            {@const colCards = savedCardsByCol[column.id] || []}
+            {@const colPts = getColumnPoints(colCards)}
+            <div
+              class="board-column"
+              class:drag-over={dragOverColumnId === column.id}
+              on:dragover={(e) => handleDragOver(column.id, e)}
+              on:dragleave={() => handleDragLeave(column.id)}
+              on:drop={(e) => handleDrop(column.id, e)}
+            >
+              <div class="column-header">
+                <span class="column-dot" style="background-color: {column.color};"></span>
+                <span class="column-title">{column.title}</span>
+                <div class="column-metrics">
+                  <span class="column-pts-pill">{colPts} pts</span>
+                  <span class="column-count">{colCards.length}</span>
                 </div>
               </div>
-            {/each}
-          </div>
-        {/if}
-      </div>
+
+              <div class="card-list">
+                {#each colCards as card (card.id)}
+                  {@const verdict = getCardVerdict(card)}
+                  {@const prio = getPriorityMeta(card)}
+                  <div
+                    class="task-card saved-card-item"
+                    class:is-unestimated={markUnestimated && isCardUnestimated(card)}
+                    class:is-dragging={draggedCard && (draggedCard.id === card.id || draggedCard.raw_ext_id === card.raw_ext_id)}
+                    role="button"
+                    tabindex="0"
+                    draggable="true"
+                    on:dragstart={(e) => handleDragStart(card, column.id, e)}
+                    on:dragend={handleDragEnd}
+                    on:click={() => openCardDetail(card)}
+                    on:keydown={(e) => handleCardKeydown(card, e)}
+                    aria-label={`การ์ดที่บันทึก ${card.title}`}
+                  >
+                    <div class="saved-top-badge-row">
+                      <span class="rag-indexed-pill">RAG Indexed</span>
+                      {#if verdict === "testing"}
+                        <span class="verdict-pill testing">กำลังทดสอบ...</span>
+                      {:else if verdict === "failed"}
+                        <span class="verdict-pill failed">FAILED</span>
+                      {:else if verdict === "passed"}
+                        <span class="verdict-pill passed">PASSED</span>
+                      {/if}
+                    </div>
+
+                    {#if getCleanLabels(card.labels).length > 0}
+                      <div class="card-labels-group">
+                        {#each getCleanLabels(card.labels) as label}
+                          <span class="label-pill" style="background-color: {label.color}; color: {label.textColor};">
+                            {label.name}
+                          </span>
+                        {/each}
+                      </div>
+                    {/if}
+
+                    <h4 class="card-title">{card.title}</h4>
+
+                    <div class="card-footer">
+                      <div class="footer-left-meta">
+                        {#if markUnestimated && isCardUnestimated(card)}
+                          <span class="unestimated-pill">Unestimated</span>
+                        {:else}
+                          <span class="story-points-pill">{card.story_points || "1"} pts</span>
+                        {/if}
+                        <span class="prio-badge prio-{prio.level}">{prio.label}</span>
+                      </div>
+
+                      <div class="footer-right-members">
+                        {#each (card.members || []) as member}
+                          {#if member.avatar}
+                            <img
+                              src={member.avatar}
+                              alt={member.name}
+                              class="member-avatar"
+                              loading="lazy"
+                              decoding="async"
+                              title={member.name}
+                              on:error={handleAvatarError}
+                            />
+                            <span class="member-initials" style="display: none;" title={member.name}>{member.initials || "M"}</span>
+                          {:else}
+                            <span class="member-initials" title={member.name}>{member.initials || "M"}</span>
+                          {/if}
+                        {/each}
+                      </div>
+                    </div>
+
+                    <div class="saved-card-actions-bar">
+                      <button
+                        type="button"
+                        class="btn-card-action test"
+                        on:click|stopPropagation={() => handleAgentTest(card)}
+                        disabled={verdict === "testing"}
+                      >
+                        {#if verdict === "testing"}
+                          <span class="spinner-small"></span> กำลังทดสอบ...
+                        {:else}
+                          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="12" height="12">
+                            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                          </svg>
+                          Test Agent
+                        {/if}
+                      </button>
+                      <button
+                        type="button"
+                        class="btn-card-action unsave"
+                        on:click|stopPropagation={(e) => unsaveCard(card, e)}
+                        title="ยกเลิกการบันทึกการ์ดออกจากโครงการ"
+                      >
+                        ยกเลิก
+                      </button>
+                    </div>
+                  </div>
+                {/each}
+
+                {#if colCards.length === 0}
+                  <div class="empty-column">ไม่มีการ์ดในสถานะนี้</div>
+                {/if}
+              </div>
+            </div>
+          {/each}
+        </div>
+      {/if}
     {/if}
   {/if}
 </div>
 
-<!-- Modal ตั้งค่าการเชื่อมต่อบอร์ด (Board Integration Modal) -->
-{#if showConfigModal}
-  <!-- svelte-ignore a11y-click-events-have-key-events -->
-  <div class="modal-backdrop" transition:fade={{ duration: 150 }} on:click={() => showConfigModal = false}>
-    <!-- svelte-ignore a11y-click-events-have-key-events -->
-    <div class="modal-card glass-panel" role="dialog" aria-modal="true" aria-label="ตั้งค่าการเชื่อมต่อบอร์ด" in:scale={{ start: 0.95, duration: 200 }} on:click|stopPropagation>
-      <div class="modal-header">
-        <div style="display: flex; align-items: center; gap: 10px;">
-          <span style="font-size: 24px;">🔌</span>
-          <div>
-            <h3 class="modal-title">ตั้งค่าการเชื่อมต่อบอร์ด (Board Integration)</h3>
-            <p class="modal-subtitle">กำหนดค่าการเชื่อมต่อเพื่อดึงงานจาก Trello หรือ GitHub เข้าสู่ระบบ QA Agent</p>
-          </div>
-        </div>
-        <button type="button" class="btn-close" aria-label="ปิดหน้าต่าง" on:click={() => showConfigModal = false}>✕</button>
-      </div>
+<!-- Modular Card Detail Modal -->
+<QABoardCardModal
+  bind:this={cardModalRef}
+  {showDetailModal}
+  {selectedCard}
+  {columns}
+  {currentIntegration}
+  {selectedProjectId}
+  {isSavingSelected}
+  bind:newCommentText
+  bind:commentAttachments
+  {isSendingComment}
+  {isUploadingAttachment}
+  on:close={closeCardDetail}
+  on:saveSingle={(e) => saveSingleCard(e.detail)}
+  on:unsave={(e) => unsaveCard(e.detail.card, e.detail.event)}
+  on:moveCard={(e) => moveCardToColumn(e.detail.card, e.detail.targetColumnId)}
+  on:runAgentTest={(e) => handleAgentTest(e.detail)}
+  on:previewImage={(e) => openImagePreview(e.detail.url, e.detail.alt)}
+  on:commentPaste={(e) => handleCommentPaste(e.detail)}
+  on:fileChange={(e) => handleFileInputChange(e.detail)}
+  on:removeAttachment={(e) => removeCommentAttachment(e.detail)}
+  on:postComment={postComment}
+/>
 
-      <!-- Provider Tabs -->
-      <div class="provider-tabs">
-        <button class="tab-btn-modal" class:active={configProvider === 'trello'} on:click={() => configProvider = 'trello'}>
-          <span style="color: #38bdf8; font-weight: bold;">🔵 Trello Board</span>
-        </button>
-        <button class="tab-btn-modal" class:active={configProvider === 'github'} on:click={() => configProvider = 'github'}>
-          <span style="color: #f3f4f6; font-weight: bold;">🐱 GitHub Issues / Project</span>
-        </button>
-      </div>
-
-      <div class="modal-body">
-        {#if configProvider === 'trello'}
-          <div class="provider-guide">
-            <p><strong>วิธีรับค่าจาก Trello:</strong> ไปที่ <a href="https://trello.com/power-ups/admin" target="_blank" rel="noreferrer">Trello Power-Up Admin</a> เพื่อสร้าง Key & Token และดู Board ID จากลิงก์บอร์ดของคุณ</p>
-          </div>
-
-          <div class="form-group">
-            <label for="trello_api_key">Trello API Key <span class="required">*</span></label>
-            <input type="text" id="trello_api_key" bind:value={trelloApiKey} placeholder="เช่น a1b2c3d4e5f6..." />
-          </div>
-
-          <div class="form-group">
-            <label for="trello_token">Trello API Token <span class="required">*</span></label>
-            <input type="password" id="trello_token" bind:value={trelloToken} placeholder="เช่น ATATT..." />
-          </div>
-
-          <div class="form-group">
-            <label for="trello_board_id">Trello Board ID <span class="required">*</span></label>
-            <input type="text" id="trello_board_id" bind:value={trelloBoardId} placeholder="เช่น 64f1234abcd56789 (ดูจาก URL บอร์ดหลัง /b/)" />
-          </div>
-
-        {:else if configProvider === 'github'}
-          <div class="provider-guide">
-            <p><strong>วิธีรับค่าจาก GitHub:</strong> ไปที่ GitHub ➔ Settings ➔ Developer Settings ➔ <a href="https://github.com/settings/tokens" target="_blank" rel="noreferrer">Personal Access Tokens (classic หรือ fine-grained)</a> โดยเลือกสิทธิ์ <code>repo</code></p>
-          </div>
-
-          <div class="form-group">
-            <label for="github_token">GitHub Personal Access Token (PAT) <span class="required">*</span></label>
-            <input type="password" id="github_token" bind:value={githubToken} placeholder="เช่น ghp_xxxxxxxxxxxx หรือ github_pat_..." />
-          </div>
-
-          <div class="form-row">
-            <div class="form-group" style="flex: 1;">
-              <label for="github_owner">Repository Owner / Org <span class="required">*</span></label>
-              <input type="text" id="github_owner" bind:value={githubOwner} placeholder="เช่น AkradTTT08 หรือ MyOrganization" />
-            </div>
-
-            <div class="form-group" style="flex: 1;">
-              <label for="github_repo">Repository Name <span class="required">*</span></label>
-              <input type="text" id="github_repo" bind:value={githubRepo} placeholder="เช่น OCR-Document" />
-            </div>
-          </div>
-        {/if}
-      </div>
-
-      <div class="modal-footer">
-        <button class="btn-test-conn" on:click={testConnection} disabled={isTestingConnection}>
-          {#if isTestingConnection}
-            <span class="spinner-small"></span> กำลังทดสอบ...
-          {:else}
-            ⚡ ทดสอบการเชื่อมต่อ (Test)
-          {/if}
-        </button>
-
-        <div style="display: flex; gap: 8px;">
-          <button class="btn-secondary" on:click={() => showConfigModal = false}>ยกเลิก</button>
-          <button class="btn-primary" on:click={saveBoardIntegration} disabled={isSavingConfig}>
-            {#if isSavingConfig}
-              <span class="spinner-small"></span> กำลังบันทึก...
-            {:else}
-              💾 บันทึกและเชื่อมต่อ
-            {/if}
-          </button>
-        </div>
-      </div>
-    </div>
-  </div>
-{/if}
-
-<!-- Modal ดูรายละเอียด Card (Card Detail Modal - Trello Style) -->
-{#if showDetailModal && selectedCard}
-  <!-- svelte-ignore a11y-click-events-have-key-events -->
-  <div class="modal-backdrop" transition:fade={{ duration: 150 }} on:click={closeCardDetail}>
-    <!-- svelte-ignore a11y-click-events-have-key-events -->
-    <div class="trello-modal-container glass-panel" role="dialog" aria-modal="true" aria-label="รายละเอียดการ์ด" in:scale={{ start: 0.95, duration: 200 }} on:click|stopPropagation>
-      
-      <!-- Top Bar with Status Badge & Close -->
-      <div class="trello-modal-topbar">
-        <div class="trello-modal-top-left">
-          <div class="column-status-select">
-            <span>{columns.find(c => c.id === selectedCard.status)?.title || 'Doing'}</span>
-          </div>
-
-          {#if selectedCard.is_saved}
-            <span class="saved-status-badge">
-              ✅ บันทึกในโครงการแล้ว & RAG Indexed
-            </span>
-          {/if}
-        </div>
-
-        <div style="display: flex; gap: 10px; align-items: center;">
-          {#if getExternalUrl(selectedCard)}
-            <a href={getExternalUrl(selectedCard)} target="_blank" rel="noreferrer" class="btn-ext-link {currentIntegration?.provider || 'trello'}">
-              {#if currentIntegration?.provider === 'trello'}
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M19.5 2h-15A2.5 2.5 0 0 0 2 4.5v15A2.5 2.5 0 0 0 4.5 22h15a2.5 2.5 0 0 0 2.5-2.5v-15A2.5 2.5 0 0 0 19.5 2zm-8.25 15a1.25 1.25 0 0 1-1.25-1.25V6.75a1.25 1.25 0 0 1 1.25-1.25h3.5a1.25 1.25 0 0 1 1.25 1.25v9a1.25 1.25 0 0 1-1.25 1.25h-3.5zm-5.5-4a1.25 1.25 0 0 1-1.25-1.25V6.75A1.25 1.25 0 0 1 6 5.5h3.5A1.25 1.25 0 0 1 10.75 6.75v5A1.25 1.25 0 0 1 9.5 13H6z"/></svg>
-                <span>เปิดดูใน Trello</span>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
-              {:else}
-                <span>🐱 เปิดดูใน GitHub</span>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
-              {/if}
-            </a>
-          {/if}
-          <button type="button" class="btn-close" aria-label="ปิดหน้าต่าง" on:click={closeCardDetail}>✕</button>
-        </div>
-      </div>
-
-      <!-- Main Title Header -->
-      <div class="trello-modal-header">
-        <span class="trello-card-icon">⭕</span>
-        <h2 class="trello-card-title">{selectedCard.title}</h2>
-      </div>
-
-      <!-- Meta Grid: Members, Labels, Story points, Priority -->
-      <div class="trello-meta-grid">
-        <div class="meta-group">
-          <span class="meta-group-title">Members</span>
-          <div class="meta-group-content">
-            {#if selectedCard.members && selectedCard.members.length > 0}
-              {#each selectedCard.members as member}
-                {#if member.avatar}
-                  <img 
-                    src={member.avatar} 
-                    alt={member.name} 
-                    class="member-avatar-large" 
-                    title="{member.name}{member.username ? ' (@' + member.username + ')' : ''}"
-                    on:error={(e) => {
-                      e.currentTarget.style.display = 'none';
-                      if (e.currentTarget.nextElementSibling) e.currentTarget.nextElementSibling.style.display = 'inline-flex';
-                    }}
-                  />
-                  <span class="member-initials-large" style="display: none;" title="{member.name}{member.username ? ' (@' + member.username + ')' : ''}">{member.initials || 'M'}</span>
-                {:else}
-                  <span class="member-initials-large" title="{member.name}{member.username ? ' (@' + member.username + ')' : ''}">{member.initials || 'M'}</span>
-                {/if}
-              {/each}
-            {:else}
-              <span class="no-meta-text">No members</span>
-            {/if}
-          </div>
-        </div>
-
-        <div class="meta-group">
-          <span class="meta-group-title">Labels</span>
-          <div class="meta-group-content">
-            {#if getCleanLabels(selectedCard.labels).length > 0}
-              {#each getCleanLabels(selectedCard.labels) as label}
-                <span class="trello-label-pill-large" style="background-color: {label.color || '#38bdf8'};">
-                  {label.name}
-                </span>
-              {/each}
-            {:else}
-              <span class="no-meta-text">No labels</span>
-            {/if}
-          </div>
-        </div>
-
-        <div class="meta-group">
-          <span class="meta-group-title">Story points</span>
-          <div class="meta-group-content">
-            <span class="trello-points-pill">{selectedCard.story_points || '1'}</span>
-          </div>
-        </div>
-
-        <div class="meta-group">
-          <span class="meta-group-title">Priority</span>
-          <div class="meta-group-content">
-            <span class="trello-priority-badge">
-              {selectedCard.priority === 'High' ? 'Main Card' : (selectedCard.priority || 'Main Card')}
-            </span>
-          </div>
-        </div>
-      </div>
-
-      <!-- Quick Save / Unsave Banner in Modal -->
-      <div class="modal-card-action-banner">
-        {#if !selectedCard.is_saved}
-          <button class="btn-modal-save-rag" on:click={() => saveSingleCard(selectedCard)} disabled={isSavingSelected}>
-            💾 บันทึก Card นี้ลงในโครงการ & จัดทำดัชนี RAG ทันที
-          </button>
-        {:else}
-          <div style="display: flex; gap: 10px; align-items: center;">
-            <button class="btn-modal-unsave" on:click={(e) => unsaveCard(selectedCard, e)}>
-              🗑️ ยกเลิกการบันทึกออกจากโครงการ
-            </button>
-            <button type="button" class="btn-modal-test" on:click={() => handleAgentTest(selectedCard)} disabled={selectedCard.isTesting}>
-              🤖 ทดสอบด้วย AI Agent
-            </button>
-          </div>
-        {/if}
-      </div>
-
-      <!-- 2-Column Main Layout: Left (Description + Agent Test), Right (Comments & Activity) -->
-      <div class="trello-2col-layout">
-        <!-- Left Column -->
-        <div class="trello-col-main">
-          <div class="trello-section-header">
-            <div style="display: flex; align-items: center; gap: 8px;">
-              <span style="font-size: 1.1rem; font-weight: bold;">≡</span>
-              <h3 class="section-title">Description</h3>
-            </div>
-          </div>
-
-          <div class="trello-description-box">
-            {#if selectedCard.description}
-              <div class="desc-content">
-                {#each parseCommentSegments(selectedCard.description, selectedProjectId) as segment}
-                  {#if segment.type === 'text'}
-                    <span>{segment.content}</span>
-                  {:else if segment.type === 'image'}
-                    <!-- svelte-ignore a11y-click-events-have-key-events -->
-                    <div class="comment-image-container" on:click|stopPropagation={() => openImagePreview(segment.url, segment.alt)}>
-                      <img 
-                        src={segment.url} 
-                        alt={segment.alt} 
-                        class="comment-attached-image" 
-                        loading="lazy"
-                        title="คลิกเพื่อดูรูปภาพขนาดเต็ม ({segment.alt})" 
-                      />
-                    </div>
-                  {:else if segment.type === 'video'}
-                    <div class="comment-video-container">
-                      <video 
-                        src={segment.url} 
-                        controls 
-                        class="comment-video-player" 
-                        preload="metadata"
-                      >
-                        <track kind="captions" />
-                        เบราว์เซอร์ของคุณไม่รองรับการเล่นวิดีโอนี้
-                      </video>
-                      <div class="video-meta-bar">
-                        <span>🎬 {segment.alt || 'Video attachment'}</span>
-                        <a href={segment.url} target="_blank" rel="noreferrer" class="video-open-link" title="เปิดวิดีโอในแท็บใหม่">↗ ขยาย</a>
-                      </div>
-                    </div>
-                  {:else if segment.type === 'link'}
-                    <a href={segment.url} target="_blank" rel="noopener noreferrer" class="comment-rich-link" title={segment.url}>
-                      🔗 {segment.text || segment.url}
-                    </a>
-                  {/if}
-                {/each}
-              </div>
-            {:else}
-              <div class="desc-content no-data-text">ไม่มีรายละเอียดระบุไว้สำหรับ Card นี้</div>
-            {/if}
-          </div>
-
-          <!-- QA Agent Test Suite Section -->
-          <div class="trello-agent-box">
-            <div class="agent-box-header">
-              <span style="font-size: 18px;">🤖</span>
-              <h4 style="margin: 0; color: #c084fc; font-size: 0.95rem;">AI Agent Tester & Verification</h4>
-            </div>
-
-            <div class="agent-box-content">
-              {#if selectedCard.isTesting || selectedCard.status === 'testing'}
-                <div class="testing-indicator-large">
-                  <span class="spinner-small"></span> AI Agent กำลังทดสอบระบบอัตโนมัติสำหรับ Card นี้...
-                </div>
-              {:else if selectedCard.test_result}
-                <div class="agent-report-container">
-                  {#if typeof selectedCard.test_result === 'string' && selectedCard.test_result.includes('FAILED')}
-                    <div class="test-verdict-badge failed">
-                      ⚠️ FAILED: พบข้อบกพร่อง (Defect Detected)
-                    </div>
-                  {:else if typeof selectedCard.test_result === 'string' && selectedCard.test_result.includes('PASSED')}
-                    <div class="test-verdict-badge passed">
-                      ✅ PASSED: ตรวจสอบผ่านตามเกณฑ์ทั้งหมด
-                    </div>
-                  {/if}
-                  {#each parseCommentSegments(typeof selectedCard.test_result === 'object' ? JSON.stringify(selectedCard.test_result, null, 2) : selectedCard.test_result, selectedProjectId) as segment}
-                    {#if segment.type === 'text'}
-                      <pre class="test-result-pre" class:failed={segment.content.includes('FAILED')}>{segment.content}</pre>
-                    {:else if segment.type === 'image'}
-                      <!-- svelte-ignore a11y-click-events-have-key-events -->
-                      <div class="comment-image-container" on:click|stopPropagation={() => openImagePreview(segment.url, segment.alt)}>
-                        <img 
-                          src={segment.url} 
-                          alt={segment.alt} 
-                          class="comment-attached-image" 
-                          loading="lazy"
-                          title="คลิกเพื่อดูรูปภาพหลักฐาน ({segment.alt})" 
-                        />
-                      </div>
-                    {:else if segment.type === 'link'}
-                      <a href={segment.url} target="_blank" rel="noopener noreferrer" class="comment-rich-link">
-                        🔗 {segment.text || segment.url}
-                      </a>
-                    {/if}
-                  {/each}
-                </div>
-              {:else}
-                <p style="margin: 0; color: #94a3b8; font-size: 0.85rem;">ยังไม่ได้ทำการทดสอบ Card นี้</p>
-              {/if}
-            </div>
-
-            <div class="agent-box-footer">
-              <button type="button" class="btn-run-agent" on:click={() => handleAgentTest(selectedCard)} disabled={selectedCard.isTesting}>
-                🤖 Run Agent Test
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <!-- Right Column: Comments & Activity Feed -->
-        <div class="trello-col-sidebar">
-          <div class="trello-section-header">
-            <div style="display: flex; align-items: center; gap: 8px;">
-              <span style="font-size: 1.1rem;">💬</span>
-              <h3 class="section-title">Comments and activity</h3>
-              {#if selectedCard.actions && selectedCard.actions.length > 0}
-                <span class="comment-count-badge">{selectedCard.actions.length}</span>
-              {/if}
-            </div>
-            <button class="btn-toggle-comments" on:click={() => showComments = !showComments} title={showComments ? 'ซ่อนความคิดเห็น' : 'แสดงความคิดเห็น'}>
-              {#if showComments}
-                <span>👁️ ซ่อน</span>
-              {:else}
-                <span>👁️‍🗨️ แสดง ({selectedCard.actions ? selectedCard.actions.length : 0})</span>
-              {/if}
-            </button>
-          </div>
-
-          {#if showComments}
-            <!-- Write Comment Box with Attachment / Video / Link Toolbar -->
-            <div class="comment-input-area">
-              <div class="comment-box-wrapper {isUploadingAttachment ? 'is-uploading' : ''}">
-                <textarea 
-                  bind:this={commentTextareaRef}
-                  bind:value={newCommentText} 
-                  on:paste={handleCommentPaste}
-                  placeholder="Write a comment... (กด Ctrl+V เพื่อวางรูป Cap หน้าจอ หรือแนบวิดีโอ/ลิงก์)" 
-                  rows="3"
-                ></textarea>
-
-                <!-- Visual Media Attachment Thumbnails in Composer -->
-                {#if commentAttachments.length > 0}
-                  <div class="composer-attachments-grid">
-                    {#each commentAttachments as att (att.id)}
-                      <div class="composer-media-card {att.type}">
-                        <button type="button" class="btn-del-media-card" on:click={() => removeCommentAttachment(att.id)} title="ลบไฟล์นี้">✕</button>
-                        {#if att.type === 'image'}
-                          <!-- svelte-ignore a11y-click-events-have-key-events -->
-                          <img 
-                            src={att.url} 
-                            alt="Attached Image" 
-                            class="composer-preview-img" 
-                            on:click={() => openImagePreview(att.url, 'Attached Image')}
-                            title="คลิกเพื่อดูรูปภาพขนาดเต็ม"
-                          />
-                        {:else if att.type === 'video'}
-                          <video src={att.url} controls class="composer-preview-video"></video>
-                        {/if}
-                      </div>
-                    {/each}
-                  </div>
-                {/if}
-
-                {#if isUploadingAttachment}
-                  <div class="comment-uploading-overlay">
-                    <span class="spinner-small"></span> กำลังอัปโหลดไฟล์แนบ...
-                  </div>
-                {/if}
-
-                <div class="comment-toolbar">
-                  <div class="toolbar-actions">
-                    <input 
-                      type="file" 
-                      accept="image/*,video/*" 
-                      bind:this={commentFileInput} 
-                      on:change={handleFileInputChange} 
-                      style="display: none;" 
-                    />
-                    <button type="button" class="btn-comment-tool" on:click={triggerFileInput} title="แนบไฟล์รูปภาพหรือวิดีโอ (Upload Image / Video)">
-                      📎 แนบไฟล์
-                    </button>
-                    <button type="button" class="btn-comment-tool" on:click={insertLinkPrompt} title="แทรกลิงก์ (Insert Link)">
-                      🔗 ลิงก์
-                    </button>
-                    <span class="clipboard-paste-hint" title="คุณสามารถกด Ctrl+V เพื่อวางรูปภาพจากการแคปหน้าจอได้โดยตรง">
-                      📋 <kbd>Ctrl</kbd>+<kbd>V</kbd> วางรูปแคปจอ
-                    </span>
-                  </div>
-
-                  {#if newCommentText.trim() || commentAttachments.length > 0}
-                    <button class="btn-save-comment" on:click={postComment} disabled={isSendingComment || isUploadingAttachment}>
-                      {isSendingComment ? 'Saving...' : 'Save'}
-                    </button>
-                  {/if}
-                </div>
-              </div>
-            </div>
-
-            <!-- Activity Timeline Feed -->
-            <div class="activity-timeline custom-comment-scrollbar">
-              {#if selectedCard.actions && selectedCard.actions.length > 0}
-                {#each selectedCard.actions as act}
-                  <div class="activity-item">
-                    {#if act.user_avatar}
-                      <img src={act.user_avatar} alt={act.user_name} class="act-avatar" />
-                    {:else}
-                      <div class="act-initials">
-                        {act.user_name ? act.user_name.split(' ').map(n=>n[0]).join('').slice(0,2).toUpperCase() : 'U'}
-                      </div>
-                    {/if}
-                    <div class="act-details">
-                      <div class="act-text">
-                        <strong>{act.user_name || 'User'}</strong>
-                        {#each parseCommentSegments(act.text, selectedProjectId) as segment}
-                          {#if segment.type === 'text'}
-                            <span>{segment.content}</span>
-                          {:else if segment.type === 'image'}
-                            <!-- svelte-ignore a11y-click-events-have-key-events -->
-                            <div class="comment-image-container" on:click|stopPropagation={() => openImagePreview(segment.url, segment.alt)}>
-                              <img 
-                                src={segment.url} 
-                                alt={segment.alt} 
-                                class="comment-attached-image" 
-                                loading="lazy"
-                                title="คลิกเพื่อดูรูปภาพขนาดเต็ม ({segment.alt})" 
-                              />
-                            </div>
-                          {:else if segment.type === 'video'}
-                            <div class="comment-video-container">
-                              <video 
-                                src={segment.url} 
-                                controls 
-                                class="comment-video-player" 
-                                preload="metadata"
-                              >
-                                <track kind="captions" />
-                                เบราว์เซอร์ของคุณไม่รองรับการเล่นวิดีโอนี้
-                              </video>
-                              <div class="video-meta-bar">
-                                <span>🎬 {segment.alt || 'Video attachment'}</span>
-                                <a href={segment.url} target="_blank" rel="noreferrer" class="video-open-link" title="เปิดวิดีโอในแท็บใหม่">↗ ขยาย</a>
-                              </div>
-                            </div>
-                          {:else if segment.type === 'link'}
-                            <a href={segment.url} target="_blank" rel="noopener noreferrer" class="comment-rich-link" title={segment.url}>
-                              🔗 {segment.text || segment.url}
-                            </a>
-                          {/if}
-                        {/each}
-                      </div>
-                      <span class="act-date">
-                        {act.date ? new Date(act.date).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true }) : ''}
-                      </span>
-                    </div>
-                  </div>
-                {/each}
-              {:else}
-                <div style="color: var(--text-muted, #94a3b8); font-size: 0.85rem; font-style: italic; padding: 8px 0;">ไม่มีประวัติกิจกรรมล่าสุด</div>
-              {/if}
-            </div>
-          {:else}
-            <!-- svelte-ignore a11y-click-events-have-key-events -->
-            <div class="comments-collapsed-placeholder" on:click={() => showComments = true} title="คลิกเพื่อเปิดดูความคิดเห็น">
-              <span>💬 ความคิดเห็นถูกซ่อนอยู่ (คลิกเพื่อแสดง {selectedCard.actions ? selectedCard.actions.length : 0} รายการ)</span>
-            </div>
-          {/if}
-        </div>
-      </div>
-
-    </div>
-  </div>
-{/if}
-
-<!-- Image Lightbox Modal -->
-{#if showImageModal && previewModalImage}
-  <!-- svelte-ignore a11y-click-events-have-key-events -->
-  <div class="image-lightbox-backdrop" transition:fade={{ duration: 150 }} on:click={() => showImageModal = false}>
-    <!-- svelte-ignore a11y-click-events-have-key-events -->
-    <div class="image-lightbox-content" role="dialog" aria-modal="true" aria-label="ดูรูปภาพขนาดเต็ม" in:scale={{ start: 0.95, duration: 200 }} on:click|stopPropagation>
-      <button type="button" class="lightbox-close-btn" aria-label="ปิดหน้าต่าง" on:click={() => showImageModal = false} title="ปิด">✕</button>
-      <img src={previewModalImage} alt={previewModalAlt} class="lightbox-full-img" />
-      <div class="lightbox-toolbar">
-        <a href={previewModalImage} target="_blank" rel="noreferrer" class="lightbox-btn-download">
-          🔗 เปิดดูรูปภาพขนาดเต็มในแท็บใหม่
-        </a>
-      </div>
-    </div>
-  </div>
-{/if}
-
-<!-- Agile Tools & Story Points Modal -->
-{#if showAgileSummaryModal}
-  <!-- svelte-ignore a11y-click-events-have-key-events -->
-  <div class="modal-backdrop" transition:fade={{ duration: 150 }} on:click={() => showAgileSummaryModal = false}>
-    <!-- svelte-ignore a11y-click-events-have-key-events -->
-    <div class="agile-tools-modal-card glass-panel" role="dialog" aria-modal="true" aria-label="Agile Tools" in:scale={{ start: 0.95, duration: 200 }} on:click|stopPropagation>
-      <div class="agile-modal-header">
-        <div style="display: flex; align-items: center; gap: 8px;">
-          <span style="font-size: 1.2rem;">⏱️</span>
-          <h3 style="margin: 0; font-size: 1.15rem; font-weight: 700; color: #f1f5f9;">Agile Tools</h3>
-        </div>
-        <button type="button" class="btn-close" aria-label="ปิดหน้าต่าง" on:click={() => showAgileSummaryModal = false}>✕</button>
-      </div>
-
-      <div class="agile-modal-body">
-        <div class="agile-toggle-row">
-          <span class="toggle-label">Mark Unestimated</span>
-          <label class="switch">
-            <input type="checkbox" bind:checked={markUnestimated} />
-            <span class="slider round"></span>
-          </label>
-        </div>
-
-        <div class="points-counts-section">
-          <h4 class="points-counts-title">List point counts:</h4>
-          
-          <div class="points-list-container custom-comment-scrollbar">
-            {#each agilePointsSummary.columnsSummary as col}
-              <div class="point-item-row">
-                <span class="point-col-name">
-                  <span class="point-dot" style="background-color: {col.color || '#38bdf8'};"></span>
-                  {col.title}
-                </span>
-                <span class="point-val">{col.points} points</span>
-              </div>
-            {/each}
-
-            <div class="point-total-row">
-              <span class="total-label">TOTAL:</span>
-              <span class="total-pts-highlight">{agilePointsSummary.totalPoints} points</span>
-            </div>
-          </div>
-        </div>
-
-        <div class="agile-extra-stats">
-          <div class="stat-badge">
-            <span>📋 การ์ดทั้งหมด:</span>
-            <strong>{agilePointsSummary.totalCards} ใบ</strong>
-          </div>
-          <div class="stat-badge">
-            <span>❓ ยังไม่ประเมินแต้ม:</span>
-            <strong>{agilePointsSummary.unestimatedCards} ใบ</strong>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-{/if}
-
-<!-- Filter Cards Modal / Drawer -->
-{#if showFilterModal}
-  <!-- svelte-ignore a11y-click-events-have-key-events -->
-  <div class="modal-backdrop" transition:fade={{ duration: 150 }} on:click={() => showFilterModal = false}>
-    <!-- svelte-ignore a11y-click-events-have-key-events -->
-    <div class="filter-modal-card glass-panel" role="dialog" aria-modal="true" aria-label="Filter" in:scale={{ start: 0.95, duration: 200 }} on:click|stopPropagation>
-      <div class="filter-modal-header">
-        <div style="display: flex; align-items: center; gap: 8px;">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon></svg>
-          <h3 style="margin: 0; font-size: 1.15rem; font-weight: 700; color: #f1f5f9;">Filter</h3>
-        </div>
-        <button type="button" class="btn-close" aria-label="ปิดหน้าต่าง" on:click={() => showFilterModal = false}>✕</button>
-      </div>
-
-      <div class="filter-modal-body custom-comment-scrollbar">
-        <!-- 1. Keyword -->
-        <div class="filter-section">
-          <label class="filter-section-title" for="filter-keyword-input">Keyword</label>
-          <div class="filter-input-wrapper">
-            <input 
-              id="filter-keyword-input"
-              type="text" 
-              placeholder="Enter a keyword..." 
-              aria-label="ค้นหาการ์ดด้วยคำค้น"
-              bind:value={cardSearchQuery}
-              class="filter-text-input" 
-            />
-            {#if cardSearchQuery}
-              <button type="button" class="clear-input-inline" aria-label="ล้างคำค้นหา" on:click={() => cardSearchQuery = ''}>✕</button>
-            {/if}
-          </div>
-          <span class="filter-helper-text">Search cards, members, labels, and more.</span>
-        </div>
-
-        <!-- 2. Members -->
-        <div class="filter-section">
-          <label class="filter-section-title">Members</label>
-          
-          <label class="filter-checkbox-item">
-            <input type="checkbox" bind:checked={filterNoMembers} on:change={() => { if(filterNoMembers) selectedMemberIds = new Set(); }} />
-            <span class="member-icon-circle">👤</span>
-            <span>No members</span>
-          </label>
-
-          {#if !filterNoMembers && boardMembersList.length > 0}
-            <div class="filter-members-sublist">
-              <span class="sublist-heading">Select members:</span>
-              {#each boardMembersList as member}
-                {@const mKey = member.id || member.username || member.name}
-                <label class="filter-checkbox-item member-item">
-                  <input 
-                    type="checkbox" 
-                    checked={selectedMemberIds.has(mKey)} 
-                    on:change={() => toggleMemberFilter(mKey)}
-                  />
-                  {#if member.avatar}
-                    <img src={member.avatar} alt={member.name} class="filter-member-avatar" />
-                  {:else}
-                    <span class="filter-member-initials">{member.initials || 'M'}</span>
-                  {/if}
-                  <span class="member-name-text">{member.name} {#if member.username}<small>@{member.username}</small>{/if}</span>
-                </label>
-              {/each}
-            </div>
-          {/if}
-        </div>
-
-        <!-- 3. Card Status / Completion -->
-        <div class="filter-section">
-          <label class="filter-section-title">Card status</label>
-          <label class="filter-checkbox-item">
-            <input 
-              type="checkbox" 
-              checked={filterCompletion === 'complete'} 
-              on:change={(e) => filterCompletion = e.target.checked ? 'complete' : 'all'} 
-            />
-            <span>Marked as complete</span>
-          </label>
-          <label class="filter-checkbox-item">
-            <input 
-              type="checkbox" 
-              checked={filterCompletion === 'incomplete'} 
-              on:change={(e) => filterCompletion = e.target.checked ? 'incomplete' : 'all'} 
-            />
-            <span>Not marked as complete</span>
-          </label>
-        </div>
-
-        <!-- 4. Saved Status (in Live Tab) -->
-        {#if activeTab === 'live'}
-          <div class="filter-section">
-            <label class="filter-section-title">สถานะบันทึกในโครงการ & RAG</label>
-            <div class="filter-pill-group">
-              <button 
-                class="filter-pill-btn" 
-                class:active={filterSavedStatus === 'all'} 
-                on:click={() => filterSavedStatus = 'all'}
-              >
-                ทั้งหมด
-              </button>
-              <button 
-                class="filter-pill-btn" 
-                class:active={filterSavedStatus === 'saved'} 
-                on:click={() => filterSavedStatus = 'saved'}
-              >
-                ✅ บันทึกแล้ว
-              </button>
-              <button 
-                class="filter-pill-btn" 
-                class:active={filterSavedStatus === 'unsaved'} 
-                on:click={() => filterSavedStatus = 'unsaved'}
-              >
-                ⬜ ยังไม่บันทึก
-              </button>
-            </div>
-          </div>
-        {/if}
-
-        <!-- 5. Labels -->
-        <div class="filter-section">
-          <label class="filter-section-title">Labels</label>
-          
-          <label class="filter-checkbox-item">
-            <input type="checkbox" bind:checked={filterNoLabels} on:change={() => { if(filterNoLabels) selectedLabelNames = new Set(); }} />
-            <span class="label-icon-tag">🏷️</span>
-            <span>No labels</span>
-          </label>
-
-          {#if !filterNoLabels && boardLabelsList.length > 0}
-            <div class="filter-labels-sublist">
-              {#each boardLabelsList as label}
-                {@const lKey = label.name.toLowerCase()}
-                <label class="filter-label-pill-item">
-                  <input 
-                    type="checkbox" 
-                    checked={selectedLabelNames.has(lKey)} 
-                    on:change={() => toggleLabelFilter(label.name)}
-                  />
-                  <span class="filter-label-bar" style="background-color: {label.color || '#38bdf8'};">
-                    <span class="label-text-bold">{label.name}</span>
-                    <span class="label-count-tag">{label.count}</span>
-                  </span>
-                </label>
-              {/each}
-            </div>
-          {/if}
-        </div>
-      </div>
-
-      <div class="filter-modal-footer">
-        <button class="btn-clear-filters" on:click={resetAllFilters} disabled={activeFilterCount === 0}>
-          Clear all filters
-        </button>
-        <button class="btn-apply-filters" on:click={() => showFilterModal = false}>
-          แสดงผลลัพธ์ ({totalFilteredCardsCount} การ์ด)
-        </button>
-      </div>
-    </div>
-  </div>
-{/if}
+<!-- Modular Secondary Modals (Config, Agile Tools, Filter, Lightbox) -->
+<QABoardModals
+  {showConfigModal}
+  bind:configProvider
+  bind:trelloApiKey
+  bind:trelloToken
+  bind:trelloBoardId
+  bind:githubToken
+  bind:githubOwner
+  bind:githubRepo
+  {isTestingConnection}
+  {isSavingConfig}
+  bind:configErrors
+  {showAgileSummaryModal}
+  bind:markUnestimated
+  {agilePointsSummary}
+  {showFilterModal}
+  {activeTab}
+  bind:cardSearchQuery
+  bind:filterNoMembers
+  {selectedMemberIds}
+  bind:filterNoLabels
+  {selectedLabelNames}
+  bind:filterSavedStatus
+  bind:filterCompletion
+  {filterTypes}
+  {boardMembersList}
+  {boardLabelsList}
+  {boardTypesList}
+  {activeFilterCount}
+  {totalFilteredCardsCount}
+  {showImageModal}
+  {previewModalImage}
+  {previewModalAlt}
+  on:closeConfig={() => (showConfigModal = false)}
+  on:testConnection={testConnection}
+  on:saveConfig={saveBoardIntegration}
+  on:closeAgile={() => (showAgileSummaryModal = false)}
+  on:closeFilter={() => (showFilterModal = false)}
+  on:toggleMember={(e) => toggleMemberFilter(e.detail)}
+  on:clearMembers={() => (selectedMemberIds = new Set())}
+  on:toggleLabel={(e) => toggleLabelFilter(e.detail)}
+  on:clearLabels={() => (selectedLabelNames = new Set())}
+  on:toggleType={(e) => toggleTypeFilter(e.detail)}
+  on:resetFilters={resetAllFilters}
+  on:closeImage={() => (showImageModal = false)}
+/>
 
 <!-- Smart AI Test Launcher Modal -->
 {#if isTestModalOpen}
-  <SmartTestLauncherModal 
+  <SmartTestLauncherModal
     projectId={selectedProjectId}
-    projectName={$selectedProjectStore?.name || $selectedProjectStore?.project_name || 'Project'}
+    projectName={$selectedProjectStore?.name || $selectedProjectStore?.project_name || "Project"}
     cardData={testTargetCard}
     isOpen={isTestModalOpen}
-    on:close={() => isTestModalOpen = false}
+    on:close={handleTestModalClose}
     on:test_completed={handleTestCompleted}
   />
 {/if}
@@ -2304,2415 +1778,971 @@
 
 <style>
   .board-container {
-    padding: 24px;
+    padding: 16px 20px;
     height: 100%;
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 14px;
     overflow-y: auto;
     box-sizing: border-box;
-  }
-
-  .top-nav {
-    margin-bottom: 4px;
-  }
-
-  .btn-back {
-    background: transparent;
-    border: none;
-    color: #a78bfa;
-    font-size: 14px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    cursor: pointer;
-    transition: color 0.2s;
-  }
-  .btn-back:hover {
-    color: #c084fc;
-  }
-  
-  .header-section {
-    padding-bottom: 16px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-  }
-
-  .header-main-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-end;
-    flex-wrap: wrap;
-    gap: 16px;
-  }
-  
-  .title {
-    margin: 0;
-    font-size: 1.5rem;
-    font-weight: 700;
+    font-family: var(--font-th);
     color: var(--text-main);
   }
-  
-  .subtitle {
-    margin: 4px 0 0 0;
-    color: #94a3b8;
-    font-size: 0.9rem;
-  }
 
-  .project-info-row {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-top: 10px;
-    flex-wrap: wrap;
-  }
-
-  .active-project-badge {
-    padding: 4px 14px;
-    background: rgba(139, 92, 246, 0.12);
-    border-radius: 20px;
-    border: 1px solid rgba(139, 92, 246, 0.3);
-    font-size: 13px;
-    color: #e2e8f0;
-  }
-
-  .integration-status-badge {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 4px 14px;
-    border-radius: 20px;
-    font-size: 12px;
-  }
-  .integration-status-badge.trello {
-    background: rgba(14, 165, 233, 0.15);
-    border: 1px solid rgba(14, 165, 233, 0.4);
-    color: #38bdf8;
-  }
-  .integration-status-badge.github {
-    background: rgba(243, 244, 246, 0.1);
-    border: 1px solid rgba(243, 244, 246, 0.3);
-    color: #f3f4f6;
-  }
-  .integration-status-badge.unconfigured {
-    background: rgba(234, 179, 8, 0.15);
-    border: 1px solid rgba(234, 179, 8, 0.35);
-    color: #facc15;
-  }
-
-  .provider-pill {
-    font-weight: 700;
-  }
-  .provider-detail {
-    opacity: 0.9;
-    font-family: monospace;
-  }
-
-  .header-actions {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 10px;
-  }
-
-  .btn-config {
-    background: rgba(139, 92, 246, 0.15);
-    border: 1px solid rgba(139, 92, 246, 0.4);
-    color: #c084fc;
-    padding: 8px 16px;
-    border-radius: 8px;
-    font-size: 0.85rem;
-    font-weight: 600;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    transition: all 0.2s;
-  }
-  .btn-config svg {
-    flex-shrink: 0;
-  }
-  .btn-config:hover {
-    background: rgba(139, 92, 246, 0.3);
-    color: #fff;
-    transform: translateY(-1px);
-  }
-
-  /* Main Tab Switcher Bar */
-  .tab-switcher-container {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 12px;
-    border-bottom: 2px solid rgba(255, 255, 255, 0.08);
-    padding-bottom: 2px;
-  }
-
-  .tab-btn {
-    background: transparent;
-    border: none;
-    border-bottom: 2px solid transparent;
-    padding: 10px 18px;
-    font-size: 0.95rem;
-    font-weight: 600;
-    color: #94a3b8;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    transition: all 0.2s ease;
-    border-radius: 0;
-  }
-  .tab-btn:hover {
-    color: #e2e8f0;
-    background: rgba(255, 255, 255, 0.04);
-  }
-  .tab-btn.active {
-    color: #38bdf8;
-    border-bottom-color: #38bdf8;
-    background: rgba(56, 189, 248, 0.08);
-  }
-
-  .tab-icon {
-    font-size: 16px;
-  }
-  .tab-label {
-    letter-spacing: 0.2px;
-  }
-
-  .tab-counter-badge {
-    background: rgba(255, 255, 255, 0.12);
-    color: #cbd5e1;
-    font-size: 12px;
-    font-weight: 700;
-    padding: 2px 8px;
-    border-radius: 12px;
-  }
-  .tab-btn.active .tab-counter-badge {
-    background: #0284c7;
-    color: #ffffff;
-  }
-  .tab-counter-badge.saved {
-    background: rgba(168, 85, 247, 0.2);
-    color: #c084fc;
-  }
-  .tab-btn.active .tab-counter-badge.saved {
-    background: #9333ea;
-    color: #ffffff;
-  }
-
-  .live-board-wrapper,
-  .saved-board-wrapper {
+  /* Distilled 2-Row Top Chrome */
+  .board-chrome-shell {
+    background: var(--bg2);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-lg);
+    padding: 12px 16px;
     display: flex;
     flex-direction: column;
-    flex: 1;
-    min-height: 0;
+    gap: 10px;
+    flex-shrink: 0;
   }
 
-  /* Sticky Action Bar (Live Selection) */
-  .sticky-action-bar {
-    position: sticky;
-    top: 0;
-    z-index: 20;
+  .chrome-row-primary,
+  .chrome-row-secondary {
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    padding: 12px 18px;
-    margin-bottom: 16px;
-    flex-wrap: wrap;
+    justify-content: space-between;
     gap: 12px;
-    background: rgba(15, 23, 42, 0.92);
-    border: 1px solid rgba(56, 189, 248, 0.3);
-    border-radius: 12px;
+    flex-wrap: wrap;
   }
 
-  .action-bar-left, .action-bar-right {
+  .chrome-row-secondary {
+    padding-top: 10px;
+    border-top: 1px solid var(--glass-border);
+  }
+
+  .chrome-brand-group,
+  .chrome-primary-right,
+  .secondary-left,
+  .secondary-right {
     display: flex;
     align-items: center;
     gap: 10px;
     flex-wrap: wrap;
   }
 
-  .selection-status-badge {
+  .btn-back-compact {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    height: 36px;
-    padding: 0 14px;
-    box-sizing: border-box;
-    background: rgba(56, 189, 248, 0.12);
-    border: 1px solid rgba(56, 189, 248, 0.35);
-    border-radius: 8px;
-    color: #38bdf8;
-    font-size: 0.9rem;
+    gap: 5px;
+    min-height: 34px;
+    padding: 6px 11px;
+    border-radius: var(--radius-sm);
+    background: var(--surface-card);
+    border: 1px solid var(--glass-border);
+    color: var(--text-muted);
+    font-size: 12.5px;
+    font-weight: 500;
+    cursor: pointer;
+    font-family: inherit;
+    transition: color 0.16s ease, border-color 0.16s ease, background-color 0.16s ease;
   }
 
-  .btn-action-outline {
+  .btn-back-compact:hover {
+    color: var(--text-main);
+    background: var(--surface-card-hover);
+    border-color: var(--glass-border-light);
+  }
+
+  .project-title-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .board-title {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--text-main);
+    font-family: var(--font-en);
+  }
+
+  .active-project-pill {
+    padding: 3px 10px;
+    border-radius: 999px;
+    background: rgba(99, 102, 241, 0.14);
+    border: 1px solid rgba(99, 102, 241, 0.32);
+    color: var(--primary-soft-text);
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .integration-pill {
     display: inline-flex;
     align-items: center;
-    justify-content: center;
     gap: 6px;
-    height: 36px;
-    padding: 0 14px;
-    box-sizing: border-box;
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(255, 255, 255, 0.18);
-    color: #e2e8f0;
-    border-radius: 8px;
-    font-size: 0.85rem;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 11.5px;
+    font-weight: 600;
+    font-family: inherit;
+  }
+
+  .integration-pill.connected {
+    background: rgba(16, 185, 129, 0.12);
+    border: 1px solid rgba(16, 185, 129, 0.32);
+    color: var(--success-soft-text);
+  }
+
+  .integration-pill .status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--success);
+  }
+
+  .integration-pill.unconfigured {
+    background: rgba(245, 158, 11, 0.14);
+    border: 1px solid rgba(245, 158, 11, 0.36);
+    color: var(--warning-soft-text);
+    cursor: pointer;
+  }
+
+  /* Main Tab Switcher */
+  .main-tab-switcher {
+    display: inline-flex;
+    background: var(--bg);
+    padding: 3px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--glass-border);
+    gap: 4px;
+  }
+
+  .main-tab-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    min-height: 32px;
+    padding: 5px 12px;
+    border-radius: 6px;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 12.5px;
     font-weight: 600;
     cursor: pointer;
-    transition: all 0.2s;
-  }
-  .btn-action-outline:hover {
-    background: rgba(255, 255, 255, 0.15);
-    color: #ffffff;
-    transform: translateY(-1px);
-  }
-  .btn-danger-outline {
-    border-color: rgba(239, 68, 68, 0.4);
-    color: #f87171;
-  }
-  .btn-danger-outline:hover {
-    background: rgba(239, 68, 68, 0.15);
-    color: #fca5a5;
-    border-color: rgba(239, 68, 68, 0.7);
+    font-family: inherit;
+    transition: background-color 0.16s ease, color 0.16s ease;
   }
 
-  .search-input-wrapper {
+  .main-tab-btn.active {
+    background: rgba(99, 102, 241, 0.22);
+    color: var(--text-main);
+  }
+
+  .tab-count-pill {
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.08);
+    font-size: 11px;
+    font-family: var(--font-en);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .tab-count-pill.saved {
+    background: rgba(168, 85, 247, 0.22);
+    color: var(--primary-soft-text-hover);
+  }
+
+  .btn-chrome-tool,
+  .btn-toolbar-sub,
+  .btn-toolbar-danger {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 34px;
+    padding: 6px 12px;
+    border-radius: var(--radius-sm);
+    background: var(--surface-card);
+    border: 1px solid var(--glass-border);
+    color: var(--text-muted);
+    font-size: 12.5px;
+    font-weight: 500;
+    cursor: pointer;
+    font-family: inherit;
+    transition: color 0.16s ease, border-color 0.16s ease, background-color 0.16s ease;
+  }
+
+  .btn-chrome-tool:hover,
+  .btn-toolbar-sub:hover:not(:disabled) {
+    color: var(--text-main);
+    background: var(--surface-card-hover);
+    border-color: var(--glass-border-light);
+  }
+
+  .btn-toolbar-sub:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  .btn-toolbar-sub.active-filter {
+    background: rgba(99, 102, 241, 0.18);
+    border-color: var(--primary-soft-text);
+    color: var(--text-main);
+  }
+
+  .btn-toolbar-danger {
+    color: var(--danger-soft-text);
+    border-color: rgba(244, 63, 94, 0.3);
+  }
+
+  .btn-toolbar-danger:hover {
+    background: rgba(244, 63, 94, 0.16);
+    color: var(--danger-soft-text-hover);
+  }
+
+  .pts-chip,
+  .filter-badge-count {
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: rgba(99, 102, 241, 0.22);
+    color: var(--primary-soft-text-hover);
+    font-size: 11px;
+    font-weight: 700;
+    font-family: var(--font-en);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .selection-readout,
+  .rag-ready-hint {
+    font-size: 12.5px;
+    color: var(--text-muted);
+  }
+
+  .selection-readout strong {
+    color: var(--primary-soft-text-hover);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .view-mode-segmented {
+    display: inline-flex;
+    background: var(--bg);
+    padding: 3px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--glass-border);
+    gap: 3px;
+  }
+
+  .seg-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 28px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: inherit;
+  }
+
+  .seg-btn.active {
+    background: var(--surface-card-hover);
+    color: var(--text-main);
+  }
+
+  .search-box-compact {
     position: relative;
     display: flex;
     align-items: center;
-    max-width: 100%;
+    gap: 7px;
+    background: var(--bg);
+    border: 1px solid var(--glass-border-light);
+    border-radius: var(--radius-sm);
+    padding: 0 10px;
+    min-height: 34px;
+    width: clamp(190px, 20vw, 270px);
+    color: var(--text-muted);
   }
-  .search-icon {
-    position: absolute;
-    left: 10px;
-    font-size: 13px;
-    color: var(--text-muted, #94a3b8);
-    pointer-events: none;
+
+  .search-box-compact:focus-within {
+    border-color: var(--primary);
   }
-  .card-search-box {
-    background: rgba(30, 41, 59, 0.85);
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 8px;
-    color: #f1f5f9;
-    height: 36px;
-    padding: 0 28px 0 30px;
-    font-size: 0.85rem;
-    width: 220px;
-    max-width: 100%;
-    box-sizing: border-box;
-    transition: border-color 0.2s, box-shadow 0.2s;
-  }
-  .card-search-box:focus {
-    border-color: #38bdf8;
-    box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.2);
-    outline: none;
-  }
-  .clear-search-btn {
-    position: absolute;
-    right: 8px;
+
+  .search-box-compact input {
+    flex: 1;
+    min-width: 0;
     background: transparent;
     border: none;
-    color: var(--text-muted, #94a3b8);
-    cursor: pointer;
-    font-size: 11px;
-    padding: 4px;
+    outline: none;
+    color: var(--text-main);
+    font-size: 12.5px;
+    font-family: inherit;
   }
 
-  .btn-refresh-live {
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    color: #e2e8f0;
-    height: 36px;
-    padding: 0 14px;
-    box-sizing: border-box;
-    border-radius: 8px;
-    font-size: 0.85rem;
+  .btn-clear-query {
+    background: transparent;
+    border: none;
+    color: var(--text-dim);
+    cursor: pointer;
+    padding: 2px 4px;
+  }
+
+  .btn-primary-cta {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    min-height: 34px;
+    padding: 6px 14px;
+    border-radius: var(--radius-sm);
+    background: var(--gradient-main);
+    border: 1px solid rgba(129, 140, 248, 0.45);
+    color: #ffffff;
+    font-size: 12.5px;
     font-weight: 600;
     cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    transition: all 0.2s;
-  }
-  .btn-refresh-live svg {
-    flex-shrink: 0;
-  }
-  .btn-refresh-live:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.16);
-    transform: translateY(-1px);
+    font-family: inherit;
   }
 
-  .btn-save-selected-rag {
-    background: linear-gradient(135deg, #2563eb 0%, #7c3aed 100%);
-    border: 1px solid rgba(255, 255, 255, 0.25);
-    color: #ffffff;
-    height: 36px;
-    padding: 0 18px;
-    box-sizing: border-box;
-    border-radius: 8px;
-    font-size: 0.9rem;
-    font-weight: 700;
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    box-shadow: 0 4px 15px rgba(37, 99, 235, 0.4);
-    transition: all 0.2s ease;
-  }
-  .btn-save-selected-rag:hover:not(:disabled) {
-    box-shadow: 0 6px 20px rgba(124, 58, 237, 0.6);
-    transform: translateY(-1px);
-  }
-  .btn-save-selected-rag:disabled {
-    opacity: 0.4;
+  .btn-primary-cta:disabled {
+    opacity: 0.45;
     cursor: not-allowed;
-    box-shadow: none;
   }
 
-  /* Saved Top Bar */
-  .saved-top-bar {
+  /* Active Filter Strip */
+  .active-filters-strip {
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    padding: 12px 18px;
-    margin-bottom: 16px;
     flex-wrap: wrap;
-    gap: 12px;
-    background: rgba(15, 23, 42, 0.85);
-    border: 1px solid rgba(168, 85, 247, 0.3);
-    border-radius: 12px;
-  }
-  .rag-info-pill {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 0.9rem;
-    color: #e2e8f0;
-  }
-  .rag-sparkle {
-    font-size: 16px;
-    color: #c084fc;
-  }
-  .saved-bar-right {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex-wrap: wrap;
+    gap: 6px;
+    padding-top: 8px;
+    border-top: 1px solid var(--glass-border);
+    font-size: 12px;
   }
 
-  /* Board Layout */
-  .glass-panel {
-    background: rgba(15, 23, 42, 0.65);
-    backdrop-filter: blur(16px);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-    border-radius: 12px;
+  .strip-label {
+    color: var(--text-muted);
+    font-weight: 500;
   }
-  
+
+  .filter-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 9px;
+    border-radius: 999px;
+    background: var(--surface-card);
+    border: 1px solid var(--glass-border-light);
+    color: var(--text-main);
+    font-size: 11.5px;
+  }
+
+  .filter-chip button {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 0 2px;
+  }
+
+  .btn-clear-all-filters {
+    background: transparent;
+    border: none;
+    color: var(--danger-soft-text);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    margin-left: auto;
+    font-family: inherit;
+  }
+
+  /* Kanban Board Columns */
   .board-layout {
-    display: flex;
-    gap: 16px;
-    overflow-x: auto;
     flex: 1;
-    padding-bottom: 12px;
-    align-items: flex-start;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(260px, 1fr));
+    gap: 14px;
+    overflow-x: auto;
+    align-items: stretch;
   }
 
-  .board-layout::-webkit-scrollbar {
-    height: 8px;
-  }
-  .board-layout::-webkit-scrollbar-track {
-    background: rgba(0, 0, 0, 0.15);
-    border-radius: 4px;
-  }
-  .board-layout::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.18);
-    border-radius: 4px;
-  }
-  .board-layout::-webkit-scrollbar-thumb:hover {
-    background: rgba(168, 85, 247, 0.45);
-  }
-  
   .board-column {
-    min-width: 320px;
-    width: 320px;
+    background: var(--bg2);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-md);
     display: flex;
     flex-direction: column;
-    background: rgba(15, 23, 42, 0.7);
-    max-height: clamp(420px, calc(100vh - 340px), 740px);
-    min-height: 360px;
-    border-radius: 12px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    min-height: 460px;
+    max-height: calc(100dvh - 235px);
+    overflow: hidden;
+    transition: border-color 0.16s ease, background-color 0.16s ease;
   }
+
   .board-column.drag-over {
-    border-color: #38bdf8 !important;
-    background: rgba(14, 42, 71, 0.85) !important;
-    box-shadow: 0 0 24px rgba(56, 189, 248, 0.4) !important;
-    transform: scale(1.01);
+    border-color: var(--primary);
+    background: rgba(99, 102, 241, 0.06);
   }
-  
+
   .column-header {
     display: flex;
     align-items: center;
-    padding: 16px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-    background: rgba(0, 0, 0, 0.25);
-    border-radius: 12px 12px 0 0;
+    gap: 8px;
+    padding: 12px 14px;
+    background: var(--bg);
+    border-bottom: 1px solid var(--glass-border);
     flex-shrink: 0;
   }
-  
+
   .column-dot {
-    width: 10px;
-    height: 10px;
+    width: 9px;
+    height: 9px;
     border-radius: 50%;
-    margin-right: 10px;
     flex-shrink: 0;
   }
-  
+
   .column-title {
+    font-size: 13.5px;
     font-weight: 600;
-    color: #f1f5f9;
+    color: var(--text-main);
     flex: 1;
-    font-size: 0.95rem;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
-  
-  .column-count {
-    background: rgba(255, 255, 255, 0.12);
-    color: #cbd5e1;
-    padding: 2px 8px;
-    border-radius: 12px;
-    font-size: 0.75rem;
+
+  .column-metrics {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+
+  .column-pts-pill {
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: rgba(99, 102, 241, 0.14);
+    border: 1px solid rgba(99, 102, 241, 0.28);
+    color: var(--primary-soft-text);
+    font-size: 11px;
     font-weight: 600;
+    font-family: var(--font-en);
+    font-variant-numeric: tabular-nums;
   }
-  
+
+  .column-count {
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--surface-card);
+    color: var(--text-muted);
+    font-size: 11.5px;
+    font-weight: 700;
+    font-family: var(--font-en);
+    font-variant-numeric: tabular-nums;
+  }
+
   .card-list {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  /* Task Cards */
+  .task-card {
+    background: var(--surface-card);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-md);
     padding: 12px;
     display: flex;
     flex-direction: column;
-    gap: 12px;
-    overflow-y: auto;
-    flex: 1;
-    min-height: 0;
+    gap: 9px;
+    cursor: pointer;
+    transition: background-color 0.16s ease, border-color 0.16s ease, transform 0.16s ease;
   }
 
-  .card-list::-webkit-scrollbar {
-    width: 6px;
-  }
-  .card-list::-webkit-scrollbar-track {
-    background: rgba(0, 0, 0, 0.15);
-    border-radius: 4px;
-  }
-  .card-list::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.2);
-    border-radius: 4px;
-  }
-  .card-list::-webkit-scrollbar-thumb:hover {
-    background: rgba(56, 189, 248, 0.5);
-  }
-  
-  .task-card {
-    background: rgba(30, 41, 59, 0.85);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 10px;
-    padding: 14px;
-    cursor: grab;
-    user-select: none;
-    -webkit-user-select: none;
-    transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s, opacity 0.2s;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-  .task-card:active {
-    cursor: grabbing;
-  }
   .task-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
-    border-color: rgba(139, 92, 246, 0.5);
-  }
-  .task-card.is-dragging {
-    opacity: 0.35 !important;
-    transform: scale(0.96) !important;
-    border: 2px dashed #38bdf8 !important;
-    box-shadow: none !important;
-  }
-  .task-card.is-saved {
-    border: 1px solid rgba(34, 197, 94, 0.45);
-    background: rgba(20, 46, 38, 0.55);
-  }
-  .task-card.is-unestimated {
-    border: 1px solid rgba(245, 158, 11, 0.55);
-    background: rgba(58, 39, 14, 0.45);
-  }
-  .task-card.selected {
-    border: 2px solid #38bdf8;
-    background: rgba(30, 58, 95, 0.9);
-    box-shadow: 0 0 16px rgba(56, 189, 248, 0.35);
+    background: var(--surface-card-hover);
+    border-color: rgba(168, 85, 247, 0.34);
+    transform: translateY(-1px);
   }
 
-  /* Card Top Control Row (Labels on Left, Checkbox on Right) */
-  .card-top-control-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 8px;
-    margin-bottom: 4px;
+  .task-card.selected {
+    background: var(--surface-card-unread);
+    border-color: var(--primary);
+    box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.35);
   }
+
+  .task-card.is-unestimated {
+    border-color: rgba(245, 158, 11, 0.45);
+  }
+
+  .task-card.is-dragging {
+    opacity: 0.45;
+  }
+
+  .card-top-row,
+  .saved-top-badge-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
   .card-labels-group {
     display: flex;
     flex-wrap: wrap;
-    align-items: center;
-    gap: 4px;
+    gap: 5px;
     flex: 1;
+    min-width: 0;
   }
 
-  .card-checkbox-hitbox {
-    padding: 2px 4px;
-    display: flex;
+  .label-pill {
+    padding: 2px 8px;
+    border-radius: 5px;
+    font-size: 11px;
+    font-weight: 600;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .saved-status-pill,
+  .rag-indexed-pill {
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: rgba(16, 185, 129, 0.14);
+    border: 1px solid rgba(16, 185, 129, 0.32);
+    color: var(--success-soft-text);
+    font-size: 10.5px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .verdict-pill {
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 10.5px;
+    font-weight: 700;
+    font-family: var(--font-en);
+    white-space: nowrap;
+  }
+
+  .verdict-pill.passed {
+    background: rgba(16, 185, 129, 0.16);
+    border: 1px solid rgba(16, 185, 129, 0.38);
+    color: var(--success-soft-text);
+  }
+
+  .verdict-pill.failed {
+    background: rgba(244, 63, 94, 0.16);
+    border: 1px solid rgba(244, 63, 94, 0.4);
+    color: var(--danger-soft-text);
+  }
+
+  .verdict-pill.testing {
+    background: rgba(168, 85, 247, 0.18);
+    border: 1px solid rgba(168, 85, 247, 0.4);
+    color: var(--primary-soft-text-hover);
+  }
+
+  .verdict-pill.untested {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--glass-border);
+    color: var(--text-dim);
+  }
+
+  .card-checkbox-btn {
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    background: var(--bg);
+    border: 1px solid var(--glass-border-light);
+    color: #ffffff;
+    display: inline-flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    margin-left: auto;
-    border-radius: 6px;
-    user-select: none;
-    transition: background 0.15s;
-  }
-  .card-checkbox-hitbox:hover {
-    background: rgba(255, 255, 255, 0.08);
-  }
-  .custom-checkbox-ui {
-    width: 17px;
-    height: 17px;
-    border-radius: 4px;
-    border: 1.5px solid rgba(255, 255, 255, 0.4);
-    background: rgba(15, 23, 42, 0.6);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: #ffffff;
-    transition: all 0.15s ease-in-out;
-    box-sizing: border-box;
-  }
-  .card-checkbox-hitbox:hover .custom-checkbox-ui {
-    border-color: #38bdf8;
-  }
-  .custom-checkbox-ui.checked {
-    background: #0284c7;
-    border-color: #0284c7;
-    box-shadow: 0 0 8px rgba(2, 132, 199, 0.5);
+    flex-shrink: 0;
+    padding: 0;
   }
 
-  .saved-status-badge {
-    background: rgba(34, 197, 94, 0.15);
-    border: 1px solid rgba(34, 197, 94, 0.4);
-    color: #4ade80;
-    font-size: 11px;
-    font-weight: 700;
-    padding: 2px 8px;
-    border-radius: 10px;
-  }
-
-  .saved-top-badge-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 4px;
-  }
-
-  .rag-indexed-badge {
-    background: rgba(168, 85, 247, 0.15);
-    border: 1px solid rgba(168, 85, 247, 0.4);
-    color: #c084fc;
-    font-size: 11px;
-    font-weight: 700;
-    padding: 2px 8px;
-    border-radius: 10px;
-  }
-
-  .test-status-badge.passed {
-    background: rgba(34, 197, 94, 0.15);
-    border: 1px solid rgba(34, 197, 94, 0.4);
-    color: #4ade80;
-    font-size: 11px;
-    font-weight: 700;
-    padding: 2px 8px;
-    border-radius: 10px;
+  .card-checkbox-btn.checked {
+    background: var(--primary);
+    border-color: var(--primary);
   }
 
   .card-title {
     margin: 0;
-    font-size: 0.95rem;
-    color: #f1f5f9;
+    font-size: 13.2px;
     font-weight: 600;
-    line-height: 1.35;
+    color: var(--text-main);
+    line-height: 1.45;
+    word-break: break-word;
   }
 
   .card-footer {
     display: flex;
+    align-items: center;
     justify-content: space-between;
-    align-items: center;
-    margin-top: 4px;
-    flex-wrap: wrap;
     gap: 8px;
-  }
-
-  /* Saved Card Actions Bar */
-  .saved-card-actions-bar {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 8px;
-    margin-top: 6px;
-    padding-top: 8px;
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
-  }
-
-  .btn-card-action {
-    padding: 4px 10px;
-    border-radius: 6px;
-    font-size: 11px;
-    font-weight: 600;
-    cursor: pointer;
-    border: none;
-    transition: all 0.2s;
-  }
-  .btn-card-action.test {
-    background: rgba(168, 85, 247, 0.2);
-    border: 1px solid rgba(168, 85, 247, 0.4);
-    color: #d8b4fe;
-  }
-  .btn-card-action.test:hover:not(:disabled) {
-    background: rgba(168, 85, 247, 0.4);
-    color: #ffffff;
-  }
-  .btn-card-action.unsave {
-    background: rgba(239, 68, 68, 0.15);
-    border: 1px solid rgba(239, 68, 68, 0.35);
-    color: #f87171;
-  }
-  .btn-card-action.unsave:hover {
-    background: rgba(239, 68, 68, 0.3);
-    color: #ffffff;
-  }
-
-  /* Empty Saved State */
-  .empty-saved-state {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 60px 24px;
-    text-align: center;
-    gap: 16px;
-    max-width: 540px;
-    margin: 40px auto;
-  }
-  .empty-icon {
-    font-size: 48px;
-  }
-  .empty-saved-state h3 {
-    margin: 0;
-    color: #f1f5f9;
-    font-size: 1.25rem;
-  }
-  .empty-saved-state p {
-    margin: 0;
-    color: #94a3b8;
-    font-size: 0.9rem;
-    line-height: 1.5;
-  }
-
-  /* Labels */
-  .trello-labels-bar {
-    display: flex;
-    gap: 6px;
-    flex-wrap: wrap;
-  }
-
-  .trello-label-pill {
-    padding: 3px 10px;
-    border-radius: 4px;
-    font-size: 11px;
-    font-weight: 700;
-    color: #ffffff;
-    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
-    display: inline-block;
-  }
-
-  .trello-label-pill-large {
-    padding: 4px 14px;
-    border-radius: 4px;
-    font-size: 13px;
-    font-weight: 700;
-    color: #ffffff;
-    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
-    display: inline-block;
+    margin-top: 2px;
   }
 
   .footer-left-meta {
     display: flex;
     align-items: center;
-    gap: 8px;
     flex-wrap: wrap;
+    gap: 6px;
   }
 
-  .desc-icon {
-    font-size: 14px;
-    color: #94a3b8;
-    line-height: 1;
-    font-weight: bold;
+  .desc-indicator {
+    color: var(--text-dim);
+    display: inline-flex;
+    align-items: center;
   }
 
   .story-points-pill {
-    background: #4d7c0f;
-    color: #ffffff;
-    padding: 2px 8px;
-    border-radius: 6px;
+    padding: 2px 7px;
+    border-radius: 5px;
+    background: rgba(99, 102, 241, 0.14);
+    border: 1px solid rgba(99, 102, 241, 0.28);
+    color: var(--primary-soft-text);
     font-size: 11px;
-    font-weight: 700;
-    display: inline-flex;
-    align-items: center;
+    font-weight: 600;
+    font-family: var(--font-en);
+    font-variant-numeric: tabular-nums;
   }
 
   .unestimated-pill {
-    background: rgba(245, 158, 11, 0.18);
-    border: 1px solid rgba(245, 158, 11, 0.45);
-    color: #fcd34d;
-    padding: 2px 8px;
-    border-radius: 6px;
+    padding: 2px 7px;
+    border-radius: 5px;
+    background: rgba(245, 158, 11, 0.15);
+    border: 1px solid rgba(245, 158, 11, 0.38);
+    color: var(--warning-soft-text);
     font-size: 11px;
-    font-weight: 700;
-    display: inline-flex;
-    align-items: center;
+    font-weight: 600;
+  }
+
+  .prio-badge {
+    padding: 2px 7px;
+    border-radius: 5px;
+    font-size: 11px;
+    font-weight: 500;
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-muted);
+  }
+
+  .prio-badge.prio-high {
+    background: rgba(244, 63, 94, 0.14);
+    color: var(--danger-soft-text);
   }
 
   .footer-right-members {
     display: flex;
     align-items: center;
-    gap: 0;
-    margin-left: auto;
-  }
-  .footer-right-members > :not(:first-child) {
-    margin-left: -6px;
+    gap: 4px;
   }
 
   .member-avatar {
-    width: 28px;
-    height: 28px;
+    width: 24px;
+    height: 24px;
     border-radius: 50%;
-    border: 2px solid #1e293b;
     object-fit: cover;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
-    cursor: pointer;
-  }
-  .member-avatar:hover {
-    transform: scale(1.18);
-    box-shadow: 0 0 10px rgba(56, 189, 248, 0.6);
-    z-index: 5;
+    border: 1px solid var(--glass-border-light);
   }
 
   .member-initials {
-    width: 28px;
-    height: 28px;
+    width: 24px;
+    height: 24px;
     border-radius: 50%;
-    background: #0284c7;
-    color: #ffffff;
-    font-size: 11px;
-    font-weight: 700;
-    display: flex;
+    background: rgba(99, 102, 241, 0.18);
+    border: 1px solid rgba(99, 102, 241, 0.34);
+    color: var(--primary-soft-text);
+    display: inline-flex;
     align-items: center;
     justify-content: center;
-    border: 2px solid #1e293b;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
-    transition: transform 0.2s ease;
-    cursor: pointer;
-  }
-  .member-initials:hover {
-    transform: scale(1.18);
-  }
-
-  .member-avatar-large {
-    width: 36px;
-    height: 36px;
-    border-radius: 50%;
-    border: 2px solid #2c333a;
-    object-fit: cover;
-    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.5);
-    transition: transform 0.2s ease;
-    cursor: pointer;
-  }
-  .member-avatar-large:hover {
-    transform: scale(1.15);
-  }
-
-  .member-initials-large {
-    width: 36px;
-    height: 36px;
-    border-radius: 50%;
-    background: #0284c7;
-    color: #ffffff;
-    font-size: 13px;
+    font-size: 10.5px;
     font-weight: 700;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border: 2px solid #2c333a;
-    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.5);
-    transition: transform 0.2s ease;
-    cursor: pointer;
-  }
-  .member-initials-large:hover {
-    transform: scale(1.15);
   }
 
-  /* Modal Card Action Banner */
-  .modal-card-action-banner {
-    background: rgba(30, 41, 59, 0.7);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 10px;
-    padding: 12px 16px;
+  /* Saved Card Progressive Action Bar */
+  .saved-card-actions-bar {
     display: flex;
     align-items: center;
     justify-content: space-between;
-  }
-  .btn-modal-save-rag {
-    background: linear-gradient(135deg, #0284c7 0%, #7c3aed 100%);
-    color: #ffffff;
-    border: none;
-    padding: 8px 18px;
-    border-radius: 8px;
-    font-weight: 700;
-    cursor: pointer;
-    font-size: 0.9rem;
-    transition: all 0.2s;
-  }
-  .btn-modal-save-rag:hover:not(:disabled) {
-    transform: translateY(-1px);
-    box-shadow: 0 4px 15px rgba(2, 132, 199, 0.5);
-  }
-  .btn-modal-unsave {
-    background: rgba(239, 68, 68, 0.2);
-    border: 1px solid rgba(239, 68, 68, 0.4);
-    color: #f87171;
-    padding: 6px 14px;
-    border-radius: 8px;
-    font-size: 0.85rem;
-    font-weight: 600;
-    cursor: pointer;
-  }
-  .btn-modal-unsave:hover {
-    background: rgba(239, 68, 68, 0.35);
-  }
-  .btn-modal-test {
-    background: rgba(168, 85, 247, 0.2);
-    border: 1px solid rgba(168, 85, 247, 0.4);
-    color: #d8b4fe;
-    padding: 6px 14px;
-    border-radius: 8px;
-    font-size: 0.85rem;
-    font-weight: 600;
-    cursor: pointer;
-  }
-  .btn-modal-test:hover {
-    background: rgba(168, 85, 247, 0.35);
+    gap: 6px;
+    padding-top: 8px;
+    border-top: 1px solid var(--glass-border);
   }
 
-  /* Trello Modal Styling */
-  .trello-modal-container {
-    width: 95vw;
-    max-width: 980px;
-    max-height: 90vh;
-    background: #1d2125;
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 16px;
-    color: #b6c2cf;
-    padding: 26px 32px;
-    display: flex;
-    flex-direction: column;
-    overflow-y: auto;
-    overflow-x: hidden;
-    gap: 20px;
-    box-shadow: 0 24px 70px rgba(0, 0, 0, 0.85);
-  }
-
-  .trello-modal-topbar {
-    display: flex;
-    justify-content: space-between;
+  .btn-card-action {
+    display: inline-flex;
     align-items: center;
-    flex-wrap: wrap;
-    gap: 10px;
-  }
-  .trello-modal-top-left {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-
-  .column-status-select {
-    background: #282e33;
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 6px;
+    justify-content: center;
+    gap: 5px;
+    min-height: 28px;
     padding: 4px 10px;
-    font-size: 13px;
-    font-weight: 600;
-    color: #9fadbc;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-
-  .btn-ext-link {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 14px;
     border-radius: 6px;
-    font-size: 13px;
+    font-size: 11.5px;
     font-weight: 600;
-    text-decoration: none;
-    transition: all 0.2s;
-  }
-  .btn-ext-link.trello {
-    background: #0055cc;
-    color: #ffffff;
-  }
-  .btn-ext-link.trello:hover {
-    background: #0065ff;
-  }
-  .btn-ext-link.github {
-    background: #238636;
-    color: #ffffff;
-  }
-  .btn-ext-link.github:hover {
-    background: #2ea043;
+    cursor: pointer;
+    font-family: inherit;
+    transition: opacity 0.16s ease, background-color 0.16s ease, color 0.16s ease;
   }
 
-  .trello-modal-header {
-    display: flex;
-    align-items: flex-start;
-    gap: 12px;
-  }
-  .trello-card-icon {
-    font-size: 20px;
-    margin-top: 4px;
-  }
-  .trello-card-title {
-    margin: 0;
-    font-size: 1.4rem;
-    font-weight: 600;
-    color: #ffffff;
-    line-height: 1.3;
+  .btn-card-action.test {
+    background: rgba(168, 85, 247, 0.16);
+    border: 1px solid rgba(168, 85, 247, 0.36);
+    color: var(--primary-soft-text-hover);
   }
 
-  .trello-meta-grid {
-    display: flex;
-    gap: 24px;
-    flex-wrap: wrap;
-  }
-  .meta-group {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-  .meta-group-title {
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    color: #8c9bab;
-    letter-spacing: 0.5px;
-  }
-  .meta-group-content {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    min-height: 32px;
-  }
-  .no-meta-text {
-    color: var(--text-muted, #94a3b8);
-    font-size: 13px;
-    font-style: italic;
+  .btn-card-action.test:hover:not(:disabled) {
+    background: rgba(168, 85, 247, 0.28);
   }
 
-  .trello-points-pill {
-    background: #4d7c0f;
-    color: #ffffff;
-    padding: 4px 12px;
-    border-radius: 6px;
-    font-size: 13px;
-    font-weight: 700;
+  .btn-card-action.view {
+    background: var(--surface-card);
+    border: 1px solid var(--glass-border-light);
+    color: var(--text-main);
   }
 
-  .trello-priority-badge {
-    background: #282e33;
-    color: #9fadbc;
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    padding: 4px 12px;
-    border-radius: 6px;
-    font-size: 13px;
-    font-weight: 600;
+  .btn-card-action.unsave {
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text-dim);
+    opacity: 0;
   }
 
-  .trello-2col-layout {
-    display: flex;
-    gap: 28px;
-    margin-top: 8px;
-  }
-  @media (max-width: 768px) {
-    .trello-2col-layout {
-      flex-direction: column;
-    }
+  .task-card:hover .btn-card-action.unsave,
+  .task-card:focus-within .btn-card-action.unsave,
+  .btn-card-action.unsave:focus-visible {
+    opacity: 1;
   }
 
-  .trello-col-main {
-    flex: 1.25;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 20px;
+  .btn-card-action.unsave:hover,
+  .btn-card-action.unsave-table:hover {
+    color: var(--danger-soft-text);
+    background: rgba(244, 63, 94, 0.14);
+    border-color: rgba(244, 63, 94, 0.3);
   }
-  .trello-col-sidebar {
+
+  .btn-card-action.unsave-table {
+    background: transparent;
+    border: 1px solid var(--glass-border);
+    color: var(--text-muted);
+  }
+
+  /* QA Execution Table View */
+  .qa-table-shell {
     flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
+    min-height: 0;
+    overflow: auto;
+    background: var(--bg2);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-md);
   }
 
-  .trello-section-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 8px;
+  .qa-exec-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    text-align: left;
   }
-  .section-title {
-    margin: 0;
-    font-size: 1.05rem;
+
+  .qa-exec-table th {
+    position: sticky;
+    top: 0;
+    background: var(--bg);
+    color: var(--text-muted);
+    font-size: 12px;
     font-weight: 600;
-    color: #dee4ea;
-  }
-  .comment-count-badge {
-    background: #282e33;
-    color: #9fadbc;
-    padding: 1px 8px;
-    border-radius: 10px;
-    font-size: 12px;
-  }
-
-  .btn-toggle-comments {
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    color: #cbd5e1;
-    padding: 4px 10px;
-    border-radius: 6px;
-    font-size: 12px;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-  .btn-toggle-comments:hover {
-    background: rgba(255, 255, 255, 0.15);
-    color: #ffffff;
-  }
-
-  .trello-description-box {
-    background: #22272b;
-    border-radius: 8px;
-    padding: 14px 16px;
-    min-height: 90px;
-    font-size: 14px;
-    line-height: 1.6;
-    color: #b6c2cf;
-  }
-  .desc-content {
-    white-space: pre-wrap;
-    word-break: break-word;
-    overflow-wrap: break-word;
-  }
-  .no-data-text {
-    color: var(--text-muted, #94a3b8);
-    font-style: italic;
-  }
-
-  /* QA Agent Tester Box */
-  .trello-agent-box {
-    background: rgba(88, 28, 135, 0.2);
-    border: 1px solid rgba(168, 85, 247, 0.35);
-    border-radius: 8px;
-    padding: 14px 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-  .agent-box-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .agent-box-content {
-    font-size: 13px;
-  }
-  .testing-indicator-large {
-    display: flex;
-    align-items: center;
-    gap: 10px;
     padding: 12px 14px;
-    border-radius: 8px;
-    background: rgba(168, 85, 247, 0.14);
-    border: 1px solid rgba(168, 85, 247, 0.35);
-    color: #e9d5ff;
-    font-size: 0.88rem;
-    font-weight: 500;
+    border-bottom: 1px solid var(--glass-border);
+    z-index: 2;
   }
-  .agent-report-container {
+
+  .qa-exec-table td {
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--glass-border);
+    vertical-align: middle;
+  }
+
+  .qa-exec-table tbody tr:hover {
+    background: var(--surface-card);
+  }
+
+  .table-card-title-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-main);
+    font-size: 13.5px;
+    font-weight: 600;
+    text-align: left;
+    cursor: pointer;
+    padding: 0;
+    font-family: inherit;
+  }
+
+  .table-card-title-btn:hover {
+    color: var(--primary-soft-text-hover);
+    text-decoration: underline;
+  }
+
+  .table-labels-row {
     display: flex;
-    flex-direction: column;
-    gap: 10px;
-    min-width: 0;
+    flex-wrap: wrap;
+    gap: 5px;
+    margin-top: 6px;
   }
-  .test-verdict-badge {
-    padding: 6px 12px;
-    border-radius: 6px;
-    font-size: 13px;
-    font-weight: 700;
-    margin-bottom: 8px;
+
+  .table-status-select {
+    min-height: 32px;
+    padding: 4px 28px 4px 10px;
+    font-size: 12.5px;
+    background-color: var(--surface-card);
+  }
+
+  .table-pts-prio,
+  .table-action-btns {
     display: flex;
     align-items: center;
     gap: 6px;
+    flex-wrap: wrap;
   }
-  .test-verdict-badge.passed {
-    background: rgba(34, 197, 94, 0.15);
-    border: 1px solid rgba(34, 197, 94, 0.4);
-    color: #4ade80;
+
+  .col-actions-head,
+  .cell-actions-col {
+    text-align: right;
   }
-  .test-verdict-badge.failed {
-    background: rgba(239, 68, 68, 0.15);
-    border: 1px solid rgba(239, 68, 68, 0.4);
-    color: #f87171;
-  }
-  .test-result-pre {
-    margin: 0;
-    background: rgba(0, 0, 0, 0.4);
-    padding: 10px;
-    border-radius: 6px;
-    font-size: 12px;
-    color: #4ade80;
-    max-height: 240px;
-    overflow-y: auto;
-    font-family: monospace;
-    white-space: pre-wrap;
-  }
-  .test-result-pre.failed {
-    color: #fca5a5;
-    border: 1px solid rgba(239, 68, 68, 0.45);
-    background: rgba(127, 29, 29, 0.25);
-  }
-  .agent-box-footer {
-    display: flex;
+
+  .cell-actions-col .table-action-btns {
     justify-content: flex-end;
   }
-  .btn-run-agent {
-    background: #7c3aed;
-    color: #ffffff;
-    border: none;
-    padding: 6px 14px;
-    border-radius: 6px;
-    font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-  .btn-run-agent:hover:not(:disabled) {
-    background: #9333ea;
-  }
 
-  /* Comments Area & Rich Media */
-  .comment-input-area {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-  .comment-box-wrapper {
-    position: relative;
-    background: #22272b;
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 8px;
-    padding: 8px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    transition: border-color 0.2s, box-shadow 0.2s;
-  }
-  .comment-box-wrapper:focus-within {
-    border-color: #38bdf8;
-    box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2);
-  }
-  .comment-box-wrapper.is-uploading {
-    opacity: 0.8;
-    pointer-events: none;
-  }
-  .comment-uploading-overlay {
-    position: absolute;
-    inset: 0;
-    background: rgba(15, 23, 42, 0.85);
-    backdrop-filter: blur(2px);
-    border-radius: 8px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    color: #38bdf8;
-    font-size: 0.85rem;
-    font-weight: 600;
-    z-index: 10;
-  }
-  .comment-input-area textarea {
-    width: 100%;
-    background: transparent;
-    border: none;
-    padding: 4px;
-    color: #f1f5f9;
-    font-size: 14px;
-    line-height: 1.45;
-    resize: vertical;
-    box-sizing: border-box;
-  }
-  .comment-input-area textarea:focus {
-    outline: none;
-  }
-  .composer-attachments-grid {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    padding: 6px 0;
-    border-top: 1px dashed rgba(255, 255, 255, 0.12);
-  }
-  .composer-media-card {
-    position: relative;
-    background: #181d20;
-    border: 1px solid rgba(56, 189, 248, 0.4);
-    border-radius: 8px;
-    overflow: hidden;
-    width: 96px;
-    height: 96px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
-    transition: transform 0.2s, border-color 0.2s;
-  }
-  .composer-media-card:hover {
-    border-color: #38bdf8;
-    transform: translateY(-2px);
-  }
-  .composer-preview-img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    display: block;
-    cursor: pointer;
-    background: #0f172a;
-  }
-  .composer-preview-video {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    display: block;
-    background: #000;
-  }
-  .btn-del-media-card {
-    position: absolute;
-    top: 4px;
-    right: 4px;
-    background: rgba(239, 68, 68, 0.9);
-    color: #ffffff;
-    border: none;
-    width: 18px;
-    height: 18px;
-    border-radius: 50%;
-    font-size: 10px;
-    font-weight: bold;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 5;
-    transition: background 0.15s, transform 0.15s;
-    line-height: 1;
-    padding: 0;
-  }
-  .btn-del-media-card:hover {
-    background: #ef4444;
-    transform: scale(1.15);
-  }
-  .comment-toolbar {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding-top: 6px;
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-  .toolbar-actions {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex-wrap: wrap;
-  }
-  .btn-comment-tool {
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    color: #cbd5e1;
-    padding: 4px 10px;
-    border-radius: 6px;
-    font-size: 12px;
-    cursor: pointer;
-    font-weight: 500;
-    transition: all 0.2s;
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-  }
-  .btn-comment-tool:hover {
-    background: rgba(255, 255, 255, 0.16);
-    color: #ffffff;
-    border-color: rgba(255, 255, 255, 0.25);
-  }
-  .clipboard-paste-hint {
-    font-size: 11px;
-    color: #94a3b8;
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 2px 6px;
-    background: rgba(255, 255, 255, 0.04);
-    border-radius: 4px;
-  }
-  .clipboard-paste-hint kbd {
-    background: #1e293b;
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    box-shadow: 0 1px 0 rgba(0, 0, 0, 0.3);
-    color: #38bdf8;
-    padding: 1px 4px;
-    border-radius: 3px;
-    font-size: 10px;
-    font-family: inherit;
-    font-weight: 600;
-  }
-  .btn-save-comment {
-    background: #0055cc;
-    color: #ffffff;
-    border: none;
-    padding: 5px 14px;
-    border-radius: 6px;
-    font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: background 0.2s;
-  }
-  .btn-save-comment:hover:not(:disabled) {
-    background: #0065ff;
-  }
-  .btn-save-comment:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-  }
-
-  .activity-timeline {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    max-height: 380px;
-    overflow-y: auto;
-    padding-right: 4px;
-  }
-
-  .custom-comment-scrollbar::-webkit-scrollbar {
-    width: 6px;
-  }
-  .custom-comment-scrollbar::-webkit-scrollbar-track {
-    background: rgba(0, 0, 0, 0.2);
-    border-radius: 4px;
-  }
-  .custom-comment-scrollbar::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.2);
-    border-radius: 4px;
-  }
-  .custom-comment-scrollbar::-webkit-scrollbar-thumb:hover {
-    background: rgba(255, 255, 255, 0.35);
-  }
-
-  .activity-item {
-    display: flex;
-    gap: 10px;
-    font-size: 13px;
-  }
-  .act-avatar {
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
-    object-fit: cover;
-    margin-top: 2px;
-    flex-shrink: 0;
-  }
-  .act-initials {
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
-    background: #0284c7;
-    color: #ffffff;
-    font-size: 11px;
-    font-weight: 700;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    margin-top: 2px;
-    flex-shrink: 0;
-  }
-  .act-details {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-  .act-text {
-    background: #22272b;
-    padding: 8px 12px;
-    border-radius: 8px;
-    color: #dee4ea;
-    line-height: 1.45;
-    word-break: break-word;
-    overflow-wrap: break-word;
-  }
-  .act-text strong {
-    display: block;
-    margin-bottom: 4px;
-    color: #9fadbc;
-  }
-  .act-date {
-    font-size: 11px;
-    color: var(--text-muted, #94a3b8);
-    margin-left: 4px;
-  }
-
-  .comments-collapsed-placeholder {
-    padding: 12px;
-    background: #22272b;
-    border-radius: 8px;
-    color: #8c9bab;
-    font-size: 13px;
-    cursor: pointer;
-    text-align: center;
-    transition: background 0.2s;
-  }
-  .comments-collapsed-placeholder:hover {
-    background: #282e33;
-    color: #dee4ea;
-  }
-
-  /* Media & Link Styling in Comments & Description */
-  .comment-image-container {
-    margin: 8px 0;
-    cursor: pointer;
-  }
-  .comment-attached-image {
-    max-width: 100%;
-    max-height: 260px;
-    border-radius: 6px;
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    background: rgba(0, 0, 0, 0.2);
-    transition: transform 0.2s, border-color 0.2s;
-    display: block;
-  }
-  .comment-attached-image:hover {
-    transform: scale(1.015);
-    border-color: #38bdf8;
-  }
-
-  .comment-video-container {
-    margin: 8px 0;
-    background: #111827;
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 8px;
-    overflow: hidden;
-    max-width: 100%;
-  }
-  .comment-video-player {
-    width: 100%;
-    max-height: 280px;
-    display: block;
-    background: #000;
-  }
-  .video-meta-bar {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 6px 10px;
-    font-size: 11px;
-    color: #94a3b8;
-    background: rgba(0, 0, 0, 0.4);
-    border-top: 1px solid rgba(255, 255, 255, 0.06);
-  }
-  .video-open-link {
-    color: #38bdf8;
-    text-decoration: none;
-    font-weight: 600;
-  }
-  .video-open-link:hover {
-    text-decoration: underline;
-  }
-
-  .comment-rich-link {
-    color: #38bdf8;
-    text-decoration: underline;
-    text-underline-offset: 2px;
-    font-weight: 500;
-    word-break: break-all;
-    transition: color 0.15s;
-    margin: 0 2px;
-  }
-  .comment-rich-link:hover {
-    color: #7dd3fc;
-  }
-
-  /* Lightbox Modal */
-  .image-lightbox-backdrop {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100vw;
-    height: 100vh;
-    padding: 20px;
-    box-sizing: border-box;
-    background: rgba(0, 0, 0, 0.88);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: calc(var(--z-modal, 10000) + 50);
-  }
-  .image-lightbox-content {
-    position: relative;
-    max-width: 90vw;
-    max-height: 90vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 12px;
-  }
-  .lightbox-full-img {
-    max-width: 90vw;
-    max-height: 80vh;
-    object-fit: contain;
-    border-radius: 8px;
-    box-shadow: 0 10px 40px rgba(0,0,0,0.9);
-  }
-  .lightbox-close-btn {
-    position: absolute;
-    top: 10px;
-    right: 10px;
-    z-index: 2;
-    background: rgba(10, 11, 18, 0.78);
-    border: 1px solid rgba(255, 255, 255, 0.25);
-    color: #ffffff;
-    font-size: 16px;
-    width: 34px;
-    height: 34px;
-    border-radius: 50%;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    transition: background-color 0.2s, transform 0.2s;
-  }
-  .lightbox-close-btn:hover {
-    background: rgba(239, 68, 68, 0.85);
-    transform: scale(1.06);
-  }
-  .lightbox-toolbar {
-    display: flex;
-    justify-content: center;
-  }
-  .lightbox-btn-download {
-    color: #38bdf8;
-    text-decoration: none;
-    font-size: 13px;
-    background: rgba(0, 0, 0, 0.6);
-    padding: 6px 14px;
-    border-radius: 20px;
-    border: 1px solid rgba(56, 189, 248, 0.4);
-  }
-
-  /* Common Modal Elements */
-  .modal-backdrop {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100vw;
-    height: 100vh;
-    background: rgba(0, 0, 0, 0.7);
-    backdrop-filter: blur(8px);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: var(--z-modal, 10000);
-  }
-  .modal-card {
-    width: 95vw;
-    max-width: 580px;
-    max-height: 88vh;
-    overflow-y: auto;
-    padding: 24px;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-  }
-  .modal-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 12px;
-  }
-  .modal-title {
-    margin: 0;
-    font-size: 1.25rem;
-    color: #f8fafc;
-  }
-  .modal-subtitle {
-    margin: 2px 0 0 0;
-    font-size: 0.85rem;
-    color: #94a3b8;
-  }
-  .btn-close {
-    background: transparent;
-    border: none;
-    color: var(--text-muted, #94a3b8);
-    font-size: 18px;
-    line-height: 1;
-    padding: 4px 8px;
-    border-radius: 6px;
-    cursor: pointer;
-    flex-shrink: 0;
-    transition: color 0.15s ease, background-color 0.15s ease;
-  }
-  .btn-close:hover {
-    color: #fff;
-    background: rgba(255, 255, 255, 0.08);
-  }
-
-  .provider-tabs {
-    display: flex;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  }
-  .tab-btn-modal {
-    flex: 1;
-    background: transparent;
-    border: none;
-    border-bottom: 2px solid transparent;
-    padding: 10px;
-    cursor: pointer;
-    font-size: 0.9rem;
-  }
-  .tab-btn-modal.active {
-    border-bottom-color: #38bdf8;
-    background: rgba(56, 189, 248, 0.08);
-  }
-
-  .provider-guide {
-    background: rgba(56, 189, 248, 0.1);
-    border: 1px solid rgba(56, 189, 248, 0.3);
-    padding: 10px 14px;
-    border-radius: 8px;
-    font-size: 0.85rem;
-    color: #e0f2fe;
-    margin-bottom: 14px;
-  }
-  .provider-guide a {
-    color: #38bdf8;
-  }
-
-  .form-group {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    margin-bottom: 12px;
-  }
-  .form-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 12px;
-  }
-  .form-row > * {
-    min-width: 0;
-  }
-  .form-group label {
-    font-size: 0.85rem;
-    color: #cbd5e1;
-    font-weight: 500;
-  }
-  .required {
-    color: #f87171;
-  }
-  .form-group input {
-    background: rgba(15, 23, 42, 0.8);
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 8px;
-    padding: 8px 12px;
-    color: #f1f5f9;
-    font-size: 0.9rem;
-  }
-  .form-group input:focus {
-    outline: none;
-    border-color: #a855f7;
-  }
-
-  .modal-footer {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 10px;
-    margin-top: 8px;
-  }
-
-  .btn-test-conn {
-    background: rgba(234, 179, 8, 0.15);
-    border: 1px solid rgba(234, 179, 8, 0.4);
-    color: #facc15;
-    padding: 8px 16px;
-    border-radius: 8px;
-    font-size: 0.85rem;
-    font-weight: 600;
-    cursor: pointer;
-  }
-  .btn-secondary {
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    color: #cbd5e1;
-    padding: 8px 16px;
-    border-radius: 8px;
-    font-size: 0.85rem;
-    cursor: pointer;
-  }
-  .btn-primary {
-    background: linear-gradient(135deg, #7c3aed 0%, #3b82f6 100%);
-    border: none;
-    color: #ffffff;
-    padding: 8px 18px;
-    border-radius: 8px;
-    font-size: 0.85rem;
-    font-weight: 600;
-    cursor: pointer;
-  }
-
-  .badge {
-    padding: 2px 8px;
-    border-radius: 6px;
-    font-size: 11px;
-    font-weight: 600;
-  }
-  .badge.priority-high {
-    background: rgba(239, 68, 68, 0.2);
-    color: #f87171;
-  }
-  .badge.priority-medium {
-    background: rgba(59, 130, 246, 0.2);
-    color: #60a5fa;
-  }
-  .badge.priority-low {
-    background: rgba(100, 116, 139, 0.2);
-    color: #94a3b8;
-  }
-
+  /* Empty & Onboarding & Skeleton States */
   .empty-column {
-    padding: 24px;
+    padding: 28px 12px;
     text-align: center;
-    color: var(--text-muted, #94a3b8);
-    font-size: 0.85rem;
-    font-style: italic;
+    color: var(--text-dim);
+    font-size: 12.5px;
+    border: 1px dashed var(--glass-border);
+    border-radius: var(--radius-sm);
+  }
+
+  .board-onboarding-state {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 48px 24px;
+    background: var(--bg2);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-lg);
+    gap: 12px;
+  }
+
+  .onboarding-icon {
+    width: 60px;
+    height: 60px;
+    border-radius: 16px;
+    background: rgba(99, 102, 241, 0.14);
+    border: 1px solid rgba(99, 102, 241, 0.32);
+    color: var(--primary-soft-text);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .board-onboarding-state h3 {
+    margin: 0;
+    font-size: 17px;
+    font-weight: 700;
+    color: var(--text-main);
+  }
+
+  .board-onboarding-state p {
+    margin: 0;
+    max-width: 48ch;
+    font-size: 13.5px;
+    color: var(--text-muted);
+    line-height: 1.55;
+  }
+
+  .skeleton-card {
+    padding: 14px;
+    border-radius: var(--radius-md);
+    background: var(--surface-card);
+    border: 1px solid var(--glass-border);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .sk-line {
+    height: 12px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  .sk-pill { width: 38%; height: 16px; }
+  .sk-title { width: 88%; height: 14px; }
+  .sk-meta { width: 55%; }
+
+  .spinning {
+    animation: spinBoard 0.9s linear infinite;
   }
 
   .spinner-small {
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(255, 255, 255, 0.28);
+    border-top-color: currentColor;
+    border-radius: 50%;
     display: inline-block;
-    width: 12px;
-    height: 12px;
-    border: 2px solid rgba(255, 255, 255, 0.3);
-    border-top-color: #ffffff;
-    border-radius: 50%;
-    flex-shrink: 0;
-    animation: spin 0.8s linear infinite;
+    animation: spinBoard 0.75s linear infinite;
   }
 
-  .spinning {
-    animation: spin 0.9s linear infinite;
-  }
+  @keyframes spinBoard { to { transform: rotate(360deg); } }
 
-  @keyframes spin {
-    to { transform: rotate(360deg); }
-  }
-
-  /* Header Agile & Filter Buttons */
-  .btn-agile-tools {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    background: rgba(234, 179, 8, 0.12);
-    border: 1px solid rgba(234, 179, 8, 0.35);
-    color: #fef08a;
-    padding: 8px 14px;
-    border-radius: 8px;
-    font-size: 0.85rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-  .btn-agile-tools:hover {
-    background: rgba(234, 179, 8, 0.22);
-    border-color: rgba(234, 179, 8, 0.6);
-    transform: translateY(-1px);
-  }
-  .agile-pts-badge {
-    background: #ca8a04;
-    color: #ffffff;
-    font-size: 11px;
-    font-weight: 700;
-    padding: 2px 7px;
-    border-radius: 10px;
-  }
-
-  .btn-filter-toggle {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.16);
-    color: #cbd5e1;
-    padding: 8px 14px;
-    border-radius: 8px;
-    font-size: 0.85rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-  .btn-filter-toggle:hover {
-    background: rgba(255, 255, 255, 0.16);
-    color: #ffffff;
-    transform: translateY(-1px);
-  }
-  .btn-filter-toggle.has-active-filters {
-    background: rgba(56, 189, 248, 0.18);
-    border-color: #38bdf8;
-    color: #38bdf8;
-  }
-  .filter-count-badge {
-    background: #0284c7;
-    color: #ffffff;
-    font-size: 11px;
-    font-weight: 700;
-    padding: 2px 6px;
-    border-radius: 10px;
-  }
-  .filter-count-badge.small {
-    font-size: 10px;
-    padding: 1px 5px;
-    margin-left: 2px;
-  }
-
-  .btn-filter-toggle svg,
-  .btn-filter-quick svg {
-    flex-shrink: 0;
-  }
-  .btn-filter-quick {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    height: 36px;
-    padding: 0 12px;
-    box-sizing: border-box;
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    color: #cbd5e1;
-    border-radius: 8px;
-    font-size: 0.85rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-  .btn-filter-quick:hover {
-    background: rgba(255, 255, 255, 0.16);
-    color: #ffffff;
-  }
-  .btn-filter-quick.active {
-    background: rgba(56, 189, 248, 0.18);
-    border-color: #38bdf8;
-    color: #38bdf8;
-  }
-
-  /* Active Filters Strip */
-  .active-filters-strip {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 14px;
-    margin-bottom: 14px;
-    flex-wrap: wrap;
-    background: rgba(15, 23, 42, 0.75);
-    border: 1px solid rgba(56, 189, 248, 0.25);
-    border-radius: 10px;
-    font-size: 0.82rem;
-  }
-  .strip-label {
-    color: #38bdf8;
-    font-weight: 600;
-  }
-  .active-filter-tag {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    background: rgba(30, 41, 59, 0.9);
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    color: #e2e8f0;
-    padding: 3px 8px;
-    border-radius: 6px;
-  }
-  .active-filter-tag button {
-    background: transparent;
-    border: none;
-    color: #94a3b8;
-    cursor: pointer;
-    font-size: 11px;
-    padding: 0;
-  }
-  .active-filter-tag button:hover {
-    color: #f87171;
-  }
-  .btn-clear-all-filters {
-    background: transparent;
-    border: none;
-    color: #f87171;
-    font-size: 0.8rem;
-    cursor: pointer;
-    text-decoration: underline;
-    margin-left: auto;
-  }
-
-  /* Agile Tools Modal Styling (Screenshot 1) */
-  .agile-tools-modal-card {
-    background: #1c2128;
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 12px;
-    width: 380px;
-    max-width: 90vw;
-    color: #dee4ea;
-    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
-    overflow: hidden;
-  }
-  .agile-modal-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 16px 20px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  }
-  .agile-modal-body {
-    padding: 20px;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-  }
-  .agile-toggle-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding-bottom: 14px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  }
-  .toggle-label {
-    font-size: 0.9rem;
-    color: #cbd5e1;
-    font-weight: 500;
-  }
-
-  /* Toggle Switch */
-  .switch {
-    position: relative;
-    display: inline-block;
-    width: 44px;
-    height: 24px;
-  }
-  .switch input {
-    opacity: 0;
-    width: 0;
-    height: 0;
-  }
-  .slider {
-    position: absolute;
-    cursor: pointer;
-    top: 0; left: 0; right: 0; bottom: 0;
-    background-color: #334155;
-    transition: .3s;
-  }
-  .slider:before {
-    position: absolute;
-    content: "";
-    height: 18px;
-    width: 18px;
-    left: 3px;
-    bottom: 3px;
-    background-color: white;
-    transition: .3s;
-  }
-  input:checked + .slider {
-    background-color: #22c55e;
-  }
-  input:checked + .slider:before {
-    transform: translateX(20px);
-  }
-  .slider.round {
-    border-radius: 24px;
-  }
-  .slider.round:before {
-    border-radius: 50%;
-  }
-
-  .points-counts-section {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-  .points-counts-title {
-    margin: 0;
-    font-size: 0.95rem;
-    font-weight: 700;
-    color: #f1f5f9;
-  }
-  .points-list-container {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    max-height: 280px;
-    overflow-y: auto;
-    padding-right: 4px;
-  }
-  .point-item-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    font-size: 0.88rem;
-    color: #cbd5e1;
-    padding: 4px 0;
-  }
-  .point-col-name {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .point-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-  }
-  .point-val {
-    font-weight: 600;
-    color: #f8fafc;
-  }
-  .point-total-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding-top: 10px;
-    margin-top: 6px;
-    border-top: 1px solid rgba(255, 255, 255, 0.15);
-    font-size: 0.95rem;
-  }
-  .total-label {
-    font-weight: 700;
-    color: #f1f5f9;
-  }
-  .total-pts-highlight {
-    color: #facc15;
-    font-size: 1.05rem;
-    font-weight: 800;
-  }
-
-  .agile-extra-stats {
-    display: flex;
-    gap: 10px;
-    padding-top: 12px;
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
-  }
-  .stat-badge {
-    flex: 1;
-    background: rgba(15, 23, 42, 0.6);
-    padding: 8px 12px;
-    border-radius: 8px;
-    font-size: 0.8rem;
-    color: #94a3b8;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-  .stat-badge strong {
-    color: #38bdf8;
-    font-size: 0.95rem;
-  }
-
-  /* Filter Modal Styling (Screenshot 2) */
-  .filter-modal-card {
-    background: #1c2128;
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 12px;
-    width: 360px;
-    max-width: 90vw;
-    color: #dee4ea;
-    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
-    display: flex;
-    flex-direction: column;
-    max-height: 85vh;
-  }
-  .filter-modal-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 16px 20px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  }
-  .filter-modal-body {
-    padding: 16px 20px;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 18px;
-    flex: 1;
-  }
-  .filter-section {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-  .filter-section-title {
-    font-size: 0.85rem;
-    font-weight: 700;
-    color: #9fadbc;
-    text-transform: capitalize;
-  }
-  .filter-input-wrapper {
-    position: relative;
-    display: flex;
-    align-items: center;
-  }
-  .filter-text-input {
-    width: 100%;
-    background: #22272b;
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 6px;
-    padding: 8px 30px 8px 12px;
-    color: #f1f5f9;
-    font-size: 0.88rem;
-    box-sizing: border-box;
-  }
-  .filter-text-input:focus {
-    outline: none;
-    border-color: #38bdf8;
-  }
-  .clear-input-inline {
-    position: absolute;
-    right: 8px;
-    background: transparent;
-    border: none;
-    color: #94a3b8;
-    cursor: pointer;
-    font-size: 11px;
-  }
-  .filter-helper-text {
-    font-size: 0.75rem;
-    color: var(--text-muted, #94a3b8);
-  }
-
-  .filter-checkbox-item {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 6px 8px;
-    border-radius: 6px;
-    font-size: 0.88rem;
-    color: #cbd5e1;
-    cursor: pointer;
-    transition: background 0.15s;
-  }
-  .filter-checkbox-item:hover {
-    background: rgba(255, 255, 255, 0.05);
-  }
-  .filter-checkbox-item input[type="checkbox"] {
-    width: 16px;
-    height: 16px;
-    cursor: pointer;
-    accent-color: #38bdf8;
-  }
-  .member-icon-circle {
-    font-size: 14px;
-    color: #94a3b8;
-  }
-
-  .filter-members-sublist {
-    margin-left: 12px;
-    padding-left: 10px;
-    border-left: 1px solid rgba(255, 255, 255, 0.12);
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    max-height: 180px;
-    overflow-y: auto;
-  }
-  .sublist-heading {
-    font-size: 0.78rem;
-    color: var(--text-muted, #94a3b8);
-    margin-bottom: 2px;
-  }
-  .filter-member-avatar {
-    width: 22px;
-    height: 22px;
-    border-radius: 50%;
-    object-fit: cover;
-  }
-  .filter-member-initials {
-    width: 22px;
-    height: 22px;
-    border-radius: 50%;
-    background: #0284c7;
-    color: #ffffff;
-    font-size: 10px;
-    font-weight: 700;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .member-name-text {
-    font-size: 0.85rem;
-  }
-  .member-name-text small {
-    color: var(--text-muted, #94a3b8);
-    margin-left: 4px;
-  }
-
-  .filter-pill-group {
-    display: flex;
-    gap: 6px;
-  }
-  .filter-pill-btn {
-    flex: 1;
-    background: #22272b;
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    color: #cbd5e1;
-    padding: 6px 10px;
-    border-radius: 6px;
-    font-size: 0.8rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-  .filter-pill-btn.active {
-    background: rgba(56, 189, 248, 0.2);
-    border-color: #38bdf8;
-    color: #38bdf8;
-    font-weight: 600;
-  }
-
-  .filter-labels-sublist {
-    margin-left: 12px;
-    padding-left: 10px;
-    border-left: 1px solid rgba(255, 255, 255, 0.12);
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    max-height: 200px;
-    overflow-y: auto;
-  }
-  .filter-label-pill-item {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    cursor: pointer;
-  }
-  .filter-label-pill-item input[type="checkbox"] {
-    width: 16px;
-    height: 16px;
-    cursor: pointer;
-    accent-color: #38bdf8;
-  }
-  .filter-label-bar {
-    flex: 1;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 5px 12px;
-    border-radius: 6px;
-    color: #ffffff;
-    font-size: 0.82rem;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.2);
-  }
-  .label-text-bold {
-    font-weight: 700;
-  }
-  .label-count-tag {
-    background: rgba(0, 0, 0, 0.35);
-    padding: 1px 6px;
-    border-radius: 8px;
-    font-size: 0.75rem;
-  }
-
-  .filter-modal-footer {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 14px 20px;
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
-    background: rgba(0, 0, 0, 0.2);
-  }
-  .btn-clear-filters {
-    background: transparent;
-    border: none;
-    color: #f87171;
-    font-size: 0.85rem;
-    cursor: pointer;
-    font-weight: 500;
-  }
-  .btn-clear-filters:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-  }
-  .btn-apply-filters {
-    background: #0055cc;
-    border: none;
-    color: #ffffff;
-    padding: 8px 18px;
-    border-radius: 6px;
-    font-size: 0.85rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: background 0.2s;
-  }
-  .btn-apply-filters:hover {
-    background: #0065ff;
-  }
-
-  @media (max-width: 768px) {
-    .board-container {
-      padding: 16px;
+  @media (hover: none), (pointer: coarse) {
+    .btn-card-action.unsave {
+      opacity: 0.9;
     }
-    .board-column {
-      min-width: 280px;
-      width: 280px;
+    .card-checkbox-btn {
+      width: 32px;
+      height: 32px;
     }
-    .trello-modal-container {
-      padding: 18px 16px;
+  }
+
+  @media (max-width: 1100px) {
+    .board-layout {
+      grid-template-columns: repeat(2, minmax(260px, 1fr));
+    }
+  }
+
+  @media (max-width: 640px) {
+    .board-layout {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .spinning,
+    .spinner-small {
+      animation: none;
+    }
+    .task-card,
+    .task-card:hover {
+      transform: none;
+      transition: none;
     }
   }
 </style>
