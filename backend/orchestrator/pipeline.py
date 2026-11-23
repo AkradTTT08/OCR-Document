@@ -1,11 +1,11 @@
 from .state import DocumentState, QAState, QASecurityState
 from .agents import SpellCheckerAgent, FormatCheckerAgent, FinalReviewerAgent
 
-def run_document_pipeline(text: str) -> DocumentState:
+def run_document_pipeline(text: str, lang: str = "tha+eng") -> DocumentState:
     """
     Executes the deterministic Sequential Pipeline for document checking.
     """
-    state = DocumentState(original_text=text)
+    state = DocumentState(original_text=text, lang=lang)
     
     # Node 1: Spell Check
     state = SpellCheckerAgent.run(state)

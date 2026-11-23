@@ -46,6 +46,7 @@
   let isSidebarCollapsed = false;
   let isMobileSidebarOpen = false;
   let sidebarHistorySearch = "";
+  let ocrHistorySearch = "";
   let activeHistoryId = null;
   let navSectionOpen = {
     discovery: true,
@@ -249,6 +250,11 @@
     showSidebarDeleteModal = true;
   }
 
+  function promptDeleteOcrHistory(item) {
+    sidebarItemToDelete = { type: 'ocr_history', item, name: item.filename || 'เอกสารนี้', typeName: 'OCR Scan' };
+    showSidebarDeleteModal = true;
+  }
+
   function cancelSidebarDelete() {
     showSidebarDeleteModal = false;
     sidebarItemToDelete = null;
@@ -299,6 +305,17 @@
           const err = await res.json();
           toast(err.error || "ไม่สามารถลบประวัติได้", "error");
         }
+      } else if (sidebarItemToDelete.type === 'ocr_history') {
+        const item = sidebarItemToDelete.item;
+        const fName = item.filename || 'เอกสารนี้';
+        await deleteOCRHistory(item.id);
+        if (scanResult && scanResult.id === item.id) {
+          scanResult = null;
+          isProcessing = false;
+        }
+        toast(`ลบประวัติการสแกน "${fName}" เรียบร้อยแล้ว`, "success");
+        showSidebarDeleteModal = false;
+        sidebarItemToDelete = null;
       }
     } catch (e) {
       console.error(e);
@@ -311,6 +328,7 @@
   let scanResult = null;
   let isProcessing = false;
   let progress = { pct: 0, label: "", step: 0 };
+  let uploadPanelRef = null;
   let activeView = "ocr"; // 'ocr' | 'kb' | 'skills' | 'qa_consult'
 
   // Reactive statement to enforce allowed view based on permissions and role
@@ -826,6 +844,13 @@
       return fn.includes(q) || gn.includes(q);
     });
   })();
+
+  $: displayedOCRHistory = (() => {
+    const list = $ocrHistory || [];
+    const q = String(ocrHistorySearch || '').trim().toLowerCase();
+    if (!q) return list;
+    return list.filter(item => String(item.filename || '').toLowerCase().includes(q));
+  })();
 </script>
 
 <svelte:window on:keydown={handleGlobalKeydown} />
@@ -910,7 +935,7 @@
                 <button
                   class="nav-item"
                   title="Scan OCR"
-                  class:active={activeView === "ocr" && !scanResult}
+                  class:active={activeView === "ocr"}
                   on:click={() => { activeView = "ocr"; scanResult = null; isMobileSidebarOpen = false; }}
                 >
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z"/></svg>
@@ -1128,8 +1153,22 @@
 
                 {#if isOcrHistoryExpanded}
                   {#if $ocrHistory.length > 0}
+                    {#if $ocrHistory.length > 4}
+                      <div class="sidebar-filter-box">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                        <input
+                          type="text"
+                          bind:value={ocrHistorySearch}
+                          placeholder="กรองชื่อไฟล์ประวัติ..."
+                          aria-label="กรองชื่อไฟล์ประวัติการสแกน OCR"
+                        />
+                        {#if ocrHistorySearch}
+                          <button type="button" class="btn-clear-filter" aria-label="ล้างคำค้นหา" on:click={() => (ocrHistorySearch = "")}>✕</button>
+                        {/if}
+                      </div>
+                    {/if}
                     <div class="history-list qa-flex-scroll">
-                      {#each $ocrHistory as item}
+                      {#each displayedOCRHistory as item}
                         <div class="sidebar-item-row">
                           <button type="button" class="history-item" class:active={scanResult && scanResult.id === item.id} on:click={() => { selectOCRHistory(item); isMobileSidebarOpen = false; }}>
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path></svg>
@@ -1141,13 +1180,18 @@
                           <button
                             type="button"
                             class="btn-sidebar-delete"
-                            title="ลบประวัติ"
+                            title="ลบประวัติการสแกนนี้"
                             aria-label={`ลบประวัติ ${item.filename}`}
-                            on:click|stopPropagation={() => deleteOCRHistory(item.id)}
+                            on:click|stopPropagation={() => promptDeleteOcrHistory(item)}
                           >
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M18 6L6 18M6 6l12 12"></path></svg>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13">
+                              <polyline points="3 6 5 6 21 6"></polyline>
+                              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                            </svg>
                           </button>
                         </div>
+                      {:else}
+                        <div class="sidebar-empty-box">ไม่พบไฟล์ที่ตรงกับ "{ocrHistorySearch}"</div>
                       {/each}
                     </div>
                   {:else}
@@ -1556,13 +1600,19 @@
         {#key activeView}
           <div class="view-wrapper" in:fade="{{ duration: 300, delay: 150 }}">
             {#if activeView === "ocr" && $authRole === "admin"}
-              <div style="display: {(!isProcessing && !scanResult) ? 'flex' : 'none'}; flex-direction: column; width: 100%; height: 100%;">
-                <div class="upload-container" style="flex: 1; padding: 0;">
-                  <UploadPanel on:result={handleResult} on:processing={handleProcessing} />
+              <div style="display: {(!isProcessing && !scanResult) ? 'flex' : 'none'}; flex-direction: column; width: 100%; min-height: 100%;">
+                <div class="upload-container" style="flex: 1; padding: 0; display: flex; flex-direction: column;">
+                  <UploadPanel bind:this={uploadPanelRef} on:result={handleResult} on:processing={handleProcessing} />
                 </div>
               </div>
               {#if isProcessing || scanResult}
-                <ResultsPanel result={scanResult} {isProcessing} {progress} on:close={() => {scanResult = null; isProcessing = false;}} />
+                <ResultsPanel
+                  result={scanResult}
+                  {isProcessing}
+                  {progress}
+                  on:close={() => {scanResult = null; isProcessing = false;}}
+                  on:cancel={(e) => uploadPanelRef?.cancelProcessing(!!e.detail?.keepPartial)}
+                />
               {/if}
             {:else if activeView === 'project_management'}
               <ProjectManagement />

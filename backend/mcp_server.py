@@ -234,7 +234,7 @@ def get_project_context(project_id: str, query: str = "") -> str:
         JSON string containing the project documents list and relevant RAG context chunks.
     """
     try:
-        from db_ingestion import get_project_markdown_documents_summary, search_knowledge_base
+        from db_ingestion import get_project_markdown_documents_summary, search_knowledge_base, get_kb_feedback_memories
         resolved_pid, proj_name, proj_code = _resolve_project(project_id)
         if not resolved_pid:
             return json.dumps({"status": "ERROR", "message": f"Project '{project_id}' not found."}, ensure_ascii=False)
@@ -242,17 +242,21 @@ def get_project_context(project_id: str, query: str = "") -> str:
         # 1. Available MD Documents in this project only
         docs_summary = get_project_markdown_documents_summary(resolved_pid, limit=20)
         
-        # 2. Semantic Search strictly scoped to this project
+        # 2. Semantic Search strictly scoped to this project (Hybrid + Golden Boost)
         search_chunks = []
         if query and query.strip():
             search_chunks = search_knowledge_base(query_text=query, project_id=resolved_pid, top_k=6)
+
+        # 3. Persistent AI Self-Learning Memories / Domain Corrections for this project
+        feedback_memories = get_kb_feedback_memories(project_id=resolved_pid, limit=15)
             
         result = {
             "project_id": resolved_pid,
             "project_code": proj_code,
             "project_name": proj_name,
             "available_documents": docs_summary,
-            "relevant_knowledge_chunks": search_chunks
+            "relevant_knowledge_chunks": search_chunks,
+            "ai_feedback_memories": feedback_memories
         }
         return json.dumps(result, indent=2, ensure_ascii=False)
     except Exception as e:
@@ -279,7 +283,7 @@ def get_qa_skills(skill_id: str = None) -> str:
         if skill_id:
             cur.execute(
                 "SELECT skill_id, skill_name, skill_description, markdown_instructions, target_doc_type "
-                "FROM agent_skills WHERE skill_id::text = %s OR skill_name ILIKE %s LIMIT 1",
+                "FROM agent_skills WHERE (skill_id::text = %s OR skill_name ILIKE %s) AND COALESCE(is_active, TRUE) = TRUE LIMIT 1",
                 (skill_id, f"%{skill_id}%")
             )
             row = cur.fetchone()
@@ -352,7 +356,13 @@ def _qa_consult_impl(
     try:
         from orchestrator.state import QAState
         from orchestrator.pipeline import run_qa_consult
-        from db_ingestion import search_knowledge_base, get_latest_qa_transaction, save_qa_transaction, get_project_markdown_documents_summary
+        from db_ingestion import (
+            search_knowledge_base,
+            get_latest_qa_transaction,
+            save_qa_transaction,
+            get_project_markdown_documents_summary,
+            format_kb_feedback_memory_context
+        )
         
         # 1. Resolve Project
         resolved_pid, project_name, project_code = _resolve_project(project_id)
@@ -374,26 +384,53 @@ def _qa_consult_impl(
         )
         
         kb_context = ""
+        memory_ctx = format_kb_feedback_memory_context(resolved_pid, limit=12)
+        if memory_ctx:
+            kb_context += memory_ctx + "\n"
         if kb_chunks:
-            kb_context = f"=== ข้อมูลอ้างอิงจากฐานข้อมูลโครงการ {project_name} ({project_code}) ===\n"
+            kb_context += f"=== ข้อมูลอ้างอิงจากฐานข้อมูลโครงการ {project_name} ({project_code}) ===\n"
             for c in kb_chunks:
-                kb_context += f"- [Source: {c.get('filename', 'Doc')} | Category: {c.get('doc_category', '')}]: {c.get('chunk_text', '')}\n\n"
+                cat_lbl = c.get('doc_category') or c.get('doc_type', '')
+                golden_lbl = " | Golden Data" if c.get('is_golden_data') else ""
+                kb_context += f"- [Source: {c.get('filename', 'Doc')} | Category: {cat_lbl}{golden_lbl}]: {c.get('chunk_text', '')}\n\n"
                 
-        # 3. Retrieve AI Skill instructions if skill_id provided
+        # 3. Retrieve Active AI Skill instructions if skill_id provided (supports single or comma-separated IDs/names)
         skill_instructions = ""
         if skill_id:
+            _conn = None
+            _cur = None
             try:
                 from db_ingestion import get_db_connection
-                _conn = get_db_connection()
-                _cur = _conn.cursor()
-                _cur.execute("SELECT markdown_instructions FROM agent_skills WHERE skill_id::text = %s OR skill_name ILIKE %s LIMIT 1", (skill_id, f"%{skill_id}%"))
-                _srow = _cur.fetchone()
-                if _srow and _srow[0]:
-                    skill_instructions = _srow[0]
-                _cur.close()
-                _conn.close()
+                req_tokens = [s.strip() for s in str(skill_id).split(',') if s.strip()]
+                if req_tokens:
+                    _conn = get_db_connection()
+                    _cur = _conn.cursor()
+                    _cur.execute(
+                        """
+                        SELECT skill_name, target_doc_type, markdown_instructions
+                        FROM agent_skills
+                        WHERE (skill_id::text = ANY(%s) OR skill_name = ANY(%s))
+                          AND COALESCE(is_active, TRUE) = TRUE
+                        """,
+                        (req_tokens, req_tokens)
+                    )
+                    _srows = _cur.fetchall()
+                    if not _srows and len(req_tokens) == 1:
+                        _cur.execute(
+                            "SELECT skill_name, target_doc_type, markdown_instructions FROM agent_skills "
+                            "WHERE skill_name ILIKE %s AND COALESCE(is_active, TRUE) = TRUE LIMIT 1",
+                            (f"%{req_tokens[0]}%",)
+                        )
+                        _srows = _cur.fetchall()
+                    if _srows:
+                        skill_instructions = "\n\n".join(
+                            f"### Skill: {r[0]} ({r[1] or 'General'})\n{r[2]}" for r in _srows if r[2]
+                        )
             except Exception as s_err:
                 logger.warning(f"Failed to fetch skill instructions: {s_err}")
+            finally:
+                if _cur: _cur.close()
+                if _conn: _conn.close()
                 
         # 4. Fetch previous transaction in this group if exists
         prev_report_context = ""

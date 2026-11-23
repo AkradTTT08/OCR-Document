@@ -94,10 +94,13 @@ def extract_requirements_from_text(text: str, project_id: str, doc_id: int):
             
         requirements = json.loads(raw_json)
         
-        # Save to DB
+        # Save to DB (replace previous requirements for this doc_id to avoid stale duplicates on re-edit)
         conn = get_db_connection()
         cursor = conn.cursor()
-        
+
+        if doc_id:
+            cursor.execute("DELETE FROM structured_requirements WHERE doc_id = %s;", (doc_id,))
+
         saved_ids = []
         for req in requirements:
             cursor.execute("""

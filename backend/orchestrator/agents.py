@@ -12,10 +12,7 @@ class SpellCheckerAgent:
         """Agent 1: Detects spelling and semantic errors."""
         logger.info("Running SpellCheckerAgent...")
         state.status = "spellcheck"
-        # Use existing monolithic function (which will be orchestrated by us now)
-        # Note: spellcheck_text returns tokens, errors, and summary.
-        # We extract errors for the shared state.
-        result = spellcheck_text(state.original_text, include_suggestions=True)
+        result = spellcheck_text(state.original_text, include_suggestions=True, lang=getattr(state, 'lang', 'tha+eng'))
         state.spell_errors = result.get('errors', [])
         state.tokens = result.get('tokens', [])
         state.summary = result.get('summary', {})

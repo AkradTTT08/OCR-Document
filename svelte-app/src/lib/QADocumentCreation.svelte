@@ -313,7 +313,7 @@
 
   async function fetchSkills() {
     try {
-      const res = await fetch('/api/skills');
+      const res = await fetch('/api/skills?active_only=true');
       const data = await res.json();
       if (res.ok) {
         skills = data.skills || [];

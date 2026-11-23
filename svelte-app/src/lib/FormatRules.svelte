@@ -130,31 +130,41 @@
       suggestedFix = '';
     }
   }
+
+  function handleWindowKeydown(e) {
+    if (open && e.key === 'Escape') {
+      open = false;
+    }
+  }
 </script>
 
+<svelte:window on:keydown={handleWindowKeydown} />
+
 <div class="fmt-panel">
-  <button class="fmt-toggle" on:click={() => open = true}>
-    <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16" style="color:var(--warning)">
-      <path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.533 1.533 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.533 1.533 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd" />
-    </svg>
-    <div class="fmt-title-wrap">
-      <span>กฎการจัดฟอร์แมต</span>
-      <span>เอกสาร</span>
+  <button type="button" class="fmt-toggle" on:click={() => open = true} aria-haspopup="dialog" aria-expanded={open}>
+    <div class="fmt-toggle-left">
+      <span class="fmt-icon-box" aria-hidden="true">
+        <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
+          <path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.533 1.533 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.533 1.533 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd" />
+        </svg>
+      </span>
+      <div class="fmt-title-wrap">
+        <span class="fmt-title">กฎการจัดฟอร์แมต</span>
+        <span class="fmt-sub">รูปแบบเอกสาร &amp; Regex</span>
+      </div>
     </div>
     <span class="count-badge">{rules.length}</span>
   </button>
 
   {#if open}
-    <!-- svelte-ignore a11y-click-events-have-key-events -->
-    <!-- svelte-ignore a11y-no-static-element-interactions -->
-    <div class="modal-backdrop" on:click={() => open = false}>
-      <div class="modal-content" on:click|stopPropagation>
+    <div class="modal-backdrop" role="presentation" on:click={() => open = false}>
+      <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="fmt-modal-title" on:click|stopPropagation>
         <div class="modal-header">
-          <div class="modal-title">
+          <div class="modal-title" id="fmt-modal-title">
             <svg viewBox="0 0 20 20" fill="currentColor" width="18" height="18"><path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.533 1.533 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.533 1.533 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd" /></svg>
             กฎการจัดฟอร์แมตเอกสาร
           </div>
-          <button class="btn-close" on:click={() => open = false}>✕</button>
+          <button type="button" class="btn-close" aria-label="ปิดหน้าต่างกฎการจัดฟอร์แมต" on:click={() => open = false}>✕</button>
         </div>
     <div class="fmt-body">
       {#if loading}
@@ -239,40 +249,83 @@
 
 <style>
 .fmt-panel {
-  display: inline-block;
+  display: flex;
+  width: 100%;
 }
 .fmt-toggle {
-  display: flex; align-items: center; gap: 12px;
-  background: transparent; border: none; cursor: pointer;
-  padding: 8px 12px; font-family: var(--font-th);
-  font-size: 14px; font-weight: 700; color: #fff;
-  transition: all 0.2s;
-  border-radius: 8px;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  cursor: pointer;
+  padding: 12px 14px;
+  font-family: var(--font-th);
+  color: var(--text-main);
+  transition: border-color 0.2s ease, background-color 0.2s ease, transform 0.2s ease;
+  border-radius: 16px;
 }
 .fmt-toggle:hover {
   background: rgba(255,255,255,0.05);
+  border-color: rgba(245, 158, 11, 0.4);
+  transform: translateY(-1px);
 }
-
+.fmt-toggle-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.fmt-icon-box {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.28);
+  color: var(--warning-soft-text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
 .fmt-title-wrap {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  line-height: 1.2;
+  min-width: 0;
+  line-height: 1.25;
+}
+.fmt-title {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--text-main);
+  white-space: nowrap;
+}
+.fmt-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
 }
 
 .count-badge {
   background: rgba(245, 158, 11, 0.15);
-  color: var(--warning);
-  font-size: 13px;
+  color: var(--warning-soft-text);
+  font-family: var(--font-en);
+  font-size: 12px;
   font-weight: 700;
-  width: 24px;
+  min-width: 26px;
   height: 24px;
-  display: flex;
+  padding: 0 7px;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 50%;
+  border-radius: 999px;
   border: 1px solid rgba(245, 158, 11, 0.3);
-  margin-left: 4px;
+  flex-shrink: 0;
 }
 
 /* Modal */

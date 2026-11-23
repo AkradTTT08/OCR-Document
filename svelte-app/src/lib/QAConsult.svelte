@@ -276,7 +276,7 @@
 
     // Load Skills (separate try/catch so failure won't block projects)
     try {
-      const resSkills = await fetch("/api/skills");
+      const resSkills = await fetch("/api/skills?active_only=true");
       if (resSkills.ok) {
         const data = await resSkills.json();
         skills = (data.skills || []).filter(s =>

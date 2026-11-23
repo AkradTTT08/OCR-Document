@@ -6,6 +6,7 @@ class DocumentState(BaseModel):
     Shared State / Context for the Multi-Agent Document Checking Pipeline
     """
     original_text: str
+    lang: str = "tha+eng"
     spell_errors: List[Dict[str, Any]] = Field(default_factory=list)
     format_errors: List[Dict[str, Any]] = Field(default_factory=list)
     tokens: List[Dict[str, Any]] = Field(default_factory=list)

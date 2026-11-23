@@ -12,6 +12,43 @@
   const dispatch = createEventDispatcher();
   const titleId = `cm-title-${Math.random().toString(36).slice(2, 9)}`;
 
+  function trapFocus(node) {
+    const previouslyFocused = document.activeElement;
+    const selector = 'button:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])';
+    const timer = setTimeout(() => {
+      const items = node.querySelectorAll(selector);
+      if (items.length > 0) /** @type {HTMLElement} */ (items[0]).focus();
+    }, 20);
+
+    function onKeydown(e) {
+      if (e.key !== 'Tab') return;
+      const items = Array.from(node.querySelectorAll(selector));
+      if (items.length === 0) return;
+      const first = /** @type {HTMLElement} */ (items[0]);
+      const last = /** @type {HTMLElement} */ (items[items.length - 1]);
+      if (e.shiftKey) {
+        if (document.activeElement === first || !node.contains(document.activeElement)) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else if (document.activeElement === last || !node.contains(document.activeElement)) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+
+    node.addEventListener('keydown', onKeydown);
+    return {
+      destroy() {
+        clearTimeout(timer);
+        node.removeEventListener('keydown', onKeydown);
+        if (previouslyFocused && typeof previouslyFocused.focus === 'function') {
+          previouslyFocused.focus();
+        }
+      }
+    };
+  }
+
   function handleConfirm() {
     open = false;
     dispatch('confirm');
@@ -36,6 +73,7 @@
   <div class="cm-backdrop" transition:fade={{ duration: 150 }} on:click|self={handleCancel} role="presentation">
     <div
       class="cm-dialog"
+      use:trapFocus
       role="dialog"
       aria-modal="true"
       aria-labelledby={titleId}

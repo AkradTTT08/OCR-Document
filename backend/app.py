@@ -36,6 +36,8 @@ from dictionary_manager import (
     load_dictionary,
     reload_dictionary,
     add_custom_word,
+    remove_custom_word,
+    get_custom_words_list,
     get_dictionary_stats
 )
 from format_checker import (
@@ -135,28 +137,34 @@ def _auto_init_tables():
 _auto_init_tables()
 
 
+def _thai_visual_char_len(s: str) -> int:
+    if not s:
+        return 0
+    return sum(1 for ch in s if not ('\u0e31' == ch or '\u0e34' <= ch <= '\u0e3a' or '\u0e47' <= ch <= '\u0e4e'))
+
+
 def enrich_errors_with_boxes(errors: List[Dict], words_map: List[Dict]) -> List[Dict]:
-    """จับคู่กล่อง (Box) กับข้อผิดพลาดเพื่อให้ Frontend แสดง Highlight ได้แม่นยำ"""
+    """จับคู่กล่อง (Box) กับข้อผิดพลาดเพื่อให้ Frontend แสดง Highlight ได้แม่นยำ (รองรับทั้งคำเดี่ยว คำซ้อนในประโยคไทย และวลีหลายคำ)"""
     if not words_map or not errors:
         return errors
 
     for err in errors:
-        token = err.get("token", "")
+        token = (err.get("token") or "").strip()
         if not token:
             continue
             
         found_box = None
         found_box_norm = None
         
-        # Match exact token
+        # 1. Match exact token
         for w in words_map:
             if w.get('text', '') == token:
                 found_box = w.get('box')
                 found_box_norm = w.get('box_norm')
                 break
                 
+        # 2. Try matching substring using Thai visual character width ratio (ignoring combining vowels/tone marks)
         if not found_box:
-            # Try matching substring
             for w in words_map:
                 w_text = w.get('text', '')
                 if token in w_text:
@@ -166,23 +174,78 @@ def enrich_errors_with_boxes(errors: List[Dict], words_map: List[Dict]) -> List[
                         try:
                             start_idx = w_text.find(token)
                             if start_idx >= 0:
-                                total_chars = len(w_text)
-                                ratio_start = start_idx / total_chars
-                                ratio_end = (start_idx + len(token)) / total_chars
+                                total_v = max(1, _thai_visual_char_len(w_text))
+                                start_v = _thai_visual_char_len(w_text[:start_idx])
+                                tok_v = max(1, _thai_visual_char_len(token))
+                                ratio_start = max(0.0, min(0.95, start_v / total_v))
+                                ratio_end = max(ratio_start + 0.05, min(1.0, (start_v + tok_v) / total_v))
                                 line_x0 = found_box_norm[0][0]
                                 line_x1 = found_box_norm[1][0]
                                 new_x0 = line_x0 + (line_x1 - line_x0) * ratio_start
                                 new_x1 = line_x0 + (line_x1 - line_x0) * ratio_end
-                                word_box_norm = [
+                                found_box_norm = [
                                     [new_x0, found_box_norm[0][1]],
                                     [new_x1, found_box_norm[1][1]],
                                     [new_x1, found_box_norm[2][1]],
                                     [new_x0, found_box_norm[3][1]]
                                 ]
-                                found_box_norm = word_box_norm
+                                if found_box:
+                                    bx0, bx1 = found_box[0][0], found_box[1][0]
+                                    nbx0 = bx0 + (bx1 - bx0) * ratio_start
+                                    nbx1 = bx0 + (bx1 - bx0) * ratio_end
+                                    found_box = [
+                                        [nbx0, found_box[0][1]],
+                                        [nbx1, found_box[1][1]],
+                                        [nbx1, found_box[2][1]],
+                                        [nbx0, found_box[3][1]]
+                                    ]
                         except Exception as e:
                             logger.warning(f"Word box estimation failed: {e}")
                     break
+
+        # 3. Multi-word phrase match (e.g., "ไม่ผูกเที่ยวบิน / Manifest", "การ์ดดัง Doing")
+        if not found_box and ' ' in token:
+            parts = [p for p in token.split() if p]
+            if len(parts) >= 2:
+                first_p, last_p = parts[0], parts[-1]
+                n_w = len(words_map)
+                for idx_w in range(n_w):
+                    w0_txt = words_map[idx_w].get('text', '')
+                    if first_p in w0_txt:
+                        end_idx = None
+                        for j in range(idx_w, min(n_w, idx_w + len(parts) + 3)):
+                            if last_p in words_map[j].get('text', ''):
+                                end_idx = j
+                                break
+                        if end_idx is not None:
+                            b0_norm = words_map[idx_w].get('box_norm')
+                            b1_norm = words_map[end_idx].get('box_norm')
+                            b0_abs = words_map[idx_w].get('box')
+                            b1_abs = words_map[end_idx].get('box')
+                            if b0_norm and b1_norm:
+                                x0_n = b0_norm[0][0]
+                                if len(w0_txt) > len(first_p):
+                                    s_i = w0_txt.find(first_p)
+                                    if s_i > 0:
+                                        r_s = _thai_visual_char_len(w0_txt[:s_i]) / max(1, _thai_visual_char_len(w0_txt))
+                                        x0_n = b0_norm[0][0] + (b0_norm[1][0] - b0_norm[0][0]) * r_s
+                                x1_n = b1_norm[1][0]
+                                y0_n = min(b0_norm[0][1], b1_norm[0][1])
+                                y1_n = max(b0_norm[2][1], b1_norm[2][1])
+                                found_box_norm = [
+                                    [x0_n, y0_n],
+                                    [x1_n, y0_n],
+                                    [x1_n, y1_n],
+                                    [x0_n, y1_n]
+                                ]
+                                if b0_abs and b1_abs:
+                                    found_box = [
+                                        [b0_abs[0][0], b0_abs[0][1]],
+                                        [b1_abs[1][0], b0_abs[1][1]],
+                                        [b1_abs[2][0], b1_abs[2][1]],
+                                        [b0_abs[3][0], b1_abs[3][1]]
+                                    ]
+                                break
                     
         if found_box:
             err['box'] = found_box
@@ -1031,60 +1094,179 @@ def list_projects():
         return jsonify({'error': str(e)}), 500
 
 
+def _validate_project_uuid(project_id: str) -> bool:
+    try:
+        uuid.UUID(str(project_id))
+        return True
+    except Exception:
+        return False
+
+
+def _sanitize_project_site_urls(site_urls, default_base_url='http://localhost:5173'):
+    """Validate and sanitize project site URLs (only http/https allowed, strip empty entries)."""
+    allowed_envs = {'TEST', 'UAT', 'PRD', 'DEV', 'STAGING', 'CUSTOM'}
+    cleaned = []
+    if isinstance(site_urls, list):
+        for item in site_urls:
+            if not isinstance(item, dict):
+                continue
+            url = str(item.get('url') or '').strip()
+            if not url:
+                continue
+            if not (url.startswith('http://') or url.startswith('https://')):
+                raise ValueError(f"URL ไม่ถูกต้อง (ต้องขึ้นต้นด้วย http:// หรือ https://): {url}")
+            env = str(item.get('env_type') or 'TEST').strip().upper()
+            if env not in allowed_envs:
+                env = 'CUSTOM'
+            cleaned.append({
+                'env_type': env,
+                'url': url,
+                'is_default': bool(item.get('is_default', False))
+            })
+
+    def_url = str(default_base_url or '').strip()
+    if def_url and not (def_url.startswith('http://') or def_url.startswith('https://')):
+        raise ValueError(f"Default Base URL ไม่ถูกต้อง (ต้องขึ้นต้นด้วย http:// หรือ https://): {def_url}")
+
+    if cleaned:
+        if not any(s['is_default'] for s in cleaned):
+            cleaned[0]['is_default'] = True
+        for s in cleaned:
+            if s['is_default']:
+                def_url = s['url']
+                break
+    elif def_url:
+        cleaned = [{'env_type': 'TEST', 'url': def_url, 'is_default': True}]
+    else:
+        def_url = 'http://localhost:5173'
+        cleaned = [{'env_type': 'TEST', 'url': def_url, 'is_default': True}]
+
+    return cleaned, def_url
+
+
+def _check_project_write_permission(project_id: str = None):
+    """Verify JWT authentication and Project Management write permission."""
+    req_payload = get_request_user_payload()
+    if not req_payload:
+        return jsonify({'error': 'กรุณาเข้าสู่ระบบก่อนดำเนินการจัดการโครงการ'}), 401
+    role = str(req_payload.get('role') or '').lower()
+    if role == 'admin':
+        return None
+    allowed_menus = req_payload.get('allowed_menus') or []
+    if isinstance(allowed_menus, list) and 'project_management' not in allowed_menus:
+        return jsonify({'error': 'คุณไม่มีสิทธิ์จัดการโครงการ (Project Management)'}), 403
+    if project_id:
+        allowed_projects = req_payload.get('allowed_projects') or ['all']
+        if isinstance(allowed_projects, list) and 'all' not in allowed_projects:
+            norm = [str(a).strip().lower() for a in allowed_projects]
+            if str(project_id).strip().lower() not in norm:
+                return jsonify({'error': 'คุณไม่มีสิทธิ์แก้ไขหรือลบโครงการนี้'}), 403
+    return None
+
+
 @app.route('/api/projects', methods=['POST'])
 def create_project():
     """Create a new project"""
-    data = request.get_json()
+    auth_err = _check_project_write_permission()
+    if auth_err:
+        return auth_err
+
+    data = request.get_json(silent=True)
     logger.info(f"Create project request: {data}")
     if not data or ('name' not in data and 'project_name' not in data):
         return jsonify({'error': 'กรุณาระบุชื่อโครงการ (name หรือ project_name)'}), 400
-        
+
+    p_name = str(data.get('project_name') or data.get('name') or '').strip()
+    if not p_name:
+        return jsonify({'error': 'ชื่อโครงการห้ามเป็นค่าว่าง'}), 400
+    if len(p_name) > 200:
+        return jsonify({'error': 'ชื่อโครงการต้องไม่เกิน 200 ตัวอักษร'}), 400
+
+    p_code = data.get('project_code')
+    if p_code is not None:
+        p_code = str(p_code).strip()
+        if not p_code:
+            p_code = None
+        elif len(p_code) > 64:
+            return jsonify({'error': 'รหัสโครงการต้องไม่เกิน 64 ตัวอักษร'}), 400
+
+    desc = str(data.get('description') or '').strip()
+    status = str(data.get('status') or 'Active').strip()
+    if status not in ('Active', 'Inactive'):
+        return jsonify({'error': 'สถานะโครงการต้องเป็น Active หรือ Inactive เท่านั้น'}), 400
+
+    try:
+        cleaned_sites, cleaned_default_url = _sanitize_project_site_urls(
+            data.get('site_urls'),
+            data.get('default_base_url', 'http://localhost:5173')
+        )
+    except ValueError as ve:
+        return jsonify({'error': str(ve)}), 400
+
     try:
         from db_ingestion import add_project
-        p_name = data.get('project_name') or data.get('name')
-        p_code = data.get('project_code')
-        desc = data.get('description', '')
-        status = data.get('status', 'Active')
-        default_base_url = data.get('default_base_url', 'http://localhost:5173')
-        site_urls = data.get('site_urls')
-        
-        # ถ้า project_code เป็น string ว่าง ให้ใช้ None แทน (auto-generate)
-        if p_code is not None and not p_code.strip():
-            p_code = None
-        
         project = add_project(
             name=p_name,
             project_name=p_name,
             project_code=p_code,
             description=desc,
             status=status,
-            default_base_url=default_base_url,
-            site_urls=site_urls
+            default_base_url=cleaned_default_url,
+            site_urls=cleaned_sites
         )
         return jsonify({'success': True, 'project': project})
     except Exception as e:
+        err_str = str(e)
+        status_code = 409 if 'ซ้ำ' in err_str else 500
         logger.error(f"Error creating project: {e}", exc_info=True)
-        return jsonify({'error': f'สร้างโครงการไม่สำเร็จ: {str(e)}'}), 500
+        return jsonify({'error': f'สร้างโครงการไม่สำเร็จ: {err_str}'}), status_code
 
 @app.route('/api/projects/<string:project_id>', methods=['PUT'])
 def update_project_api(project_id):
     """Update a project"""
-    data = request.get_json()
+    if not _validate_project_uuid(project_id):
+        return jsonify({'error': 'รหัสโครงการ (UUID) ไม่ถูกต้อง'}), 400
+    auth_err = _check_project_write_permission(project_id=project_id)
+    if auth_err:
+        return auth_err
+
+    data = request.get_json(silent=True)
     if not data:
         return jsonify({'error': 'ไม่มีข้อมูลสำหรับอัปเดต'}), 400
-        
+
+    p_name = data.get('project_name') if 'project_name' in data else data.get('name')
+    if p_name is not None:
+        p_name = str(p_name).strip()
+        if not p_name:
+            return jsonify({'error': 'ชื่อโครงการห้ามเป็นค่าว่าง'}), 400
+        if len(p_name) > 200:
+            return jsonify({'error': 'ชื่อโครงการต้องไม่เกิน 200 ตัวอักษร'}), 400
+
+    p_code = data.get('project_code')
+    if p_code is not None:
+        p_code = str(p_code).strip()
+        if not p_code:
+            p_code = None
+        elif len(p_code) > 64:
+            return jsonify({'error': 'รหัสโครงการต้องไม่เกิน 64 ตัวอักษร'}), 400
+
+    desc = str(data.get('description')).strip() if data.get('description') is not None else None
+    status = data.get('status')
+    if status is not None:
+        status = str(status).strip()
+        if status not in ('Active', 'Inactive'):
+            return jsonify({'error': 'สถานะโครงการต้องเป็น Active หรือ Inactive เท่านั้น'}), 400
+
+    site_urls = data.get('site_urls')
+    default_base_url = data.get('default_base_url')
+    if site_urls is not None or default_base_url is not None:
+        try:
+            site_urls, default_base_url = _sanitize_project_site_urls(site_urls, default_base_url or '')
+        except ValueError as ve:
+            return jsonify({'error': str(ve)}), 400
+
     try:
         from db_ingestion import update_project
-        p_name = data.get('project_name') or data.get('name')
-        p_code = data.get('project_code')
-        desc = data.get('description')
-        status = data.get('status')
-        default_base_url = data.get('default_base_url')
-        site_urls = data.get('site_urls')
-        
-        if p_code is not None and not str(p_code).strip():
-            p_code = None
-            
         project = update_project(
             project_id=project_id,
             name=p_name,
@@ -1096,19 +1278,29 @@ def update_project_api(project_id):
         )
         return jsonify({'success': True, 'project': project, 'message': 'อัปเดตโครงการเรียบร้อยแล้ว'})
     except Exception as e:
+        err_str = str(e)
+        status_code = 409 if 'ซ้ำ' in err_str else (404 if 'ไม่พบโครงการ' in err_str else 500)
         logger.error(f"Error updating project {project_id}: {e}", exc_info=True)
-        return jsonify({'error': f'อัปเดตไม่สำเร็จ: {str(e)}'}), 500
+        return jsonify({'error': f'อัปเดตไม่สำเร็จ: {err_str}'}), status_code
 
 @app.route('/api/projects/<string:project_id>', methods=['DELETE'])
 def delete_project_api(project_id):
     """Delete a project"""
+    if not _validate_project_uuid(project_id):
+        return jsonify({'error': 'รหัสโครงการ (UUID) ไม่ถูกต้อง'}), 400
+    auth_err = _check_project_write_permission(project_id=project_id)
+    if auth_err:
+        return auth_err
+
     try:
         from db_ingestion import delete_project
-        success = delete_project(project_id)
+        delete_project(project_id)
         return jsonify({'success': True, 'message': 'ลบโครงการเรียบร้อยแล้ว'})
     except Exception as e:
+        err_str = str(e)
+        status_code = 404 if 'ไม่พบโครงการ' in err_str else 500
         logger.error(f"Error deleting project {project_id}: {e}", exc_info=True)
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': err_str}), status_code
 
 
 @app.route('/api/ocr', methods=['POST'])
@@ -1160,18 +1352,41 @@ def spellcheck():
 
     text = data['text']
     include_suggestions = data.get('include_suggestions', True)
+    lang = data.get('lang', 'tha+eng')
     words_map = data.get('words', [])
 
     try:
         # Run Multi-Agent Document Pipeline
-        pipeline_state = run_document_pipeline(text)
+        pipeline_state = run_document_pipeline(text, lang=lang)
         
-        # Combine errors
-        errors = pipeline_state.spell_errors + pipeline_state.format_errors
+        # Combine errors without duplicating identical position+token
+        seen_pos = {(e.get('position'), e.get('token')) for e in pipeline_state.spell_errors}
+        dedup_format_errors = [
+            fe for fe in pipeline_state.format_errors
+            if (fe.get('position'), fe.get('token')) not in seen_pos
+        ]
+        errors = pipeline_state.spell_errors + dedup_format_errors
+        if not include_suggestions:
+            for e in errors:
+                e['suggestions'] = []
             
-        # จับคู่กล่องข้อความ
-        if words_map:
-            enrich_errors_with_boxes(errors, words_map)
+        # จับคู่กล่องข้อความ (หากไม่มี words_map หรือเป็นพิกัดแบบเก่า ให้คำนวณใหม่จากภาพแคชของหน้านั้น)
+        session_id = secure_filename(str(data.get('session_id') or ''))
+        page_num = int(data.get('page_number') or 0)
+        if session_id and page_num > 0:
+            try:
+                from PIL import Image
+                import ocr_engine
+                img_path = CACHE_FOLDER / session_id / f"page_{page_num}.jpg"
+                if img_path.exists():
+                    with Image.open(str(img_path)) as pil_img:
+                        words_map = ocr_engine._generate_fallback_words(text, pil_img.width, pil_img.height, pil_image=pil_img)
+            except Exception as box_err:
+                logger.warning(f"Could not regenerate visual boxes on spellcheck: {box_err}")
+        if not words_map:
+            import ocr_engine
+            words_map = ocr_engine._generate_fallback_words(text, 2481, 3508)
+        enrich_errors_with_boxes(errors, words_map)
             
         # Reconstruct result format for frontend compatibility
         spell_result = {
@@ -1183,7 +1398,8 @@ def spellcheck():
         
         summary = spell_result.get('summary', {})
         if summary:
-            format_count = sum(1 for e in errors if e.get('error_type') == 'format')
+            format_count = len(dedup_format_errors)
+            summary['format_errors'] = format_count
             summary['error_count'] = summary.get('error_count', 0) + format_count
             
         return jsonify({
@@ -1210,6 +1426,76 @@ def view_page(session_id, page_num):
         return "Image not found", 404
         
     return send_from_directory(str(directory), filename)
+
+
+@app.route('/api/ocr/reprocess_page', methods=['POST'])
+def reprocess_single_page():
+    """
+    สแกน OCR ซ้ำเฉพาะหน้าที่ต้องการจากไฟล์ภาพแคช (uploads/cache/<session_id>/page_<N>.jpg)
+    เพื่อแก้ไขหน้าที่ข้อความเพี้ยนโดยไม่ต้องอัปโหลด PDF ใหม่ทั้งไฟล์
+    """
+    data = request.get_json(silent=True) or {}
+    session_id = secure_filename(str(data.get('session_id') or ''))
+    page_num = int(data.get('page_number') or 0)
+    lang = data.get('lang', 'tha+eng')
+    run_spell = bool(data.get('auto_spellcheck', False))
+
+    if not session_id or page_num <= 0:
+        return jsonify({'error': 'กรุณาระบุ session_id และหมายเลขหน้า (page_number)'}), 400
+
+    img_path = CACHE_FOLDER / session_id / f"page_{page_num}.jpg"
+    if not img_path.exists():
+        return jsonify({'error': f'ไม่พบไฟล์ภาพต้นฉบับของหน้าที่ {page_num} ในแคช กรุณาอัปโหลดไฟล์เพื่อสแกนใหม่'}), 404
+
+    try:
+        from PIL import Image
+        import ocr_engine
+        from spell_checker import _tokenize_thai_and_english_counts
+
+        with Image.open(str(img_path)) as pil_img:
+            img_copy = pil_img.convert('RGB')
+        ocr_res = ocr_engine.ocr_image(img_copy, lang=lang, filename=f"reprocess_p{page_num}.jpg")
+        if ocr_res.get('error'):
+            return jsonify({'error': ocr_res.get('error')}), 502
+        text = ocr_res.get('text', '')
+        words = ocr_res.get('words', [])
+
+        page_obj = {
+            'page_number': page_num,
+            'session_id': session_id,
+            'image_url': f"page_{page_num}.jpg",
+            'text': text,
+            'words': words,
+            'width': ocr_res.get('width', img_copy.width),
+            'height': ocr_res.get('height', img_copy.height),
+        }
+
+        if run_spell and text.strip():
+            spell_result = spellcheck_text(text, include_suggestions=True, lang=lang)
+            errors = list(spell_result.get('errors', []))
+            try:
+                fmt_errors = check_format_rules(text)
+                seen_pos = {(e.get('position'), e.get('token')) for e in errors}
+                dedup_fmt = [fe for fe in fmt_errors if (fe.get('position'), fe.get('token')) not in seen_pos]
+                errors.extend(dedup_fmt)
+            except Exception:
+                dedup_fmt = []
+            enrich_errors_with_boxes(errors, words)
+            spell_result['errors'] = errors
+            summary = spell_result.get('summary', {})
+            if summary:
+                summary['format_errors'] = len(dedup_fmt)
+                summary['error_count'] = summary.get('error_count', 0) + len(dedup_fmt)
+            page_obj['spell_check'] = spell_result
+        else:
+            th_cnt, en_cnt, _ = _tokenize_thai_and_english_counts(text)
+            page_obj['spell_check'] = None
+            page_obj['token_counts'] = {'thai_tokens': th_cnt, 'english_tokens': en_cnt}
+
+        return jsonify({'success': True, 'page': page_obj})
+    except Exception as e:
+        logger.error(f"Reprocess page {page_num} error: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/process', methods=['POST'])
@@ -1320,11 +1606,19 @@ def process_stream():
     เพื่อรายงานความคืบหน้าทีละหน้า
     """
     if 'file' not in request.files:
-        return jsonify({'error': 'ไม่พบไฟล์'}), 400
+        return jsonify({'error': 'ไม่พบไฟล์ กรุณาเลือกไฟล์ PDF'}), 400
 
     file = request.files['file']
+    if not file or not file.filename or not allowed_file(file.filename):
+        return jsonify({'error': 'รองรับเฉพาะไฟล์นามสกุล .pdf เท่านั้น'}), 400
+
     lang = request.args.get('lang', 'tha+eng')
-    dpi = int(request.args.get('dpi', 300))
+    if lang not in ('tha+eng', 'tha', 'eng'):
+        lang = 'tha+eng'
+    try:
+        dpi = max(72, min(600, int(request.args.get('dpi', 300))))
+    except Exception:
+        dpi = 300
     auto_spellcheck = request.args.get('auto_spellcheck', 'false').lower() == 'true'
     include_suggestions = request.args.get('include_suggestions', 'true').lower() == 'true'
     start_page = int(request.args.get('start_page', 1) or 1)
@@ -1332,13 +1626,27 @@ def process_stream():
     end_page = int(end_page_val) if (end_page_val and end_page_val.isdigit() and int(end_page_val) > 0) else None
     
     pdf_bytes = file.read()
-    filename = secure_filename(file.filename)
+    if not pdf_bytes or not pdf_bytes.lstrip().startswith(b'%PDF-'):
+        return jsonify({'error': 'ไฟล์ที่อัปโหลดไม่ใช่โครงสร้าง PDF ที่ถูกต้อง (%PDF header missing)'}), 400
+
+    filename = secure_filename(file.filename) or 'document.pdf'
+
+    # Opportunistic cleanup of preview cache folders older than 24 hours
+    try:
+        import shutil
+        cutoff = time.time() - 86400
+        for old_dir in CACHE_FOLDER.iterdir():
+            if old_dir.is_dir() and old_dir.stat().st_mtime < cutoff:
+                shutil.rmtree(old_dir, ignore_errors=True)
+    except Exception:
+        pass
 
     def generate():
         import json
         import time
         import uuid
         from PIL import Image
+        import ocr_engine
         
         session_id = str(uuid.uuid4())
         session_dir = CACHE_FOLDER / session_id
@@ -1353,9 +1661,6 @@ def process_stream():
             # Get total pages instantly using pdfinfo_from_bytes
             total_pages = 1
             try:
-                import importlib
-                import ocr_engine
-                importlib.reload(ocr_engine)
                 from pdf2image.pdf2image import pdfinfo_from_bytes
                 poppler_path = ocr_engine.POPPLER_PATH if (ocr_engine.POPPLER_PATH and os.path.exists(ocr_engine.POPPLER_PATH)) else None
                 info = pdfinfo_from_bytes(pdf_bytes, poppler_path=poppler_path)
@@ -1403,15 +1708,19 @@ def process_stream():
                     try:
                         spell_result = spellcheck_text(
                             page.get('text', ''),
-                            include_suggestions=include_suggestions
+                            include_suggestions=include_suggestions,
+                            lang=lang
                         )
-                        errors = spell_result.get('errors', [])
+                        errors = list(spell_result.get('errors', []))
                         
-                        # ตรวจสอบรูปแบบ (Format Rules)
+                        # ตรวจสอบรูปแบบ (Format Rules) โดยไม่ซ้ำกับตำแหน่งคำผิดเดิม
                         try:
                             format_errors = check_format_rules(page.get('text', ''))
-                            errors.extend(format_errors)
+                            seen_pos = {(e.get('position'), e.get('token')) for e in errors}
+                            dedup_fmt = [fe for fe in format_errors if (fe.get('position'), fe.get('token')) not in seen_pos]
+                            errors.extend(dedup_fmt)
                         except Exception as fmt_err:
+                            dedup_fmt = []
                             logger.error(f"Format check error in stream on page {page_num}: {fmt_err}")
                             
                         # จับคู่กล่องข้อความ
@@ -1421,7 +1730,8 @@ def process_stream():
                         spell_result['errors'] = errors
                         summary = spell_result.get('summary', {})
                         if summary:
-                            format_count = sum(1 for e in errors if e.get('error_type') == 'format')
+                            format_count = len(dedup_fmt)
+                            summary['format_errors'] = format_count
                             summary['error_count'] = summary.get('error_count', 0) + format_count
                             
                         page['spell_check'] = spell_result
@@ -1433,12 +1743,18 @@ def process_stream():
                                 'thai_tokens': 0, 'english_tokens': 0,
                                 'total_tokens': 0, 'error_count': 0,
                                 'thai_errors': 0, 'english_errors': 0,
-                                'semantic_errors': 0, 'error_rate': 0
+                                'semantic_errors': 0, 'format_errors': 0, 'error_rate': 0
                             }
                         }
                 else:
-                    # ข้ามการตรวจคำผิด
+                    # ข้ามการตรวจคำผิดด้วย AI แต่นับจำนวนคำไทยและอังกฤษด้วย PyThaiNLP เพื่อให้แสดงสถิติจำนวนคำได้ถูกต้อง
                     page['spell_check'] = None
+                    try:
+                        from spell_checker import _tokenize_thai_and_english_counts
+                        th_cnt, en_cnt, _ = _tokenize_thai_and_english_counts(page.get('text', ''))
+                        page['token_counts'] = {'thai_tokens': th_cnt, 'english_tokens': en_cnt}
+                    except Exception:
+                        page['token_counts'] = {'thai_tokens': 0, 'english_tokens': 0}
                 
                 pages.append(page)
                 yield f"data: {json.dumps({'type': 'page_result', 'page': page})}\n\n"
@@ -1446,13 +1762,24 @@ def process_stream():
             # เรียงหน้าให้ถูกต้อง
             pages.sort(key=lambda p: p['page_number'])
 
-            # สรุปผลตอนท้าย
+            # สรุปผลตอนท้ายครบทั้งภาษาไทย อังกฤษ บริบท และฟอร์แมต
+            total_thai_tokens = sum(
+                (p.get('spell_check') or {}).get('summary', {}).get('thai_tokens')
+                or (p.get('token_counts') or {}).get('thai_tokens', 0)
+                for p in pages
+            )
+            total_eng_tokens = sum(
+                (p.get('spell_check') or {}).get('summary', {}).get('english_tokens')
+                or (p.get('token_counts') or {}).get('english_tokens', 0)
+                for p in pages
+            )
+            total_tokens = total_thai_tokens + total_eng_tokens
             total_errors = sum((p.get('spell_check') or {}).get('summary', {}).get('error_count', 0) for p in pages)
-            total_tokens = sum((p.get('spell_check') or {}).get('summary', {}).get('thai_tokens', 0) for p in pages)
             
             final_data = {
                 'type': 'complete',
                 'filename': filename,
+                'session_id': session_id,
                 'total_pages': len(pages),
                 'total_doc_pages': total_pages,
                 'start_page': effective_first,
@@ -1460,7 +1787,9 @@ def process_stream():
                 'summary': {
                     'total_pages': len(pages),
                     'total_doc_pages': total_pages,
-                    'total_thai_tokens': total_tokens,
+                    'total_thai_tokens': total_thai_tokens,
+                    'total_english_tokens': total_eng_tokens,
+                    'total_tokens': total_tokens,
                     'total_errors': total_errors,
                     'error_rate': round(total_errors / total_tokens * 100, 2) if total_tokens > 0 else 0,
                     'total_time': round(time.time() - start_time, 2)
@@ -1508,19 +1837,35 @@ def debug_env():
 @app.route('/api/dictionary/add', methods=['POST'])
 def add_word():
     """เพิ่มคำใหม่ใน custom dictionary"""
-    data = request.get_json()
+    data = request.get_json(silent=True)
     if not data or 'word' not in data:
         return jsonify({'error': 'กรุณาส่ง JSON { "word": "..." }'}), 400
 
-    word = data['word'].strip()
+    word = str(data['word'] or '').strip()
     if not word:
         return jsonify({'error': 'คำว่างไม่สามารถเพิ่มได้'}), 400
+    if len(word) > 100 or '\n' in word or '\r' in word:
+        return jsonify({'error': 'คำศัพท์ต้องเป็นบรรทัดเดียวและยาวไม่เกิน 100 ตัวอักษร'}), 400
 
     success = add_custom_word(word)
     if success:
-        return jsonify({'success': True, 'message': f'เพิ่มคำ "{word}" สำเร็จ'})
+        return jsonify({'success': True, 'message': f'เพิ่มคำ "{word}" สำเร็จ', 'words': get_custom_words_list()})
     else:
         return jsonify({'error': 'เพิ่มคำไม่สำเร็จ'}), 500
+
+
+@app.route('/api/dictionary/remove', methods=['POST', 'DELETE'])
+def remove_word():
+    """ลบคำออกจาก custom dictionary"""
+    data = request.get_json(silent=True) or {}
+    word = str(data.get('word') or request.args.get('word') or '').strip()
+    if not word:
+        return jsonify({'error': 'กรุณาระบุคำศัพท์ที่ต้องการลบ'}), 400
+
+    removed = remove_custom_word(word)
+    if removed:
+        return jsonify({'success': True, 'message': f'ลบคำ "{word}" เรียบร้อยแล้ว', 'words': get_custom_words_list()})
+    return jsonify({'error': f'ไม่พบคำว่า "{word}" ในพจนานุกรม'}), 404
 
 
 @app.route('/api/dictionary/reload', methods=['POST'])
@@ -1545,6 +1890,29 @@ def reload_dict():
 #   documents(doc_id, project_id, doc_category, doc_type, original_filename,
 #             full_markdown_content, is_golden_data, file_hash, version, status, created_at)
 #   document_chunks(chunk_id, doc_id, chunk_text, embedding vector(384), created_at)
+
+def _check_kb_write_permission(project_id: str = None, allow_ocr: bool = False):
+    """Verify JWT authentication and Knowledge Base write permission."""
+    req_payload = get_request_user_payload()
+    if not req_payload:
+        return jsonify({'error': 'กรุณาเข้าสู่ระบบก่อนดำเนินการจัดการคลังความรู้'}), 401
+    role = str(req_payload.get('role') or '').lower()
+    if role == 'admin':
+        return None
+    allowed_menus = req_payload.get('allowed_menus') or []
+    required_menus = {'knowledge_base', 'project_management'}
+    if allow_ocr:
+        required_menus.update({'ocr', 'scan_ocr'})
+    if isinstance(allowed_menus, list) and not any(m in required_menus for m in allowed_menus):
+        return jsonify({'error': 'คุณไม่มีสิทธิ์แก้ไขหรือจัดการเอกสารใน Knowledge Base'}), 403
+    if project_id:
+        allowed_projects = req_payload.get('allowed_projects') or ['all']
+        if isinstance(allowed_projects, list) and 'all' not in allowed_projects:
+            norm = [str(a).strip().lower() for a in allowed_projects]
+            if str(project_id).strip().lower() not in norm:
+                return jsonify({'error': 'คุณไม่มีสิทธิ์เข้าถึงหรือแก้ไขเอกสารในโครงการนี้'}), 403
+    return None
+
 
 @app.route('/api/kb/stats', methods=['GET'])
 def kb_stats():
@@ -1596,14 +1964,38 @@ def kb_documents():
 
         if project_id:
             cursor.execute(
-                "SELECT doc_id, original_filename, project_id, doc_category, doc_type, status, created_at, is_golden_data "
-                "FROM documents WHERE project_id = %s::uuid ORDER BY doc_id DESC LIMIT %s OFFSET %s;",
+                """
+                SELECT d.doc_id, d.original_filename, d.project_id, d.doc_category, d.doc_type,
+                       d.status, d.created_at, COALESCE(d.is_golden_data, FALSE) AS is_golden_data,
+                       COALESCE(cc.chunk_count, 0) AS chunk_count
+                FROM documents d
+                LEFT JOIN (
+                    SELECT doc_id, COUNT(*) AS chunk_count
+                    FROM document_chunks
+                    GROUP BY doc_id
+                ) cc ON d.doc_id = cc.doc_id
+                WHERE d.project_id = %s::uuid AND (d.status = 'Active' OR d.status IS NULL)
+                ORDER BY d.created_at DESC NULLS LAST, d.doc_id DESC
+                LIMIT %s OFFSET %s;
+                """,
                 (project_id, limit, offset)
             )
         else:
             cursor.execute(
-                "SELECT doc_id, original_filename, project_id, doc_category, doc_type, status, created_at, is_golden_data "
-                "FROM documents ORDER BY doc_id DESC LIMIT %s OFFSET %s;",
+                """
+                SELECT d.doc_id, d.original_filename, d.project_id, d.doc_category, d.doc_type,
+                       d.status, d.created_at, COALESCE(d.is_golden_data, FALSE) AS is_golden_data,
+                       COALESCE(cc.chunk_count, 0) AS chunk_count
+                FROM documents d
+                LEFT JOIN (
+                    SELECT doc_id, COUNT(*) AS chunk_count
+                    FROM document_chunks
+                    GROUP BY doc_id
+                ) cc ON d.doc_id = cc.doc_id
+                WHERE (d.status = 'Active' OR d.status IS NULL)
+                ORDER BY d.created_at DESC NULLS LAST, d.doc_id DESC
+                LIMIT %s OFFSET %s;
+                """,
                 (limit, offset)
             )
 
@@ -1611,28 +2003,25 @@ def kb_documents():
         documents = []
         for row in rows:
             doc_id_val = row[0]
-            cursor.execute("SELECT COUNT(*) FROM document_chunks WHERE doc_id = %s;", (doc_id_val,))
-            chunk_count = cursor.fetchone()[0]
-
             documents.append({
                 'id': str(doc_id_val),
                 'doc_id': str(doc_id_val),
                 'name': row[1] or 'ไม่ระบุชื่อ',
                 'original_filename': row[1] or 'ไม่ระบุชื่อ',
                 'filename': row[1] or 'ไม่ระบุชื่อ',
-                'project_id': row[2],
+                'project_id': str(row[2]) if row[2] else None,
                 'doc_category': row[3],
                 'doc_type': row[4],
                 'status': row[5],
                 'created_at': row[6].isoformat() if row[6] else None,
-                'is_golden_data': row[7] if len(row) > 7 else False,
-                'chunk_count': chunk_count
+                'is_golden_data': bool(row[7]),
+                'chunk_count': int(row[8] or 0)
             })
 
         if project_id:
-            cursor.execute("SELECT COUNT(*) FROM documents WHERE project_id = %s::uuid;", (project_id,))
+            cursor.execute("SELECT COUNT(*) FROM documents WHERE project_id = %s::uuid AND (status = 'Active' OR status IS NULL);", (project_id,))
         else:
-            cursor.execute("SELECT COUNT(*) FROM documents;")
+            cursor.execute("SELECT COUNT(*) FROM documents WHERE (status = 'Active' OR status IS NULL);")
         total = cursor.fetchone()[0]
 
         cursor.close()
@@ -1711,61 +2100,26 @@ def kb_document_detail(doc_id):
 @app.route('/api/kb/search', methods=['GET'])
 def kb_search():
     """
-    ค้นหาเอกสารด้วย Vector Similarity
-    Query: ?q=<text>&project_id=<id>&top_k=5
+    ค้นหาเอกสารด้วย Unified Hybrid Search (Vector Similarity + Keyword Boost + Golden Data Boost)
+    Query: ?q=<text>&project_id=<id>&doc_type=<cat>&top_k=10
     """
     query_text = request.args.get('q', '').strip()
     project_id = request.args.get('project_id', type=str)
-    top_k = request.args.get('top_k', 5, type=int)
+    doc_type = request.args.get('doc_type', type=str)
+    top_k = max(1, min(50, request.args.get('top_k', 10, type=int)))
 
     if not query_text:
         return jsonify({'error': 'กรุณาระบุคำค้นหา (q)'}), 400
 
     try:
-        from db_ingestion import get_model, get_db_connection
-        embedder = get_model()
-        query_vec = embedder.encode([query_text])[0].tolist()
-
-        conn = get_db_connection()
-        cursor = conn.cursor()
-
-        if project_id:
-            cursor.execute("""
-                SELECT dc.chunk_id, dc.doc_id, dc.chunk_text,
-                       dc.embedding <=> %s::vector AS distance,
-                       d.original_filename AS doc_name
-                FROM document_chunks dc
-                JOIN documents d ON d.doc_id = dc.doc_id
-                WHERE d.project_id = %s::uuid
-                ORDER BY distance ASC
-                LIMIT %s;
-            """, (query_vec, project_id, top_k))
-        else:
-            cursor.execute("""
-                SELECT dc.chunk_id, dc.doc_id, dc.chunk_text,
-                       dc.embedding <=> %s::vector AS distance,
-                       d.original_filename AS doc_name
-                FROM document_chunks dc
-                JOIN documents d ON d.doc_id = dc.doc_id
-                ORDER BY distance ASC
-                LIMIT %s;
-            """, (query_vec, top_k))
-
-        rows = cursor.fetchall()
-        results = [
-            {
-                'chunk_id': r[0],
-                'document_id': r[1],
-                'chunk_text': r[2],
-                'similarity': round(1 - float(r[3]), 4),
-                'doc_name': r[4] or 'ไม่ระบุชื่อ'
-            }
-            for r in rows
-        ]
-
-        cursor.close()
-        conn.close()
-
+        from db_ingestion import search_knowledge_base
+        results = search_knowledge_base(
+            query_text=query_text,
+            doc_type=doc_type if doc_type else None,
+            top_k=top_k,
+            project_id=project_id if project_id else None,
+            hybrid=True
+        )
         return jsonify({'success': True, 'results': results, 'query': query_text})
     except Exception as e:
         logger.error(f"KB search error: {e}", exc_info=True)
@@ -1802,7 +2156,7 @@ def save_format_rules_route():
 @app.route('/api/kb/ingest', methods=['POST'])
 def kb_ingest():
     """บันทึกเอกสารเข้า Project (Knowledge Base) ด้วยตัวเอง"""
-    data = request.get_json()
+    data = request.get_json(silent=True)
     if not data:
         return jsonify({'error': 'No data provided'}), 400
 
@@ -1818,10 +2172,11 @@ def kb_ingest():
     if not filename or not markdown_text or not project_id:
         return jsonify({'error': 'กรุณาระบุ filename, markdown_text, และ project_id'}), 400
 
+    auth_err = _check_kb_write_permission(project_id=project_id, allow_ocr=True)
+    if auth_err:
+        return auth_err
+
     try:
-        import importlib
-        import db_ingestion
-        importlib.reload(db_ingestion)
         from db_ingestion import ingest_markdown_document
         import shutil
         
@@ -1857,6 +2212,9 @@ def kb_ingest():
 @app.route('/api/kb/documents/<string:doc_id>', methods=['PUT'])
 def kb_update_document(doc_id):
     """แก้ไขเนื้อหาเอกสาร (Markdown), หมวดหมู่, ชื่อเอกสาร และทำการ Chunk/Embed ใหม่"""
+    auth_err = _check_kb_write_permission()
+    if auth_err:
+        return auth_err
     try:
         data = request.get_json() or {}
         new_markdown = data.get('markdown_text')
@@ -1899,6 +2257,9 @@ def kb_view_page(doc_id, page_num):
 @app.route('/api/kb/documents/<string:doc_id>', methods=['DELETE'])
 def kb_delete_document(doc_id):
     """ลบเอกสารออกจาก Knowledge Base"""
+    auth_err = _check_kb_write_permission()
+    if auth_err:
+        return auth_err
     conn = None
     try:
         from db_ingestion import get_db_connection
@@ -1913,6 +2274,15 @@ def kb_delete_document(doc_id):
         # Delete document (CASCADE will delete chunks)
         cursor.execute("DELETE FROM documents WHERE doc_id = %s;", (doc_id,))
         conn.commit()
+
+        # Clean up orphaned preview images folder on disk
+        try:
+            import shutil
+            img_dir = KB_IMAGES_FOLDER / secure_filename(str(doc_id))
+            if img_dir.exists() and img_dir.is_dir():
+                shutil.rmtree(img_dir, ignore_errors=True)
+        except Exception as clean_err:
+            logger.warning(f"Failed to remove kb_images dir for doc {doc_id}: {clean_err}")
         
         return jsonify({'success': True, 'message': 'ลบเอกสารเรียบร้อยแล้ว'})
     except Exception as e:
@@ -1927,8 +2297,40 @@ def kb_delete_document(doc_id):
 # AI Agent Skills Endpoints (agent_skills)
 # ===================================================================
 
-def ensure_skills_table():
-    """Ensure agent_skills table exists in PostgreSQL and seed standard skills if empty."""
+_SKILLS_TABLE_ENSURED = False
+
+
+def _validate_skill_uuid(val: str) -> bool:
+    import uuid as _uuid
+    if not val:
+        return False
+    try:
+        _uuid.UUID(str(val).strip())
+        return True
+    except Exception:
+        return False
+
+
+def _check_skill_write_permission():
+    """Verify JWT authentication and AI Skills write permission."""
+    req_payload = get_request_user_payload()
+    if not req_payload:
+        return jsonify({'error': 'กรุณาเข้าสู่ระบบก่อนจัดการ AI Skills'}), 401
+    role = str(req_payload.get('role') or '').lower()
+    if role == 'admin':
+        return None
+    allowed_menus = req_payload.get('allowed_menus') or []
+    required = {'ai_skills', 'skills', 'skill_manager'}
+    if isinstance(allowed_menus, list) and not any(m in required for m in allowed_menus):
+        return jsonify({'error': 'คุณไม่มีสิทธิ์สร้าง แก้ไข หรือลบ AI Skills'}), 403
+    return None
+
+
+def ensure_skills_table(force: bool = False):
+    """Ensure agent_skills table exists in PostgreSQL and seed standard skills if empty (cached per process)."""
+    global _SKILLS_TABLE_ENSURED
+    if _SKILLS_TABLE_ENSURED and not force:
+        return
     conn = None
     try:
         from db_ingestion import get_db_connection
@@ -2034,6 +2436,7 @@ def ensure_skills_table():
         
         conn.commit()
         cursor.close()
+        _SKILLS_TABLE_ENSURED = True
     except Exception as e:
         if conn: conn.rollback()
         logger.error(f"Error ensuring agent_skills table: {e}", exc_info=True)
@@ -2043,7 +2446,7 @@ def ensure_skills_table():
 
 @app.route('/api/skills', methods=['GET'])
 def get_skills():
-    """ดึงรายการ AI Skills ทั้งหมด"""
+    """ดึงรายการ AI Skills ทั้งหมด (รองรับ active_only, status, search, target_doc_type พร้อม usage_count)"""
     ensure_skills_table()
     conn = None
     try:
@@ -2054,6 +2457,8 @@ def get_skills():
         search = request.args.get('search', '').strip()
         target_type = request.args.get('target_doc_type', '').strip()
         include_system = request.args.get('include_system', 'false').lower() == 'true'
+        active_only = request.args.get('active_only', 'false').lower() == 'true'
+        status_filter = request.args.get('status', '').strip().lower()
 
         query = """
             SELECT skill_id, skill_name, skill_description, markdown_instructions,
@@ -2067,32 +2472,52 @@ def get_skills():
             query += " AND skill_name NOT ILIKE %s"
             params.append('%Exit Criteria%')
 
+        if active_only or status_filter == 'active':
+            query += " AND COALESCE(is_active, TRUE) = TRUE"
+        elif status_filter == 'draft':
+            query += " AND COALESCE(is_active, TRUE) = FALSE"
+
         if search:
             query += " AND (skill_name ILIKE %s OR skill_description ILIKE %s OR markdown_instructions ILIKE %s)"
             pattern = f"%{search}%"
             params.extend([pattern, pattern, pattern])
 
-        if target_type:
-            query += " AND target_doc_type = %s"
+        if target_type and target_type.upper() != 'ALL':
+            query += " AND UPPER(TRIM(COALESCE(target_doc_type, ''))) = UPPER(TRIM(%s))"
             params.append(target_type)
 
-        query += " ORDER BY created_at DESC;"
+        query += " ORDER BY COALESCE(is_active, TRUE) DESC, created_at DESC;"
 
         cursor.execute(query, params)
         rows = cursor.fetchall()
 
+        # Fetch lightweight usage counts from qa_generated_documents in a single query
+        usage_map = {}
+        try:
+            cursor.execute("SELECT skill_id FROM qa_generated_documents WHERE skill_id IS NOT NULL AND skill_id <> '';")
+            for (raw_sid,) in cursor.fetchall():
+                for part in str(raw_sid).split(','):
+                    tok = part.strip()
+                    if tok:
+                        usage_map[tok] = usage_map.get(tok, 0) + 1
+        except Exception:
+            conn.rollback()
+
         skills = []
         for r in rows:
+            sid_str = str(r[0])
+            sname = r[1] or ''
             skills.append({
-                'skill_id': str(r[0]),
-                'skill_name': r[1],
-                'skill_description': r[2],
-                'markdown_instructions': r[3],
-                'target_doc_type': r[4],
-                'version': r[5],
-                'is_active': r[6],
-                'created_by': r[7],
-                'created_at': r[8].isoformat() if r[8] else None
+                'skill_id': sid_str,
+                'skill_name': sname,
+                'skill_description': r[2] or '',
+                'markdown_instructions': r[3] or '',
+                'target_doc_type': r[4] or 'General',
+                'version': int(r[5]) if r[5] is not None else 1,
+                'is_active': bool(r[6]) if r[6] is not None else True,
+                'created_by': r[7] or 'Admin',
+                'created_at': r[8].isoformat() if r[8] else None,
+                'usage_count': usage_map.get(sid_str, 0) + usage_map.get(sname, 0)
             })
 
         return jsonify({'success': True, 'skills': skills, 'total': len(skills)})
@@ -2107,6 +2532,8 @@ def get_skills():
 def get_skill_detail(skill_id):
     """ดูรายละเอียด AI Skill รายรายการ"""
     ensure_skills_table()
+    if not _validate_skill_uuid(skill_id):
+        return jsonify({'error': 'รหัส Skill (UUID) ไม่ถูกต้อง'}), 400
     conn = None
     try:
         from db_ingestion import get_db_connection
@@ -2117,7 +2544,7 @@ def get_skill_detail(skill_id):
             SELECT skill_id, skill_name, skill_description, markdown_instructions,
                    target_doc_type, version, is_active, created_by, created_at
             FROM agent_skills
-            WHERE skill_id = %s;
+            WHERE skill_id = %s::uuid;
         """, (skill_id,))
         r = cursor.fetchone()
         if not r:
@@ -2147,27 +2574,41 @@ def get_skill_detail(skill_id):
 def create_skill():
     """สร้าง AI Skill ใหม่"""
     ensure_skills_table()
-    data = request.get_json()
+    auth_err = _check_skill_write_permission()
+    if auth_err:
+        return auth_err
+
+    data = request.get_json(silent=True)
     if not data:
         return jsonify({'error': 'No payload provided'}), 400
 
-    skill_name = data.get('skill_name')
-    markdown_instructions = data.get('markdown_instructions')
+    skill_name = str(data.get('skill_name') or '').strip()
+    markdown_instructions = str(data.get('markdown_instructions') or '').strip()
 
     if not skill_name or not markdown_instructions:
-        return jsonify({'error': 'กรุณาระบุ skill_name และ markdown_instructions'}), 400
+        return jsonify({'error': 'กรุณาระบุชื่อ Skill และเนื้อหา Markdown Instructions'}), 400
+    if len(skill_name) > 100:
+        return jsonify({'error': 'ชื่อ Skill ต้องไม่เกิน 100 ตัวอักษร'}), 400
 
-    skill_description = data.get('skill_description', '')
-    target_doc_type = data.get('target_doc_type', 'General')
-    version = data.get('version', 1)
-    is_active = data.get('is_active', True)
-    created_by = data.get('created_by', 'Admin')
+    skill_description = str(data.get('skill_description') or '').strip()
+    target_doc_type = str(data.get('target_doc_type') or 'General').strip()[:50]
+    try:
+        version = max(1, int(data.get('version') or 1))
+    except Exception:
+        version = 1
+    is_active = bool(data.get('is_active', True))
+    req_payload = get_request_user_payload() or {}
+    created_by = str(data.get('created_by') or req_payload.get('username') or 'Admin').strip()[:50]
 
     conn = None
     try:
         from db_ingestion import get_db_connection
         conn = get_db_connection()
         cursor = conn.cursor()
+
+        cursor.execute("SELECT skill_id FROM agent_skills WHERE LOWER(TRIM(skill_name)) = LOWER(TRIM(%s)) LIMIT 1;", (skill_name,))
+        if cursor.fetchone():
+            return jsonify({'error': f'มี AI Skill ชื่อ "{skill_name}" อยู่ในระบบแล้ว กรุณาใช้ชื่ออื่น'}), 409
 
         cursor.execute("""
             INSERT INTO agent_skills (skill_name, skill_description, markdown_instructions, target_doc_type, version, is_active, created_by)
@@ -2191,7 +2632,13 @@ def create_skill():
 def update_skill(skill_id):
     """แก้ไข AI Skill"""
     ensure_skills_table()
-    data = request.get_json()
+    auth_err = _check_skill_write_permission()
+    if auth_err:
+        return auth_err
+    if not _validate_skill_uuid(skill_id):
+        return jsonify({'error': 'รหัส Skill (UUID) ไม่ถูกต้อง'}), 400
+
+    data = request.get_json(silent=True)
     if not data:
         return jsonify({'error': 'No payload provided'}), 400
 
@@ -2201,18 +2648,47 @@ def update_skill(skill_id):
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        # Check existing
-        cursor.execute("SELECT skill_id FROM agent_skills WHERE skill_id = %s;", (skill_id,))
-        if not cursor.fetchone():
+        cursor.execute("SELECT skill_id, markdown_instructions, COALESCE(version, 1) FROM agent_skills WHERE skill_id = %s::uuid;", (skill_id,))
+        existing_row = cursor.fetchone()
+        if not existing_row:
             return jsonify({'error': 'ไม่พบ Skill ที่ต้องการแก้ไข'}), 404
 
+        old_instructions = existing_row[1] or ''
+        old_version = int(existing_row[2] or 1)
+
         skill_name = data.get('skill_name')
-        skill_description = data.get('skill_description')
-        markdown_instructions = data.get('markdown_instructions')
-        target_doc_type = data.get('target_doc_type')
+        if skill_name is not None:
+            skill_name = str(skill_name).strip()
+            if not skill_name:
+                return jsonify({'error': 'ชื่อ Skill ห้ามเป็นค่าว่าง'}), 400
+            if len(skill_name) > 100:
+                return jsonify({'error': 'ชื่อ Skill ต้องไม่เกิน 100 ตัวอักษร'}), 400
+            cursor.execute(
+                "SELECT skill_id FROM agent_skills WHERE LOWER(TRIM(skill_name)) = LOWER(TRIM(%s)) AND skill_id <> %s::uuid LIMIT 1;",
+                (skill_name, skill_id)
+            )
+            if cursor.fetchone():
+                return jsonify({'error': f'มี AI Skill ชื่อ "{skill_name}" อยู่ในระบบแล้ว'}), 409
+
+        skill_description = str(data.get('skill_description')).strip() if data.get('skill_description') is not None else None
+        markdown_instructions = str(data.get('markdown_instructions')).strip() if data.get('markdown_instructions') is not None else None
+        if markdown_instructions is not None and not markdown_instructions:
+            return jsonify({'error': 'เนื้อหา Markdown Instructions ห้ามเป็นค่าว่าง'}), 400
+        target_doc_type = str(data.get('target_doc_type')).strip()[:50] if data.get('target_doc_type') is not None else None
+
         version = data.get('version')
+        if version is not None:
+            try:
+                version = max(1, int(version))
+            except Exception:
+                version = old_version
+        # Auto-bump version if instructions changed and caller left version unchanged
+        if data.get('auto_bump_version') and markdown_instructions is not None and markdown_instructions != old_instructions:
+            if version is None or version <= old_version:
+                version = old_version + 1
+
         is_active = data.get('is_active')
-        created_by = data.get('created_by')
+        created_by = str(data.get('created_by')).strip()[:50] if data.get('created_by') is not None else None
 
         cursor.execute("""
             UPDATE agent_skills
@@ -2223,11 +2699,13 @@ def update_skill(skill_id):
                 version = COALESCE(%s, version),
                 is_active = COALESCE(%s, is_active),
                 created_by = COALESCE(%s, created_by)
-            WHERE skill_id = %s;
+            WHERE skill_id = %s::uuid
+            RETURNING version;
         """, (skill_name, skill_description, markdown_instructions, target_doc_type, version, is_active, created_by, skill_id))
 
+        updated_ver = cursor.fetchone()[0]
         conn.commit()
-        return jsonify({'success': True, 'message': 'อัปเดต AI Skill สำเร็จ'})
+        return jsonify({'success': True, 'message': 'อัปเดต AI Skill สำเร็จ', 'version': updated_ver})
     except Exception as e:
         if conn: conn.rollback()
         logger.error(f"Update skill error: {e}", exc_info=True)
@@ -2240,17 +2718,23 @@ def update_skill(skill_id):
 def delete_skill(skill_id):
     """ลบ AI Skill"""
     ensure_skills_table()
+    auth_err = _check_skill_write_permission()
+    if auth_err:
+        return auth_err
+    if not _validate_skill_uuid(skill_id):
+        return jsonify({'error': 'รหัส Skill (UUID) ไม่ถูกต้อง'}), 400
+
     conn = None
     try:
         from db_ingestion import get_db_connection
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        cursor.execute("SELECT skill_id FROM agent_skills WHERE skill_id = %s;", (skill_id,))
+        cursor.execute("SELECT skill_id FROM agent_skills WHERE skill_id = %s::uuid;", (skill_id,))
         if not cursor.fetchone():
             return jsonify({'error': 'ไม่พบ Skill ที่ต้องการลบ'}), 404
 
-        cursor.execute("DELETE FROM agent_skills WHERE skill_id = %s;", (skill_id,))
+        cursor.execute("DELETE FROM agent_skills WHERE skill_id = %s::uuid;", (skill_id,))
         conn.commit()
 
         return jsonify({'success': True, 'message': 'ลบ AI Skill เรียบร้อยแล้ว'})
@@ -2266,6 +2750,8 @@ def delete_skill(skill_id):
 def export_skill_md(skill_id):
     """Export AI Skill เป็นไฟล์ SKILL.md"""
     ensure_skills_table()
+    if not _validate_skill_uuid(skill_id):
+        return jsonify({'error': 'รหัส Skill (UUID) ไม่ถูกต้อง'}), 400
     conn = None
     try:
         from db_ingestion import get_db_connection
@@ -2275,7 +2761,7 @@ def export_skill_md(skill_id):
         cursor.execute("""
             SELECT skill_name, skill_description, markdown_instructions, target_doc_type, version, created_by
             FROM agent_skills
-            WHERE skill_id = %s;
+            WHERE skill_id = %s::uuid;
         """, (skill_id,))
         r = cursor.fetchone()
         if not r:
@@ -2875,38 +3361,50 @@ def qa_consult_api():
         except:
             doc_type = [doc_type_raw] if doc_type_raw else []
 
-        # parse skill_id array
-        try:
-            skill_ids = json.loads(skill_id_raw)
-        except:
-            skill_ids = [skill_id_raw] if skill_id_raw and skill_id_raw not in ["undefined", "null"] else []
-        
+        # parse skill_id array safely (handles JSON array, comma-separated IDs/names, or single string)
+        skill_ids = []
+        if skill_id_raw and str(skill_id_raw).strip() not in ("undefined", "null", "[]"):
+            try:
+                parsed_skills = json.loads(skill_id_raw)
+                if isinstance(parsed_skills, list):
+                    skill_ids = [str(s).strip() for s in parsed_skills if s and str(s).strip() not in ("undefined", "null")]
+                elif parsed_skills:
+                    skill_ids = [str(parsed_skills).strip()]
+            except Exception:
+                skill_ids = [s.strip() for s in str(skill_id_raw).split(',') if s.strip() and s.strip() not in ("undefined", "null")]
+
         if not file or not email:
             return jsonify({'type': 'error', 'message': 'Missing file or email'}), 400
 
         skill_instructions = ""
         if skill_ids:
+            conn = None
+            cursor = None
             try:
                 from db_ingestion import get_db_connection
                 conn = get_db_connection()
                 cursor = conn.cursor()
-                
-                placeholders = ', '.join(['%s::uuid'] * len(skill_ids))
-                cursor.execute(f"SELECT skill_name, markdown_instructions FROM agent_skills WHERE skill_id IN ({placeholders})", tuple(skill_ids))
+                cursor.execute(
+                    """
+                    SELECT skill_name, target_doc_type, markdown_instructions
+                    FROM agent_skills
+                    WHERE (skill_id::text = ANY(%s) OR skill_name = ANY(%s))
+                      AND COALESCE(is_active, TRUE) = TRUE
+                    """,
+                    (skill_ids, skill_ids)
+                )
                 rows = cursor.fetchall()
                 if rows:
                     for r in rows:
-                        skill_instructions += f"### Skill: {r[0]}\n{r[1]}\n\n"
-                cursor.close()
-                conn.close()
+                        skill_instructions += f"### Skill: {r[0]} ({r[1] or 'General'})\n{r[2]}\n\n"
+                    logger.info(f"QA Consult injected {len(rows)} active AI Skill(s): {[r[0] for r in rows]}")
+                else:
+                    logger.warning(f"No active AI Skills matched requested IDs: {skill_ids}")
             except Exception as e:
-                logger.error(f"Failed to fetch skill: {e}")
-                # Ensure we close connections if there's an error
-                try:
-                    if 'cursor' in locals() and cursor: cursor.close()
-                    if 'conn' in locals() and conn: conn.close()
-                except:
-                    pass
+                logger.error(f"Failed to fetch skill: {e}", exc_info=True)
+            finally:
+                if cursor: cursor.close()
+                if conn: conn.close()
 
         # Read file bytes before background worker starts to avoid I/O on closed file
         raw_original_filename = (getattr(file, 'filename', None) or 'document.pdf').strip()
@@ -3093,10 +3591,20 @@ def qa_consult_api():
                         logger.warning(f"Failed to load QA Analysis Diagram context for QA Consult: {diag_err}")
 
                 kb_context = structured_reqs_context
+                if project_id:
+                    try:
+                        from db_ingestion import format_kb_feedback_memory_context
+                        feedback_memory_ctx = format_kb_feedback_memory_context(project_id, limit=12)
+                        if feedback_memory_ctx:
+                            kb_context += "\n" + feedback_memory_ctx + "\n"
+                    except Exception as fm_err:
+                        logger.warning(f"Failed to load KB feedback memory for QA Consult: {fm_err}")
                 if diagram_context:
                     kb_context += diagram_context + "\n"
                 for res in kb_results[:12]:
-                    kb_context += f"[Source: {res['filename']} | Category: {res.get('doc_type', '')}]\n{res['chunk_text']}\n\n"
+                    golden_mark = " | Golden Data" if res.get('is_golden_data') else ""
+                    cat_label = res.get('doc_category') or res.get('doc_type', '')
+                    kb_context += f"[Source: {res['filename']} | Category: {cat_label}{golden_mark}]\n{res['chunk_text']}\n\n"
                 
                 # Fetch previous transaction if exists
                 prev_transaction = None
@@ -6624,10 +7132,14 @@ def reindex_kb_route():
     """
     try:
         from db_ingestion import reindex_project_documents
-        data = request.json or {}
+        data = request.get_json(silent=True) or {}
         project_id = data.get('project_id')
         if not project_id:
             return jsonify({'error': 'project_id is required'}), 400
+
+        auth_err = _check_kb_write_permission(project_id=project_id)
+        if auth_err:
+            return auth_err
             
         success, res = reindex_project_documents(project_id)
         if success:
@@ -7518,26 +8030,73 @@ def api_clear_user_notifications():
     success = clear_user_notifications(user)
     return jsonify({'success': success}), 200
 
-# --- AI Feedback Loop Endpoint ---
-@app.route('/api/kb/feedback', methods=['POST', 'OPTIONS'])
+# --- AI Feedback Loop & Persistent Self-Learning Memory Endpoints ---
+@app.route('/api/kb/feedback', methods=['GET', 'POST', 'OPTIONS'])
 def log_kb_feedback():
     if request.method == 'OPTIONS':
         return jsonify({'status': 'ok'}), 200
+
+    if request.method == 'GET':
+        try:
+            from db_ingestion import get_kb_feedback_memories
+            doc_id = request.args.get('doc_id') or request.args.get('context_id')
+            project_id = request.args.get('project_id')
+            limit = request.args.get('limit', 30, type=int)
+            memories = get_kb_feedback_memories(project_id=project_id, doc_id=doc_id, limit=limit)
+            return jsonify({'success': True, 'memories': memories})
+        except Exception as e:
+            logger.error(f"Error fetching KB feedback memories: {e}", exc_info=True)
+            return jsonify({'error': str(e)}), 500
+
+    auth_err = _check_kb_write_permission()
+    if auth_err:
+        return auth_err
+
     try:
-        data = request.get_json() or {}
+        from db_ingestion import save_kb_feedback_memory
+        data = request.get_json(silent=True) or {}
         rating = data.get('rating', 5)
-        correction = data.get('correction', '')
-        context_id = data.get('context_id', '')
-        
-        logger.info(f"AI Feedback received: rating={rating}, correction='{correction}' for context={context_id}")
-        
+        correction = str(data.get('correction') or '').strip()
+        doc_id = data.get('doc_id') or data.get('context_id')
+        project_id = data.get('project_id')
+        req_payload = get_request_user_payload() or {}
+        created_by = req_payload.get('username') or req_payload.get('email') or 'qa_user'
+
+        saved = save_kb_feedback_memory(
+            project_id=project_id,
+            doc_id=doc_id if doc_id and doc_id != 'general' else None,
+            rating=rating,
+            correction=correction,
+            created_by=created_by
+        )
+        logger.info(f"Saved KB feedback memory id={saved['memory_id']} doc={saved['doc_id']} rating={saved['rating']}")
+
         return jsonify({
             'success': True,
-            'message': 'AI Feedback & Correction saved. RAG Context Memory tuned successfully!',
-            'rating': rating
+            'message': 'บันทึก AI Feedback & Self-Learning Memory ลงฐานข้อมูลเรียบร้อยแล้ว',
+            'memory': saved,
+            'rating': saved['rating']
         })
     except Exception as e:
-        logger.error(f"Error logging KB feedback: {e}")
+        logger.error(f"Error logging KB feedback: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/kb/feedback/<string:memory_id>', methods=['DELETE', 'OPTIONS'])
+def delete_kb_feedback_route(memory_id):
+    if request.method == 'OPTIONS':
+        return jsonify({'status': 'ok'}), 200
+    auth_err = _check_kb_write_permission()
+    if auth_err:
+        return auth_err
+    try:
+        from db_ingestion import delete_kb_feedback_memory
+        deleted = delete_kb_feedback_memory(memory_id)
+        if not deleted:
+            return jsonify({'error': 'ไม่พบรายการ Memory ที่ต้องการลบ'}), 404
+        return jsonify({'success': True, 'message': 'ลบ AI Memory เรียบร้อยแล้ว'})
+    except Exception as e:
+        logger.error(f"Error deleting KB feedback {memory_id}: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 # --- Vision AI Diagram & Wireframe Analyzer Endpoint ---

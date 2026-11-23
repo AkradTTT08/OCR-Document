@@ -1472,7 +1472,11 @@ def create_qa_document(project_id: str, doc_type: str, doc_name: str, skill_id, 
         target_skill_ids = parse_id_list(skill_id)
         skill_rows = []
         if target_skill_ids:
-            cursor.execute("SELECT skill_name, target_doc_type, markdown_instructions FROM agent_skills WHERE skill_id::text = ANY(%s) OR skill_name = ANY(%s)", (list(target_skill_ids), list(target_skill_ids)))
+            cursor.execute(
+                "SELECT skill_name, target_doc_type, markdown_instructions FROM agent_skills "
+                "WHERE (skill_id::text = ANY(%s) OR skill_name = ANY(%s)) AND COALESCE(is_active, TRUE) = TRUE",
+                (list(target_skill_ids), list(target_skill_ids))
+            )
             skill_rows = cursor.fetchall()
 
         # Fetch learned QA rules from continuous learning database
@@ -1608,7 +1612,7 @@ def create_qa_document_async(gen_id: str, project_id: str, doc_type: str, doc_na
             try:
                 cursor.execute(
                     "SELECT skill_name, target_doc_type, markdown_instructions FROM agent_skills "
-                    "WHERE skill_id::text = ANY(%s) OR skill_name = ANY(%s)", 
+                    "WHERE (skill_id::text = ANY(%s) OR skill_name = ANY(%s)) AND COALESCE(is_active, TRUE) = TRUE",
                     (list(target_skill_ids), list(target_skill_ids))
                 )
                 skill_rows = cursor.fetchall()

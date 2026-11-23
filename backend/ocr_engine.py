@@ -63,6 +63,60 @@ else:
     logger.warning(f"POPPLER_PATH does not exist: {POPPLER_PATH}")
 
 
+def _has_repetition_runaway(text: str) -> bool:
+    """ตรวจจับกรณีโมเดล LLM ติดลูปพิมพ์จุด (......) หรือขีด (------) ยาวผิดปกติจนข้อความในหน้าถูกตัดจบ"""
+    if not text:
+        return False
+    return bool(re.search(r"(\.|_|-|=|\s)\1{75,}", text))
+
+
+def _sanitize_ocr_markdown(text: str) -> str:
+    """
+    ทำความสะอาดข้อความ Markdown ที่ได้จาก OCR:
+    1) ย่อจุดไข่ปลา/เส้นประในหน้าสารบัญ (.....) ให้เหลือเพียง ' ... '
+    2) ย่อเส้นขีดแบ่งตาราง Markdown (| :---------- |) ให้เป็น '| --- |' มาตรฐาน
+    3) ย่อเส้นช่องว่างสำหรับกรอกข้อมูล (__________) ให้เหลือ '_____'
+    """
+    if not text:
+        return ""
+    cleaned_lines = []
+    for line in text.split('\n'):
+        stripped = line.strip()
+        # กรณีเป็นแถวขีดคั่นหัวตาราง Markdown เช่น | :------- | :------- |
+        if stripped.startswith('|') and re.match(r'^[|:\s-]+$', stripped) and '-' in stripped:
+            cells = stripped.strip('|').split('|')
+            norm_cells = []
+            for c in cells:
+                c_str = c.strip()
+                if c_str.startswith(':') and c_str.endswith(':'):
+                    norm_cells.append(':---:')
+                elif c_str.startswith(':'):
+                    norm_cells.append(':---')
+                elif c_str.endswith(':'):
+                    norm_cells.append('---:')
+                else:
+                    norm_cells.append('---')
+            cleaned_lines.append('| ' + ' | '.join(norm_cells) + ' |')
+            continue
+
+        # กรณีเป็นเส้นคั่นแนวนอนล้วนๆ (Horizontal Rule)
+        if re.match(r'^[-=_]{5,}$', stripped):
+            cleaned_lines.append('---')
+            continue
+
+        # ย่อจุดนำสายตาในสารบัญ (Table of Contents dot leaders) เช่น '1. บทนำ ................... 6' -> '1. บทนำ ... 6'
+        line = re.sub(r'(?:\.\s*){4,}\.', ' ... ', line)
+        line = re.sub(r'…{3,}', ' ... ', line)
+        # ย่อขีดกลางหรือขีดเส้นใต้ที่ซ้ำกันยาวเกินไปในบรรทัด
+        line = re.sub(r'-{6,}', '---', line)
+        line = re.sub(r'_{6,}', '_____', line)
+        cleaned_lines.append(line)
+
+    result = '\n'.join(cleaned_lines)
+    result = re.sub(r'\n{4,}', '\n\n\n', result)
+    return result.strip()
+
+
 def _apply_it_keyword_correction(text: str) -> str:
     """
     ใช้ไฟล์ data/user_words.txt เพื่อแก้ไขคำศัพท์ IT ที่อาจจะอ่านเพี้ยนเล็กน้อย
@@ -176,20 +230,35 @@ def ocr_image(pil_image: Image.Image, lang: str = 'tha+eng', filename: str = Non
     สกัดข้อความจากรูปภาพโดยใช้ Google Gemini Vision API (google-genai SDK)
     คืนค่าเป็น Dict: { 'text': str, 'words': list }
     """
-    model_name = os.environ.get('GEMINI_MODEL', 'gemini-3.1-flash')
+    model_name = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash')
+    if '3.1' in model_name:
+        model_name = 'gemini-2.5-flash'
     w, h = pil_image.size
 
-    # ปรับปรุง System Prompt ให้เก็บเนื้อหาครบถ้วน รองรับตารางแบบ Markdown และไม่ตัดจบกลางคัน
+    lang_hint = {
+        'tha': "Focus primarily on Thai script (ภาษาไทย) and numbers/symbols, ensuring exact Thai vowel and tone-mark ordering.",
+        'eng': "Focus primarily on English text, technical identifiers, and numbers/symbols.",
+    }.get(lang, "Focus on both Thai (ภาษาไทย) and English text, ensuring exact Thai vowel/tone-mark ordering and accurate English transcription.")
+
+    # ปรับปรุง System Prompt ให้เก็บเนื้อหาครบถ้วน รองรับตารางแบบ Markdown และป้องกันอาการติดลูปจุดสารบัญ/เส้นตาราง
     system_prompt = (
         "You are an expert OCR transcription assistant specializing in Thai and English documents, forms, technical cards, diagrams, and spreadsheets.\n"
+        f"{lang_hint}\n"
         "Transcribe ALL content from the image accurately, completely, and faithfully without omitting any rows, columns, or text blocks.\n"
-        "- If the image contains a table or spreadsheet, transcribe it strictly as a standard Markdown table (| Col 1 | Col 2 | ...) with header separator row (|---|---|). For multi-line text within a cell, use <br> instead of raw line breaks to preserve table structure.\n"
+        "- CRITICAL ANTI-LOOP RULE: NEVER output long runs of repeated characters such as dots (......), hyphens (------), underscores (______), or spaces.\n"
+        "- For Table of Contents (สารบัญ), index entries, or leader lines with dots (.....), ALWAYS replace the entire dotted leader between the heading and the page number with a single ' ... ' (maximum 3 dots, e.g., '1. บทนำ ... 6').\n"
+        "- For signature lines or fill-in form blanks, use at most 5 underscores ('_____').\n"
+        "- If the image contains a table or spreadsheet, transcribe it strictly as a standard Markdown table (| Col 1 | Col 2 | ...) with a COMPACT header separator row using exactly 3 hyphens per column (| --- | --- |). NEVER pad table cells or separator rows with long hyphen strings.\n"
         "- If the image contains a flowchart or process diagram, transcribe or convert it into a Mermaid.js diagram inside a ```mermaid ... ``` code block, preserving steps and conditions accurately.\n"
-        "- Preserve original typos, grammar, dates, numbers, IDs, URLs, and punctuation exactly as shown.\n"
+        "- Preserve original typos, grammar, dates, numbers, IDs, URLs, and punctuation exactly as shown so downstream proofreading can audit them.\n"
         "- Do NOT truncate, summarize, or skip content. Transcribe all rows from top to bottom completely.\n"
         "- Do NOT hallucinate or loop repeating phrases."
     )
-    user_prompt = "Transcribe all text from this image completely and accurately. If there are tables, preserve the table structure with Markdown format."
+    user_prompt = (
+        "Transcribe all text from this image completely and accurately from top to bottom. "
+        "If this is a Table of Contents (สารบัญ), use ' ... ' (only 3 dots) before each page number instead of long dotted lines. "
+        "If there are tables, use compact '| --- | --- |' Markdown table separators."
+    )
 
     try:
         from google.genai import types
@@ -338,15 +407,42 @@ def ocr_image(pil_image: Image.Image, lang: str = 'tha+eng', filename: str = Non
             logger.warning(f"Gemini returned no text. Finish reason: {finish}")
             text = ""
 
+        # ตรวจสอบว่าโมเดลติดลูปพิมพ์จุด (......) หรือขีด (------) จนข้อความในหน้าถูกตัดจบหรือไม่
+        if _has_repetition_runaway(text):
+            logger.warning("Detected character repetition runaway in OCR output! Retrying page with strict anti-loop recovery prompt...")
+            recovery_prompt = (
+                f"{system_prompt}\n\n"
+                "STRICT OVERRIDE: Your previous attempt got stuck in a character repetition loop (repeating '.' or '-').\n"
+                "1. NEVER repeat '.' more than 3 times (' ... '). In a Table of Contents (สารบัญ), write each line simply as: 'Heading ... PageNumber'.\n"
+                "2. NEVER repeat '-' more than 3 times ('---') in Markdown table separator rows ('| --- | --- |').\n"
+                "3. Transcribe EVERY line and row on this page completely from top to bottom."
+            )
+            try:
+                retry_resp = clients[0].models.generate_content(
+                    model=fallback_models[0],
+                    contents=[
+                        types.Part.from_bytes(data=img_bytes, mime_type='image/jpeg'),
+                        recovery_prompt,
+                    ],
+                    config=types.GenerateContentConfig(
+                        temperature=0.35,
+                        max_output_tokens=8192,
+                    )
+                )
+                if retry_resp and retry_resp.text:
+                    text = retry_resp.text
+                    logger.info("Anti-loop OCR retry succeeded.")
+            except Exception as retry_err:
+                logger.warning(f"Anti-loop OCR retry failed ({retry_err}); sanitizing initial output.")
+
         # อนุญาตให้มี Markdown code block (เช่น ```mermaid) เพื่อเก็บโครงสร้าง Flowchart
-        # หากมี ``` ครอบข้อความธรรมดามา ก็ปล่อยไว้เพราะระบบเก็บเป็น Markdown อยู่แล้ว
-        text = text.strip()
+        text = _sanitize_ocr_markdown(_normalize_thai_pdf_text(text.strip()))
 
         # Post-processing
         text = _apply_it_keyword_correction(text)
 
-        # Generate fallback bounding boxes
-        words = _generate_fallback_words(text, w, h)
+        # Generate visual bounding boxes aligned to actual ink bands on the page image
+        words = _generate_fallback_words(text, w, h, pil_image=pil_image)
 
         return {
             'text': text,
@@ -543,7 +639,9 @@ def ocr_images_batch(batch_items: list[tuple[int, Image.Image]], lang: str = 'th
         "You are an expert Thai & English OCR transcription assistant.\n"
         f"Transcribe ALL text from each of the {len(batch_items)} document page images above accurately, completely, and with PERFECT Thai vowel and tone-mark ordering.\n"
         f"You MUST separate each page strictly using these exact headers on their own lines: {markers_hint}\n"
-        "- Preserve tables as standard Markdown tables (| Col 1 | Col 2 |) when present.\n"
+        "- CRITICAL ANTI-LOOP RULE: NEVER output long runs of repeated dots (......) or hyphens (------).\n"
+        "- For Table of Contents (สารบัญ) or dotted leader lines, replace the dots with a single ' ... ' (3 dots max, e.g., '1. บทนำ ... 6').\n"
+        "- Preserve tables as standard Markdown tables with compact '| --- | --- |' separator rows.\n"
         "- Preserve original dates, numbers, IDs, and spelling faithfully. Do NOT summarize or omit any page.\n"
         "- Output ONLY the page headers and transcribed content."
     )
@@ -600,7 +698,11 @@ def ocr_images_batch(batch_items: list[tuple[int, Image.Image]], lang: str = 'th
         p_num = int(m.group(1))
         start_pos = m.end()
         end_pos = matches[idx_m + 1].start() if idx_m + 1 < len(matches) else len(raw_text)
-        page_txt = _apply_it_keyword_correction(_normalize_thai_pdf_text(raw_text[start_pos:end_pos].strip()))
+        raw_page_slice = raw_text[start_pos:end_pos].strip()
+        if _has_repetition_runaway(raw_page_slice):
+            logger.warning(f"Batch page {p_num} had repetition runaway; will re-run single-page OCR.")
+            continue
+        page_txt = _apply_it_keyword_correction(_sanitize_ocr_markdown(_normalize_thai_pdf_text(raw_page_slice)))
         parsed[p_num] = page_txt
 
     # หากหน้าใดไม่ถูกแยกออกมาครบ ให้ fallback ยิงเดี่ยวเฉพาะหน้านั้น
@@ -859,6 +961,17 @@ def ocr_pdf_bytes_generator(pdf_bytes: bytes, dpi: int = 150, lang: str = 'tha+e
         first = 1
         last = total_pages
 
+    # เตรียมดึง Native Text จาก PDF เผื่อเป็น Fallback หรือกัน LLM Repetition Runaway / API Quota (402/429)
+    native_pages_map = {}
+    try:
+        native_list = _extract_native_pdf_pages(pdf_bytes)
+        if native_list:
+            for idx, n_txt in enumerate(native_list, start=1):
+                if n_txt and len(n_txt.strip()) >= 15:
+                    native_pages_map[idx] = _sanitize_ocr_markdown(n_txt)
+    except Exception:
+        native_pages_map = {}
+
     # ใช้ Sequential เพื่อป้องกัน Rate Limit ของ Gemini Free Tier (15 RPM)
     for page_num in range(first, last + 1):
         page_start = time.time()
@@ -877,7 +990,7 @@ def ocr_pdf_bytes_generator(pdf_bytes: bytes, dpi: int = 150, lang: str = 'tha+e
         except Exception as e:
             res = {
                 'page_number': page_num,
-                'text': '',
+                'text': native_pages_map.get(page_num, ''),
                 'words': [],
                 'error': f"ไม่สามารถแปลง PDF หน้าที่ {page_num} ได้: {str(e)}",
                 'total_pages': total_pages,
@@ -889,6 +1002,17 @@ def ocr_pdf_bytes_generator(pdf_bytes: bytes, dpi: int = 150, lang: str = 'tha+e
             
         try:
             text_result = ocr_image(image, lang=lang, filename=filename)
+            ocr_txt = text_result.get('text', '') or ''
+            native_fallback = native_pages_map.get(page_num, '')
+            # หาก Vision API เกิด Error (เช่น 402/429) หรือข้อความที่ได้สั้นผิดปกติหลังจากตัด repetition loop ให้ใช้ Native PDF Text แทน
+            if native_fallback and (
+                text_result.get('error')
+                or ocr_txt.startswith('❌')
+                or (len(ocr_txt.strip()) < max(40, int(len(native_fallback) * 0.35)))
+            ):
+                logger.info(f"Using native PDF text fallback on page {page_num} ({len(native_fallback)} chars vs OCR {len(ocr_txt)} chars)")
+                text_result['text'] = native_fallback
+                text_result.pop('error', None)
             page_data = {
                 'page_number': page_num,
                 'total_pages': total_pages,
@@ -897,18 +1021,21 @@ def ocr_pdf_bytes_generator(pdf_bytes: bytes, dpi: int = 150, lang: str = 'tha+e
             }
             res = {**text_result, **page_data}
         except Exception as e:
+            native_fallback = native_pages_map.get(page_num, '')
             res = {
                 'page_number': page_num,
-                'text': '',
+                'text': native_fallback,
                 'words': [],
-                'error': str(e),
+                'error': None if native_fallback else str(e),
                 'total_pages': total_pages,
                 'target_total': (last - first + 1),
                 'time_taken': round(time.time() - page_start, 2)
             }
         yield res, image
         
-        # หน่วงเวลา 4 วินาทีระหว่างหน้า เพื่อป้องกัน Rate Limit (15 RPM)
+        # หน่วงเวลาแบบ Adaptive ตามจำนวน API Keys เพื่อสมดุลความเร็วและ Rate Limit
         if page_num < last:
-            time.sleep(4)
+            key_count = max(1, len(get_all_api_keys()))
+            delay_sec = 0.6 if key_count > 1 else 1.5
+            time.sleep(delay_sec)
 

@@ -60,28 +60,30 @@ def get_ocr_db_connection():
         password=os.environ.get("DB_PASS", "qa_password")
     )
 
-def semantic_markdown_chunking(text: str, filename: str = "", category: str = "", project_name: str = "", max_chunk_size: int = 1200) -> list[str]:
+def semantic_markdown_chunking(text: str, filename: str = "", category: str = "", project_name: str = "", max_chunk_size: int = 650, overlap: int = 100) -> list[str]:
     """
-    Advanced Heading-Aware Semantic Markdown Chunking:
+    Token-Safe Heading-Aware Semantic Markdown Chunking:
     1. Parses Markdown line by line, tracking Heading hierarchy (# H1, ## H2, ### H3, #### H4).
-    2. Keeps Markdown tables (| ... |) and Code fences (``` ... ```) intact without breaking them in half.
-    3. Prepends Contextual Breadcrumbs ([โครงการ: ... | เอกสาร: ... | หมวดหมู่: ... | โครงสร้าง: H1 > H2 > H3]) to every chunk.
-    4. Balances chunk size (~1,000-1,200 chars) for optimal dense vector embeddings.
+    2. Splits oversized paragraphs and Markdown tables cleanly at line boundaries, repeating
+       Markdown table headers across split chunks so every chunk remains self-contained.
+    3. Sizes chunks (~650 chars with ~100 char overlap) to stay inside the dense token budget
+       of multilingual MiniLM embeddings without silent tail truncation.
+    4. Prepends Contextual Breadcrumbs ([โครงการ: ... | เอกสาร: ... | หมวดหมู่: ... | ส่วน: ...]).
     """
     if not text or not text.strip():
         return []
 
     lines = text.split('\n')
     sections = []
-    
+
     current_h1 = ""
     current_h2 = ""
     current_h3 = ""
-    
+
     current_block_lines = []
     current_breadcrumb = ""
     in_code_block = False
-    
+
     def get_breadcrumb():
         parts = []
         if current_h1: parts.append(current_h1)
@@ -91,22 +93,20 @@ def semantic_markdown_chunking(text: str, filename: str = "", category: str = ""
 
     for line in lines:
         stripped = line.strip()
-        
-        # Check code block fence
+
         if stripped.startswith("```"):
             in_code_block = not in_code_block
             current_block_lines.append(line)
             continue
-            
+
         if in_code_block:
             current_block_lines.append(line)
             continue
 
-        # Check headings
         is_h1 = stripped.startswith("# ") and not stripped.startswith("## ")
         is_h2 = stripped.startswith("## ") and not stripped.startswith("### ")
         is_h3 = stripped.startswith("### ") or stripped.startswith("#### ")
-        
+
         if is_h1 or is_h2 or is_h3:
             if current_block_lines:
                 raw_block = "\n".join(current_block_lines).strip()
@@ -116,7 +116,7 @@ def semantic_markdown_chunking(text: str, filename: str = "", category: str = ""
                         "text": raw_block
                     })
                 current_block_lines = []
-                
+
             if is_h1:
                 current_h1 = stripped.lstrip("#").strip()
                 current_h2 = ""
@@ -126,7 +126,7 @@ def semantic_markdown_chunking(text: str, filename: str = "", category: str = ""
                 current_h3 = ""
             elif is_h3:
                 current_h3 = stripped.lstrip("#").strip()
-                
+
             current_breadcrumb = get_breadcrumb()
             current_block_lines.append(line)
             continue
@@ -141,14 +141,64 @@ def semantic_markdown_chunking(text: str, filename: str = "", category: str = ""
                 "text": raw_block
             })
 
+    def split_oversized_block(block: str, limit: int, ov: int) -> list[str]:
+        """Splits a large paragraph or Markdown table cleanly by lines, preserving table headers."""
+        if len(block) <= limit:
+            return [block]
+
+        block_lines = block.split('\n')
+        table_header = None
+        if (
+            len(block_lines) >= 2
+            and block_lines[0].strip().startswith('|')
+            and block_lines[1].strip().startswith('|')
+            and '-' in block_lines[1]
+        ):
+            table_header = f"{block_lines[0]}\n{block_lines[1]}"
+            data_lines = block_lines[2:]
+        else:
+            data_lines = block_lines
+
+        pieces = []
+        buf = table_header or ""
+        step = max(120, limit - max(0, min(ov, limit // 3)))
+
+        for ln in data_lines:
+            # Handle single extraordinarily long lines with overlapping slices
+            if len(ln) > limit:
+                if buf and buf != table_header:
+                    pieces.append(buf.strip())
+                    buf = table_header or ""
+                for start in range(0, len(ln), step):
+                    seg = ln[start:start + limit].strip()
+                    if seg:
+                        pieces.append(f"{table_header}\n{seg}".strip() if table_header else seg)
+                continue
+
+            candidate = f"{buf}\n{ln}".strip() if buf else ln
+            if len(candidate) <= limit:
+                buf = candidate
+            else:
+                if buf and buf != table_header:
+                    pieces.append(buf.strip())
+                if table_header:
+                    buf = f"{table_header}\n{ln}".strip()
+                else:
+                    tail = buf[-ov:].strip() if (ov > 0 and buf) else ""
+                    buf = f"{tail}\n{ln}".strip() if tail and (len(tail) + len(ln) + 1 <= limit) else ln
+
+        if buf and buf != table_header:
+            pieces.append(buf.strip())
+
+        return pieces or [block[:limit]]
+
     # Convert sections into final contextual chunks
     final_chunks = []
-    
+
     for sec in sections:
         b_crumb = sec["breadcrumb"]
         sec_text = sec["text"]
-        
-        # Build contextual prefix
+
         prefix_parts = []
         if project_name:
             prefix_parts.append(f"โครงการ: {project_name}")
@@ -158,40 +208,53 @@ def semantic_markdown_chunking(text: str, filename: str = "", category: str = ""
             prefix_parts.append(f"หมวดหมู่: {category}")
         if b_crumb and b_crumb != "เนื้อหาทั่วไป":
             prefix_parts.append(f"ส่วน: {b_crumb}")
-            
+
         prefix_header = f"[{' | '.join(prefix_parts)}]\n" if prefix_parts else ""
-        
-        # If section is within max_chunk_size, keep as single chunk
-        if len(sec_text) <= max_chunk_size:
+        body_limit = max(250, max_chunk_size - min(len(prefix_header), 180))
+
+        if len(sec_text) <= body_limit:
             final_chunks.append(f"{prefix_header}{sec_text}".strip())
         else:
             paragraphs = sec_text.split('\n\n')
             accumulated = ""
             for p in paragraphs:
-                if len(accumulated) + len(p) + 2 <= max_chunk_size:
-                    accumulated = f"{accumulated}\n\n{p}".strip() if accumulated else p
+                p_clean = p.strip()
+                if not p_clean:
+                    continue
+                if len(p_clean) > body_limit:
+                    if accumulated:
+                        final_chunks.append(f"{prefix_header}{accumulated}".strip())
+                        accumulated = ""
+                    for sub in split_oversized_block(p_clean, body_limit, overlap):
+                        final_chunks.append(f"{prefix_header}{sub}".strip())
+                    continue
+
+                if len(accumulated) + len(p_clean) + 2 <= body_limit:
+                    accumulated = f"{accumulated}\n\n{p_clean}".strip() if accumulated else p_clean
                 else:
                     if accumulated:
                         final_chunks.append(f"{prefix_header}{accumulated}".strip())
-                    accumulated = p
+                    accumulated = p_clean
             if accumulated:
                 final_chunks.append(f"{prefix_header}{accumulated}".strip())
-                
+
     if not final_chunks and text:
-        final_chunks = [text[i:i+max_chunk_size] for i in range(0, len(text), max_chunk_size - 200)]
-        
+        step = max(200, max_chunk_size - overlap)
+        final_chunks = [text[i:i + max_chunk_size].strip() for i in range(0, len(text), step) if text[i:i + max_chunk_size].strip()]
+
     return final_chunks
 
-def chunk_markdown(text: str, chunk_size: int = 1500, overlap: int = 200, filename: str = "", category: str = "", project_name: str = "") -> list[str]:
+def chunk_markdown(text: str, chunk_size: int = 650, overlap: int = 100, filename: str = "", category: str = "", project_name: str = "") -> list[str]:
     """
-    Splits markdown text into semantic chunks with contextual breadcrumb awareness.
+    Splits markdown text into token-safe semantic chunks with contextual breadcrumb awareness.
     """
     return semantic_markdown_chunking(
         text=text,
         filename=filename,
         category=category,
         project_name=project_name,
-        max_chunk_size=chunk_size
+        max_chunk_size=chunk_size,
+        overlap=overlap
     )
 
 # ===================================================================
@@ -394,16 +457,33 @@ def update_project(project_id: str, name: str = None, project_name: str = None, 
         if conn: conn.close()
 
 def delete_project(project_id: str):
-    """Delete a project and all its associated documents (CASCADE)."""
+    """Delete a project, all its associated documents (CASCADE), and clean up orphaned kb_images folders on disk."""
+    import shutil
+    from pathlib import Path
     conn = None
     cursor = None
+    doc_ids_to_clean = []
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
+        cursor.execute("SELECT doc_id FROM documents WHERE project_id = %s::uuid;", (project_id,))
+        doc_ids_to_clean = [str(r[0]) for r in cursor.fetchall() if r and r[0] is not None]
+
         cursor.execute("DELETE FROM projects WHERE project_id = %s::uuid;", (project_id,))
         if cursor.rowcount == 0:
             raise Exception("ไม่พบโครงการที่ต้องการลบ")
         conn.commit()
+
+        # Clean up orphaned preview image directories after DB commit succeeds
+        if doc_ids_to_clean:
+            kb_img_root = Path(__file__).resolve().parent.parent / 'uploads' / 'kb_images'
+            for did in doc_ids_to_clean:
+                target_dir = kb_img_root / did
+                if target_dir.exists() and target_dir.is_dir():
+                    try:
+                        shutil.rmtree(target_dir, ignore_errors=True)
+                    except Exception as clean_err:
+                        logger.warning(f"Failed to remove orphaned kb_images dir {target_dir}: {clean_err}")
         return True
     except Exception as e:
         if conn: conn.rollback()
@@ -464,7 +544,7 @@ def ingest_markdown_document(filename: str, markdown_text: str, project_id: int 
             filename=filename,
             category=doc_category,
             project_name=proj_name,
-            max_chunk_size=1200
+            max_chunk_size=650
         )
         logger.info(f"Generated {len(chunks)} contextual chunks for '{filename}'.")
 
@@ -485,13 +565,36 @@ def ingest_markdown_document(filename: str, markdown_text: str, project_id: int 
         # 5. DB Insertion
         # Check for duplicate by file_hash within the same project
         cursor.execute(
-            "SELECT doc_id FROM documents WHERE file_hash = %s AND project_id = %s::uuid AND status = 'Active';",
+            "SELECT doc_id, doc_category, original_filename, is_golden_data FROM documents "
+            "WHERE file_hash = %s AND project_id = %s::uuid AND (status = 'Active' OR status IS NULL);",
             (file_hash, effective_project_id)
         )
         existing = cursor.fetchone()
         if existing:
-            logger.info(f"Document with same hash already exists in project {effective_project_id} (doc_id={existing[0]}). Skipping ingestion.")
-            return True, str(existing[0])
+            existing_id, ex_cat, ex_fn, ex_golden = existing
+            meta_changed = (
+                (doc_category and doc_category != ex_cat) or
+                (filename and filename != ex_fn) or
+                (bool(is_golden_data) != bool(ex_golden))
+            )
+            if meta_changed:
+                cursor.execute(
+                    "UPDATE documents SET doc_category = %s, original_filename = %s, is_golden_data = %s WHERE doc_id = %s;",
+                    (doc_category or ex_cat, filename or ex_fn, bool(is_golden_data), existing_id)
+                )
+                # Refresh chunks so breadcrumbs reflect the updated filename/category
+                cursor.execute("DELETE FROM document_chunks WHERE doc_id = %s;", (existing_id,))
+                for chunk_text, emb in zip(chunks, embeddings):
+                    emb_list = emb if isinstance(emb, list) else emb.tolist()
+                    cursor.execute(
+                        "INSERT INTO document_chunks (doc_id, chunk_text, embedding) VALUES (%s, %s, %s);",
+                        (existing_id, chunk_text, emb_list)
+                    )
+                conn.commit()
+                logger.info(f"Duplicate hash detected for doc_id={existing_id}; updated metadata/breadcrumbs.")
+            else:
+                logger.info(f"Document with same hash already exists in project {effective_project_id} (doc_id={existing_id}). Skipping ingestion.")
+            return True, str(existing_id)
 
         cursor.execute(
             "INSERT INTO documents (project_id, doc_category, doc_type, original_filename, "
@@ -608,16 +711,17 @@ def update_markdown_document(
             raise Exception("Document update affected 0 rows.")
 
         # If content, category or filename changed, re-chunk and re-embed
+        content_changed = new_markdown_text is not None and new_markdown_text.strip() != cur_content
         if need_rechunk and final_content.strip():
-            # 1. Semantic Chunking
+            # 1. Semantic Chunking (Token-Safe)
             chunks = semantic_markdown_chunking(
                 text=final_content,
                 filename=final_filename,
                 category=final_category,
                 project_name=proj_name,
-                max_chunk_size=1200
+                max_chunk_size=650
             )
-            
+
             # 2. Embedding
             embedder = get_model()
             if embedder is not None:
@@ -637,6 +741,28 @@ def update_markdown_document(
 
         conn.commit()
         logger.info(f"Successfully updated document '{doc_id}' (Category: '{final_category}', Filename: '{final_filename}').")
+
+        # Re-sync Agent 1 structured requirements in background when Markdown content changed
+        if content_changed and final_content.strip() and doc_row[2]:
+            try:
+                import threading
+                from agent_1_ingestion import extract_requirements_from_text
+                target_pid = str(doc_row[2])
+                def _bg_resync(text, pid, did):
+                    try:
+                        ok, res_msg = extract_requirements_from_text(text, pid, did)
+                        if not ok:
+                            logger.warning(f"Background Agent 1 re-sync failed for doc {did}: {res_msg}")
+                        else:
+                            logger.info(f"Background Agent 1 re-sync complete for doc {did}: {res_msg}")
+                    except Exception as bg_err:
+                        logger.error(f"Background Agent 1 re-sync error for doc {did}: {bg_err}")
+                t = threading.Thread(target=_bg_resync, args=(final_content, target_pid, doc_id))
+                t.daemon = True
+                t.start()
+            except Exception as sync_err:
+                logger.warning(f"Failed to start background Agent 1 re-sync thread: {sync_err}")
+
         return True, "Update successful"
 
     except Exception as e:
@@ -689,12 +815,41 @@ def get_project_markdown_documents_summary(project_id: str, limit: int = 20):
         if conn: conn.close()
 
 
-def search_knowledge_base(query_text: str, doc_type: str = None, top_k: int = 5, project_id: str = None, hybrid: bool = True):
+CATEGORY_ALIAS_GROUPS = [
+    {"REQUIREMENT", "REQUIREMENTS", "REQ", "BRD"},
+    {"TESTCASE", "TEST CASES", "TEST CASE", "TEST_CASE", "TEST PLAN", "TESTPLAN"},
+    {"USERMANUAL", "USER MANUAL", "USER_MANUAL"},
+    {"ADMIN MANUAL", "ADMINMANUAL", "ADMIN_MANUAL"},
+    {"INSTALLATION SYSTEM", "INSTALLATION GUIDE", "INSTALL GUIDE"},
+    {"TOR/SOW", "TOR", "SOW"},
+]
+
+
+def _expand_category_aliases(doc_type):
+    """Expands category filters so singular/plural and spacing variants match reliably."""
+    raw_list = doc_type if isinstance(doc_type, list) else [doc_type]
+    expanded = set()
+    for item in raw_list:
+        if not item:
+            continue
+        norm = str(item).strip().upper()
+        if not norm or norm == "OTHER":
+            continue
+        expanded.add(norm)
+        for group in CATEGORY_ALIAS_GROUPS:
+            if norm in group:
+                expanded.update(group)
+    return sorted(expanded)
+
+
+def search_knowledge_base(query_text: str, doc_type: str = None, top_k: int = 5, project_id: str = None, hybrid: bool = True, golden_boost: float = 0.08):
     """
-    Enhanced Hybrid Knowledge Base Search (Semantic Vector Distance + Keyword Exact Match Ranking):
-    - Uses pgvector's <=> Cosine distance for deep semantic relevance.
-    - Applies keyword match boost for technical terms, IDs, or endpoints (e.g. REQ-001, /api/v1/..., HTTP codes).
-    - Supports category filtering (Requirement, SRS, API_Spec, Architecture, Test_Standard, etc.).
+    Unified Hybrid Knowledge Base Search (Single Source of Truth for UI, Agents, and MCP):
+    - Uses pgvector <=> cosine distance for semantic similarity (falls back to SQL ILIKE if embedder unavailable).
+    - Applies Keyword Exact-Match Boost (+0.25 max) for technical terms, IDs, Thai terms, and endpoints.
+    - Applies Golden Data Boost (+0.08 default) so authoritative Golden Data docs rank above drafts.
+    - Normalizes category aliases (e.g., Requirement <-> Requirements, TestCase <-> Test Cases).
+    - Returns standardized keys (chunk_id, doc_id/document_id, filename/doc_name, doc_category/doc_type, is_golden_data, project_name, similarity).
     """
     if not query_text or not query_text.strip():
         return []
@@ -702,80 +857,118 @@ def search_knowledge_base(query_text: str, doc_type: str = None, top_k: int = 5,
     conn = None
     cursor = None
     try:
+        import re
         embedder = get_model()
-        query_embedding = embedder.encode([query_text])[0] if embedder is not None else [0.0] * 384
-        
+        query_embedding = embedder.encode([query_text])[0] if embedder is not None else None
+        q_words = [w.lower() for w in re.findall(r'[a-zA-Z0-9_\-\.\/]{3,}|[\u0E00-\u0E7F]{3,}', query_text) if len(w) >= 3]
+
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        sql = """
-            SELECT 
-                dc.chunk_text, 
-                d.doc_category, 
-                d.original_filename,
-                1 - (dc.embedding <=> %s::vector) as similarity,
-                d.doc_id
-            FROM document_chunks dc
-            JOIN documents d ON dc.doc_id = d.doc_id
-            WHERE (d.status = 'Active' OR d.status IS NULL)
-        """
-        params = [query_embedding.tolist() if hasattr(query_embedding, 'tolist') else query_embedding]
+        expanded_cats = _expand_category_aliases(doc_type) if doc_type else []
+        where_clauses = ["(d.status = 'Active' OR d.status IS NULL)"]
+        filter_params = []
 
         if project_id:
-            sql += " AND d.project_id = %s::uuid"
-            params.append(project_id)
+            where_clauses.append("d.project_id = %s::uuid")
+            filter_params.append(project_id)
 
-        if doc_type:
-            if isinstance(doc_type, list) and len(doc_type) > 0:
-                valid_types = [dt.upper() for dt in doc_type if dt and dt.upper() != 'OTHER']
-                if valid_types:
-                    placeholders = ', '.join(['%s'] * len(valid_types))
-                    sql += f" AND UPPER(TRIM(d.doc_category)) IN ({placeholders})"
-                    params.extend(valid_types)
-            elif isinstance(doc_type, str) and doc_type.upper() != "OTHER":
-                sql += " AND UPPER(TRIM(d.doc_category)) = %s"
-                params.append(doc_type.upper())
+        if expanded_cats:
+            placeholders = ', '.join(['%s'] * len(expanded_cats))
+            where_clauses.append(f"UPPER(TRIM(d.doc_category)) IN ({placeholders})")
+            filter_params.extend(expanded_cats)
 
-        # Retrieve more candidates if hybrid search is enabled
-        fetch_limit = top_k * 3 if hybrid else top_k
-        sql += " ORDER BY dc.embedding <=> %s::vector LIMIT %s;"
-        params.extend([query_embedding.tolist() if hasattr(query_embedding, 'tolist') else query_embedding, fetch_limit])
+        where_sql = " AND ".join(where_clauses)
+        fetch_limit = max(top_k * 3, 15) if hybrid else top_k
 
-        cursor.execute(sql, params)
-        raw_results = cursor.fetchall()
-        
+        if query_embedding is not None:
+            vec_list = query_embedding.tolist() if hasattr(query_embedding, 'tolist') else query_embedding
+            sql = f"""
+                SELECT
+                    dc.chunk_id,
+                    dc.chunk_text,
+                    d.doc_category,
+                    d.original_filename,
+                    1 - (dc.embedding <=> %s::vector) AS similarity,
+                    d.doc_id,
+                    COALESCE(d.is_golden_data, FALSE) AS is_golden_data,
+                    COALESCE(p.project_name, '') AS project_name
+                FROM document_chunks dc
+                JOIN documents d ON dc.doc_id = d.doc_id
+                LEFT JOIN projects p ON d.project_id = p.project_id
+                WHERE {where_sql}
+                ORDER BY dc.embedding <=> %s::vector ASC
+                LIMIT %s;
+            """
+            params = [vec_list] + filter_params + [vec_list, fetch_limit]
+            cursor.execute(sql, params)
+            raw_results = cursor.fetchall()
+        else:
+            # Graceful SQL keyword fallback when sentence-transformers model is unavailable
+            kw_terms = q_words[:6] if q_words else [query_text.strip()]
+            like_clause = " OR ".join(["dc.chunk_text ILIKE %s"] * len(kw_terms))
+            sql = f"""
+                SELECT
+                    dc.chunk_id,
+                    dc.chunk_text,
+                    d.doc_category,
+                    d.original_filename,
+                    0.50 AS similarity,
+                    d.doc_id,
+                    COALESCE(d.is_golden_data, FALSE) AS is_golden_data,
+                    COALESCE(p.project_name, '') AS project_name
+                FROM document_chunks dc
+                JOIN documents d ON dc.doc_id = d.doc_id
+                LEFT JOIN projects p ON d.project_id = p.project_id
+                WHERE {where_sql} AND ({like_clause})
+                ORDER BY COALESCE(d.is_golden_data, FALSE) DESC, dc.chunk_id DESC
+                LIMIT %s;
+            """
+            params = filter_params + [f"%{t}%" for t in kw_terms] + [fetch_limit]
+            cursor.execute(sql, params)
+            raw_results = cursor.fetchall()
+
         results = []
-        # Keyword extraction for hybrid boosting
-        import re
-        q_words = [w.lower() for w in re.findall(r'[a-zA-Z0-9_\-\.\/]{3,}|[\u0E00-\u0E7F]{3,}', query_text) if len(w) >= 3]
-        
         for row in raw_results:
-            chunk_txt = row[0] or ""
-            doc_cat = row[1] or "Reference"
-            doc_fn = row[2] or "Untitled"
-            base_sim = float(row[3]) if row[3] is not None else 0.0
-            
-            # Hybrid Keyword Score Calculation
+            chunk_id_val = str(row[0]) if row[0] is not None else None
+            chunk_txt = row[1] or ""
+            doc_cat = row[2] or "Reference"
+            doc_fn = row[3] or "Untitled"
+            base_sim = float(row[4]) if row[4] is not None else 0.0
+            doc_id_str = str(row[5]) if row[5] is not None else None
+            is_golden = bool(row[6])
+            proj_name = row[7] or ""
+
+            # Hybrid Keyword Boost
             keyword_score = 0.0
             if hybrid and q_words:
-                matched_count = sum(1 for w in q_words if w in chunk_txt.lower())
-                keyword_score = (matched_count / len(q_words)) * 0.25 # Up to +0.25 bonus score
-                
-            combined_score = round(min(1.0, base_sim + keyword_score), 4)
-            
+                lower_txt = chunk_txt.lower()
+                matched_count = sum(1 for w in q_words if w in lower_txt)
+                keyword_score = (matched_count / len(q_words)) * 0.25
+
+            # Golden Data Authority Boost
+            g_boost = float(golden_boost) if is_golden else 0.0
+
+            combined_score = round(min(1.0, max(0.0, base_sim + keyword_score + g_boost)), 4)
+
             results.append({
+                "chunk_id": chunk_id_val,
                 "chunk_text": chunk_txt,
                 "doc_type": doc_cat,
+                "doc_category": doc_cat,
                 "filename": doc_fn,
-                "doc_id": str(row[4]) if len(row) > 4 else None,
+                "doc_name": doc_fn,
+                "doc_id": doc_id_str,
+                "document_id": doc_id_str,
+                "is_golden_data": is_golden,
+                "project_name": proj_name,
                 "similarity": combined_score,
-                "raw_vector_sim": round(base_sim, 4)
+                "raw_vector_sim": round(base_sim, 4),
+                "golden_boost": round(g_boost, 4)
             })
-            
-        # Re-sort by combined hybrid score
-        if hybrid:
-            results.sort(key=lambda x: x["similarity"], reverse=True)
-            
+
+        # Re-sort by combined hybrid + golden score
+        results.sort(key=lambda x: x["similarity"], reverse=True)
         return results[:top_k]
 
     except Exception as e:
@@ -788,7 +981,7 @@ def search_knowledge_base(query_text: str, doc_type: str = None, top_k: int = 5,
 
 def reindex_project_documents(project_id: str):
     """
-    Re-indexes all active documents in a project using Semantic Markdown Chunking & Contextual Breadcrumbs.
+    Re-indexes all active documents in a project using Token-Safe Semantic Markdown Chunking & Contextual Breadcrumbs.
     """
     if not project_id:
         return False, "project_id is required"
@@ -797,12 +990,12 @@ def reindex_project_documents(project_id: str):
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
+
         # Fetch project name
         cursor.execute("SELECT project_name FROM projects WHERE project_id = %s::uuid", (project_id,))
         p_row = cursor.fetchone()
         proj_name = p_row[0] if p_row else ""
-        
+
         # Fetch all active documents
         cursor.execute("""
             SELECT doc_id, original_filename, doc_category, full_markdown_content
@@ -810,10 +1003,10 @@ def reindex_project_documents(project_id: str):
             WHERE project_id = %s::uuid AND (status = 'Active' OR status IS NULL)
         """, (project_id,))
         docs = cursor.fetchall()
-        
+
         embedder = get_model()
         total_chunks = 0
-        
+
         for doc_id, filename, category, content in docs:
             if not content:
                 continue
@@ -822,16 +1015,16 @@ def reindex_project_documents(project_id: str):
                 filename=filename or "",
                 category=category or "",
                 project_name=proj_name,
-                max_chunk_size=1200
+                max_chunk_size=650
             )
             if not chunks:
                 continue
-                
+
             if embedder is not None:
                 embeddings = [emb.tolist() for emb in embedder.encode(chunks)]
             else:
                 embeddings = [[0.0] * 384 for _ in chunks]
-                
+
             cursor.execute("DELETE FROM document_chunks WHERE doc_id = %s", (doc_id,))
             for chunk_text, emb in zip(chunks, embeddings):
                 cursor.execute(
@@ -839,7 +1032,7 @@ def reindex_project_documents(project_id: str):
                     (doc_id, chunk_text, emb)
                 )
             total_chunks += len(chunks)
-            
+
         conn.commit()
         logger.info(f"Re-indexed project {project_id}: {len(docs)} documents, {total_chunks} total contextual chunks.")
         return True, {"documents_count": len(docs), "total_chunks": total_chunks}
@@ -1145,6 +1338,20 @@ def retrieve_comprehensive_qa_context(project_id: str, query: str, history: list
                 })
             context_parts.append("\n".join(catalog_lines))
             
+        # Section 2B: AI Self-Learning Memory & Domain Corrections
+        if project_id:
+            try:
+                memory_ctx = format_kb_feedback_memory_context(project_id, limit=12)
+                if memory_ctx:
+                    context_parts.append(memory_ctx)
+                    sources_metadata.append({
+                        "type": "memory",
+                        "name": "AI Self-Learning Memory (Domain Corrections)",
+                        "category": "KB Feedback"
+                    })
+            except Exception as mem_err:
+                logger.warning(f"Failed to load KB feedback memory for research: {mem_err}")
+
         # Section 3: Structured Requirements
         if structured_reqs:
             req_lines = [f"### [STRUCTURED REQUIREMENTS ({len(structured_reqs)} items)]"]
@@ -2255,4 +2462,181 @@ def get_ocr_history_by_id(history_id):
     finally:
         if cursor: cursor.close()
         if conn: conn.close()
+
+
+# ===================================================================
+# AI Feedback & Self-Learning Memory (Persistent KB Memory for Agents)
+# ===================================================================
+
+def _ensure_kb_feedback_table(cursor):
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS kb_feedback_memory (
+            memory_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            project_id UUID REFERENCES projects(project_id) ON DELETE CASCADE,
+            doc_id UUID REFERENCES documents(doc_id) ON DELETE CASCADE,
+            rating INTEGER DEFAULT 5,
+            correction TEXT NOT NULL DEFAULT '',
+            created_by VARCHAR(150),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_kb_feedback_project ON kb_feedback_memory(project_id, created_at DESC);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_kb_feedback_doc ON kb_feedback_memory(doc_id, created_at DESC);")
+
+
+def save_kb_feedback_memory(project_id: str = None, doc_id: str = None, rating: int = 5, correction: str = "", created_by: str = None):
+    """Persists domain feedback/correction into kb_feedback_memory so all QA Agents & MCP can retrieve it."""
+    import uuid
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        _ensure_kb_feedback_table(cursor)
+
+        def _valid_uuid(val):
+            if not val:
+                return None
+            try:
+                return str(uuid.UUID(str(val)))
+            except Exception:
+                return None
+
+        clean_doc_id = _valid_uuid(doc_id)
+        clean_project_id = _valid_uuid(project_id)
+
+        # Resolve project_id from documents if only doc_id was supplied
+        if clean_doc_id and not clean_project_id:
+            cursor.execute("SELECT project_id FROM documents WHERE doc_id = %s::uuid;", (clean_doc_id,))
+            row = cursor.fetchone()
+            if row and row[0]:
+                clean_project_id = str(row[0])
+
+        safe_rating = max(1, min(5, int(rating))) if rating is not None else 5
+        clean_correction = (correction or "").strip()
+
+        cursor.execute("""
+            INSERT INTO kb_feedback_memory (project_id, doc_id, rating, correction, created_by)
+            VALUES (%s, %s, %s, %s, %s)
+            RETURNING memory_id, project_id, doc_id, rating, correction, created_by, created_at;
+        """, (clean_project_id, clean_doc_id, safe_rating, clean_correction, created_by))
+        r = cursor.fetchone()
+        conn.commit()
+        return {
+            "id": str(r[0]),
+            "memory_id": str(r[0]),
+            "project_id": str(r[1]) if r[1] else None,
+            "doc_id": str(r[2]) if r[2] else None,
+            "rating": int(r[3]),
+            "correction": r[4] or "",
+            "created_by": r[5] or "",
+            "created_at": r[6].isoformat() if r[6] else None
+        }
+    except Exception as e:
+        if conn: conn.rollback()
+        logger.error(f"Error saving kb_feedback_memory: {e}", exc_info=True)
+        raise
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+
+
+def get_kb_feedback_memories(project_id: str = None, doc_id: str = None, limit: int = 30):
+    """Fetches saved AI feedback / self-learning memories scoped by doc_id and/or project_id."""
+    import uuid
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        _ensure_kb_feedback_table(cursor)
+
+        def _valid_uuid(val):
+            if not val:
+                return None
+            try:
+                return str(uuid.UUID(str(val)))
+            except Exception:
+                return None
+
+        clean_doc = _valid_uuid(doc_id)
+        clean_proj = _valid_uuid(project_id)
+
+        clauses = []
+        params = []
+        if clean_doc:
+            clauses.append("m.doc_id = %s::uuid")
+            params.append(clean_doc)
+        elif clean_proj:
+            clauses.append("m.project_id = %s::uuid")
+            params.append(clean_proj)
+
+        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(max(1, min(100, int(limit or 30))))
+
+        cursor.execute(f"""
+            SELECT m.memory_id, m.project_id, m.doc_id, m.rating, m.correction, m.created_by, m.created_at,
+                   COALESCE(d.original_filename, '') AS doc_name
+            FROM kb_feedback_memory m
+            LEFT JOIN documents d ON m.doc_id = d.doc_id
+            {where_sql}
+            ORDER BY m.created_at DESC
+            LIMIT %s;
+        """, params)
+
+        items = []
+        for r in cursor.fetchall():
+            items.append({
+                "id": str(r[0]),
+                "memory_id": str(r[0]),
+                "project_id": str(r[1]) if r[1] else None,
+                "doc_id": str(r[2]) if r[2] else None,
+                "rating": int(r[3]) if r[3] is not None else 5,
+                "correction": r[4] or "",
+                "created_by": r[5] or "",
+                "created_at": r[6].isoformat() if r[6] else None,
+                "doc_name": r[7] or ""
+            })
+        return items
+    except Exception as e:
+        logger.error(f"Error fetching kb_feedback_memory: {e}", exc_info=True)
+        return []
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+
+
+def delete_kb_feedback_memory(memory_id: str) -> bool:
+    """Deletes a specific AI Feedback memory entry by UUID."""
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        _ensure_kb_feedback_table(cursor)
+        cursor.execute("DELETE FROM kb_feedback_memory WHERE memory_id = %s::uuid;", (memory_id,))
+        deleted = cursor.rowcount > 0
+        conn.commit()
+        return deleted
+    except Exception as e:
+        if conn: conn.rollback()
+        logger.error(f"Error deleting kb_feedback_memory {memory_id}: {e}", exc_info=True)
+        return False
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+
+
+def format_kb_feedback_memory_context(project_id: str = None, limit: int = 12) -> str:
+    """Formats saved project domain corrections as a prompt-ready context block for QA Agents & MCP."""
+    memories = get_kb_feedback_memories(project_id=project_id, limit=limit)
+    usable = [m for m in memories if (m.get("correction") or "").strip()]
+    if not usable:
+        return ""
+    lines = ["=== AI Self-Learning Memory & Domain Corrections (คำแนะนำและกฎเฉพาะโครงการจากทีม QA) ==="]
+    for m in usable:
+        src = f" [เอกสาร: {m['doc_name']}]" if m.get("doc_name") else ""
+        lines.append(f"- (Rating {m['rating']}/5){src}: {m['correction']}")
+    return "\n".join(lines) + "\n"
+
 

@@ -44,7 +44,7 @@ def execute_agent(agent_type: str, input_data: str, params: Dict[str, Any]) -> s
     elif agent_type == "qa_doc_create":
         from agent_6_doc_creator import create_qa_document
         project_id = params.get("project_id", "")
-        skill_id = int(params.get("skill_id", "1"))
+        skill_id = params.get("skill_id") or ""
         doc_type = params.get("doc_type", "General Document")
         doc_name = params.get("doc_name", "Generated Doc")
         success, result = create_qa_document(project_id, doc_type, doc_name, skill_id)

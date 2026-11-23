@@ -82,6 +82,8 @@ def check_format_rules(text: str) -> List[Dict[str, Any]]:
     rules = load_format_rules()
     violations = []
     newline_positions = _build_line_map(text)
+    opening_punct = set('("([{\'“‘<|')
+    closing_punct = set(')"\']}\'”’>.,;:|!?')
 
     for rule in rules:
         rule_type = rule.get("rule_type")
@@ -92,19 +94,20 @@ def check_format_rules(text: str) -> List[Dict[str, Any]]:
         if not pattern:
             continue
 
+        tok_lang = 'thai' if any('\u0e00' <= c <= '\u0e7f' for c in pattern) else 'english'
+
         try:
             if rule_type == "preceded_by_space":
-                # ตรวจสอบว่าต้องมีช่องว่างข้างหน้า
+                # ตรวจสอบว่าต้องมีช่องว่างข้างหน้า (ยกเว้นหลังเครื่องหมายคำพูด/วงเล็บเปิด/เส้นตาราง Markdown)
                 for m in re.finditer(re.escape(pattern), text):
                     start = m.start()
                     if start > 0:
                         preceding_char = text[start - 1]
-                        if not preceding_char.isspace():
-                            # ละเว้นในกรณีเป็นเครื่องหมายคำพูดหรือสัญลักษณ์เปิดวรรคตอนอื่น ๆ (ถ้าจำเป็น)
+                        if not preceding_char.isspace() and preceding_char not in opening_punct:
                             line_number = _get_line_number(start, newline_positions)
                             violations.append({
                                 'token': m.group(),
-                                'lang': 'thai',
+                                'lang': tok_lang,
                                 'line_number': line_number,
                                 'suggestions': [suggested_fix] if suggested_fix else [f" {pattern}"],
                                 'position': start,
@@ -113,17 +116,17 @@ def check_format_rules(text: str) -> List[Dict[str, Any]]:
                             })
 
             elif rule_type == "followed_by_space":
-                # ตรวจสอบว่าต้องมีช่องว่างข้างหลัง
+                # ตรวจสอบว่าต้องมีช่องว่างข้างหลัง (ยกเว้นหน้าเครื่องหมายวรรคตอนปิด/เส้นตาราง Markdown)
                 for m in re.finditer(re.escape(pattern), text):
                     end = m.end()
                     if end < len(text):
                         following_char = text[end]
-                        if not following_char.isspace():
+                        if not following_char.isspace() and following_char not in closing_punct:
                             start = m.start()
                             line_number = _get_line_number(start, newline_positions)
                             violations.append({
                                 'token': m.group(),
-                                'lang': 'thai',
+                                'lang': tok_lang,
                                 'line_number': line_number,
                                 'suggestions': [suggested_fix] if suggested_fix else [f"{pattern} "],
                                 'position': start,
@@ -138,7 +141,7 @@ def check_format_rules(text: str) -> List[Dict[str, Any]]:
                     line_number = _get_line_number(start, newline_positions)
                     violations.append({
                         'token': m.group(),
-                        'lang': 'thai',
+                        'lang': tok_lang,
                         'line_number': line_number,
                         'suggestions': [suggested_fix] if suggested_fix else [],
                         'position': start,
@@ -149,11 +152,13 @@ def check_format_rules(text: str) -> List[Dict[str, Any]]:
             elif rule_type == "custom_regex":
                 # ตรวจสอบด้วย Regex กำหนดเอง
                 for m in re.finditer(pattern, text):
+                    if not m.group():
+                        continue
                     start = m.start()
                     line_number = _get_line_number(start, newline_positions)
                     violations.append({
                         'token': m.group(),
-                        'lang': 'thai',
+                        'lang': tok_lang,
                         'line_number': line_number,
                         'suggestions': [suggested_fix] if suggested_fix else [],
                         'position': start,
