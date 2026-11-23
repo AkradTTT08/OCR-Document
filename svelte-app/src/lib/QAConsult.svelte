@@ -96,6 +96,117 @@
     scrollToSection("qa-doc-inspector-section");
   }
 
+  let reportViewMode = "formatted"; // 'formatted' | 'raw'
+
+  // Build structured Page-by-Page Summary grouped by page number for the Report Box
+  $: reportPageGroups = (() => {
+    if (!scanResult) return [];
+    const map = new Map();
+    const ensure = (key, label, pageNum) => {
+      if (!map.has(key)) map.set(key, { key, label, pageNum, items: [] });
+      return map.get(key);
+    };
+    (scanResult.qa_findings || []).forEach((f, idx) => {
+      const pn = f.page_number ? Number(f.page_number) : null;
+      const key = pn ? `p-${pn}` : "global";
+      const lbl = pn ? `หน้า ${pn}` : "ภาพรวมทั้งเอกสาร";
+      ensure(key, lbl, pn).items.push({
+        kind: "finding",
+        severity: f.severity || "Info",
+        topic: f.check_type || "QA Finding",
+        location: f.location || f.page_label || lbl,
+        summary: f.issue || "-",
+        idx
+      });
+    });
+    (scanResult.exit_criteria_eval?.items || [])
+      .filter(it => String(it.status || "").toUpperCase() === "FAIL")
+      .forEach(it => {
+        const pns = getExitItemPageNumbers(it);
+        const targets = pns.length > 0 ? pns : [null];
+        targets.forEach(pn => {
+          const key = pn ? `p-${pn}` : "global";
+          const lbl = pn ? `หน้า ${pn}` : "ภาพรวมทั้งเอกสาร";
+          ensure(key, lbl, pn).items.push({
+            kind: "exit_fail",
+            severity: "FAIL",
+            topic: `Exit Criteria [${it.item_code}]`,
+            location: it.location || it.page_ref || lbl,
+            summary: it.question_text || it.remarks || "-"
+          });
+        });
+      });
+    return Array.from(map.values()).sort((a, b) => {
+      if (a.pageNum === null) return 1;
+      if (b.pageNum === null) return -1;
+      return a.pageNum - b.pageNum;
+    });
+  })();
+
+  function escapeHtmlSafe(str) {
+    return String(str || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  /**
+   * Convert QA Consult Markdown report into clean, structured HTML headings, bullets, and highlighted [หน้า N] chips.
+   * Strictly escapes HTML first before applying safe inline formatting.
+   */
+  function formatConsultReportHtml(rawText) {
+    const safe = escapeHtmlSafe(rawText);
+    const lines = safe.split(/\r?\n/);
+    const out = [];
+    let inList = false;
+
+    const inlineFormat = (s) => {
+      return s
+        .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+        .replace(/`([^`]+)`/g, "<code>$1</code>")
+        .replace(/\[(หน้า\s*\d+(?:\s*\|[^\]]+)?|Page\s*\d+(?:\s*\|[^\]]+)?)\]/gi, '<span class="rpt-page-badge">$1</span>');
+    };
+
+    for (const rawLine of lines) {
+      const t = rawLine.trim();
+      if (!t) {
+        if (inList) { out.push("</ul>"); inList = false; }
+        continue;
+      }
+      if (/^---+$/.test(t)) {
+        if (inList) { out.push("</ul>"); inList = false; }
+        out.push('<hr class="rpt-divider" />');
+        continue;
+      }
+      const hMatch = t.match(/^(#{1,4})\s+(.+)$/);
+      if (hMatch) {
+        if (inList) { out.push("</ul>"); inList = false; }
+        const lvl = hMatch[1].length;
+        const cleanTitle = hMatch[2].replace(/^\*\*|\*\*$/g, "");
+        out.push(`<div class="rpt-heading rpt-h${Math.min(lvl, 3)}">${inlineFormat(cleanTitle)}</div>`);
+        continue;
+      }
+      // Numbered bold section headers like "**1. ความสอดคล้อง**"
+      const numHead = t.match(/^\*\*(\d+\..+?)\*\*$/);
+      if (numHead) {
+        if (inList) { out.push("</ul>"); inList = false; }
+        out.push(`<div class="rpt-heading rpt-h2">${inlineFormat(numHead[1])}</div>`);
+        continue;
+      }
+      const bulletMatch = t.match(/^[\*\-\•]\s+(.+)$/);
+      if (bulletMatch) {
+        if (!inList) { out.push('<ul class="rpt-list">'); inList = true; }
+        out.push(`<li>${inlineFormat(bulletMatch[1])}</li>`);
+        continue;
+      }
+      if (inList) { out.push("</ul>"); inList = false; }
+      out.push(`<p class="rpt-para">${inlineFormat(t)}</p>`);
+    }
+    if (inList) out.push("</ul>");
+    return out.join("\n");
+  }
+
   let showGateModal = false;
   /** @type {any} */
   let gateResultData = null;
@@ -2531,15 +2642,20 @@
                   <tr class="row-status-{finding.severity === 'Critical' || finding.severity === 'High' ? 'fail' : finding.severity === 'Medium' ? 'na' : 'pass'}">
                     <td class="item-code-cell" style="text-align: center;"><strong>{i + 1}</strong></td>
                     <td style="text-align: center;">
-                      <button
-                        type="button"
-                        class="btn-page-jump"
-                        class:has-page={Boolean(finding.page_number)}
-                        on:click={() => jumpToFindingInInspector(finding, i)}
-                        title="คลิกเพื่อเปิดหน้าเอกสารและไฮไลต์จุดผิดพลาดนี้"
-                      >
-                        {finding.page_number ? (finding.page_label || `หน้า ${finding.page_number}`) : 'ภาพรวม'}
-                      </button>
+                      <div style="display: flex; flex-direction: column; align-items: center; gap: 4px;">
+                        <button
+                          type="button"
+                          class="btn-page-jump"
+                          class:has-page={Boolean(finding.page_number)}
+                          on:click={() => jumpToFindingInInspector(finding, i)}
+                          title="คลิกเพื่อเปิดหน้าเอกสารและไฮไลต์จุดผิดพลาดนี้"
+                        >
+                          {finding.page_number ? (finding.page_label || `หน้า ${finding.page_number}`) : 'ภาพรวม'}
+                        </button>
+                        {#if finding.location && finding.location !== finding.page_label}
+                          <span class="loc-sub-label" title={finding.location}>{finding.location}</span>
+                        {/if}
+                      </div>
                     </td>
                     <td class="category-cell">{finding.check_type || '-'}</td>
                     <td class="question-cell">
@@ -2713,27 +2829,37 @@
                       </td>
                       <td style="text-align: center;">
                         {#if itemPages.length > 0}
-                          <div style="display: flex; flex-wrap: wrap; gap: 4px; justify-content: center;">
-                            {#each itemPages as pn}
-                              <button
-                                type="button"
-                                class="btn-page-jump has-page"
-                                on:click={() => jumpToPageInInspector(pn)}
-                                title="คลิกเพื่อเปิดดูหน้า {pn} ใน Document Inspector"
-                              >
-                                หน้า {pn}
-                              </button>
-                            {/each}
+                          <div style="display: flex; flex-direction: column; align-items: center; gap: 4px;">
+                            <div style="display: flex; flex-wrap: wrap; gap: 4px; justify-content: center;">
+                              {#each itemPages as pn}
+                                <button
+                                  type="button"
+                                  class="btn-page-jump has-page"
+                                  on:click={() => jumpToPageInInspector(pn)}
+                                  title="คลิกเพื่อเปิดดูหน้า {pn} ใน Document Inspector"
+                                >
+                                  หน้า {pn}
+                                </button>
+                              {/each}
+                            </div>
+                            {#if item.location && item.location !== item.page_ref}
+                              <span class="loc-sub-label" title={item.location}>{item.location}</span>
+                            {/if}
                           </div>
                         {:else}
-                          <button
-                            type="button"
-                            class="btn-page-jump"
-                            on:click={() => jumpToPageInInspector('global')}
-                            title="คลิกเพื่อดูประเด็นภาพรวมทั้งเอกสาร"
-                          >
-                            ภาพรวม
-                          </button>
+                          <div style="display: flex; flex-direction: column; align-items: center; gap: 4px;">
+                            <button
+                              type="button"
+                              class="btn-page-jump"
+                              on:click={() => jumpToPageInInspector('global')}
+                              title="คลิกเพื่อดูประเด็นภาพรวมทั้งเอกสาร"
+                            >
+                              {item.page_ref || 'ภาพรวม'}
+                            </button>
+                            {#if item.location && item.location !== item.page_ref}
+                              <span class="loc-sub-label" title={item.location}>{item.location}</span>
+                            {/if}
+                          </div>
                         {/if}
                       </td>
                       <td class="remarks-cell">
@@ -2766,6 +2892,14 @@
           </div>
           <div class="email-header-actions">
             {#if scanResult.report}
+              <button
+                type="button"
+                class="btn-report-action"
+                on:click={() => reportViewMode = reportViewMode === 'formatted' ? 'raw' : 'formatted'}
+                title="สลับมุมมองรายงานแบบจัดหัวข้อ / ข้อความดิบ"
+              >
+                {reportViewMode === 'formatted' ? 'ดูข้อความดิบ (Raw)' : 'มุมมองอ่านง่าย'}
+              </button>
               <button type="button" class="btn-report-action" on:click={copyReportText} title="คัดลอกข้อความรายงาน">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                 คัดลอกรายงาน
@@ -2780,10 +2914,57 @@
         <div class="email-body">
           <p>เรียนผู้ใช้งาน,</p>
           <p>ระบบ Spectra QA ได้ทำการตรวจสอบเอกสาร <b>{scanResult.filename || 'ไม่ระบุชื่อไฟล์'}</b> ประเภท <b>{scanResult.doc_type || 'ไม่ระบุประเภท'}</b> เรียบร้อยแล้ว</p>
-          <p>นี่คือผลการวิเคราะห์และเปรียบเทียบกับฐานข้อมูล Knowledge Base:</p>
+
+          <!-- Structured Page-by-Page Summary Index -->
+          {#if reportPageGroups.length > 0}
+            <div class="report-page-index-box">
+              <div class="rpi-header">
+                <span class="rpi-title">สรุปหัวข้อที่พบข้อผิดพลาดแยกตามหมายเลขหน้าเอกสาร</span>
+                <span class="rpi-count">{reportPageGroups.length} กลุ่มหน้า</span>
+              </div>
+              <div class="rpi-groups">
+                {#each reportPageGroups as grp}
+                  <div class="rpi-group-card">
+                    <div class="rpi-group-head">
+                      <button
+                        type="button"
+                        class="btn-page-jump"
+                        class:has-page={grp.pageNum !== null}
+                        on:click={() => jumpToPageInInspector(grp.pageNum)}
+                        title="คลิกเพื่อเปิดดู {grp.label} ใน Document Inspector"
+                      >
+                        {grp.label}
+                      </button>
+                      <span class="rpi-group-cnt">พบ {grp.items.length} ประเด็น</span>
+                    </div>
+                    <ul class="rpi-item-list">
+                      {#each grp.items as it}
+                        <li>
+                          <span class="rpi-tag" class:fail={it.kind === 'exit_fail' || it.severity === 'Critical' || it.severity === 'High'}>
+                            {it.topic}
+                          </span>
+                          {#if it.location && it.location !== grp.label}
+                            <span class="rpi-loc">({it.location})</span>
+                          {/if}
+                          <span class="rpi-summary">{it.summary}</span>
+                        </li>
+                      {/each}
+                    </ul>
+                  </div>
+                {/each}
+              </div>
+            </div>
+          {/if}
+
           <hr>
           {#if scanResult.report}
-            <pre>{scanResult.report}</pre>
+            {#if reportViewMode === 'raw'}
+              <pre>{scanResult.report}</pre>
+            {:else}
+              <div class="formatted-consult-report">
+                {@html formatConsultReportHtml(scanResult.report)}
+              </div>
+            {/if}
           {:else}
             <div class="report-missing-error">
               ไม่พบเนื้อหารายงาน (AI ไม่ได้ส่งข้อความกลับมา หรือเกิดข้อผิดพลาดในการรับข้อมูล)<br>
@@ -5696,5 +5877,159 @@
     border-color: #a5b4fc;
     color: #ffffff;
     transform: translateY(-1px);
+  }
+  .loc-sub-label {
+    font-size: 10.8px;
+    color: #a5b4fc;
+    line-height: 1.3;
+    max-width: 150px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+
+  /* Structured Page-by-Page Summary Index inside Consult Report */
+  .report-page-index-box {
+    margin: 16px 0 18px;
+    padding: 16px 18px;
+    border-radius: 14px;
+    background: rgba(11, 13, 21, 0.72);
+    border: 1px solid rgba(129, 140, 248, 0.28);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .rpi-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .rpi-title {
+    font-size: 14px;
+    font-weight: 700;
+    color: #e0e7ff;
+  }
+  .rpi-count {
+    font-size: 11.5px;
+    font-weight: 600;
+    padding: 2px 10px;
+    border-radius: 999px;
+    background: rgba(99, 102, 241, 0.2);
+    color: #c7d2fe;
+    border: 1px solid rgba(129, 140, 248, 0.35);
+  }
+  .rpi-groups {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 12px;
+  }
+  .rpi-group-card {
+    background: rgba(18, 21, 33, 0.9);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .rpi-group-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .rpi-group-cnt {
+    font-size: 11.5px;
+    color: #94a3b8;
+    font-weight: 600;
+  }
+  .rpi-item-list {
+    margin: 0;
+    padding-left: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: #cbd5e1;
+  }
+  .rpi-tag {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 1px 7px;
+    border-radius: 6px;
+    margin-right: 5px;
+    background: rgba(99, 102, 241, 0.2);
+    color: #c7d2fe;
+  }
+  .rpi-tag.fail {
+    background: rgba(239, 68, 68, 0.2);
+    color: #fca5a5;
+  }
+  .rpi-loc {
+    color: #a5b4fc;
+    font-size: 11.5px;
+    margin-right: 5px;
+  }
+  .rpi-summary {
+    color: #e2e8f0;
+  }
+
+  /* Formatted Consult Report Body */
+  .formatted-consult-report {
+    font-size: 13.5px;
+    line-height: 1.75;
+    color: #e2e8f0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .formatted-consult-report :global(.rpt-heading) {
+    font-weight: 700;
+    color: #f8fafc;
+    margin-top: 14px;
+    padding-bottom: 5px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  .formatted-consult-report :global(.rpt-h1) { font-size: 16px; color: #e0e7ff; }
+  .formatted-consult-report :global(.rpt-h2) { font-size: 14.5px; color: #c7d2fe; }
+  .formatted-consult-report :global(.rpt-h3) { font-size: 13.5px; color: #f8fafc; }
+  .formatted-consult-report :global(.rpt-para) { margin: 2px 0; color: #cbd5e1; }
+  .formatted-consult-report :global(.rpt-list) {
+    margin: 4px 0 8px;
+    padding-left: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .formatted-consult-report :global(.rpt-list li) { color: #e2e8f0; }
+  .formatted-consult-report :global(.rpt-page-badge) {
+    display: inline-block;
+    padding: 1px 8px;
+    margin: 0 2px;
+    border-radius: 6px;
+    font-size: 11.5px;
+    font-weight: 700;
+    background: rgba(99, 102, 241, 0.24);
+    border: 1px solid rgba(129, 140, 248, 0.45);
+    color: #e0e7ff;
+  }
+  .formatted-consult-report :global(.rpt-divider) {
+    border: none;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    margin: 12px 0;
+  }
+  .formatted-consult-report :global(code) {
+    background: rgba(15, 23, 42, 0.85);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 1px 6px;
+    border-radius: 5px;
+    font-size: 12px;
+    color: #fcd34d;
   }
 </style>

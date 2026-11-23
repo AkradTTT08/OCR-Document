@@ -8,6 +8,9 @@
   --bg-dark:      #050505;
   --bg:           #0a0b12;
   --bg2:          #12141c;
+  --surface-card:        #171a26;
+  --surface-card-hover:  #1d2133;
+  --surface-card-unread: #191d30;
   
   /* Glassmorphism Surfaces */
   --glass-bg:     rgba(18, 20, 28, 0.45);
@@ -24,7 +27,17 @@
   --accent:       #06b6d4; /* Cyan */
   --success:      #10b981; /* Emerald */
   --danger:       #f43f5e; /* Rose */
+  --danger-solid: #be123c; /* Rose 700 — WCAG AA >= 6.4:1 with white text */
+  --danger-solid-hover: #9f1239;
   --warning:      #f59e0b; /* Amber */
+
+  /* Accessible Soft Status Text Tokens (WCAG AA >= 4.5:1 on dark surfaces) */
+  --primary-soft-text: #a5b4fc;
+  --primary-soft-text-hover: #c7d2fe;
+  --danger-soft-text:  #fda4af;
+  --danger-soft-text-hover: #ffe4e6;
+  --warning-soft-text: #fcd34d;
+  --success-soft-text: #6ee7b7;
   
   /* Gradient Magic */
   --gradient-main: linear-gradient(135deg, var(--primary), var(--secondary));

@@ -22,7 +22,14 @@
   let viewMode = "split"; // 'split' | 'image' | 'highlight'
   let userPickedMode = false;
   let imageZoom = 100;
+  let isExpanded = false;
   let textPaneEl;
+
+  function handleWindowKeydown(e) {
+    if (e.key === "Escape" && isExpanded) {
+      isExpanded = false;
+    }
+  }
 
   $: indexedFindings = (findings || []).map((f, idx) => ({
     ...f,
@@ -56,11 +63,12 @@
     : failedExitCriteria.filter(it => it._pageNums.includes(Number(selectedPageNumber)));
 
   $: computedSummary = (() => {
-    if (pageIssueSummary && Array.isArray(pageIssueSummary.pages) && pageIssueSummary.pages.length > 0) {
-      return pageIssueSummary;
-    }
     const byPage = new Map();
-    (pages || []).forEach(p => {
+    const basePages = (pageIssueSummary && Array.isArray(pageIssueSummary.pages) && pageIssueSummary.pages.length > 0)
+      ? pageIssueSummary.pages
+      : (pages || []).map(p => ({ page_number: Number(p.page_number), label: p.label || `หน้า ${p.page_number}`, has_image: Boolean(p.has_image) }));
+
+    basePages.forEach(p => {
       const pn = Number(p.page_number);
       byPage.set(pn, {
         page_number: pn,
@@ -72,6 +80,7 @@
         has_image: Boolean(p.has_image)
       });
     });
+
     let globalCnt = 0;
     indexedFindings.forEach(f => {
       if (f._pageNum && byPage.has(f._pageNum)) {
@@ -80,10 +89,37 @@
         if (f._sev === "critical" || f._sev === "high") slot.critical_high += 1;
         else if (f._sev === "medium") slot.medium += 1;
         else slot.low_info += 1;
+      } else if (f._pageNum) {
+        byPage.set(f._pageNum, {
+          page_number: f._pageNum,
+          label: f.page_label || `หน้า ${f._pageNum}`,
+          total_issues: 1,
+          critical_high: (f._sev === "critical" || f._sev === "high") ? 1 : 0,
+          medium: f._sev === "medium" ? 1 : 0,
+          low_info: (f._sev !== "critical" && f._sev !== "high" && f._sev !== "medium") ? 1 : 0,
+          has_image: false
+        });
       } else {
         globalCnt += 1;
       }
     });
+
+    // Also include failed Exit Criteria items in per-page error counters so users see exact failed pages immediately
+    failedExitCriteria.forEach(ec => {
+      if (ec._pageNums && ec._pageNums.length > 0) {
+        ec._pageNums.forEach(pn => {
+          if (!byPage.has(pn)) {
+            byPage.set(pn, { page_number: pn, label: `หน้า ${pn}`, total_issues: 0, critical_high: 0, medium: 0, low_info: 0, has_image: false });
+          }
+          const slot = byPage.get(pn);
+          slot.total_issues += 1;
+          slot.critical_high += 1;
+        });
+      } else {
+        globalCnt += 1;
+      }
+    });
+
     const ordered = Array.from(byPage.values()).sort((a, b) => a.page_number - b.page_number);
     return {
       total_pages: ordered.length,
@@ -289,7 +325,18 @@
   }
 </script>
 
-<section class="doc-inspector-card" id="qa-doc-inspector-section" aria-label="Document Page Focus and Error Highlighter">
+<svelte:window on:keydown={handleWindowKeydown} />
+
+{#if isExpanded}
+  <div class="inspector-expand-backdrop" role="presentation" on:click={() => isExpanded = false}></div>
+{/if}
+
+<section
+  class="doc-inspector-card"
+  class:is-expanded={isExpanded}
+  id="qa-doc-inspector-section"
+  aria-label="Document Page Focus and Error Highlighter"
+>
   <div class="inspector-header">
     <div class="inspector-title-group">
       <div class="inspector-icon-badge" aria-hidden="true">
@@ -445,6 +492,32 @@
                 เนื้อหาพร้อมไฮไลต์
               </button>
             {/if}
+            <button
+              type="button"
+              class="btn-mode btn-expand-viewer"
+              class:active={isExpanded}
+              on:click={() => isExpanded = !isExpanded}
+              title={isExpanded ? "ย่อกลับขนาดปกติ (Esc)" : "ขยายเต็มหน้าจอเพื่อดูเอกสารชัดเจนขึ้น"}
+              aria-label={isExpanded ? "ย่อกลับขนาดปกติ" : "ขยายเต็มหน้าจอ"}
+            >
+              {#if isExpanded}
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <polyline points="4 14 10 14 10 20"></polyline>
+                  <polyline points="20 10 14 10 14 4"></polyline>
+                  <line x1="14" y1="10" x2="21" y2="3"></line>
+                  <line x1="3" y1="21" x2="10" y2="14"></line>
+                </svg>
+                ย่อกลับ
+              {:else}
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <polyline points="15 3 21 3 21 9"></polyline>
+                  <polyline points="9 21 3 21 3 15"></polyline>
+                  <line x1="21" y1="3" x2="14" y2="10"></line>
+                  <line x1="3" y1="21" x2="10" y2="14"></line>
+                </svg>
+                ขยายเต็มจอ
+              {/if}
+            </button>
           </div>
         </div>
 
@@ -478,7 +551,7 @@
                 {/if}
                 <div class="zoom-btns">
                   <button type="button" on:click={() => imageZoom = Math.max(60, imageZoom - 20)} aria-label="ย่อภาพ">−</button>
-                  <span>{imageZoom}%</span>
+                  <button type="button" class="zoom-reset-btn" on:click={() => imageZoom = 100} title="รีเซ็ตขนาดภาพเป็น 100%">{imageZoom}%</button>
                   <button type="button" on:click={() => imageZoom = Math.min(200, imageZoom + 20)} aria-label="ขยายภาพ">+</button>
                 </div>
               </div>
@@ -511,7 +584,7 @@
           {/if}
 
           {#if viewMode === "highlight" || viewMode === "split" || !activePageObj.has_image}
-            <div class="text-highlight-stage" bind:this={textPaneEl} in:fade={{ duration: 160 }}>
+            <div class="text-highlight-stage" class:split-bottom={viewMode === "split" && activePageObj.has_image && activePageObj.image_url} bind:this={textPaneEl} in:fade={{ duration: 160 }}>
               {#if activePageFindings.length > 0}
                 <div class="highlight-legend-bar">
                   <span class="legend-item"><span class="hl-swatch critical"></span> Critical / High</span>
@@ -593,6 +666,9 @@
                     <div class="fc-top-row">
                       <span class="fc-sev-pill sev-critical">FAIL · {ec.item_code}</span>
                       <span class="fc-type">{ec.category || "Exit Criteria"}</span>
+                      {#if ec.location || ec.page_ref}
+                        <span class="fc-loc-pill">{ec.location || ec.page_ref}</span>
+                      {/if}
                     </div>
                     <div class="fc-issue">{ec.question_text}</div>
                     {#if ec.remarks}
@@ -623,6 +699,9 @@
                   <span class="fc-sev-pill sev-{f._sev}">{f.severity || "Info"}</span>
                   {#if f.check_type}
                     <span class="fc-type">{f.check_type}</span>
+                  {/if}
+                  {#if f.location}
+                    <span class="fc-loc-pill">{f.location}</span>
                   {/if}
                   {#if matchedFindingIndicesOnPage.has(f._idx)}
                     <span class="fc-hl-tag" title="พบตำแหน่งข้อความและไฮไลต์ไว้บนหน้าเอกสารแล้ว">ไฮไลต์แล้ว</span>
@@ -823,9 +902,40 @@
     font-variant-numeric: tabular-nums;
   }
 
+  .inspector-expand-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(4, 6, 12, 0.78);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    z-index: calc(var(--z-modal, 10000) - 1);
+  }
+
+  .doc-inspector-card.is-expanded {
+    position: fixed;
+    inset: 14px;
+    z-index: var(--z-modal, 10000);
+    background: var(--bg2, #12141c);
+    border-color: rgba(129, 140, 248, 0.42);
+    box-shadow: 0 28px 80px rgba(0, 0, 0, 0.85);
+    overflow: hidden;
+  }
+
+  .doc-inspector-card.is-expanded .inspector-split-grid {
+    flex: 1;
+    min-height: 0;
+  }
+
+  .doc-inspector-card.is-expanded .viewer-pane,
+  .doc-inspector-card.is-expanded .findings-pane {
+    height: 100%;
+    min-height: 0;
+    max-height: none;
+  }
+
   .inspector-split-grid {
     display: grid;
-    grid-template-columns: minmax(0, 1.35fr) minmax(300px, 0.95fr);
+    grid-template-columns: minmax(0, 1.6fr) minmax(310px, 0.85fr);
     gap: 16px;
     align-items: stretch;
   }
@@ -838,8 +948,9 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    min-height: 460px;
-    max-height: 640px;
+    min-height: 640px;
+    height: clamp(700px, 80vh, 940px);
+    max-height: 940px;
   }
 
   .viewer-toolbar {
@@ -882,8 +993,19 @@
   .btn-mode.active { background: rgba(99, 102, 241, 0.25); border-color: rgba(129, 140, 248, 0.55); color: #e0e7ff; }
 
   .text-highlight-stage {
-    flex: 1; overflow-y: auto; padding: 14px 16px 20px;
-    display: flex; flex-direction: column; gap: 10px;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 14px 16px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .text-highlight-stage.split-bottom {
+    flex: 0.9 1 0;
+    min-height: 180px;
+    max-height: 36%;
   }
   .highlight-legend-bar {
     display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
@@ -922,26 +1044,47 @@
     100% { box-shadow: 0 0 0 4px rgba(165, 180, 252, 0.65); }
   }
 
-  .image-viewer-stage { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  .image-viewer-stage { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
   .image-viewer-stage.compact-split {
-    flex: 0 0 auto; max-height: 310px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    flex: 2.1 1 0;
+    min-height: 420px;
+    max-height: none;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
   }
   .image-zoom-bar {
     display: flex; justify-content: space-between; align-items: center; gap: 10px;
     padding: 8px 14px; background: rgba(15, 18, 28, 0.9);
     border-bottom: 1px solid rgba(255, 255, 255, 0.06); flex-wrap: wrap;
+    flex-shrink: 0;
   }
   .img-issue-callout { font-size: 12px; color: #fecaca; font-weight: 500; }
   .img-clean-callout { font-size: 12px; color: #6ee7b7; font-weight: 500; }
   .zoom-btns { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #cbd5e1; font-variant-numeric: tabular-nums; }
   .zoom-btns button {
-    width: 26px; height: 26px; border-radius: 6px;
+    min-width: 26px; height: 26px; padding: 0 6px; border-radius: 6px;
     border: 1px solid rgba(255, 255, 255, 0.14);
     background: rgba(255, 255, 255, 0.05); color: #f8fafc; cursor: pointer;
+    font-family: inherit; font-size: 12px;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
   }
-  .image-scroll-canvas { flex: 1; overflow: auto; padding: 16px; text-align: center; background: #07090f; }
-  .image-frame-wrapper { position: relative; display: inline-block; max-width: 100%; }
+  .zoom-btns button:hover {
+    background: rgba(99, 102, 241, 0.24);
+    border-color: rgba(129, 140, 248, 0.5);
+  }
+  .zoom-btns .zoom-reset-btn {
+    min-width: 48px;
+    font-weight: 600;
+  }
+  .image-scroll-canvas {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    padding: 16px;
+    text-align: center;
+    background: #07090f;
+  }
+  .image-frame-wrapper { position: relative; display: inline-block; min-width: 280px; }
   .page-preview-img {
     width: 100%; height: auto; display: block;
     border-radius: 8px; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.6);
@@ -1007,6 +1150,19 @@
   .fc-sev-pill.sev-low,
   .fc-sev-pill.sev-info { background: rgba(99, 102, 241, 0.2); color: #c7d2fe; }
   .fc-type { font-size: 11px; color: #94a3b8; }
+  .fc-loc-pill {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: rgba(99, 102, 241, 0.16);
+    border: 1px solid rgba(129, 140, 248, 0.35);
+    color: #c7d2fe;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .fc-hl-tag {
     margin-left: auto; font-size: 10.5px; font-weight: 600; padding: 2px 7px; border-radius: 999px;
     background: rgba(16, 185, 129, 0.14); color: #6ee7b7; border: 1px solid rgba(52, 211, 153, 0.3);

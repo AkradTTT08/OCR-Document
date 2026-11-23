@@ -39,6 +39,8 @@ export const unreadCount = derived(notifications, $notifications => {
 const seenNotificationIds = new Set();
 let isInitialFetch = true;
 let syncInterval = null;
+let isFetching = false;
+let visibilityListener = null;
 
 function getAuthHeaders() {
   const headers = {};
@@ -61,8 +63,9 @@ function getCurrentUsername() {
  */
 export async function fetchUserNotifications() {
   const username = getCurrentUsername();
-  if (!username) return;
+  if (!username || isFetching) return;
 
+  isFetching = true;
   try {
     const res = await fetch(`/api/user/notifications?username=${encodeURIComponent(username)}`, {
       headers: getAuthHeaders()
@@ -93,24 +96,40 @@ export async function fetchUserNotifications() {
     }
   } catch (err) {
     console.debug('Failed to sync user notifications:', err);
+  } finally {
+    isFetching = false;
   }
 }
 
 /**
- * Start background polling for user notifications
+ * Start background polling for user notifications (pauses when tab is hidden)
  */
 export function startNotificationSync(intervalMs = 6000) {
-  if (syncInterval) clearInterval(syncInterval);
+  stopNotificationSync();
   fetchUserNotifications();
   syncInterval = setInterval(() => {
+    if (typeof document !== 'undefined' && document.hidden) return;
     fetchUserNotifications();
   }, intervalMs);
+
+  if (typeof document !== 'undefined') {
+    visibilityListener = () => {
+      if (!document.hidden) {
+        fetchUserNotifications();
+      }
+    };
+    document.addEventListener('visibilitychange', visibilityListener);
+  }
 }
 
 export function stopNotificationSync() {
   if (syncInterval) {
     clearInterval(syncInterval);
     syncInterval = null;
+  }
+  if (visibilityListener && typeof document !== 'undefined') {
+    document.removeEventListener('visibilitychange', visibilityListener);
+    visibilityListener = null;
   }
 }
 

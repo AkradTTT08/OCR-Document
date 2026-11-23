@@ -216,7 +216,7 @@ def ocr_image(pil_image: Image.Image, lang: str = 'tha+eng', filename: str = Non
         # -----------------------------------------
 
         max_retries = 2
-        raw_fallback_models = [model_name, 'gemini-3.1-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite']
+        raw_fallback_models = [model_name, 'gemini-2.5-flash', 'gemini-2.5-flash-lite']
         # Remove duplicate models while preserving order
         seen = set()
         fallback_models = [m for m in raw_fallback_models if not (m in seen or seen.add(m))]
@@ -247,7 +247,27 @@ def ocr_image(pil_image: Image.Image, lang: str = 'tha+eng', filename: str = Non
                     except Exception as e:
                         last_error = e
                         error_msg = str(e)
-                        if '404' in error_msg or 'NOT_FOUND' in error_msg or 'not found' in error_msg.lower():
+                        if 'developer instruction is not enabled' in error_msg.lower():
+                            logger.warning(f"API rejected system_instruction for {current_model}; retrying with inline prompt.")
+                            try:
+                                response = client.models.generate_content(
+                                    model=current_model,
+                                    contents=[
+                                        types.Part.from_bytes(data=img_bytes, mime_type='image/jpeg'),
+                                        f"{system_prompt}\n\n{user_prompt}",
+                                    ],
+                                    config=types.GenerateContentConfig(
+                                        temperature=0.1,
+                                        max_output_tokens=8192,
+                                    )
+                                )
+                                success = True
+                                break
+                            except Exception as inline_err:
+                                last_error = inline_err
+                                logger.error(f"Inline prompt retry failed for {current_model}: {inline_err}")
+                                break
+                        elif '404' in error_msg or 'NOT_FOUND' in error_msg or 'not found' in error_msg.lower():
                             logger.warning(f"Model {current_model} is not supported or not found (404). Switching to fallback model.")
                             break # Break retry loop, go to next model in fallback_models
                         elif '503' in error_msg or 'UNAVAILABLE' in error_msg:
@@ -395,12 +415,383 @@ def ocr_pdf_file(pdf_path: str, dpi: int = 150, lang: str = 'tha+eng', progress_
     return results
 
 
-def ocr_pdf_bytes(pdf_bytes: bytes, dpi: int = 150, lang: str = 'tha+eng', progress_callback=None, filename: str = None, save_images_dir: str = None) -> list[dict]:
+def _normalize_thai_pdf_text(text: str) -> str:
+    """แปลงสระอำแบบแยก (นิคหิต + สระอา) เป็นสระอำมาตรฐาน"""
+    if not text:
+        return ""
+    return text.replace("\u0e4d\u0e32", "\u0e33")
+
+
+def _count_thai_pdf_glitches(text: str) -> int:
+    """
+    ตรวจจับอาการสระ/วรรณยุกต์ภาษาไทยสลับตำแหน่งหรือแตกเว้นวรรคจากการดึง text ตรงของ PDF
+    (เช่น 'รห ัส', 'ข ้อมูล', 'สนิ คา้', 'เวอร์ช นั 1.1', 'ผรุ้ับ', 'ใ นไฟล์')
+    """
+    if not text:
+        return 0
+    glitches = 0
+    # 1) เว้นวรรคนำหน้าสระบน/ล่าง หรือวรรณยุกต์ (ในภาษาไทยไม่มีทางเกิด)
+    glitches += len(re.findall(r"[ \t]+[\u0e31\u0e34-\u0e3a\u0e47-\u0e4e]", text))
+    # 2) วรรณยุกต์ไปเกาะหลังสระอา เช่น 'คา้', 'หนา้'
+    glitches += len(re.findall(r"\u0e32[\u0e48-\u0e4c]", text))
+    # 3) สระบน/ล่าง + วรรณยุกต์ + สระบน/ล่าง ซ้อนกัน เช่น 'ผรุ้ับ'
+    glitches += len(re.findall(r"[\u0e31\u0e34-\u0e3a][\u0e48-\u0e4c][\u0e31\u0e34-\u0e3a]", text))
+    # 4) ไม้หันอากาศ (ั) อยู่ท้ายคำติดเว้นวรรค/ตัวเลข/เครื่องหมาย เช่น 'เวอร์ช นั 1.1'
+    glitches += len(re.findall(r"\u0e31(?:\s|$|[0-9.,;:!?()\[\]/])", text))
+    # 5) สระหน้า (เ แ โ ใ ไ) ตามด้วยเว้นวรรคแล้วค่อยตามด้วยพยัญชนะ เช่น 'ใ นไฟล์'
+    glitches += len(re.findall(r"[\u0e40-\u0e44][ \t]+[\u0e01-\u0e2e]", text))
+    return glitches
+
+
+def _is_native_pdf_text_usable(text: str) -> bool:
+    """
+    ตรวจสอบว่าข้อความที่ดึงตรงจาก PDF (Embedded Text) อ่านรู้เรื่องและสระภาษาไทยเรียงถูกต้องหรือไม่
+    หากเป็นหน้าสแกน ฟอนต์เพี้ยน หรือสระภาษาไทยสลับตำแหน่ง จะคืน False เพื่อส่งทำ Gemini Vision OCR
+    """
+    if not text:
+        return False
+    norm = _normalize_thai_pdf_text(text)
+    compact = "".join(norm.split())
+    if len(compact) < 60:
+        return False
+    garbled = sum(1 for ch in compact if ch == "\ufffd" or ("\ue000" <= ch <= "\uf8ff"))
+    if (garbled / len(compact)) > 0.05:
+        return False
+    if _count_thai_pdf_glitches(norm) >= 2:
+        return False
+    readable = sum(
+        1 for ch in compact
+        if ("\u0e00" <= ch <= "\u0e7f") or ch.isalnum()
+    )
+    return (readable / len(compact)) >= 0.45
+
+
+def _extract_pages_with_pdftotext(pdf_bytes: bytes) -> list[str] | None:
+    """ลองใช้ Poppler pdftotext ดึงข้อความแยกหน้าด้วย form-feed (\f) เผื่อบางไฟล์เรียงสระไทยดีกว่า PDFium"""
+    import shutil
+    import subprocess
+    import tempfile
+
+    pdftotext_bin = shutil.which("pdftotext")
+    if not pdftotext_bin and os.path.exists(POPPLER_PATH):
+        cand = os.path.join(POPPLER_PATH, "pdftotext.exe")
+        if os.path.exists(cand):
+            pdftotext_bin = cand
+    if not pdftotext_bin:
+        return None
+
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tf:
+            tf.write(pdf_bytes)
+            tmp_path = tf.name
+        proc = subprocess.run(
+            [pdftotext_bin, "-enc", "UTF-8", tmp_path, "-"],
+            capture_output=True,
+            timeout=25
+        )
+        if proc.returncode != 0:
+            return None
+        raw = proc.stdout.decode("utf-8", errors="replace")
+        pages = raw.split("\f")
+        if pages and not pages[-1].strip():
+            pages = pages[:-1]
+        return pages
+    except Exception as e:
+        logger.debug(f"pdftotext extraction skipped: {e}")
+        return None
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+
+
+def ocr_images_batch(batch_items: list[tuple[int, Image.Image]], lang: str = 'tha+eng', filename: str = None) -> dict[int, str]:
+    """
+    ส่งรูปภาพหลายหน้า (เช่น 3-4 หน้า) ใน 1 Gemini Vision API request เพื่อความเร็วสูงและลดจำนวน API call
+    คืนค่า dict[page_number -> extracted_text]
+    """
+    if not batch_items:
+        return {}
+    if len(batch_items) == 1:
+        p_num, p_img = batch_items[0]
+        res = ocr_image(p_img, lang=lang, filename=filename)
+        return {p_num: res.get('text', '')}
+
+    from google.genai import types
+
+    model_name = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash')
+    max_dim = int(os.environ.get('OCR_BATCH_MAX_DIM', 2000))
+    page_nums = [p_num for p_num, _ in batch_items]
+
+    contents = []
+    for p_num, pil_img in batch_items:
+        img_to_send = pil_img.convert("RGB")
+        w, h = img_to_send.size
+        if max(w, h) > max_dim:
+            ratio = max_dim / max(w, h)
+            img_to_send = img_to_send.resize((int(w * ratio), int(h * ratio)), Image.Resampling.LANCZOS)
+        buf = io.BytesIO()
+        img_to_send.save(buf, format='JPEG', quality=86)
+        contents.append(f"Image for PAGE {p_num}:")
+        contents.append(types.Part.from_bytes(data=buf.getvalue(), mime_type='image/jpeg'))
+
+    markers_hint = ", ".join([f"=== [PAGE {p}] ===" for p in page_nums])
+    prompt = (
+        "You are an expert Thai & English OCR transcription assistant.\n"
+        f"Transcribe ALL text from each of the {len(batch_items)} document page images above accurately, completely, and with PERFECT Thai vowel and tone-mark ordering.\n"
+        f"You MUST separate each page strictly using these exact headers on their own lines: {markers_hint}\n"
+        "- Preserve tables as standard Markdown tables (| Col 1 | Col 2 |) when present.\n"
+        "- Preserve original dates, numbers, IDs, and spelling faithfully. Do NOT summarize or omit any page.\n"
+        "- Output ONLY the page headers and transcribed content."
+    )
+    contents.append(prompt)
+
+    keys = get_all_api_keys()
+    clients = [_get_gemini_client(i) for i in range(len(keys))] if keys else [_get_gemini_client()]
+    raw_fallback_models = [model_name, 'gemini-2.5-flash', 'gemini-2.5-flash-lite']
+    seen = set()
+    fallback_models = [m for m in raw_fallback_models if not (m in seen or seen.add(m))]
+
+    response = None
+    last_error = None
+    for client in clients:
+        for current_model in fallback_models:
+            try:
+                response = client.models.generate_content(
+                    model=current_model,
+                    contents=contents,
+                    config=types.GenerateContentConfig(
+                        temperature=0.1,
+                        max_output_tokens=16384,
+                    )
+                )
+                break
+            except Exception as e:
+                last_error = e
+                if '429' in str(e) or 'RESOURCE_EXHAUSTED' in str(e):
+                    time.sleep(2)
+                continue
+        if response is not None:
+            break
+
+    if response is None or not getattr(response, 'text', None):
+        logger.warning(f"Batch Vision OCR failed for pages {page_nums} ({last_error}); falling back to single-page OCR.")
+        fallback_out = {}
+        for p_num, p_img in batch_items:
+            res = ocr_image(p_img, lang=lang, filename=filename)
+            fallback_out[p_num] = res.get('text', '')
+        return fallback_out
+
+    try:
+        if hasattr(response, 'usage_metadata'):
+            from db_ingestion import log_api_usage
+            used_model = getattr(response, 'model_version', None) or model_name
+            log_api_usage("OCR_Scan_Batch", used_model, response.usage_metadata, filename=filename)
+    except Exception:
+        pass
+
+    raw_text = response.text.strip()
+    parsed = {}
+    matches = list(re.finditer(r"===\s*\[PAGE\s+(\d+)\]\s*===", raw_text, flags=re.IGNORECASE))
+    for idx_m, m in enumerate(matches):
+        p_num = int(m.group(1))
+        start_pos = m.end()
+        end_pos = matches[idx_m + 1].start() if idx_m + 1 < len(matches) else len(raw_text)
+        page_txt = _apply_it_keyword_correction(_normalize_thai_pdf_text(raw_text[start_pos:end_pos].strip()))
+        parsed[p_num] = page_txt
+
+    # หากหน้าใดไม่ถูกแยกออกมาครบ ให้ fallback ยิงเดี่ยวเฉพาะหน้านั้น
+    for p_num, p_img in batch_items:
+        if p_num not in parsed or not parsed[p_num].strip():
+            res = ocr_image(p_img, lang=lang, filename=filename)
+            parsed[p_num] = res.get('text', '')
+
+    return parsed
+
+
+def ocr_pdf_bytes(
+    pdf_bytes: bytes,
+    dpi: int = 150,
+    lang: str = 'tha+eng',
+    progress_callback=None,
+    filename: str = None,
+    save_images_dir: str = None,
+    prefer_native_text: bool = False,
+    max_workers: int = 3
+) -> list[dict]:
     """
     สกัดข้อความจาก PDF bytes
-    หากระบุ save_images_dir จะบันทึกภาพหน้าเอกสาร (page_N.jpg) ไว้สำหรับแสดงใน Document Inspector
+    - หากระบุ save_images_dir จะบันทึกภาพหน้าเอกสาร (page_N.jpg) ไว้สำหรับแสดงใน Document Inspector
+    - หาก prefer_native_text=True จะดึง Embedded Text ด้วย pypdfium2 ก่อน (เร็วกว่า ~50x สำหรับ PDF ดิจิทัล)
+      และส่งเฉพาะหน้าสแกน/หน้ารูปภาพไปทำ Gemini Vision OCR แบบขนาน (ThreadPoolExecutor)
     """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     start_time = time.time()
+    if save_images_dir:
+        try:
+            os.makedirs(save_images_dir, exist_ok=True)
+        except Exception as dir_err:
+            logger.warning(f"Could not create save_images_dir {save_images_dir}: {dir_err}")
+            save_images_dir = None
+
+    def _save_preview(pil_img: Image.Image, page_num: int) -> bool:
+        if not save_images_dir or pil_img is None:
+            return False
+        try:
+            preview_img = pil_img.convert("RGB")
+            if preview_img.width > 1400:
+                ratio = 1400 / float(preview_img.width)
+                preview_img = preview_img.resize((1400, int(preview_img.height * ratio)), Image.Resampling.LANCZOS)
+            preview_img.save(os.path.join(save_images_dir, f"page_{page_num}.jpg"), "JPEG", quality=82)
+            return True
+        except Exception as save_err:
+            logger.warning(f"Could not save preview image for page {page_num}: {save_err}")
+            return False
+
+    # ── Fast Hybrid Path via pypdfium2 (Native Text + On-demand Vision OCR) ──
+    if prefer_native_text:
+        try:
+            import pypdfium2 as pdfium
+
+            pdf_doc = pdfium.PdfDocument(pdf_bytes)
+            total_pages = len(pdf_doc)
+            pdftotext_pages = _extract_pages_with_pdftotext(pdf_bytes)
+            results_by_page = {}
+            vision_queue = []  # (page_num, pil_image, saved_image)
+            completed_count = 0
+            render_scale = max(1.0, float(dpi) / 72.0)
+
+            for i in range(total_pages):
+                page_num = i + 1
+                page_start = time.time()
+                page = pdf_doc[i]
+                native_text = ""
+                # ลองใช้ pdftotext ก่อนถ้ามีและจำนวนหน้าตรงกัน (บางไฟล์เรียงสระไทยดีกว่า PDFium)
+                if pdftotext_pages and len(pdftotext_pages) == total_pages:
+                    cand_pt = _normalize_thai_pdf_text((pdftotext_pages[i] or "").strip())
+                    if _is_native_pdf_text_usable(cand_pt):
+                        native_text = cand_pt
+                if not native_text:
+                    try:
+                        textpage = page.get_textpage()
+                        try:
+                            native_text = _normalize_thai_pdf_text((textpage.get_text_range() or "").strip())
+                        finally:
+                            textpage.close()
+                    except Exception as tp_err:
+                        logger.debug(f"pypdfium2 text extract failed on page {page_num}: {tp_err}")
+
+                usable_native = _is_native_pdf_text_usable(native_text)
+                pil_img = None
+                saved_image = False
+                if save_images_dir or not usable_native:
+                    try:
+                        # สำหรับหน้าที่มี native text ใช้ scale 1.5 เพื่อสร้าง preview เร็ว; หน้าสแกนใช้ render_scale เต็ม
+                        scale_to_use = min(render_scale, 1.5) if usable_native else render_scale
+                        bitmap = page.render(scale=scale_to_use)
+                        pil_img = bitmap.to_pil()
+                        saved_image = _save_preview(pil_img, page_num)
+                    except Exception as ren_err:
+                        logger.warning(f"pypdfium2 render failed on page {page_num}: {ren_err}")
+                page.close()
+
+                if usable_native:
+                    cleaned_text = _apply_it_keyword_correction(native_text)
+                    results_by_page[page_num] = {
+                        'page_number': page_num,
+                        'text': cleaned_text,
+                        'words': [],
+                        'total_pages': total_pages,
+                        'has_image': saved_image,
+                        'extraction_mode': 'native_pdf',
+                        'time_taken': round(time.time() - page_start, 2)
+                    }
+                    completed_count += 1
+                    if progress_callback:
+                        progress_callback(completed_count, total_pages, "extracting_native", time.time() - start_time)
+                else:
+                    vision_queue.append((page_num, pil_img, saved_image))
+
+            pdf_doc.close()
+
+            if vision_queue:
+                batch_size = int(os.environ.get('OCR_VISION_BATCH_SIZE', 4))
+                batches = [vision_queue[idx:idx + batch_size] for idx in range(0, len(vision_queue), batch_size)]
+                worker_count = max(1, min(int(max_workers or 3), len(batches)))
+                logger.info(
+                    f"Hybrid PDF extraction: {len(results_by_page)}/{total_pages} pages extracted natively; "
+                    f"running Batch Vision OCR on {len(vision_queue)} scanned/broken-Thai pages "
+                    f"({len(batches)} batches of {batch_size}, workers={worker_count})."
+                )
+
+                def _run_vision_batch(batch_chunk):
+                    b_start = time.time()
+                    valid_imgs = [(p_num, p_img) for p_num, p_img, _ in batch_chunk if p_img is not None]
+                    saved_map = {p_num: p_saved for p_num, _, p_saved in batch_chunk}
+                    batch_texts = {}
+                    batch_err = None
+                    try:
+                        if valid_imgs:
+                            batch_texts = ocr_images_batch(valid_imgs, lang=lang, filename=filename)
+                    except Exception as e:
+                        batch_err = str(e)
+                    elapsed_each = round((time.time() - b_start) / max(len(batch_chunk), 1), 2)
+                    out_items = []
+                    for p_num, p_img, p_saved in batch_chunk:
+                        if p_img is None:
+                            out_items.append((p_num, {
+                                'page_number': p_num,
+                                'text': '',
+                                'error': 'ไม่สามารถเรนเดอร์ภาพหน้าเอกสารได้',
+                                'total_pages': total_pages,
+                                'has_image': p_saved,
+                                'extraction_mode': 'vision_ocr_batch',
+                                'time_taken': elapsed_each
+                            }))
+                        elif batch_err:
+                            out_items.append((p_num, {
+                                'page_number': p_num,
+                                'text': '',
+                                'error': batch_err,
+                                'total_pages': total_pages,
+                                'has_image': saved_map.get(p_num, False),
+                                'extraction_mode': 'vision_ocr_batch',
+                                'time_taken': elapsed_each
+                            }))
+                        else:
+                            out_items.append((p_num, {
+                                'page_number': p_num,
+                                'text': batch_texts.get(p_num, ''),
+                                'words': [],
+                                'total_pages': total_pages,
+                                'has_image': saved_map.get(p_num, False),
+                                'extraction_mode': 'vision_ocr_batch',
+                                'time_taken': elapsed_each
+                            }))
+                    return out_items
+
+                with ThreadPoolExecutor(max_workers=worker_count) as executor:
+                    futures = [executor.submit(_run_vision_batch, b) for b in batches]
+                    for fut in as_completed(futures):
+                        for p_num, p_res in fut.result():
+                            results_by_page[p_num] = p_res
+                            completed_count += 1
+                            if progress_callback:
+                                progress_callback(completed_count, total_pages, "extracting_vision", time.time() - start_time)
+            else:
+                logger.info(
+                    f"Hybrid PDF extraction: all {total_pages} pages extracted natively in {round(time.time() - start_time, 2)}s."
+                )
+
+            return [results_by_page[p] for p in range(1, total_pages + 1) if p in results_by_page]
+        except Exception as hybrid_err:
+            logger.warning(f"Hybrid pypdfium2 extraction failed ({hybrid_err}); falling back to Poppler + Vision OCR.")
+
+    # ── Standard Poppler + Vision OCR Path ──
     try:
         poppler_path = POPPLER_PATH if os.path.exists(POPPLER_PATH) else None
         images = convert_from_bytes(
@@ -411,31 +802,13 @@ def ocr_pdf_bytes(pdf_bytes: bytes, dpi: int = 150, lang: str = 'tha+eng', progr
     except Exception as e:
         raise RuntimeError(f"ไม่สามารถแปลง PDF ได้: {str(e)}")
 
-    if save_images_dir:
-        try:
-            os.makedirs(save_images_dir, exist_ok=True)
-        except Exception as dir_err:
-            logger.warning(f"Could not create save_images_dir {save_images_dir}: {dir_err}")
-            save_images_dir = None
-
     total_pages = len(images)
     results = []
     
     for i, image in enumerate(images):
         page_num = i + 1
         page_start = time.time()
-        saved_image = False
-
-        if save_images_dir:
-            try:
-                preview_img = image.convert("RGB")
-                if preview_img.width > 1400:
-                    ratio = 1400 / float(preview_img.width)
-                    preview_img = preview_img.resize((1400, int(preview_img.height * ratio)), Image.Resampling.LANCZOS)
-                preview_img.save(os.path.join(save_images_dir, f"page_{page_num}.jpg"), "JPEG", quality=84)
-                saved_image = True
-            except Exception as save_err:
-                logger.warning(f"Could not save preview image for page {page_num}: {save_err}")
+        saved_image = _save_preview(image, page_num)
         
         if progress_callback:
             progress_callback(page_num, total_pages, "extracting", time.time() - start_time)

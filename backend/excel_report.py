@@ -40,8 +40,9 @@ def parse_qa_report_with_ai(report_text: str, filename: str) -> list[dict]:
         prompt = f"""คุณคือผู้เชี่ยวชาญด้านการวิเคราะห์รายงาน QA (Quality Assurance)
 กรุณาแปลงรายงานการตรวจสอบด้านล่างนี้ ให้เป็น JSON Array ที่แต่ละ Object มี Key ดังนี้:
 
-- "page_number": หมายเลขหน้าเอกสารที่เป็นตัวเลขจำนวนเต็ม (เช่น 1, 2, 3) ตามที่ระบุในรายงาน เช่น "[หน้า 3]" หรือ "หน้า 3" หรือ "Page 3" (หากเป็นประเด็นภาพรวมทั้งเอกสารที่ไม่เจาะจงหน้า ให้ใส่ null)
-- "document_page": ชื่อเอกสาร / หน้าที่เกี่ยวข้อง (เช่น "หน้า 3" หรือ "หน้า 2 - Sheet: TestCase" ถ้าไม่ระบุให้ใส่ชื่อไฟล์ "{filename}")
+- "page_number": หมายเลขหน้าเอกสารที่เป็นตัวเลขจำนวนเต็ม (เช่น 1, 2, 3) ตามที่ระบุในรายงาน เช่น "[หน้า 3]" หรือ "หน้า 3" (หากเป็นข้อมูลที่ขาดหายในส่วนหัว/Document Control ให้ใส่ 1; ใส่ null เฉพาะกรณีที่ไม่สามารถระบุหน้าได้จริงๆ เท่านั้น)
+- "location": ตำแหน่งที่ชัดเจนภายในหน้า เช่น "หน้าปก — ตาราง Document Control", "หัวข้อ 2.1 — ตาราง Test Case แถว TC-004", "ย่อหน้าที่ 2" (ห้ามเขียนคลุมเครือว่า "ในเอกสาร" หรือ "-")
+- "document_page": ชื่อเอกสาร / หน้าที่เกี่ยวข้องพร้อมตำแหน่ง (เช่น "หน้า 3 — หัวข้อ 2.1 ตาราง Test Case" ถ้าไม่ระบุให้ใส่ชื่อไฟล์ "{filename}")
 - "issue": ประเด็นที่พบ (สรุปสั้นๆ ชัดเจน)
 - "severity": ระดับความรุนแรง (Critical / High / Medium / Low / Info)
 - "check_type": ประเภทการตรวจ (เช่น SRS Completeness, UI/UX, Security, Performance, Spelling)
@@ -348,7 +349,8 @@ def generate_qa_excel(report_text: str, filename: str, doc_type: str = "Requirem
         page_ref_str = _format_finding_page_ref(row_data)
         found_txt = row_data.get('found_incorrect', '-') or '-'
         values = [
-            row_idx, page_ref_str, row_data.get('document_page', filename) or filename,
+            row_idx, page_ref_str,
+            (row_data.get('location') or row_data.get('document_page') or filename),
             row_data.get('issue', '-') or '-', severity, row_data.get('check_type', '-') or '-',
             found_txt, row_data.get('correct_value', '-') or '-', row_data.get('recommendation', '-') or '-'
         ]

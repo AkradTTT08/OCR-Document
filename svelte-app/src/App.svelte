@@ -37,6 +37,7 @@
   import { toast } from "./lib/toastStore.js";
 
   let showNotifications = false;
+  let notiTriggerBtn = null;
   let showNotificationConfigModal = false;
   let isOcrHistoryExpanded = true;
   let isQaGroupsExpanded = true;
@@ -198,7 +199,7 @@
       if (showSidebarDeleteModal && !isSidebarDeleting) cancelSidebarDelete();
       else if (showMyProfileModal) requestCloseProfileModal();
       else if (showProfileMenu) showProfileMenu = false;
-      else if (showNotifications) showNotifications = false;
+      else if (showNotifications) { showNotifications = false; notiTriggerBtn?.focus(); }
       else if (showNotificationConfigModal) showNotificationConfigModal = false;
     }
   }
@@ -1474,16 +1475,30 @@
             </div>
           {/if}
           <div style="position: relative;">
-            <button type="button" class="icon-btn" on:click={() => showNotifications = !showNotifications} title="การแจ้งเตือน" aria-label="การแจ้งเตือน">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 01-3.46 0"></path></svg>
+            <button
+              bind:this={notiTriggerBtn}
+              type="button"
+              class="icon-btn"
+              class:active={showNotifications}
+              on:click={() => showNotifications = !showNotifications}
+              title="การแจ้งเตือน"
+              aria-label={$unreadCount > 0 ? `การแจ้งเตือน (${$unreadCount} รายการใหม่)` : 'การแจ้งเตือน'}
+              aria-expanded={showNotifications}
+              aria-haspopup="dialog"
+              aria-controls="noti-panel"
+            >
+              <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 01-3.46 0"></path></svg>
               {#if $unreadCount > 0}
-                <span class="noti-badge-count">{$unreadCount}</span>
+                <span class="noti-badge-count" aria-hidden="true">{$unreadCount > 99 ? '99+' : $unreadCount}</span>
               {/if}
             </button>
 
             {#if showNotifications}
               <NotificationDropdown 
-                on:close={() => showNotifications = false}
+                on:close={() => {
+                  showNotifications = false;
+                  notiTriggerBtn?.focus();
+                }}
                 on:navigate={(e) => {
                   activeView = e.detail.view;
                   showNotifications = false;
@@ -2880,6 +2895,7 @@
 
   /* Topbar */
   .topbar {
+    position: relative;
     height: 70px;
     padding: 0 28px;
     display: flex;
@@ -2887,9 +2903,18 @@
     justify-content: space-between;
     gap: 16px;
     border-bottom: 1px solid var(--glass-border);
+    background: transparent;
+    z-index: var(--z-topbar, 900);
+  }
+  .topbar::before {
+    content: "";
+    position: absolute;
+    inset: 0;
     background: var(--glass-bg);
     backdrop-filter: var(--glass-blur);
-    z-index: var(--z-topbar, 900);
+    -webkit-backdrop-filter: var(--glass-blur);
+    z-index: -1;
+    pointer-events: none;
   }
 
   .breadcrumb {
@@ -2940,11 +2965,15 @@
     width: 36px; height: 36px;
     cursor: pointer; position: relative;
     display: flex; align-items: center; justify-content: center;
-    transition: all 0.3s;
+    transition: color 0.2s ease, border-color 0.2s ease, background-color 0.2s ease, transform 0.2s ease;
   }
-  .icon-btn:hover {
+  .icon-btn:hover,
+  .icon-btn.active {
     color: var(--text-main);
     border-color: var(--glass-border-light);
+    background: rgba(168, 85, 247, 0.14);
+  }
+  .icon-btn:hover {
     transform: scale(1.05);
   }
   .noti-badge-count {
@@ -2965,6 +2994,7 @@
     border: 2px solid var(--bg-dark);
     box-shadow: 0 0 8px rgba(244, 63, 94, 0.6);
     font-family: var(--font-en);
+    font-variant-numeric: tabular-nums;
   }
 
   .status-badge {

@@ -2974,7 +2974,14 @@ def qa_consult_api():
                     def _pdf_progress_cb(p_curr, p_tot, stage, elapsed):
                         pct_val = 10 + int((p_curr / max(p_tot, 1)) * 28)
                         msg_queue.put({'type': 'progress', 'pct': min(pct_val, 38), 'message': f'กำลังอ่านและสร้างภาพหน้าเอกสาร PDF ({p_curr}/{p_tot})...'})
-                    ocr_results = ocr_pdf_bytes(file_bytes, filename=doc_filename, progress_callback=_pdf_progress_cb, save_images_dir=temp_img_dir)
+                    ocr_results = ocr_pdf_bytes(
+                        file_bytes,
+                        filename=doc_filename,
+                        progress_callback=_pdf_progress_cb,
+                        save_images_dir=temp_img_dir,
+                        prefer_native_text=True,
+                        max_workers=3
+                    )
                     extracted_chunks = []
                     total_pages = len(ocr_results)
                     for idx_p, page in enumerate(ocr_results):
@@ -3028,7 +3035,7 @@ def qa_consult_api():
                         _rconn = _get_kb_conn()
                         _rcur = _rconn.cursor()
                         _rcur.execute("""
-                            SELECT req_code, title, module_name, priority, description, acceptance_criteria
+                            SELECT req_code, title, status, description, expected_results
                             FROM structured_requirements
                             WHERE project_id = %s::uuid
                             ORDER BY req_code ASC
@@ -3038,9 +3045,9 @@ def qa_consult_api():
                         if _rrows:
                             structured_reqs_context = "=== รายการ Requirement มาตรฐานของโครงการ (Structured Requirements Baseline) ===\n"
                             for rr in _rrows:
-                                r_code, r_title, r_mod, r_prio, r_desc, r_ac = rr
-                                ac_short = f" | AC: {str(r_ac)[:180]}" if r_ac else ""
-                                structured_reqs_context += f"- [{r_code}] ({r_mod or 'General'} | {r_prio or 'Medium'}) {r_title}: {str(r_desc or '')[:220]}{ac_short}\n"
+                                r_code, r_title, r_status, r_desc, r_expected = rr
+                                exp_short = f" | Expected: {str(r_expected)[:180]}" if r_expected else ""
+                                structured_reqs_context += f"- [{r_code}] ({r_status or 'Active'}) {r_title}: {str(r_desc or '')[:220]}{exp_short}\n"
                             structured_reqs_context += "\n"
                         _rcur.close()
                         _rconn.close()
@@ -3148,20 +3155,29 @@ def qa_consult_api():
                     else:
                         instruction += f"2. พิจารณาโครงสร้างและมาตรฐานที่ควรมีของเอกสารประเภทนี้\n\n"
 
-                instruction += "รายละเอียดหัวข้อที่ต้องจัดทำในรายงาน:\n"
+                instruction += "รายละเอียดโครงสร้างหัวข้อที่ต้องจัดทำในรายงาน (จัดเป็นหัวข้อชัดเจนและระบุหมายเลขหน้าเอกสารทุกจุด):\n"
                 if not is_explicit:
-                    instruction += "0. ข้อมูลการจำแนกอัตโนมัติ (Autonomous Classification):\n"
+                    instruction += "## 0. ข้อมูลการจำแนกอัตโนมัติ (Autonomous Classification)\n"
                     instruction += "   - ประเภทเอกสารที่ตรวจพบ (Detected Document Type)\n"
                     instruction += "   - เอกสาร MD ในโครงการที่เลือกมาใช้ตรวจสอบ (Cross-referenced MD Documents in Project) พร้อมเหตุผล\n"
-                instruction += "1. ความสอดคล้อง (Conformity): เอกสารนี้สอดคล้องกับเอกสารอ้างอิงในโครงการอย่างไร\n"
-                instruction += "2. จุดที่พบข้อขัดแย้ง หรือข้อผิดพลาด (Discrepancies / Errors): มีส่วนใดที่ไม่ตรงกับฐานข้อมูล หรือผิดไปจากมาตรฐาน\n"
-                instruction += "   **ข้อกำหนดสำคัญมากสำหรับการระบุตำแหน่ง**: เนื้อหาเอกสารมีการแบ่งหน้าชัดเจนด้วยสัญลักษณ์ `--- [หน้า N] ---` ทุกครั้งที่พบข้อผิดพลาด คำผิด หรือข้อมูลขัดแย้ง ให้ระบุหมายเลขหน้าเสมอในรูปแบบ `[หน้า N]` และคัดลอกข้อความที่ผิดพลาดจากเอกสารให้ตรงตัวในเครื่องหมายคำพูด \"...\" เพื่อให้ระบบนำไปไฮไลต์บนหน้าเอกสารได้ตรงจุด\n"
-                instruction += "3. สิ่งที่ขาดหายไป (Missing Information): ข้อมูลสำคัญใดที่ควรมีแต่ในเอกสารไม่มี (ระบุ `[หน้า N]` ที่ควรเพิ่มเติมด้วยถ้าเกี่ยวข้อง)\n"
+                instruction += "## สรุปภาพรวมประเด็นแยกตามหมายเลขหน้า (Page-by-Page Summary)\n"
+                instruction += "   - สรุปเป็นหัวข้อย่อยเรียงตามหมายเลขหน้า (`หน้า 1`, `หน้า 2`, ...) ว่าแต่ละหน้าพบข้อผิดพลาดกี่ข้อและอยู่ตรงหัวข้อ/ตารางใด เช่น:\n"
+                instruction += "     * **[หน้า 1 | ตาราง Document Control]**: สรุปประเด็นที่ต้องแก้ไขในหน้านี้\n"
+                instruction += "     * **[หน้า 3 | หัวข้อ 2.2 ตาราง Test Case แถว TC-004]**: สรุปประเด็นที่ต้องแก้ไขในหน้านี้\n"
+                instruction += "## 1. ความสอดคล้อง (Conformity)\n"
+                instruction += "   - ระบุหัวข้อและ `[หน้า N]` ของเอกสารที่สอดคล้องกับมาตรฐานและเอกสารอ้างอิงในโครงการ\n"
+                instruction += "## 2. จุดที่พบข้อขัดแย้ง หรือข้อผิดพลาด (Discrepancies / Errors)\n"
+                instruction += "   - แยกเป็นหัวข้อย่อยชัดเจน ทุกข้อต้องขึ้นต้นด้วย **`[หน้า N | ตำแหน่งชัดเจน]`** พร้อมระบุ **ข้อความที่ผิดพลาดในเอกสาร** (คัดลอกตรงตัวใน \"...\") และ **สิ่งที่ควรเป็น**\n"
+                instruction += "## 3. สิ่งที่ขาดหายไป (Missing Information)\n"
+                instruction += "   - แยกเป็นหัวข้อย่อยชัดเจน ทุกข้อต้องระบุ **`[หน้า N | หัวข้อ/ตำแหน่งที่ควรเพิ่ม]`** ห้ามเขียนแบบคลุมเครือ\n"
                 if prev_transaction:
-                    instruction += "4. การแก้ไขจากครั้งก่อน (Revision Check): เปรียบเทียบกับประวัติการตรวจสอบครั้งก่อนว่าปัญหาเดิมได้รับการแก้ไขแล้วหรือไม่\n"
-                    instruction += "5. ข้อเสนอแนะแนวทางแก้ไข (Recommendations)\n"
+                    instruction += "## 4. การแก้ไขจากครั้งก่อน (Revision Check)\n"
+                    instruction += "   - เปรียบเทียบกับประวัติการตรวจสอบครั้งก่อนว่าปัญหาเดิมได้รับการแก้ไขแล้วหรือไม่ (ระบุ `[หน้า N]` ที่ตรวจสอบ)\n"
+                    instruction += "## 5. ข้อเสนอแนะแนวทางแก้ไข (Recommendations — เรียงตามหมายเลขหน้า)\n"
+                    instruction += "   - เรียงลำดับคำแนะนำตามหมายเลขหน้า `หน้า 1 → หน้า N` เพื่อให้ผู้ใช้เปิดแก้ตามลำดับหน้าได้ทันที\n"
                 else:
-                    instruction += "4. ข้อเสนอแนะแนวทางแก้ไข (Recommendations)\n"
+                    instruction += "## 4. ข้อเสนอแนะแนวทางแก้ไข (Recommendations — เรียงตามหมายเลขหน้า)\n"
+                    instruction += "   - เรียงลำดับคำแนะนำตามหมายเลขหน้า `หน้า 1 → หน้า N` เพื่อให้ผู้ใช้เปิดแก้ตามลำดับหน้าได้ทันที\n"
 
                 qa_state = QAState(
                     project_id=project_id or "",
@@ -4168,6 +4184,10 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
 5. ข้อ Typo Rate (3.x): ให้ FAIL เฉพาะกรณีพบคำผิดจำนวนมาก (>5 จุด) ที่ชัดเจน หากพบเล็กน้อย 1-3 จุด หรือเป็นศัพท์เฉพาะทาง/ชื่อเฉพาะ ให้ถือว่า PASS
 6. ข้อ Governance & Control (4.1): หากเอกสารมี Document Title, Version, Date, Author ใน Section 1 Document Control ให้ถือว่า PASS
 7. **การตรวจสอบวันที่ พ.ศ. (Buddhist Era) และ ค.ศ. (A.D.)**: วันปัจจุบันคือ {_ec_date_ad} (ค.ศ. {_ec_ad_year}) ซึ่งตรงกับ {_ec_date_be} (พ.ศ. {_ec_be_year}) เอกสารไทยสามารถใช้วันที่ พ.ศ. (ปีช่วง 2400–2700 เช่น 2567, 2568, 2569 หรือ 2 หลัก 67–69) ได้อย่างถูกต้อง ให้ลบ 543 เพื่อแปลงเป็น ค.ศ. ก่อนตรวจสอบเสมอ **ห้ามตัดสินว่าวันที่ พ.ศ. ที่เป็นอดีตหรือปัจจุบัน (<= {_ec_date_be}) เป็น "วันที่ในอนาคต" โดยเด็ดขาด**
+8. **ข้อบังคับการระบุหมายเลขหน้าและตำแหน่งที่ชัดเจน (ห้ามคลุมเครือ)**:
+   - เนื้อหาเอกสารมีการแบ่งหน้าชัดเจนด้วย `--- [หน้า N] ---`
+   - ทุกข้อที่ประเมินเป็น **FAIL** (รวมถึงกรณีข้อมูลขาดหาย) **ต้องระบุ `"page_numbers"` (อาร์เรย์เลขหน้า เช่น `[1]`, `[2, 4]`) และ `"location"` (ตำแหน่งชัดเจน เช่น `"หน้า 1 — ตาราง Document Control"`, `"หน้า 3 — ตาราง Test Case แถว TC-004 คอลัมน์ Test Data"`)** เสมอ
+   - ห้ามตอบแบบคลุมเครือโดยไม่ระบุหน้าและจุดแก้ไข: หากขาดข้อมูล Metadata / ชื่อผู้ทดสอบ / วันที่ / Revision History ให้ระบุหน้า `1` พร้อมตำแหน่ง `"หน้า 1 — ส่วนหัวเอกสาร / Document Control"`; หากขาดคอลัมน์ในตารางให้ระบุหน้าที่ตารางนั้นปรากฏอยู่จริง
 
 กรุณาประเมินข้อตรวจทุกข้อให้ครบถ้วน โดยส่งคืนผลลัพธ์เป็น JSON Array เท่านั้น ห้ามมีข้อความอื่น
 แต่ละ Object ใน JSON Array มีโครงสร้างดังนี้:
@@ -4175,17 +4195,20 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
   {{
     "item_code": "ต้องตรงกับ item_code ในรายการข้อตรวจทุกตัวอักษร",
     "status": "PASS" | "FAIL" | "NA",
+    "page_numbers": [1],
+    "location": "ระบุหน้าและตำแหน่งชัดเจน เช่น 'หน้า 2 — หัวข้อ 2.1 ตาราง Test Case คอลัมน์ Test Data'",
     "remarks": "เหตุผลสรุปผลการตรวจที่ชัดเจน อ้างอิงข้อเท็จจริงในเอกสาร",
-    "evidence_text": "ข้อความอ้างอิงจากเอกสาร หรือส่วนที่พบปัญหา (ถ้ามี)"
+    "evidence_text": "[หน้า 2 | ตาราง Test Case] ข้อความอ้างอิงจากเอกสาร หรือจุดที่ผิดพลาดจริง"
   }}
 ]
 """
     eval_items_res = []
     try:
         client = _get_gemini_client()
+        qa_consult_primary = os.environ.get('QA_CONSULT_MODEL', 'gemini-3.1-pro-preview')
         gemini_model = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash')
         fallback_models = []
-        for m in [gemini_model, 'gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash-lite']:
+        for m in [qa_consult_primary, 'gemini-3.1-pro-preview', 'gemini-2.5-pro', gemini_model, 'gemini-2.5-flash', 'gemini-2.5-flash-lite']:
             if m and m not in fallback_models:
                 fallback_models.append(m)
         
@@ -4386,8 +4409,9 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
             na_count += 1
 
             
-        # Resolve page numbers deterministically for this Exit Criteria item
+        # Resolve page numbers AND exact location deterministically for this Exit Criteria item
         _ec_p_set = set()
+        _ec_location = (ai_eval.get('location') or '').strip() if isinstance(ai_eval, dict) else ''
         if isinstance(ai_eval, dict):
             _raw_pns = ai_eval.get('page_numbers')
             if isinstance(_raw_pns, list):
@@ -4400,12 +4424,50 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
             for _hf in high_critical[:5]:
                 if _hf.get('page_number') is not None and str(_hf.get('page_number')).strip().isdigit():
                     _ec_p_set.add(int(str(_hf.get('page_number')).strip()))
-        for _pm in re.findall(r'(?:หน้า|page|p\.)\s*[:#]?\s*(\d+)', f"{evidence} {remarks}", re.I):
+                if not _ec_location and _hf.get('location'):
+                    _ec_location = str(_hf.get('location')).strip()
+        for _pm in re.findall(r'(?:หน้า|page|p\.)\s*[:#]?\s*(\d+)', f"{_ec_location} {evidence} {remarks}", re.I):
             _ec_p_set.add(int(_pm))
+
+        # Fallback: match evidence_text against logical pages in doc_text
+        if not _ec_p_set and evidence and len(evidence.strip()) >= 8 and doc_text:
+            _doc_pages_for_ec = _split_text_into_logical_pages(doc_text)
+            _norm_ev_ec = re.sub(r'\s+', ' ', evidence).lower()
+            _ev_parts = [pt.strip() for pt in re.split(r'[,;\n\|/()\"\'“”]+', _norm_ev_ec) if len(pt.strip()) >= 8]
+            _ev_parts.sort(key=len, reverse=True)
+            for _pt in _ev_parts[:4]:
+                for _dp in _doc_pages_for_ec:
+                    if _pt in re.sub(r'\s+', ' ', (_dp.get('text') or '')).lower():
+                        _ec_p_set.add(int(_dp['page_number']))
+                        break
+                if _ec_p_set:
+                    break
+
+        # Fallback for FAIL items on cover/metadata/governance/revision/table headers -> pinpoint Page 1 or first table page
+        if status == 'FAIL' and not _ec_p_set:
+            _q_cat_low = f"{q_lower} {cat_text.lower()}"
+            if any(k in _q_cat_low for k in ['governance', 'metadata', 'ผู้ทดสอบ', 'วันที่', 'author', 'version', 'revision', 'header', 'ส่วนหัว', 'title', '4.1', '4.2', '1.3']):
+                _ec_p_set.add(1)
+                if not _ec_location:
+                    _ec_location = "หน้า 1 — ส่วนหัวเอกสาร / Document Control"
+            elif any(k in _q_cat_low for k in ['test case', 'test data', 'expected result', 'actual result', 'ตาราง', 'คอลัมน์', 'table']):
+                # Find first page containing a markdown table or Test Case header
+                _doc_pages_for_ec = _split_text_into_logical_pages(doc_text or "")
+                _tbl_page = next((int(_dp['page_number']) for _dp in _doc_pages_for_ec if '|' in (_dp.get('text') or '') or 'tc' in (_dp.get('text') or '').lower()), 1)
+                _ec_p_set.add(_tbl_page)
+                if not _ec_location:
+                    _ec_location = f"หน้า {_tbl_page} — โครงสร้างตาราง Test Case / เนื้อหาหลัก"
+            elif doc_text:
+                _ec_p_set.add(1)
+                if not _ec_location:
+                    _ec_location = "หน้า 1 — โครงสร้างหลักของเอกสาร"
+
         _ec_ordered_pages = sorted(_ec_p_set)
-        _ec_page_ref = ("หน้า " + ", ".join(str(x) for x in _ec_ordered_pages)) if _ec_ordered_pages else "ภาพรวมทั้งเอกสาร"
+        _ec_page_ref = ("หน้า " + ", ".join(str(x) for x in _ec_ordered_pages)) if _ec_ordered_pages else "หน้า 1"
+        if not _ec_location:
+            _ec_location = _ec_page_ref
         if status == 'FAIL' and _ec_ordered_pages and evidence and not re.search(r'(?:หน้า|page)\s*\d+', evidence, re.I):
-            evidence = f"[{_ec_page_ref}] {evidence}"
+            evidence = f"[{_ec_page_ref} | {_ec_location}] {evidence}"
 
         evaluated_items.append({
             'item_id': item_info['item_id'],
@@ -4419,6 +4481,7 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
             'page_number': _ec_ordered_pages[0] if _ec_ordered_pages else None,
             'page_numbers': _ec_ordered_pages,
             'page_ref': _ec_page_ref,
+            'location': _ec_location,
             'remarks': remarks,
             'evidence_text': evidence
         })
