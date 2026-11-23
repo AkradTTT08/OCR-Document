@@ -115,11 +115,19 @@ class QAConsultAgent:
             client = _get_gemini_client(0)
             gemini_model = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash')
             
+            from datetime import datetime
+            now_dt = datetime.now()
+            cur_ad_year = now_dt.year
+            cur_be_year = now_dt.year + 543
+            cur_date_ad = now_dt.strftime('%d/%m/%Y')
+            cur_date_be = f"{now_dt.day:02d}/{now_dt.month:02d}/{cur_be_year}"
+
             skill_section = f"--- คำสั่งพิเศษเพิ่มเติมจาก AI Skill ---\n{state.skill_instructions}\n" if state.skill_instructions else ""
             
             prompt = f"""คุณคือผู้เชี่ยวชาญด้านระบบสารสนเทศ และ System QA (Quality Assurance)
 หน้าที่ของคุณคือตรวจสอบและเปรียบเทียบความถูกต้องของ 'เอกสารที่อัปโหลด' กับ 'ข้อมูลมาตรฐาน' ที่มีอยู่ในฐานข้อมูล (Knowledge Base ของโครงการ {state.project_name})
 
+วันที่ปัจจุบันของระบบ (Current Reference Date): {cur_date_ad} (ค.ศ. {cur_ad_year}) / {cur_date_be} (พ.ศ. {cur_be_year})
 ประเภทของเอกสารที่กำลังตรวจสอบ: {state.doc_type}
 
 {skill_section}
@@ -147,13 +155,20 @@ class QAConsultAgent:
 7. การตรวจสอบความสอดคล้องกับขอบเขตโครงการ (Strict Project Scope & Domain Isolation):
    - ต้องตรวจสอบเนื้อหาเอกสารเทียบกับ Knowledge Base และข้อกำหนดของโครงการ {state.project_name} โดยตรงเท่านั้น
    - ห้ามเรียกร้องหรือกำหนดให้เอกสารต้องมีฟีเจอร์, ตรรกะ หรือระบบงานของโครงการอื่นที่ไม่เกี่ยวข้องกับขอบเขตงานของโครงการ {state.project_name} โดยเด็ดขาด
+8. การตรวจสอบวันที่ระบบพุทธศักราช (พ.ศ. / B.E.) และคริสต์ศักราช (ค.ศ. / A.D.) — **สำคัญมาก**:
+   - วันปัจจุบันคือ **{cur_date_ad} (ค.ศ. {cur_ad_year})** ซึ่งตรงกับ **{cur_date_be} (พ.ศ. {cur_be_year})**
+   - เอกสารไทยสามารถใช้วันที่แบบ **พ.ศ.** (เช่น `2567`, `2568`, `2569` หรือรูปแบบย่อ 2 หลัก เช่น `67`, `68`, `69`) หรือ **ค.ศ.** (เช่น `2024`, `2025`, `2026`) ได้ทั้งคู่
+   - **วิธีแปลง พ.ศ. → ค.ศ. ก่อนตรวจสอบเสมอ:** หากปีในเอกสารอยู่ช่วง `2400–2700` ให้ถือว่าเป็น **ปี พ.ศ.** และนำมาลบด้วย `543` เพื่อแปลงเป็น ค.ศ. (เช่น `พ.ศ. 2568 = ค.ศ. 2025`, `พ.ศ. 2569 = ค.ศ. 2026`)
+   - **ห้ามแจ้งว่าวันที่ พ.ศ. ที่เป็นอดีตหรือวันปัจจุบัน (<= {cur_date_be} พ.ศ. {cur_be_year}) เป็น "วันที่ในอนาคต" โดยเด็ดขาด** ให้รายงานเป็นข้อผิดพลาดเรื่องวันที่ในอนาคตเฉพาะกรณีที่แปลงเป็น ค.ศ. แล้วมากกว่า `{cur_date_ad}` จริงๆ เท่านั้น
 
 {state.instruction}
 """
             
-            raw_fallback_models = [gemini_model, 'gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash-lite']
+            # QA Consult uses Gemini 3.1 Pro Preview as primary model (other menus keep GEMINI_MODEL from config)
+            qa_consult_primary = os.environ.get('QA_CONSULT_MODEL', 'gemini-3.1-pro-preview')
+            raw_fallback_models = [qa_consult_primary, 'gemini-3.1-pro-preview', 'gemini-2.5-pro', gemini_model, 'gemini-2.5-flash', 'gemini-2.5-flash-lite']
             seen = set()
-            fallback_models = [m for m in raw_fallback_models if m not in ('gemini-3.1-pro', 'gemini-3.1-flash') and not (m in seen or seen.add(m))]
+            fallback_models = [m for m in raw_fallback_models if m and not (m in seen or seen.add(m))]
             
             response = None
             for key_idx in range(len(keys)):

@@ -395,9 +395,10 @@ def ocr_pdf_file(pdf_path: str, dpi: int = 150, lang: str = 'tha+eng', progress_
     return results
 
 
-def ocr_pdf_bytes(pdf_bytes: bytes, dpi: int = 150, lang: str = 'tha+eng', progress_callback=None, filename: str = None) -> list[dict]:
+def ocr_pdf_bytes(pdf_bytes: bytes, dpi: int = 150, lang: str = 'tha+eng', progress_callback=None, filename: str = None, save_images_dir: str = None) -> list[dict]:
     """
     สกัดข้อความจาก PDF bytes
+    หากระบุ save_images_dir จะบันทึกภาพหน้าเอกสาร (page_N.jpg) ไว้สำหรับแสดงใน Document Inspector
     """
     start_time = time.time()
     try:
@@ -410,12 +411,31 @@ def ocr_pdf_bytes(pdf_bytes: bytes, dpi: int = 150, lang: str = 'tha+eng', progr
     except Exception as e:
         raise RuntimeError(f"ไม่สามารถแปลง PDF ได้: {str(e)}")
 
+    if save_images_dir:
+        try:
+            os.makedirs(save_images_dir, exist_ok=True)
+        except Exception as dir_err:
+            logger.warning(f"Could not create save_images_dir {save_images_dir}: {dir_err}")
+            save_images_dir = None
+
     total_pages = len(images)
     results = []
     
     for i, image in enumerate(images):
         page_num = i + 1
         page_start = time.time()
+        saved_image = False
+
+        if save_images_dir:
+            try:
+                preview_img = image.convert("RGB")
+                if preview_img.width > 1400:
+                    ratio = 1400 / float(preview_img.width)
+                    preview_img = preview_img.resize((1400, int(preview_img.height * ratio)), Image.Resampling.LANCZOS)
+                preview_img.save(os.path.join(save_images_dir, f"page_{page_num}.jpg"), "JPEG", quality=84)
+                saved_image = True
+            except Exception as save_err:
+                logger.warning(f"Could not save preview image for page {page_num}: {save_err}")
         
         if progress_callback:
             progress_callback(page_num, total_pages, "extracting", time.time() - start_time)
@@ -427,6 +447,7 @@ def ocr_pdf_bytes(pdf_bytes: bytes, dpi: int = 150, lang: str = 'tha+eng', progr
                 'text': text_result.get('text', ''),
                 'words': text_result.get('words', []),
                 'total_pages': total_pages,
+                'has_image': saved_image,
                 'time_taken': round(time.time() - page_start, 2)
             })
         except Exception as e:
@@ -435,6 +456,7 @@ def ocr_pdf_bytes(pdf_bytes: bytes, dpi: int = 150, lang: str = 'tha+eng', progr
                 'text': '',
                 'error': str(e),
                 'total_pages': total_pages,
+                'has_image': saved_image,
                 'time_taken': round(time.time() - page_start, 2)
             })
 

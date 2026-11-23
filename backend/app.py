@@ -2540,6 +2540,316 @@ def mcp_submit_document():
         return jsonify({"status": "ERROR", "message": str(e)}), 500
 
 
+def _is_false_future_be_date_claim(claim_text: str, doc_text: str = "") -> bool:
+    """
+    Detect false-positive 'future date' claims where the document actually uses valid past/present
+    Thai Buddhist Era (พ.ศ. / B.E., e.g. 2566-2569) dates that AI mistakenly read as A.D. (ค.ศ.).
+    """
+    import re
+    from datetime import date, datetime
+    txt = str(claim_text or "").strip()
+    if not txt:
+        return False
+    low = txt.lower()
+    is_future_claim = any(kw in low for kw in [
+        "อนาคต", "future date", "in the future", "ยังไม่ถึง", "ล่วงหน้า", "เป็นปีอนาคต", "วันที่ผิดปกติ"
+    ])
+    if not is_future_claim:
+        return False
+
+    today = datetime.now().date()
+    cur_be_year = today.year + 543
+
+    # Check explicit 4-digit BE years (2400-2700) in the claim text first
+    be_years_in_claim = [int(y) for y in re.findall(r'\b(2[456]\d{2})\b', txt)]
+    if be_years_in_claim:
+        # If every mentioned BE year converts to <= today's AD year (and if exact DD/MM/YYYY BE date is <= today)
+        all_valid_past_or_present = True
+        for y in be_years_in_claim:
+            if y > cur_be_year:
+                all_valid_past_or_present = False
+                break
+        if not all_valid_past_or_present:
+            return False
+        # Verify exact DD/MM/YYYY or YYYY-MM-DD dates in claim if present
+        dm_matches = re.findall(r'\b(\d{1,2})[/\-](\d{1,2})[/\-](2[456]\d{2})\b', txt)
+        for d_s, m_s, y_s in dm_matches:
+            try:
+                ad_dt = date(int(y_s) - 543, int(m_s), int(d_s))
+                if ad_dt > today:
+                    return False
+            except ValueError:
+                pass
+        return True
+
+    # If the claim complains about Updated Date / Revision History being in the future without quoting the year,
+    # check if the document itself uses valid past/present Thai BE years (25xx <= cur_be_year) and no true future AD years
+    if doc_text and any(kw in low for kw in ["updated date", "revision history", "วันที่", "date", "เมตาเดตา", "metadata"]):
+        doc_be_years = [int(y) for y in re.findall(r'\b(25\d{2})\b', doc_text[:15000])]
+        if doc_be_years and all(y <= cur_be_year for y in doc_be_years):
+            return True
+
+    return False
+
+
+def _filter_false_future_be_date_findings(qa_findings: list, doc_text: str = "") -> list:
+    """Remove false-positive 'future date' findings caused by Thai Buddhist Era (พ.ศ.) dates."""
+    if not qa_findings or not isinstance(qa_findings, list):
+        return qa_findings or []
+    filtered = []
+    for f in qa_findings:
+        if not isinstance(f, dict):
+            filtered.append(f)
+            continue
+        combined = " ".join([
+            str(f.get("issue") or ""),
+            str(f.get("found_incorrect") or ""),
+            str(f.get("recommendation") or ""),
+            str(f.get("correct_value") or ""),
+        ])
+        if _is_false_future_be_date_claim(combined, doc_text=doc_text):
+            logger.info(f"Filtered false-positive future-date finding for valid BE (พ.ศ.) date: {f.get('issue')}")
+            continue
+        filtered.append(f)
+    return filtered
+
+
+_QA_CONSULT_PAGES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "uploads", "qa_consult_pages")
+os.makedirs(_QA_CONSULT_PAGES_DIR, exist_ok=True)
+
+
+def _split_text_into_logical_pages(raw_text: str, filename: str = "", chunk_size: int = 2600) -> list[dict]:
+    """Split extracted text into numbered pages so AI and Document Inspector can pinpoint locations."""
+    import re
+    text = (raw_text or "").replace("\r\n", "\n").strip()
+    if not text:
+        return []
+
+    explicit_matches = list(re.finditer(r'(?m)^---\s*\[(?:หน้า|Page)\s+(\d+)(?:\s*:\s*([^\]]+))?\]\s*---\s*$', text))
+    if explicit_matches:
+        pages = []
+        for idx, m in enumerate(explicit_matches):
+            p_num = int(m.group(1))
+            custom_lbl = (m.group(2) or "").strip()
+            start = m.end()
+            end = explicit_matches[idx + 1].start() if idx + 1 < len(explicit_matches) else len(text)
+            pages.append({"page_number": p_num, "label": custom_lbl or f"หน้า {p_num}", "text": text[start:end].strip(), "has_image": False})
+        return pages
+
+    sheet_matches = list(re.finditer(r'(?m)^(?:===|#{1,3})\s*(?:Sheet|แผ่นงาน)\s*[:\-]?\s*([^\n=]+?)\s*(?:===)?\s*$', text, re.I))
+    if sheet_matches:
+        pages = []
+        for idx, m in enumerate(sheet_matches):
+            s_name = m.group(1).strip()
+            start = m.start()
+            end = sheet_matches[idx + 1].start() if idx + 1 < len(sheet_matches) else len(text)
+            pages.append({"page_number": idx + 1, "label": f"Sheet: {s_name}", "text": text[start:end].strip(), "has_image": False})
+        return pages
+
+    paragraphs = re.split(r'\n{2,}', text)
+    pages, buf, buf_len = [], [], 0
+    for para in paragraphs:
+        is_major_heading = bool(re.match(r'^#{1,2}\s+\S', para.strip()))
+        if buf and (buf_len + len(para) > chunk_size or (is_major_heading and buf_len > chunk_size * 0.45)):
+            p_num = len(pages) + 1
+            pages.append({"page_number": p_num, "label": f"หน้า {p_num}", "text": "\n\n".join(buf).strip(), "has_image": False})
+            buf, buf_len = [para], len(para)
+        else:
+            buf.append(para)
+            buf_len += len(para) + 2
+    if buf:
+        p_num = len(pages) + 1
+        pages.append({"page_number": p_num, "label": f"หน้า {p_num}", "text": "\n\n".join(buf).strip(), "has_image": False})
+    return pages
+
+
+def _attach_finding_pages(qa_findings: list[dict], pages_list: list[dict]) -> list[dict]:
+    """Deterministically resolve page_number, page_label, and highlight_snippet for every QA finding."""
+    import re
+    if not qa_findings or not isinstance(qa_findings, list):
+        return []
+    total = len(pages_list)
+    page_by_num = {int(p["page_number"]): p for p in pages_list if p.get("page_number")}
+    norm_pages = [
+        (int(p["page_number"]), p.get("label") or f"หน้า {p['page_number']}", re.sub(r'\s+', ' ', (p.get("text") or "")).lower())
+        for p in pages_list
+    ]
+
+    def _extract_page_num_from_text(val):
+        if not val:
+            return None
+        m = re.search(r'(?:หน้า|page|p\.)\s*[:#]?\s*(\d+)', str(val), re.I)
+        if m:
+            n = int(m.group(1))
+            if 1 <= n <= max(total, 1):
+                return n
+        return None
+
+    enriched = []
+    for idx, raw_f in enumerate(qa_findings):
+        f = dict(raw_f) if isinstance(raw_f, dict) else {"issue": str(raw_f)}
+        f["finding_index"] = idx
+
+        resolved_page = None
+        raw_pn = f.get("page_number")
+        if isinstance(raw_pn, int) and 1 <= raw_pn <= total:
+            resolved_page = raw_pn
+        elif isinstance(raw_pn, str) and raw_pn.strip().isdigit():
+            cand = int(raw_pn.strip())
+            if 1 <= cand <= total:
+                resolved_page = cand
+
+        if resolved_page is None:
+            resolved_page = _extract_page_num_from_text(f.get("document_page")) or _extract_page_num_from_text(f.get("issue"))
+
+        if resolved_page is None and f.get("document_page"):
+            dp_low = str(f.get("document_page")).lower()
+            for pn, lbl, _ in norm_pages:
+                clean_lbl = lbl.replace("Sheet:", "").strip().lower()
+                if clean_lbl and len(clean_lbl) >= 2 and clean_lbl in dp_low:
+                    resolved_page = pn
+                    break
+
+        snippet = str(f.get("found_incorrect") or "").strip()
+        clean_snippet = re.sub(r'^[\"\'\`“”]+|[\"\'\`“”]+$', '', snippet).strip()
+        if clean_snippet in ("-", "ไม่มี", "N/A", "n/a", "ไม่ระบุ"):
+            clean_snippet = ""
+
+        if resolved_page is None and clean_snippet and len(clean_snippet) >= 4:
+            norm_snip = re.sub(r'\s+', ' ', clean_snippet).lower()
+            for pn, _, ntext in norm_pages:
+                if norm_snip in ntext:
+                    resolved_page = pn
+                    break
+            if resolved_page is None and len(norm_snip) >= 12:
+                parts = [pt.strip() for pt in re.split(r'[,;\n\|/()]+', norm_snip) if len(pt.strip()) >= 8]
+                parts.sort(key=len, reverse=True)
+                for pt in parts[:4]:
+                    for pn, _, ntext in norm_pages:
+                        if pt in ntext:
+                            resolved_page = pn
+                            break
+                    if resolved_page is not None:
+                        break
+            if resolved_page is None:
+                tokens = [t for t in re.findall(r'[a-zA-Z0-9\u0E00-\u0E7F]{3,}', norm_snip) if len(t) >= 3][:10]
+                if len(tokens) >= 2:
+                    best_pn, best_score = None, 0
+                    for pn, _, ntext in norm_pages:
+                        hits = sum(1 for t in tokens if t in ntext)
+                        if hits > best_score and hits >= max(2, len(tokens) // 2):
+                            best_score = hits
+                            best_pn = pn
+                    resolved_page = best_pn
+
+        f["page_number"] = resolved_page
+        if resolved_page and resolved_page in page_by_num:
+            f["page_label"] = page_by_num[resolved_page].get("label") or f"หน้า {resolved_page}"
+            if not f.get("document_page") or str(f.get("document_page")).strip().lower().endswith((".pdf", ".xlsx", ".md", ".txt")):
+                f["document_page"] = f["page_label"]
+        else:
+            f["page_label"] = "ภาพรวมทั้งเอกสาร"
+
+        f["highlight_snippet"] = clean_snippet
+        enriched.append(f)
+    return enriched
+
+
+def _build_page_issue_summary(qa_findings: list[dict], pages_list: list[dict]) -> dict:
+    """Build per-page error counters so the UI can focus the user directly on pages with issues."""
+    by_page = {}
+    for p in pages_list:
+        pn = int(p["page_number"])
+        by_page[pn] = {
+            "page_number": pn,
+            "label": p.get("label") or f"หน้า {pn}",
+            "total_issues": 0,
+            "critical_high": 0,
+            "medium": 0,
+            "low_info": 0,
+            "has_image": bool(p.get("has_image"))
+        }
+
+    global_issues = 0
+    for f in (qa_findings or []):
+        pn = f.get("page_number")
+        sev = str(f.get("severity") or "info").lower()
+        if pn and int(pn) in by_page:
+            slot = by_page[int(pn)]
+            slot["total_issues"] += 1
+            if sev in ("critical", "high"): slot["critical_high"] += 1
+            elif sev == "medium": slot["medium"] += 1
+            else: slot["low_info"] += 1
+        else:
+            global_issues += 1
+
+    pages_ordered = [by_page[k] for k in sorted(by_page.keys())]
+    error_pages = [p for p in pages_ordered if p["total_issues"] > 0]
+    return {
+        "total_pages": len(pages_ordered),
+        "pages_with_issues_count": len(error_pages),
+        "global_issues_count": global_issues,
+        "pages": pages_ordered
+    }
+
+
+@app.route('/api/qa_consult/page_image/<string:scan_id>/<int:page_num>', methods=['GET'])
+def qa_consult_page_image(scan_id, page_num):
+    """Serve saved preview JPEG image for a QA Consult document page."""
+    import re
+    safe_id = re.sub(r'[^a-zA-Z0-9_\-]', '', str(scan_id or ''))
+    if not safe_id or page_num < 1:
+        return jsonify({'error': 'Invalid parameters'}), 400
+    img_path = os.path.join(_QA_CONSULT_PAGES_DIR, safe_id, f"page_{page_num}.jpg")
+    if not os.path.exists(img_path):
+        return jsonify({'error': 'Page image not found'}), 404
+    return send_file(img_path, mimetype='image/jpeg')
+
+
+@app.route('/api/qa_consult/transaction/<string:transaction_id>/pages', methods=['GET'])
+def qa_consult_transaction_pages(transaction_id):
+    """Load extracted pages + page-attributed findings for a saved QA Consult transaction."""
+    try:
+        from db_ingestion import get_db_connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, filename, extracted_text, qa_findings, total_pages
+            FROM qa_transactions
+            WHERE id::text = %s
+            LIMIT 1
+        """, (str(transaction_id),))
+        row = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        if not row:
+            return jsonify({'success': False, 'error': 'Transaction not found'}), 404
+
+        tx_id, fname, extracted_text, qa_findings, total_pages = row
+        tx_id_str = str(tx_id)
+        pages_list = _split_text_into_logical_pages(extracted_text or "", filename=fname or "")
+        img_dir = os.path.join(_QA_CONSULT_PAGES_DIR, tx_id_str)
+        for p in pages_list:
+            p_num = int(p["page_number"])
+            has_img = os.path.exists(os.path.join(img_dir, f"page_{p_num}.jpg"))
+            p["has_image"] = has_img
+            p["image_url"] = f"/api/qa_consult/page_image/{tx_id_str}/{p_num}" if has_img else None
+
+        findings_list = qa_findings if isinstance(qa_findings, list) else []
+        enriched_findings = _attach_finding_pages(findings_list, pages_list)
+        summary = _build_page_issue_summary(enriched_findings, pages_list)
+        return jsonify({
+            'success': True,
+            'transaction_id': tx_id_str,
+            'pages': pages_list,
+            'qa_findings': enriched_findings,
+            'page_issue_summary': summary
+        }), 200
+    except Exception as e:
+        logger.error(f"Error loading QA transaction pages for {transaction_id}: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route('/api/qa_consult', methods=['POST', 'OPTIONS'])
 def qa_consult_api():
     if request.method == 'OPTIONS':
@@ -2621,11 +2931,22 @@ def qa_consult_api():
 
         def run_qa_worker():
             nonlocal doc_type
+            import uuid as _uuid
+            import shutil as _shutil
+            temp_scan_key = f"tmp_{_uuid.uuid4().hex[:12]}"
+            temp_img_dir = os.path.join(_QA_CONSULT_PAGES_DIR, temp_scan_key)
+            pages_list = []
             try:
                 if file_is_excel:
                     msg_queue.put({'type': 'progress', 'pct': 10, 'message': 'กำลังวิเคราะห์และแปลงข้อมูลจากเอกสาร Excel (Sheets & Test Cases)...' })
                     try:
-                        extracted_text, total_pages = extract_text_from_excel_bytes(file_bytes, filename=raw_original_filename)
+                        raw_excel_text, total_pages = extract_text_from_excel_bytes(file_bytes, filename=raw_original_filename)
+                        pages_list = _split_text_into_logical_pages(raw_excel_text, filename=raw_original_filename)
+                        if pages_list:
+                            extracted_text = "\n\n".join(f"--- [หน้า {p['page_number']}: {p['label']}] ---\n{p['text']}" for p in pages_list)
+                            total_pages = len(pages_list)
+                        else:
+                            extracted_text = raw_excel_text
                     except Exception as ex_err:
                         logger.error(f"Failed to parse Excel file: {ex_err}", exc_info=True)
                         msg_queue.put({'type': 'error', 'message': f'ไม่สามารถอ่านไฟล์ Excel ได้: {str(ex_err)}'})
@@ -2634,23 +2955,40 @@ def qa_consult_api():
                 elif file_is_markdown:
                     msg_queue.put({'type': 'progress', 'pct': 10, 'message': 'กำลังอ่านเนื้อหาเอกสาร Markdown / Text...' })
                     try:
-                        extracted_text = file_bytes.decode('utf-8', errors='replace')
-                        total_pages = max(1, (len(extracted_text) // 3000) + 1)
+                        raw_md_text = file_bytes.decode('utf-8', errors='replace')
+                        pages_list = _split_text_into_logical_pages(raw_md_text, filename=raw_original_filename)
+                        if pages_list:
+                            extracted_text = "\n\n".join(f"--- [หน้า {p['page_number']}] ---\n{p['text']}" for p in pages_list)
+                            total_pages = len(pages_list)
+                        else:
+                            extracted_text = raw_md_text
+                            total_pages = 1
                     except Exception as md_err:
                         logger.error(f"Failed to read Markdown/Text file: {md_err}", exc_info=True)
                         msg_queue.put({'type': 'error', 'message': f'ไม่สามารถอ่านไฟล์ข้อความได้: {str(md_err)}'})
                         msg_queue.put(None)
                         return
                 else:
-                    msg_queue.put({'type': 'progress', 'pct': 10, 'message': 'กำลังวิเคราะห์ข้อความจากเอกสาร PDF...' })
-                    # 1. OCR
+                    msg_queue.put({'type': 'progress', 'pct': 10, 'message': 'กำลังวิเคราะห์ข้อความและสร้างภาพตัวอย่างหน้าเอกสาร PDF...' })
                     from ocr_engine import ocr_pdf_bytes
-                    ocr_results = ocr_pdf_bytes(file_bytes, filename=doc_filename)
-                    extracted_text = ''
+                    def _pdf_progress_cb(p_curr, p_tot, stage, elapsed):
+                        pct_val = 10 + int((p_curr / max(p_tot, 1)) * 28)
+                        msg_queue.put({'type': 'progress', 'pct': min(pct_val, 38), 'message': f'กำลังอ่านและสร้างภาพหน้าเอกสาร PDF ({p_curr}/{p_tot})...'})
+                    ocr_results = ocr_pdf_bytes(file_bytes, filename=doc_filename, progress_callback=_pdf_progress_cb, save_images_dir=temp_img_dir)
+                    extracted_chunks = []
                     total_pages = len(ocr_results)
-                    for page in ocr_results:
-                        if 'error' not in page or not page['error']:
-                            extracted_text += page.get('text', '') + '\n\n'
+                    for idx_p, page in enumerate(ocr_results):
+                        p_num = int(page.get('page_number') or (idx_p + 1))
+                        p_text = (page.get('text') or '').strip() if ('error' not in page or not page['error']) else ''
+                        pages_list.append({
+                            'page_number': p_num,
+                            'label': f'หน้า {p_num}',
+                            'text': p_text,
+                            'has_image': bool(page.get('has_image'))
+                        })
+                        if p_text:
+                            extracted_chunks.append(f"--- [หน้า {p_num}] ---\n{p_text}")
+                    extracted_text = "\n\n".join(extracted_chunks)
                 
                 if not extracted_text.strip():
                     msg_queue.put({'type': 'error', 'message': 'ไม่พบเนื้อหาข้อความในเอกสารที่อัปโหลด'})
@@ -2817,7 +3155,8 @@ def qa_consult_api():
                     instruction += "   - เอกสาร MD ในโครงการที่เลือกมาใช้ตรวจสอบ (Cross-referenced MD Documents in Project) พร้อมเหตุผล\n"
                 instruction += "1. ความสอดคล้อง (Conformity): เอกสารนี้สอดคล้องกับเอกสารอ้างอิงในโครงการอย่างไร\n"
                 instruction += "2. จุดที่พบข้อขัดแย้ง หรือข้อผิดพลาด (Discrepancies / Errors): มีส่วนใดที่ไม่ตรงกับฐานข้อมูล หรือผิดไปจากมาตรฐาน\n"
-                instruction += "3. สิ่งที่ขาดหายไป (Missing Information): ข้อมูลสำคัญใดที่ควรมีแต่ในเอกสารไม่มี\n"
+                instruction += "   **ข้อกำหนดสำคัญมากสำหรับการระบุตำแหน่ง**: เนื้อหาเอกสารมีการแบ่งหน้าชัดเจนด้วยสัญลักษณ์ `--- [หน้า N] ---` ทุกครั้งที่พบข้อผิดพลาด คำผิด หรือข้อมูลขัดแย้ง ให้ระบุหมายเลขหน้าเสมอในรูปแบบ `[หน้า N]` และคัดลอกข้อความที่ผิดพลาดจากเอกสารให้ตรงตัวในเครื่องหมายคำพูด \"...\" เพื่อให้ระบบนำไปไฮไลต์บนหน้าเอกสารได้ตรงจุด\n"
+                instruction += "3. สิ่งที่ขาดหายไป (Missing Information): ข้อมูลสำคัญใดที่ควรมีแต่ในเอกสารไม่มี (ระบุ `[หน้า N]` ที่ควรเพิ่มเติมด้วยถ้าเกี่ยวข้อง)\n"
                 if prev_transaction:
                     instruction += "4. การแก้ไขจากครั้งก่อน (Revision Check): เปรียบเทียบกับประวัติการตรวจสอบครั้งก่อนว่าปัญหาเดิมได้รับการแก้ไขแล้วหรือไม่\n"
                     instruction += "5. ข้อเสนอแนะแนวทางแก้ไข (Recommendations)\n"
@@ -2853,8 +3192,12 @@ def qa_consult_api():
                 qa_findings = []
                 try:
                     qa_findings = _parse_findings(report, original_filename)
+                    qa_findings = _filter_false_future_be_date_findings(qa_findings, doc_text=extracted_text)
+                    qa_findings = _attach_finding_pages(qa_findings, pages_list)
                 except Exception as pf_err:
                     logger.error(f"Failed to parse QA findings: {pf_err}")
+
+                page_issue_summary = _build_page_issue_summary(qa_findings, pages_list)
 
                 # 4. Evaluate Exit Criteria Checklist Gate (with QA findings context)
                 exit_criteria_eval = None
@@ -2885,6 +3228,22 @@ def qa_consult_api():
                     )
                 except Exception as e:
                     logger.error(f"Failed to save QA transaction: {e}")
+
+                # Persist PDF page preview images under transaction_id (or keep temp_scan_key)
+                final_scan_key = str(transaction_id) if transaction_id else temp_scan_key
+                if os.path.isdir(temp_img_dir):
+                    final_img_dir = os.path.join(_QA_CONSULT_PAGES_DIR, final_scan_key)
+                    if final_img_dir != temp_img_dir:
+                        try:
+                            if os.path.exists(final_img_dir):
+                                _shutil.rmtree(final_img_dir, ignore_errors=True)
+                            os.replace(temp_img_dir, final_img_dir)
+                        except Exception as mv_err:
+                            logger.warning(f"Could not move page images to {final_img_dir}: {mv_err}")
+                            final_scan_key = temp_scan_key
+                for p in pages_list:
+                    p_num = int(p['page_number'])
+                    p['image_url'] = f"/api/qa_consult/page_image/{final_scan_key}/{p_num}" if p.get('has_image') else None
 
                 # Update linked qa_generated_documents record with audit findings and status
                 try:
@@ -2998,6 +3357,8 @@ def qa_consult_api():
                     'excel_url': excel_download_url,
                     'exit_criteria_eval': exit_criteria_eval,
                     'qa_findings': qa_findings,
+                    'pages': pages_list,
+                    'page_issue_summary': page_issue_summary,
                     'extracted_text': extracted_text,
                     'raw_text': extracted_text
                 }
@@ -3783,7 +4144,14 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
 - ให้ประเมินผลตามเนื้อหาจริงในเอกสารที่ส่งตรวจเป็นหลักอย่างเป็นธรรมและตรงตามมาตรฐานวิศวกรรม
 """
 
+    _now_ec = datetime.now()
+    _ec_ad_year = _now_ec.year
+    _ec_be_year = _now_ec.year + 543
+    _ec_date_ad = _now_ec.strftime('%d/%m/%Y')
+    _ec_date_be = f"{_now_ec.day:02d}/{_now_ec.month:02d}/{_ec_be_year}"
+
     prompt = f"""คุณคือ System Auditor และ Quality Gate Evaluator
+วันที่ปัจจุบันของระบบ (Current Reference Date): {_ec_date_ad} (ค.ศ. {_ec_ad_year}) / {_ec_date_be} (พ.ศ. {_ec_be_year})
 กรุณาประเมินเนื้อหาเอกสารประเภท "{target_type_clean}" ต่อไปนี้เทียบกับรายการ Exit Criteria Checklist แต่ละข้อให้ครบทุกข้อ:
 
 === รายการข้อตรวจ (Exit Criteria Checklist) ===
@@ -3799,6 +4167,7 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
 4. ข้อ Attachments / Appendix (2.4): หากเอกสารไม่ได้ระบุว่ามี Attachment แล้วไม่แนบ หรือเอกสารมี Inline Diagrams/Tables แทน Attachment แยก ให้ถือว่า PASS (หรือ NA ถ้าไม่เกี่ยวข้อง)
 5. ข้อ Typo Rate (3.x): ให้ FAIL เฉพาะกรณีพบคำผิดจำนวนมาก (>5 จุด) ที่ชัดเจน หากพบเล็กน้อย 1-3 จุด หรือเป็นศัพท์เฉพาะทาง/ชื่อเฉพาะ ให้ถือว่า PASS
 6. ข้อ Governance & Control (4.1): หากเอกสารมี Document Title, Version, Date, Author ใน Section 1 Document Control ให้ถือว่า PASS
+7. **การตรวจสอบวันที่ พ.ศ. (Buddhist Era) และ ค.ศ. (A.D.)**: วันปัจจุบันคือ {_ec_date_ad} (ค.ศ. {_ec_ad_year}) ซึ่งตรงกับ {_ec_date_be} (พ.ศ. {_ec_be_year}) เอกสารไทยสามารถใช้วันที่ พ.ศ. (ปีช่วง 2400–2700 เช่น 2567, 2568, 2569 หรือ 2 หลัก 67–69) ได้อย่างถูกต้อง ให้ลบ 543 เพื่อแปลงเป็น ค.ศ. ก่อนตรวจสอบเสมอ **ห้ามตัดสินว่าวันที่ พ.ศ. ที่เป็นอดีตหรือปัจจุบัน (<= {_ec_date_be}) เป็น "วันที่ในอนาคต" โดยเด็ดขาด**
 
 กรุณาประเมินข้อตรวจทุกข้อให้ครบถ้วน โดยส่งคืนผลลัพธ์เป็น JSON Array เท่านั้น ห้ามมีข้อความอื่น
 แต่ละ Object ใน JSON Array มีโครงสร้างดังนี้:
@@ -3934,6 +4303,12 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
                 remarks = 'ตรวจสอบแล้วพบ Document Title, Version Number, วันที่บังคับใช้ และผู้จัดทำ ครบถ้วนใน Section 1 Document Control ตรงตามมาตรฐาน Governance'
                 evidence = 'Section 1 Document Control ระบุ Title, Version, Date, และ Author ครบถ้วนสมบูรณ์'
 
+        # Smart guard for Thai Buddhist Era (พ.ศ.) dates falsely flagged as 'future date'
+        if status == 'FAIL' and _is_false_future_be_date_claim(f"{remarks} {evidence}", doc_text=doc_text):
+            status = 'PASS'
+            remarks = f'ตรวจสอบแล้ววันที่ในเอกสารใช้ระบบพุทธศักราช (พ.ศ.) ซึ่งเป็นวันที่ในอดีตหรือปัจจุบัน (เทียบเท่า ค.ศ. ปัจจุบัน <= {datetime.now().strftime("%d/%m/%Y")}) ถูกต้องตามมาตรฐานเอกสารไทย'
+            evidence = 'วันที่ในเอกสารใช้รูปแบบ พ.ศ. ที่ถูกต้อง ไม่ใช่วันที่ในอนาคต'
+
         # Smart guard for Content Coverage / Scope (2.1, 2.2) - ONLY if doc is well-structured AND has 0 Critical/High findings
         if status == 'FAIL' and is_well_structured and base_code_clean in ('2.1', '2.2'):
             lower_ev = (evidence + " " + remarks).lower()
@@ -4011,6 +4386,27 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
             na_count += 1
 
             
+        # Resolve page numbers deterministically for this Exit Criteria item
+        _ec_p_set = set()
+        if isinstance(ai_eval, dict):
+            _raw_pns = ai_eval.get('page_numbers')
+            if isinstance(_raw_pns, list):
+                for _x in _raw_pns:
+                    if str(_x).strip().isdigit():
+                        _ec_p_set.add(int(str(_x).strip()))
+            elif ai_eval.get('page_number') is not None and str(ai_eval.get('page_number')).strip().isdigit():
+                _ec_p_set.add(int(str(ai_eval.get('page_number')).strip()))
+        if is_crit_defect_gate_item and high_critical:
+            for _hf in high_critical[:5]:
+                if _hf.get('page_number') is not None and str(_hf.get('page_number')).strip().isdigit():
+                    _ec_p_set.add(int(str(_hf.get('page_number')).strip()))
+        for _pm in re.findall(r'(?:หน้า|page|p\.)\s*[:#]?\s*(\d+)', f"{evidence} {remarks}", re.I):
+            _ec_p_set.add(int(_pm))
+        _ec_ordered_pages = sorted(_ec_p_set)
+        _ec_page_ref = ("หน้า " + ", ".join(str(x) for x in _ec_ordered_pages)) if _ec_ordered_pages else "ภาพรวมทั้งเอกสาร"
+        if status == 'FAIL' and _ec_ordered_pages and evidence and not re.search(r'(?:หน้า|page)\s*\d+', evidence, re.I):
+            evidence = f"[{_ec_page_ref}] {evidence}"
+
         evaluated_items.append({
             'item_id': item_info['item_id'],
             'item_code': item_code,
@@ -4020,6 +4416,9 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
             'severity': item_info['severity'],
             'is_mandatory': item_info['is_mandatory'],
             'status': status,
+            'page_number': _ec_ordered_pages[0] if _ec_ordered_pages else None,
+            'page_numbers': _ec_ordered_pages,
+            'page_ref': _ec_page_ref,
             'remarks': remarks,
             'evidence_text': evidence
         })

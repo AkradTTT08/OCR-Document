@@ -7,9 +7,94 @@
   import GateResultModal from "./GateResultModal.svelte";
   import ProjectSelection from "./ProjectSelection.svelte";
   import SpectraLoading from "./SpectraLoading.svelte";
+  import QADocumentInspector from "./QADocumentInspector.svelte";
   import { MASTER_DOC_TYPES } from "./constants.js";
 
   const dispatch = createEventDispatcher();
+
+  let inspectorRef;
+  /** @type {number | 'global' | null} */
+  let inspectorPageNumber = null;
+  /** @type {number | null} */
+  let inspectorFindingIndex = null;
+  let isLoadingInspectorPages = false;
+
+  async function loadInspectorPagesForTransaction(transactionId) {
+    if (!transactionId || String(transactionId).startsWith('pending-') || String(transactionId).startsWith('scan-')) return;
+    isLoadingInspectorPages = true;
+    try {
+      const res = await fetch(`/api/qa_consult/transaction/${encodeURIComponent(transactionId)}/pages`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && scanResult && (!scanResult.id || String(scanResult.id) === String(transactionId))) {
+          scanResult = {
+            ...scanResult,
+            pages: data.pages || [],
+            page_issue_summary: data.page_issue_summary || null,
+            qa_findings: (data.qa_findings && data.qa_findings.length > 0) ? data.qa_findings : scanResult.qa_findings
+          };
+        }
+      }
+    } catch (err) {
+      console.warn("Could not load document pages for inspector:", err);
+    } finally {
+      isLoadingInspectorPages = false;
+    }
+  }
+
+  function jumpToFindingInInspector(finding, idx) {
+    const pNum = finding?.page_number ? Number(finding.page_number) : "global";
+    const fIdx = finding?.finding_index !== undefined ? finding.finding_index : idx;
+    inspectorPageNumber = pNum;
+    inspectorFindingIndex = fIdx;
+    if (inspectorRef && typeof inspectorRef.focusFinding === "function") {
+      inspectorRef.focusFinding(pNum, fIdx);
+    }
+    scrollToSection("qa-doc-inspector-section");
+  }
+
+  /** @param {any} item */
+  function getExitItemPageNumbers(item) {
+    if (!item) return [];
+    const nums = new Set();
+    if (Array.isArray(item.page_numbers)) {
+      item.page_numbers.forEach(n => {
+        const v = Number(n);
+        if (Number.isInteger(v) && v > 0) nums.add(v);
+      });
+    }
+    if (item.page_number !== null && item.page_number !== undefined && Number(item.page_number) > 0) {
+      nums.add(Number(item.page_number));
+    }
+    const text = `${item.page_ref || ''} ${item.evidence_text || ''} ${item.remarks || ''}`;
+    const rx = /(?:หน้า|page|p\.)\s*[:#]?\s*(\d+)/gi;
+    let m;
+    while ((m = rx.exec(text)) !== null) {
+      const v = Number(m[1]);
+      if (Number.isInteger(v) && v > 0) nums.add(v);
+    }
+    if (nums.size === 0 && item.status === 'FAIL' && Array.isArray(scanResult?.qa_findings)) {
+      const baseCode = String(item.item_code || '').replace(/^.*-/, '').trim();
+      if (baseCode === '1.1' || String(item.category || '').includes('Defect')) {
+        scanResult.qa_findings.forEach(f => {
+          const sev = String(f.severity || '').toLowerCase();
+          if ((sev === 'critical' || sev === 'high') && f.page_number && Number(f.page_number) > 0) {
+            nums.add(Number(f.page_number));
+          }
+        });
+      }
+    }
+    return Array.from(nums).sort((a, b) => a - b);
+  }
+
+  function jumpToPageInInspector(pageNum) {
+    inspectorPageNumber = pageNum ? Number(pageNum) : "global";
+    inspectorFindingIndex = null;
+    if (inspectorRef && typeof inspectorRef.focusPage === "function") {
+      inspectorRef.focusPage(inspectorPageNumber);
+    }
+    scrollToSection("qa-doc-inspector-section");
+  }
 
   let showGateModal = false;
   /** @type {any} */
@@ -236,7 +321,10 @@
 
       const evalData = item.exit_criteria_eval || synthesizeExitCriteria({ qa_findings: item.qa_findings, report: item.report, doc_type: item.docType });
 
+      inspectorPageNumber = null;
+      inspectorFindingIndex = null;
       scanResult = {
+        id: item.id,
         status: 'success',
         report: item.report,
         email: item.email || email, // If email is in DB, use it, otherwise use current
@@ -246,8 +334,14 @@
         emailSent: false,
         excel_url: computedExcelUrl,
         qa_findings: item.qa_findings,
-        exit_criteria_eval: evalData
+        exit_criteria_eval: evalData,
+        pages: item.pages || [],
+        page_issue_summary: item.page_issue_summary || null
       };
+
+      if (item.id && (!item.pages || item.pages.length === 0)) {
+        loadInspectorPagesForTransaction(item.id);
+      }
 
       scanGroupName = cleanGName;
       scanGroupType = item.group_type || '';
@@ -1105,6 +1199,8 @@
               activeScanStatus.update(s => s ? { ...s, processStatus: data.message, progressPct: data.pct } : s);
             } else if (data.type === "complete") {
               progressPct = 100;
+              inspectorPageNumber = null;
+              inspectorFindingIndex = null;
               scanResult = data.result;
               isProcessing = false;
               activeScanStatus.set(null);
@@ -2348,6 +2444,12 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
           นำทางด่วน:
         </span>
+        <button type="button" class="btn-quick-nav highlight-btn" on:click={() => scrollToSection('qa-doc-inspector-section')}>
+          โฟกัสรายหน้า & ไฮไลต์จุดผิดพลาด
+          {#if scanResult.page_issue_summary?.pages_with_issues_count > 0}
+            ({scanResult.page_issue_summary.pages_with_issues_count} หน้า)
+          {/if}
+        </button>
         {#if scanResult.qa_findings && scanResult.qa_findings.length > 0}
           <button type="button" class="btn-quick-nav" on:click={() => scrollToSection('qa-findings-section')}>
             📊 QA Audit Findings ({scanResult.qa_findings.length})
@@ -2362,10 +2464,23 @@
             📋 Exit Criteria Gate ({scanResult.exit_criteria_eval.score_percentage}%)
           </button>
         {/if}
-        <button type="button" class="btn-quick-nav highlight-btn" on:click={() => scrollToSection('consult-report-section')}>
+        <button type="button" class="btn-quick-nav" on:click={() => scrollToSection('consult-report-section')}>
           📝 Spectra QA Consult Report (รายงานวิเคราะห์)
         </button>
       </div>
+
+      <!-- Interactive Document Page Focus & Highlight Inspector -->
+      <QADocumentInspector
+        bind:this={inspectorRef}
+        bind:selectedPageNumber={inspectorPageNumber}
+        bind:selectedFindingIndex={inspectorFindingIndex}
+        pages={scanResult.pages || []}
+        findings={scanResult.qa_findings || []}
+        exitCriteriaItems={scanResult.exit_criteria_eval?.items || []}
+        pageIssueSummary={scanResult.page_issue_summary || null}
+        filename={scanResult.filename || ""}
+        isLoadingPages={isLoadingInspectorPages}
+      />
 
       <!-- QA Findings Report Card (Always show) -->
       <div class="qa-findings-card glass-panel" id="qa-findings-section">
@@ -2401,11 +2516,12 @@
           <table class="exit-checklist-table">
             <thead>
               <tr>
-                <th style="width: 60px; text-align: center;">ลำดับ</th>
-                <th style="width: 160px;">ประเภทการตรวจ</th>
-                <th style="width: 28%;">ประเด็นที่พบ (Issue)</th>
-                <th style="width: 110px; text-align: center;">ความรุนแรง</th>
-                <th style="width: 24%;">สิ่งที่ควรเป็น</th>
+                <th style="width: 56px; text-align: center;">ลำดับ</th>
+                <th style="width: 118px; text-align: center;">หน้า / ตำแหน่ง</th>
+                <th style="width: 150px;">ประเภทการตรวจ</th>
+                <th style="width: 26%;">ประเด็นที่พบ (Issue)</th>
+                <th style="width: 100px; text-align: center;">ความรุนแรง</th>
+                <th style="width: 22%;">สิ่งที่ควรเป็น</th>
                 <th>ข้อเสนอแนะ</th>
               </tr>
             </thead>
@@ -2414,6 +2530,17 @@
                 {#each scanResult.qa_findings as finding, i}
                   <tr class="row-status-{finding.severity === 'Critical' || finding.severity === 'High' ? 'fail' : finding.severity === 'Medium' ? 'na' : 'pass'}">
                     <td class="item-code-cell" style="text-align: center;"><strong>{i + 1}</strong></td>
+                    <td style="text-align: center;">
+                      <button
+                        type="button"
+                        class="btn-page-jump"
+                        class:has-page={Boolean(finding.page_number)}
+                        on:click={() => jumpToFindingInInspector(finding, i)}
+                        title="คลิกเพื่อเปิดหน้าเอกสารและไฮไลต์จุดผิดพลาดนี้"
+                      >
+                        {finding.page_number ? (finding.page_label || `หน้า ${finding.page_number}`) : 'ภาพรวม'}
+                      </button>
+                    </td>
                     <td class="category-cell">{finding.check_type || '-'}</td>
                     <td class="question-cell">
                       <strong class="issue-headline">{finding.issue || '-'}</strong>
@@ -2432,7 +2559,7 @@
                 {/each}
               {:else}
                 <tr>
-                  <td colspan="6" style="text-align: center; padding: 40px 20px;">
+                  <td colspan="7" style="text-align: center; padding: 40px 20px;">
                     <div style="display: flex; flex-direction: column; align-items: center; gap: 12px;">
                       <div style="font-size: 48px; opacity: 0.9;">✅</div>
                       <div style="font-size: 16px; font-weight: 600; color: #34d399;">ไม่พบข้อผิดพลาดในเอกสาร</div>
@@ -2545,23 +2672,25 @@
               <thead>
                 <tr>
                   <th style="width: 68px; text-align: center;">ข้อตรวจ</th>
-                  <th style="width: 170px;">หมวดหมู่</th>
-                  <th style="width: 24%;">รายการประเมิน (Checklist Item)</th>
-                  <th style="width: 165px;">📊 ตัวชี้วัด (KPI Indicator)</th>
-                  <th style="width: 96px; text-align: center;">ความรุนแรง</th>
-                  <th style="width: 96px; text-align: center;">ผลการตรวจ</th>
+                  <th style="width: 155px;">หมวดหมู่</th>
+                  <th style="width: 22%;">รายการประเมิน (Checklist Item)</th>
+                  <th style="width: 150px;">📊 ตัวชี้วัด (KPI Indicator)</th>
+                  <th style="width: 90px; text-align: center;">ความรุนแรง</th>
+                  <th style="width: 90px; text-align: center;">ผลการตรวจ</th>
+                  <th style="width: 112px; text-align: center;">หน้า / ตำแหน่ง</th>
                   <th>ข้อสังเกต / ร่องรอยที่พบ</th>
                 </tr>
               </thead>
               <tbody>
                 {#if activeTabItems.length === 0}
                   <tr>
-                    <td colspan="7" style="text-align: center; padding: 24px; color: #94a3b8;">
+                    <td colspan="8" style="text-align: center; padding: 24px; color: #94a3b8;">
                       ไม่พบรายการข้อตรวจในเกณฑ์นี้
                     </td>
                   </tr>
                 {:else}
                   {#each activeTabItems as item}
+                    {@const itemPages = getExitItemPageNumbers(item)}
                     <tr class="row-status-{item.status.toLowerCase()}">
                       <td class="item-code-cell" style="text-align: center;"><strong>{item.item_code}</strong></td>
                       <td class="category-cell">
@@ -2581,6 +2710,31 @@
                         <span class="badge-status status-tag-{item.status.toLowerCase()}">
                           {item.status === 'PASS' ? '✅ PASS' : item.status === 'FAIL' ? '❌ FAIL' : '⚪ N/A'}
                         </span>
+                      </td>
+                      <td style="text-align: center;">
+                        {#if itemPages.length > 0}
+                          <div style="display: flex; flex-wrap: wrap; gap: 4px; justify-content: center;">
+                            {#each itemPages as pn}
+                              <button
+                                type="button"
+                                class="btn-page-jump has-page"
+                                on:click={() => jumpToPageInInspector(pn)}
+                                title="คลิกเพื่อเปิดดูหน้า {pn} ใน Document Inspector"
+                              >
+                                หน้า {pn}
+                              </button>
+                            {/each}
+                          </div>
+                        {:else}
+                          <button
+                            type="button"
+                            class="btn-page-jump"
+                            on:click={() => jumpToPageInInspector('global')}
+                            title="คลิกเพื่อดูประเด็นภาพรวมทั้งเอกสาร"
+                          >
+                            ภาพรวม
+                          </button>
+                        {/if}
                       </td>
                       <td class="remarks-cell">
                         <div class="remark-text">{item.remarks}</div>
@@ -5514,5 +5668,33 @@
     .result-meta-strip {
       padding-left: 0;
     }
+  }
+  .btn-page-jump {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 5px 10px;
+    min-height: 28px;
+    border-radius: 8px;
+    font-size: 11.5px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: rgba(255, 255, 255, 0.05);
+    color: #cbd5e1;
+    white-space: nowrap;
+    transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, transform 0.15s ease;
+  }
+  .btn-page-jump.has-page {
+    background: rgba(99, 102, 241, 0.18);
+    border-color: rgba(129, 140, 248, 0.45);
+    color: #e0e7ff;
+  }
+  .btn-page-jump:hover {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.42), rgba(168, 85, 247, 0.36));
+    border-color: #a5b4fc;
+    color: #ffffff;
+    transform: translateY(-1px);
   }
 </style>
