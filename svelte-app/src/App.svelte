@@ -30,8 +30,9 @@
   import LegalModal from "./lib/LegalModal.svelte";
   import NotificationDropdown from "./lib/NotificationDropdown.svelte";
   import NotificationConfigModal from "./lib/NotificationConfigModal.svelte";
+  import ForceChangePasswordModal from "./lib/ForceChangePasswordModal.svelte";
   import { unreadCount, startNotificationSync, stopNotificationSync } from "./lib/notificationStore.js";
-  import { showLogin, authRole, authUser, authDisplayName, authAvatar, authAllowedMenus, authAllowedProjects, DEFAULT_USER_MENUS, DEFAULT_ADMIN_MENUS, logout, updateAuthProfile } from "./lib/authStore.js";
+  import { showLogin, authRole, authUser, authDisplayName, authAvatar, authAllowedMenus, authAllowedProjects, authMustChangePassword, DEFAULT_USER_MENUS, DEFAULT_ADMIN_MENUS, logout, updateAuthProfile } from "./lib/authStore.js";
   import { globalSearchQuery, triggerGlobalSearch } from "./lib/globalStore.js";
   import { onMount, onDestroy } from "svelte";
   import { toast } from "./lib/toastStore.js";
@@ -1017,8 +1018,9 @@
                 </button>
               {/if}
             {/if}
+          {/if}
 
-          {:else if $authRole === 'user'}
+          {#if $authRole === 'user' || ($authRole === 'admin' && DEFAULT_USER_MENUS.some((m) => isMenuAllowed(m)))}
             <button
               type="button"
               class="nav-group-header"
@@ -1200,7 +1202,7 @@
                 {/if}
               </div>
             </div>
-          {:else if $authRole === 'user' && (activeView === 'qa_consult' || activeView === 'qa_performance')}
+          {:else if ($authRole === 'user' || $authRole === 'admin') && (activeView === 'qa_consult' || activeView === 'qa_performance')}
             <div class="sidebar-context-zone">
               <!-- Active Project Quick Switcher -->
               {#if sidebarProjects.length > 0}
@@ -1684,6 +1686,11 @@
 
 <!-- Notification Config Modal -->
 <NotificationConfigModal bind:showModal={showNotificationConfigModal} />
+
+<!-- Force Change Password on First Login -->
+{#if !$showLogin && $authMustChangePassword}
+  <ForceChangePasswordModal />
+{/if}
 
 {#if showMyProfileModal}
 <div class="modal-backdrop" transition:fade={{ duration: 180 }} on:click={requestCloseProfileModal}>

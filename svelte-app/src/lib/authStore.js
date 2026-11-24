@@ -59,6 +59,7 @@ if (isInitialExpired && initialToken) {
   localStorage.removeItem('auth_avatar_path');
   localStorage.removeItem('auth_allowed_menus');
   localStorage.removeItem('auth_allowed_projects');
+  localStorage.removeItem('auth_must_change_password');
   localStorage.removeItem('spectra_qa_selected_project');
   localStorage.removeItem('spectra_qa_active_group');
 }
@@ -72,6 +73,7 @@ const _displayName = writable(isInitialExpired ? '' : (localStorage.getItem('aut
 const _avatarPath = writable(isInitialExpired ? '' : (localStorage.getItem('auth_avatar_path') || ''));
 const _allowedMenus = writable(isInitialExpired ? [] : parseStoredJson('auth_allowed_menus', []));
 const _allowedProjects = writable(isInitialExpired ? ['all'] : parseStoredJson('auth_allowed_projects', ['all']));
+const _mustChangePassword = writable(isInitialExpired ? false : localStorage.getItem('auth_must_change_password') === 'true');
 
 // ── Derived readable stores for components ──
 export const authUser = { subscribe: _user.subscribe };
@@ -81,6 +83,7 @@ export const authDisplayName = { subscribe: _displayName.subscribe };
 export const authAvatar = { subscribe: _avatarPath.subscribe };
 export const authAllowedMenus = { subscribe: _allowedMenus.subscribe };
 export const authAllowedProjects = { subscribe: _allowedProjects.subscribe };
+export const authMustChangePassword = { subscribe: _mustChangePassword.subscribe };
 
 /** showLogin is true when there is no valid token */
 export const showLogin = derived(_token, ($t) => !$t);
@@ -114,10 +117,11 @@ function scheduleExpiryTimer(token) {
  * Persists credentials and installs a fetch interceptor that
  * attaches the Authorization header to every subsequent request.
  */
-export function login(token, user, role, displayName, avatarPath, allowedMenus, allowedProjects, email = '') {
+export function login(token, user, role, displayName, avatarPath, allowedMenus, allowedProjects, email = '', mustChangePassword = false) {
   const finalMenus = allowedMenus || (role === 'admin' ? DEFAULT_ADMIN_MENUS : DEFAULT_USER_MENUS);
   const finalProjects = allowedProjects || ['all'];
   const finalEmail = (email || (user && user.includes('@') ? user : '') || localStorage.getItem('auth_email') || '').trim();
+  const mustChange = Boolean(mustChangePassword);
 
   _token.set(token);
   _user.set(user);
@@ -127,6 +131,7 @@ export function login(token, user, role, displayName, avatarPath, allowedMenus, 
   _avatarPath.set(avatarPath || '');
   _allowedMenus.set(finalMenus);
   _allowedProjects.set(finalProjects);
+  _mustChangePassword.set(mustChange);
 
   localStorage.setItem('jwt_token', token);
   localStorage.setItem('auth_user', user);
@@ -137,6 +142,11 @@ export function login(token, user, role, displayName, avatarPath, allowedMenus, 
   localStorage.setItem('auth_display_name', displayName || user);
   localStorage.setItem('auth_allowed_menus', JSON.stringify(finalMenus));
   localStorage.setItem('auth_allowed_projects', JSON.stringify(finalProjects));
+  if (mustChange) {
+    localStorage.setItem('auth_must_change_password', 'true');
+  } else {
+    localStorage.removeItem('auth_must_change_password');
+  }
   if (avatarPath) {
     localStorage.setItem('auth_avatar_path', avatarPath);
   } else {
@@ -147,11 +157,21 @@ export function login(token, user, role, displayName, avatarPath, allowedMenus, 
   installFetchInterceptor();
 }
 
+export function completeForcePasswordChange(newToken) {
+  if (newToken) {
+    _token.set(newToken);
+    localStorage.setItem('jwt_token', newToken);
+    scheduleExpiryTimer(newToken);
+  }
+  _mustChangePassword.set(false);
+  localStorage.removeItem('auth_must_change_password');
+}
+
 /**
  * Dynamically updates the user's display name and/or avatar path in both
  * reactive stores and localStorage without requiring a full re-login.
  */
-export function updateAuthProfile(displayName, avatarPath, email) {
+export function updateAuthProfile(displayName, avatarPath, email, allowedMenus, allowedProjects) {
   if (displayName) {
     _displayName.set(displayName);
     localStorage.setItem('auth_display_name', displayName);
@@ -171,6 +191,14 @@ export function updateAuthProfile(displayName, avatarPath, email) {
     } else {
       localStorage.removeItem('auth_avatar_path');
     }
+  }
+  if (Array.isArray(allowedMenus)) {
+    _allowedMenus.set(allowedMenus);
+    localStorage.setItem('auth_allowed_menus', JSON.stringify(allowedMenus));
+  }
+  if (Array.isArray(allowedProjects)) {
+    _allowedProjects.set(allowedProjects);
+    localStorage.setItem('auth_allowed_projects', JSON.stringify(allowedProjects));
   }
 }
 
@@ -203,6 +231,7 @@ export function logout(reason = '') {
   _avatarPath.set('');
   _allowedMenus.set([]);
   _allowedProjects.set(['all']);
+  _mustChangePassword.set(false);
 
   localStorage.removeItem('jwt_token');
   localStorage.removeItem('auth_user');
@@ -212,6 +241,7 @@ export function logout(reason = '') {
   localStorage.removeItem('auth_avatar_path');
   localStorage.removeItem('auth_allowed_menus');
   localStorage.removeItem('auth_allowed_projects');
+  localStorage.removeItem('auth_must_change_password');
   localStorage.removeItem('spectra_qa_selected_project');
   localStorage.removeItem('spectra_qa_active_group');
 

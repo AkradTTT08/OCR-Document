@@ -1950,7 +1950,9 @@ def init_api_usage_logs():
             ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS completion_tokens INT DEFAULT 0;
             ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS total_tokens INT DEFAULT 0;
             ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS estimated_cost_usd DECIMAL(10, 6) DEFAULT 0;
+            ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS username VARCHAR(120);
             ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+            CREATE INDEX IF NOT EXISTS idx_api_usage_logs_username_created ON api_usage_logs(username, created_at);
         """)
         
         # Migrate legacy column data if present
@@ -1982,10 +1984,19 @@ def init_api_usage_logs():
         if cursor: cursor.close()
         if conn: conn.close()
 
-def log_api_usage(endpoint_name, model_name, usage_metadata, filename=None):
+def log_api_usage(endpoint_name, model_name, usage_metadata, filename=None, username=None):
     """Logs API token usage and calculates estimated cost across all agents and endpoints."""
     if not usage_metadata:
         return
+
+    if not username:
+        try:
+            from flask import has_request_context, g
+            if has_request_context():
+                username = getattr(g, 'current_username', None)
+        except Exception:
+            pass
+    username = (str(username).strip() if username else None)
         
     prompt_tokens = 0
     completion_tokens = 0
@@ -2023,15 +2034,15 @@ def log_api_usage(endpoint_name, model_name, usage_metadata, filename=None):
         cursor = conn.cursor()
         
         insert_query = """
-            INSERT INTO api_usage_logs (endpoint_name, service_name, model_name, filename, prompt_tokens, completion_tokens, total_tokens, estimated_cost_usd)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO api_usage_logs (endpoint_name, service_name, model_name, filename, prompt_tokens, completion_tokens, total_tokens, estimated_cost_usd, username)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
-        params = (endpoint_name or 'AI_Agent', endpoint_name or 'AI_Agent', model_name or 'gemini-2.5-flash', filename, prompt_tokens, completion_tokens, total_tokens, cost_usd)
+        params = (endpoint_name or 'AI_Agent', endpoint_name or 'AI_Agent', model_name or 'gemini-2.5-flash', filename, prompt_tokens, completion_tokens, total_tokens, cost_usd, username)
         
         try:
             cursor.execute(insert_query, params)
             conn.commit()
-            logger.info(f"Logged API usage for {endpoint_name} ({model_name}): {total_tokens} tokens, ${cost_usd:.6f}")
+            logger.info(f"Logged API usage for {endpoint_name} ({model_name}) user={username or 'system'}: {total_tokens} tokens, ${cost_usd:.6f}")
         except Exception as insert_err:
             conn.rollback()
             # If columns missing, perform self-healing migration and retry
@@ -2047,6 +2058,7 @@ def log_api_usage(endpoint_name, model_name, usage_metadata, filename=None):
                     completion_tokens INT DEFAULT 0,
                     total_tokens INT DEFAULT 0,
                     estimated_cost_usd DECIMAL(10, 6) DEFAULT 0,
+                    username VARCHAR(120),
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
                 ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS endpoint_name VARCHAR(100);
@@ -2058,6 +2070,7 @@ def log_api_usage(endpoint_name, model_name, usage_metadata, filename=None):
                 ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS completion_tokens INT DEFAULT 0;
                 ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS total_tokens INT DEFAULT 0;
                 ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS estimated_cost_usd DECIMAL(10, 6) DEFAULT 0;
+                ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS username VARCHAR(120);
             """)
             conn.commit()
             cursor.execute(insert_query, params)

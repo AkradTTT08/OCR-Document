@@ -86,7 +86,7 @@
                 }
                 password = '';
                 const userEmail = data.email || (data.user && data.user.includes('@') ? data.user : '') || (loginId.includes('@') ? loginId : '');
-                login(data.token, data.user, data.role, data.display_name, data.avatar_path, data.allowed_menus, data.allowed_projects, userEmail);
+                login(data.token, data.user, data.role, data.display_name, data.avatar_path, data.allowed_menus, data.allowed_projects, userEmail, Boolean(data.must_change_password));
                 toast(`เข้าสู่ระบบสำเร็จ! ยินดีต้อนรับ ${data.display_name || data.user}`, 'success');
             } else if (res.status === 429) {
                 password = '';
