@@ -1598,7 +1598,7 @@
       </header>
 
       <!-- Content Area -->
-      <div class="content-scroll" id="main-content" class:no-padding={['kb', 'ocr', 'qa_consult', 'qa_doc_creation', 'qa_member', 'qa_analysis_diagram', 'qa_performance', 'qa_research', 'qa_security', 'qa_automate', 'qa_board', 'master_agent', 'workflow_builder'].includes(activeView)}>
+      <div class="content-scroll" id="main-content" class:no-padding={['kb', 'ocr', 'exit_criteria', 'qa_consult', 'qa_doc_creation', 'qa_member', 'qa_analysis_diagram', 'qa_performance', 'qa_research', 'qa_security', 'qa_automate', 'qa_board', 'master_agent', 'workflow_builder'].includes(activeView)}>
         {#key activeView}
           <div class="view-wrapper" in:fade="{{ duration: 300, delay: 150 }}">
             {#if activeView === "ocr" && $authRole === "admin"}
@@ -3169,6 +3169,7 @@
   /* Content Scroll */
   .content-scroll {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
     padding: 32px;
     position: relative;

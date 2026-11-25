@@ -9,8 +9,10 @@
   export let minWidth = '140px';
   export let size = 'md'; // 'sm' | 'md' | 'lg'
   export let id = '';
+  export let ariaLabel = '';
 
   const dispatch = createEventDispatcher();
+  const instanceUid = `cs-${Math.random().toString(36).slice(2, 9)}`;
   let isOpen = false;
   let selectEl;
   let triggerEl;
@@ -108,6 +110,7 @@
     }
     if (e.key === 'Escape') {
       e.preventDefault();
+      e.stopPropagation();
       isOpen = false;
       focusedIndex = -1;
       triggerEl?.focus();
@@ -173,8 +176,11 @@
     on:click={toggleOpen}
     on:keydown={handleKeydown}
     {disabled}
+    aria-label={ariaLabel || undefined}
     aria-haspopup="listbox"
     aria-expanded={isOpen}
+    aria-controls={isOpen ? `${instanceUid}-listbox` : undefined}
+    aria-activedescendant={isOpen && focusedIndex >= 0 ? `${instanceUid}-opt-${focusedIndex}` : undefined}
   >
     <div class="trigger-content">
       {#if selectedOption}
@@ -193,14 +199,17 @@
     <div 
       use:portal 
       bind:this={menuEl}
+      id="{instanceUid}-listbox"
       class="custom-dropdown-menu" 
       class:drop-up={dropUp}
       style="position: fixed; top: {menuTop}px; left: {menuLeft}px; width: {menuWidth}px; max-height: {menuMaxHeight}px; z-index: var(--z-portal, 10500);"
       role="listbox"
+      aria-label={ariaLabel || placeholder}
     >
       {#each normalizedOptions as opt, idx}
         <button 
           type="button"
+          id="{instanceUid}-opt-{idx}"
           class="custom-option-item" 
           class:is-selected={String(opt.value) === String(value)}
           class:is-focused={idx === focusedIndex}

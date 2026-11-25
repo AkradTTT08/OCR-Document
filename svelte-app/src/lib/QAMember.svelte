@@ -2775,10 +2775,17 @@
 
 <style>
     .qa-member-container {
-        padding: 28px 32px;
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        overflow-x: hidden;
+        padding: 28px 32px 44px;
         color: var(--text-main);
         font-family: var(--font-th);
         width: 100%;
+        scrollbar-gutter: stable;
+        scrollbar-width: thin;
+        scrollbar-color: rgba(129, 140, 248, 0.45) rgba(255, 255, 255, 0.03);
     }
 
     .header-section {

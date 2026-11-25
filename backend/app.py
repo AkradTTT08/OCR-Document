@@ -13,6 +13,7 @@ logging.basicConfig(
 )
 
 import os
+import re
 import sys
 import tempfile
 from typing import List, Dict, Any
@@ -595,7 +596,7 @@ def _validate_password_policy(password: str):
     return None
 
 def encode_jwt(payload):
-    now = int(time.time())
+    now = time.time()
     claims = dict(payload)
     claims.setdefault('iat', now)
     claims.setdefault('jti', uuid.uuid4().hex)
@@ -609,16 +610,17 @@ def decode_jwt(token):
             token,
             JWT_SECRET,
             algorithms=['HS256'],
+            leeway=2,
             options={'require': ['exp']}
         )
         jti = payload.get('jti')
         uid = str(payload.get('user_id', ''))
-        iat = payload.get('iat', 0)
+        iat = float(payload.get('iat', 0) or 0)
         with _AUTH_LOCK:
             if jti and jti in _REVOKED_JTIS:
                 return None
             revoked_before = _USER_REVOKED_BEFORE.get(uid)
-            if revoked_before and iat < revoked_before:
+            if revoked_before and iat <= revoked_before:
                 return None
         return payload
     except Exception:
@@ -756,7 +758,7 @@ def login():
             conn.commit()
             
             # Token expires in 12 hours
-            now_ts = int(time.time())
+            now_ts = time.time()
             payload = {
                 'user_id': user_id,
                 'user': user[1],
@@ -765,7 +767,7 @@ def login():
                 'allowed_projects': allowed_projects,
                 'must_change_password': must_change_password,
                 'iat': now_ts,
-                'exp': now_ts + (12 * 3600)
+                'exp': int(now_ts) + (12 * 3600)
             }
             token = encode_jwt(payload)
             
@@ -1390,7 +1392,7 @@ def change_own_password():
 
         # Revoke older sessions, then issue a fresh JWT dated strictly after revocation
         revoke_user_sessions(user_id)
-        now_ts = int(time.time()) + 1
+        now_ts = time.time() + 0.01
         u_role = row[2] or 'user'
         default_menus = DEFAULT_ADMIN_MENUS if u_role == 'admin' else DEFAULT_USER_MENUS
         fresh_token = encode_jwt({
@@ -1401,7 +1403,7 @@ def change_own_password():
             'allowed_projects': parse_permissions_json(row[4], ['all']),
             'must_change_password': False,
             'iat': now_ts,
-            'exp': now_ts + (12 * 3600)
+            'exp': int(now_ts) + (12 * 3600)
         })
         return jsonify({
             'success': True,
@@ -5259,9 +5261,41 @@ def delete_qa_group_post():
 # Exit Criteria Management & Evaluation API Endpoints
 # ========================================================
 
-def sync_exit_criteria_to_agent_skills(template_id):
+def normalize_exit_criteria_category(raw_cat: str, item_code: str = '') -> str:
+    """Normalize legacy/variant category names into the 4 canonical Exit Criteria categories."""
+    c = (raw_cat or '').strip()
+    cl = c.lower()
+    if c in (
+        'Defect & Comment Resolution',
+        'Content Accuracy & Completeness',
+        'Format & Consistency',
+        'Governance & Control'
+    ):
+        return c
+    if any(k in cl for k in ['defect', 'bug', 'comment', 'แก้ไข']):
+        return 'Defect & Comment Resolution'
+    if any(k in cl for k in ['content', 'accuracy', 'completeness', 'เนื้อหา', 'ครบถ้วน']):
+        return 'Content Accuracy & Completeness'
+    if any(k in cl for k in ['format', 'consistency', 'typo', 'quality', 'รูปแบบ', 'คำผิด']):
+        return 'Format & Consistency'
+    if any(k in cl for k in ['governance', 'control', 'version', 'metadata', 'กำกับ']):
+        return 'Governance & Control'
+    code_clean = str(item_code or '').strip()
+    if code_clean.startswith('1'):
+        return 'Defect & Comment Resolution'
+    if code_clean.startswith('2'):
+        return 'Content Accuracy & Completeness'
+    if code_clean.startswith('3'):
+        return 'Format & Consistency'
+    if code_clean.startswith('4'):
+        return 'Governance & Control'
+    return c or 'Content Accuracy & Completeness'
+
+
+def sync_exit_criteria_to_agent_skills(template_id, old_title: str = None):
     """
     Sync an Exit Criteria template into the agent_skills table as a Markdown skill (skill.md format).
+    Updates existing skill in-place when renamed so no orphaned skills remain.
     """
     from db_ingestion import get_db_connection
     conn = None
@@ -5286,35 +5320,44 @@ def sync_exit_criteria_to_agent_skills(template_id):
         """, (template_id,))
         items = cur.fetchall()
         
-        md_text = f"# 📋 {title} (Skill.md)\n\n"
+        md_text = f"# {title} (Skill.md)\n\n"
+        md_text += f"> **Template ID:** `{t_id}`\n"
         md_text += f"> **Description:** {desc or 'Exit Criteria Gate Standards'}\n"
         md_text += f"> **Target Document Type:** {doc_type}\n\n"
-        md_text += "## 🎯 Objective\n"
+        md_text += "## Objective\n"
         md_text += "Evaluate document content against the exit criteria checklist items prior to final sign-off.\n\n"
         
         current_cat = None
         for item_code, category, question, metric, severity, is_mandatory, idx in items:
-            if category != current_cat:
-                current_cat = category
-                md_text += f"\n### {category}\n"
+            norm_cat = normalize_exit_criteria_category(category, item_code)
+            if norm_cat != current_cat:
+                current_cat = norm_cat
+                md_text += f"\n### {norm_cat}\n"
             mand_str = "[Mandatory]" if is_mandatory else "[Optional]"
             md_text += f"- **{item_code}** ({severity} | KPI: {metric or '100%'} | {mand_str}): {question}\n"
             
-        md_text += "\n## 🚦 Final Gate Assessment Rules\n"
+        md_text += "\n## Final Gate Assessment Rules\n"
         md_text += "1. **PASSED:** All relevant items evaluated as PASS.\n"
-        md_text += "2. **CONDITIONAL PASSED:** Pass all items in Category 1, 2, and 4; fail only minor formatting/typo items in Category 3.\n"
-        md_text += "3. **REJECTED:** Fail any item in Category 1 (Defect Resolution) or Category 2 (Content Accuracy).\n"
+        md_text += "2. **CONDITIONAL PASSED:** Pass all Mandatory/Critical items (Categories 1, 2, 4); fail only optional Minor formatting/typo items in Category 3.\n"
+        md_text += "3. **REJECTED:** Fail any Mandatory or Critical item.\n"
 
         skill_name = f"[Exit Criteria] {title}"
-        cur.execute("SELECT skill_id FROM agent_skills WHERE skill_name = %s;", (skill_name,))
-        existing_skill = cur.fetchone()
+        old_skill_name = f"[Exit Criteria] {old_title}" if old_title and old_title != title else None
+
+        existing_skill = None
+        if old_skill_name:
+            cur.execute("SELECT skill_id FROM agent_skills WHERE skill_name = %s;", (old_skill_name,))
+            existing_skill = cur.fetchone()
+        if not existing_skill:
+            cur.execute("SELECT skill_id FROM agent_skills WHERE skill_name = %s OR markdown_instructions ILIKE %s LIMIT 1;", (skill_name, f"%Template ID:** `{t_id}`%"))
+            existing_skill = cur.fetchone()
         
         if existing_skill:
             cur.execute("""
                 UPDATE agent_skills
-                SET skill_description = %s, markdown_instructions = %s, target_doc_type = %s, is_active = %s, version = version + 1
+                SET skill_name = %s, skill_description = %s, markdown_instructions = %s, target_doc_type = %s, is_active = %s, version = version + 1
                 WHERE skill_id = %s;
-            """, (desc or f"Exit Criteria Standard Gate Checklist for {doc_type}", md_text, doc_type, is_active, existing_skill[0]))
+            """, (skill_name, desc or f"Exit Criteria Standard Gate Checklist for {doc_type}", md_text, doc_type, is_active, existing_skill[0]))
         else:
             cur.execute("""
                 INSERT INTO agent_skills (skill_name, skill_description, markdown_instructions, target_doc_type, version, is_active, created_by)
@@ -5330,6 +5373,29 @@ def sync_exit_criteria_to_agent_skills(template_id):
         logger.error(f"Error syncing Exit Criteria to agent_skills: {e}", exc_info=True)
         if conn: conn.close()
         return False
+
+
+def delete_exit_criteria_agent_skill(template_id, title: str = None):
+    """Remove synced [Exit Criteria] skill from agent_skills when its template is deleted."""
+    from db_ingestion import get_db_connection
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        if title:
+            cur.execute(
+                "DELETE FROM agent_skills WHERE skill_name = %s OR markdown_instructions ILIKE %s;",
+                (f"[Exit Criteria] {title}", f"%Template ID:** `{template_id}`%")
+            )
+        else:
+            cur.execute("DELETE FROM agent_skills WHERE markdown_instructions ILIKE %s;", (f"%Template ID:** `{template_id}`%",))
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        logger.warning(f"Could not clean up agent_skill for deleted template {template_id}: {e}")
+        if conn:
+            conn.close()
 
 
 def _normalize_doc_type_aliases(raw_doc_type: str, doc_text: str = '') -> list:
@@ -5388,10 +5454,11 @@ def _normalize_doc_type_aliases(raw_doc_type: str, doc_text: str = '') -> list:
     return candidates
 
 
-def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', project_id = None, qa_findings: list = None):
+def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', project_id = None, qa_findings: list = None, custom_items_override: list = None, dry_run: bool = False):
     """
     Evaluates document text against Exit Criteria items using Gemini AI + Deterministic QA Findings Cross-Check.
     Combines universal baseline criteria ('ALL') with specific criteria for doc_type (e.g. SRS, Test Case, Project Plan).
+    Supports custom_items_override and dry_run=True for sandbox testing without DB side-effects.
     Returns evaluation summary, status, and itemized results.
     """
     import os
@@ -5402,16 +5469,16 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
     from ocr_engine import _get_gemini_client
 
     DEFAULT_UNIVERSAL_ITEMS = [
-        ('1.1', 'Defect & Bug', 'ไม่มี Defect ระดับ Critical / High คงค้างในเอกสาร', '0 Critical/High Bugs (ผ่าน 100%)', 'Critical', True, 1),
-        ('1.2', 'Defect & Bug', 'ไม่มีข้อผิดพลาดด้าน Logic การคำนวณ หรือการไหลของกระบวนการทำงาน (Process Flow)', '100% Correct Logic', 'Critical', True, 2),
-        ('1.3', 'Defect & Bug', 'ไม่มี Broken Links, รหัสอ้างอิงที่ไม่ตรงกัน หรือภาพประกอบที่ไม่ถูกต้อง', '0 Broken Links/Refs', 'Major', True, 3),
-        ('2.1', 'Content Completeness', 'มีเนื้อหาครบถ้วนตาม Scope, Objective และ Requirement ที่ตกลงไว้', '100% Scope Coverage', 'Critical', True, 4),
-        ('2.2', 'Content Completeness', 'มีรายละเอียด Input / Output / Data Dictionary ครบถ้วนชัดเจน', '100% Data Specs', 'Major', True, 5),
-        ('2.3', 'Content Completeness', 'ครอบคลุม Exception Cases, Edge Cases และ Error Handling', '100% Edge Cases Handling', 'Major', True, 6),
-        ('2.4', 'Content Completeness', 'มีเกณฑ์การยอมรับ (Acceptance Criteria / Definition of Done) ชัดเจนทุกหัวข้อ', '100% Defined Criteria', 'Major', True, 7),
-        ('3.1', 'Formatting & Quality', 'ไม่มีคำผิด (Spelling / Typos) ในคำศัพท์เฉพาะทาง, ภาษาไทย และภาษาอังกฤษ', '0 Typos (ความถูกต้อง 100%)', 'Minor', False, 8),
-        ('3.2', 'Formatting & Quality', 'รูปแบบฟอนต์, ขนาดตัวอักษร, ระยะย่อหน้า และหัวข้อ มีความสม่ำเสมอทั้งเอกสาร', '100% Style Consistency', 'Minor', False, 9),
-        ('3.3', 'Formatting & Quality', 'การจัดวางตาราง, รูปภาพ และ Diagram มีความชัดเจน อ่านง่าย ไม่ตกขอบ', '100% Visual Clarity', 'Minor', False, 10),
+        ('1.1', 'Defect & Comment Resolution', 'ไม่มี Defect ระดับ Critical / High คงค้างในเอกสาร', '0 Critical/High Bugs (ผ่าน 100%)', 'Critical', True, 1),
+        ('1.2', 'Defect & Comment Resolution', 'ไม่มีข้อผิดพลาดด้าน Logic การคำนวณ หรือการไหลของกระบวนการทำงาน (Process Flow)', '100% Correct Logic', 'Critical', True, 2),
+        ('1.3', 'Defect & Comment Resolution', 'ไม่มี Broken Links, รหัสอ้างอิงที่ไม่ตรงกัน หรือภาพประกอบที่ไม่ถูกต้อง', '0 Broken Links/Refs', 'Major', True, 3),
+        ('2.1', 'Content Accuracy & Completeness', 'มีเนื้อหาครบถ้วนตาม Scope, Objective และ Requirement ที่ตกลงไว้', '100% Scope Coverage', 'Critical', True, 4),
+        ('2.2', 'Content Accuracy & Completeness', 'มีรายละเอียด Input / Output / Data Dictionary ครบถ้วนชัดเจน', '100% Data Specs', 'Major', True, 5),
+        ('2.3', 'Content Accuracy & Completeness', 'ครอบคลุม Exception Cases, Edge Cases และ Error Handling', '100% Edge Cases Handling', 'Major', True, 6),
+        ('2.4', 'Content Accuracy & Completeness', 'มีเกณฑ์การยอมรับ (Acceptance Criteria / Definition of Done) ชัดเจนทุกหัวข้อ', '100% Defined Criteria', 'Major', True, 7),
+        ('3.1', 'Format & Consistency', 'ไม่มีคำผิด (Spelling / Typos) ในคำศัพท์เฉพาะทาง, ภาษาไทย และภาษาอังกฤษ', '< 1% Typo Rate (คำผิด < 1%)', 'Minor', False, 8),
+        ('3.2', 'Format & Consistency', 'รูปแบบฟอนต์, ขนาดตัวอักษร, ระยะย่อหน้า และหัวข้อ มีความสม่ำเสมอทั้งเอกสาร', '100% Style Consistency', 'Minor', False, 9),
+        ('3.3', 'Format & Consistency', 'การจัดวางตาราง, รูปภาพ และ Diagram มีความชัดเจน อ่านง่าย ไม่ตกขอบ', '100% Visual Clarity', 'Minor', False, 10),
         ('4.1', 'Governance & Control', 'มีการระบุ Document Title, Version Number, วันที่อัปเดต และชื่อผู้แต่ง/ผู้แก้ไขชัดเจน', '100% Header & Metadata', 'Major', True, 11),
         ('4.2', 'Governance & Control', 'มีประวัติการแก้ไข (Document History / Revision Log) สรุปการเปลี่ยนแปลงในแต่ละเวอร์ชัน', '100% Logged History', 'Minor', False, 12),
         ('4.3', 'Governance & Control', 'จัดทำเอกสารฉบับสะอาด (Clean Version) ที่ปิด Track Changes และ Remove Comment ร่างออกเรียบร้อย', '0 Draft Comments (ฉบับสะอาด 100%)', 'Major', True, 13)
@@ -5429,9 +5496,28 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
     target_type_clean = candidate_types[0] if candidate_types else ((doc_type or '').strip() or 'ALL')
     safe_p_id = project_id if (project_id and str(project_id).strip() and str(project_id).lower() != 'none') else None
 
+    if isinstance(custom_items_override, list) and len(custom_items_override) > 0:
+        template_title = "Draft / Sandbox Exit Criteria"
+        template_id = "sandbox-draft"
+        for idx_ov, ov in enumerate(custom_items_override, 1):
+            c_code = str(ov.get('item_code') or f"{idx_ov}").strip()
+            c_cat = normalize_exit_criteria_category(ov.get('category'), c_code)
+            item_rows.append((
+                f"draft-{idx_ov}",
+                c_code,
+                c_cat,
+                str(ov.get('question_text') or ''),
+                str(ov.get('target_metric') or '100% (ผ่านบริบูรณ์)'),
+                str(ov.get('severity') or 'Major'),
+                bool(ov.get('is_mandatory', True)),
+                idx_ov,
+                c_code
+            ))
+
     try:
-        conn = get_db_connection()
-        cur = conn.cursor()
+        if not item_rows:
+            conn = get_db_connection()
+            cur = conn.cursor()
         seen_template_ids = set()
         
         # 1. Fetch Universal ALL templates (Active, prioritizing project-specific if present)
@@ -5558,7 +5644,8 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
             else:
                 template_title = templates_to_use[0]['title']
 
-        cur.close()
+        if conn and 'cur' in locals() and cur:
+            cur.close()
     except Exception as db_err:
         logger.warning(f"DB load for exit criteria templates encountered issue (will use universal fallback): {db_err}")
 
@@ -5813,16 +5900,10 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
             remarks = f'ตรวจสอบแล้ววันที่ในเอกสารใช้ระบบพุทธศักราช (พ.ศ.) ซึ่งเป็นวันที่ในอดีตหรือปัจจุบัน (เทียบเท่า ค.ศ. ปัจจุบัน <= {datetime.now().strftime("%d/%m/%Y")}) ถูกต้องตามมาตรฐานเอกสารไทย'
             evidence = 'วันที่ในเอกสารใช้รูปแบบ พ.ศ. ที่ถูกต้อง ไม่ใช่วันที่ในอนาคต'
 
-        # Smart guard for Content Coverage / Scope (2.1, 2.2) - ONLY if doc is well-structured AND has 0 Critical/High findings
-        if status == 'FAIL' and is_well_structured and base_code_clean in ('2.1', '2.2'):
-            lower_ev = (evidence + " " + remarks).lower()
-            if any(term in lower_ev for term in ['ไม่ครอบคลุม', 'ขาด', 'ไม่พบ', 'not found', 'missing']) and has_requirement_ids:
-                status = 'PASS'
-                remarks = 'เอกสารมีโครงสร้างครบถ้วนตาม Scope ที่กำหนดใน Document Control พร้อม Requirement IDs และไม่พบ Critical/High Finding'
-                evidence = 'เอกสารมี Sections หลักครอบคลุมตาม Scope ที่ระบุ'
-
-        # Smart guard for Attachments (2.4) - common false positive for Markdown docs
-        if status == 'FAIL' and base_code_clean == '2.4' and is_well_structured:
+        # Smart guard for Attachments - ONLY when item explicitly checks Attachment/Appendix and is NOT Critical
+        sev_curr = (item_info.get('severity') or '').strip().upper()
+        is_mand_curr = bool(item_info.get('is_mandatory', True))
+        if status == 'FAIL' and sev_curr != 'CRITICAL' and any(k in q_lower for k in ['attachment', 'เอกสารแนบ', 'ภาคผนวก', 'glossary']) and is_well_structured:
             lower_ev = (evidence + " " + remarks).lower()
             if any(term in lower_ev for term in ['attachment', 'แนบ', 'appendix', 'ภาคผนวก', 'ไม่พบ', 'ไม่มี']):
                 has_tables = '|' in doc_text and '---' in doc_text
@@ -5831,21 +5912,22 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
                     status = 'PASS'
                     remarks = 'เอกสารใช้ Inline Tables/Diagrams แทน Attachment แยก ถือว่าครบถ้วน'
                     evidence = 'พบ Tables และ/หรือ Diagrams ในเนื้อหาเอกสาร'
-                else:
+                elif not is_mand_curr:
                     status = 'NA'
                     remarks = 'เอกสารไม่ได้ระบุว่ามี Attachment ที่ต้องแนบ จึงไม่เกี่ยวข้อง'
                     evidence = ''
 
-        # Smart guard for Typo Rate (3.3, 3.1) - only fail if there are significant actual typos
-        if status == 'FAIL' and base_code_clean in ('3.1', '3.3'):
+        # Smart guard for Typo Rate - ONLY when item explicitly evaluates spelling/typos AND is Minor + Non-Mandatory
+        is_typo_question = any(k in q_lower for k in ['คำผิด', 'typo', 'spelling', 'สะกด', 'ไวยากรณ์'])
+        if status == 'FAIL' and is_typo_question and sev_curr == 'MINOR' and not is_mand_curr:
             lower_ev = (evidence + " " + remarks).lower()
-            if any(term in lower_ev for term in ['latex', '$', '\\le', '\\times', 'สูตร', 'formula', 'format']):
+            if any(term in lower_ev for term in ['latex', '$', '\\le', '\\times', 'สูตร', 'formula']):
                 status = 'PASS'
                 remarks = 'สูตรคณิตศาสตร์และตัวแปรในเอกสารไม่ถือเป็นคำผิด (Typo)'
                 evidence = 'LaTeX/Math notation ไม่ใช่ Typo'
-            elif not typos or len(typos) <= 3:
+            elif qa_findings is not None and len(typos) <= 3:
                 status = 'PASS'
-                remarks = 'ไม่พบคำผิดที่มีนัยสำคัญในเอกสาร'
+                remarks = 'ไม่พบคำผิดเกินเกณฑ์ผ่อนปรนในเอกสาร'
                 evidence = f'QA Findings พบคำผิด {len(typos)} รายการ (ไม่เกินเกณฑ์)' if typos else 'ไม่พบคำผิดจาก QA Analysis'
 
         # Fallback reasoning from findings if AI evaluation didn't return a valid status for this item
@@ -5854,11 +5936,7 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
                 status = 'FAIL'
                 remarks = f"พบประเด็นความรุนแรง Critical/High จำนวน {len(high_critical)} รายการ"
                 evidence = high_critical[0].get('issue', '')
-            elif base_code_clean in ('1.2', '2.1') and high_critical:
-                status = 'FAIL'
-                remarks = f"พบข้อบกพร่องสำคัญจากผลตรวจ QA Analysis: {high_critical[0].get('issue', '')}"
-                evidence = high_critical[0].get('found_incorrect', '') or high_critical[0].get('issue', '')
-            elif base_code_clean == '3.1' and typos and len(typos) > 3:
+            elif is_typo_question and typos and len(typos) > 3:
                 status = 'FAIL'
                 remarks = f"พบคำผิดหรือการสะกดคำไม่ถูกต้อง {len(typos)} รายการ"
                 evidence = typos[0].get('issue', '')
@@ -5871,19 +5949,21 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
         elif status == 'FAIL':
             failed_count += 1
             cat = item_info['category'] or ''
+            cat_low = cat.lower()
             sev_upper = (item_info.get('severity') or '').strip().upper()
             is_mand = bool(item_info.get('is_mandatory', True))
             is_cat3_formatting = (
                 base_code_clean.startswith('3.')
-                or ('Formatting' in cat and 'Defect' not in cat and 'Content' not in cat)
+                or ('format' in cat_low and 'defect' not in cat_low and 'content' not in cat_low)
             )
             if (
-                'Defect' in cat
-                or 'Content' in cat
+                'defect' in cat_low
+                or 'content' in cat_low
                 or base_code_clean.startswith('1.')
                 or base_code_clean.startswith('2.')
                 or sev_upper == 'CRITICAL'
-                or (is_mand and not is_cat3_formatting)
+                or is_mand
+                or not is_cat3_formatting
             ):
                 has_cat1_2_fail = True
         else:
@@ -5981,23 +6061,25 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
         final_status = 'REJECTED'
         summary_remarks = f'เอกสารไม่ผ่านเกณฑ์ Exit Criteria สาระสำคัญ (ไม่ผ่าน {failed_count} ข้อ / Critical-High Findings {len(high_critical)} รายการ) ต้องแก้ไขและส่งกลับมาตรวจใหม่'
 
-    # Save evaluation log in DB if possible
-    if conn:
+    # Save evaluation log in DB if possible (skip on dry_run)
+    if conn and not dry_run:
         try:
-            # Check if template_id is valid UUID
             valid_t_id = None
             try:
                 uuid.UUID(str(template_id))
                 valid_t_id = template_id
-            except:
+            except Exception:
                 valid_t_id = None
 
             if valid_t_id:
                 cur = conn.cursor()
                 cur.execute("""
-                    INSERT INTO document_exit_evaluations (template_id, project_id, status, score_percentage, summary_remarks)
-                    VALUES (%s, %s, %s, %s, %s) RETURNING eval_id;
-                """, (valid_t_id, safe_p_id, final_status, score_pct, summary_remarks))
+                    INSERT INTO document_exit_evaluations (
+                        template_id, project_id, status, evaluation_status, total_items, passed_items, failed_items, na_items, score_percentage, summary_remarks
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING eval_id;
+                """, (valid_t_id, safe_p_id, final_status, final_status, total_items, passed_count, failed_count, na_count, score_pct, summary_remarks))
                 eval_id = cur.fetchone()[0]
                 
                 for item in evaluated_items:
@@ -6005,14 +6087,28 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
                     try:
                         uuid.UUID(str(item['item_id']))
                         valid_i_id = item['item_id']
-                    except:
+                    except Exception:
                         valid_i_id = None
                         
                     if valid_i_id:
                         cur.execute("""
-                            INSERT INTO document_exit_evaluation_items (evaluation_id, item_id, item_code, target_metric, status, remarks, evidence_text)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s);
-                        """, (eval_id, valid_i_id, item['item_code'], item['target_metric'], item['status'], item['remarks'], item['evidence_text']))
+                            INSERT INTO document_exit_evaluation_items (
+                                evaluation_id, item_id, item_code, category, question_text, target_metric, severity, is_mandatory, status, remarks, evidence_text
+                            )
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
+                        """, (
+                            eval_id,
+                            valid_i_id,
+                            item['item_code'],
+                            item.get('category'),
+                            item.get('question_text'),
+                            item['target_metric'],
+                            item.get('severity'),
+                            item.get('is_mandatory', True),
+                            item['status'],
+                            item['remarks'],
+                            item['evidence_text']
+                        ))
                 conn.commit()
                 cur.close()
         except Exception as log_err:
@@ -6020,8 +6116,13 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
         finally:
             try:
                 conn.close()
-            except:
+            except Exception:
                 pass
+    elif conn:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
     return {
         'template_id': str(template_id),
@@ -6157,13 +6258,13 @@ def handle_exit_criteria_templates():
             """
             params = []
             if project_id:
-                query += " AND (t.project_id = %s OR t.project_id IS NULL)"
+                query += " AND (t.project_id = %s::uuid OR t.project_id IS NULL)"
                 params.append(project_id)
             if doc_type:
-                query += " AND (t.doc_type = %s OR t.doc_type = 'ALL')"
+                query += " AND (UPPER(TRIM(t.doc_type)) = UPPER(TRIM(%s)) OR UPPER(TRIM(t.doc_type)) = 'ALL')"
                 params.append(doc_type)
                 
-            query += " GROUP BY t.template_id, p.project_name, p.project_code ORDER BY t.created_at DESC;"
+            query += " GROUP BY t.template_id, p.project_name, p.project_code ORDER BY (CASE WHEN UPPER(TRIM(t.doc_type)) = 'ALL' THEN 0 ELSE 1 END), t.created_at DESC;"
             cur.execute(query, params)
             rows = cur.fetchall()
             
@@ -6175,11 +6276,11 @@ def handle_exit_criteria_templates():
                     'title': r[2],
                     'description': r[3],
                     'doc_type': r[4],
-                    'is_active': r[5],
-                    'max_loops': r[6],
+                    'is_active': bool(r[5]),
+                    'max_loops': r[6] or 3,
                     'created_at': str(r[7]) if r[7] else None,
                     'updated_at': str(r[8]) if r[8] else None,
-                    'item_count': r[9],
+                    'item_count': int(r[9] or 0),
                     'project_name': r[10],
                     'project_code': r[11]
                 })
@@ -6191,13 +6292,20 @@ def handle_exit_criteria_templates():
             return jsonify({'error': str(e)}), 500
 
     elif request.method == 'POST':
+        payload = get_request_user_payload()
+        if not payload:
+            return jsonify({'error': 'Unauthorized, please login'}), 401
+        if payload.get('role') != 'admin':
+            return jsonify({'error': 'Forbidden: Admin privileges required'}), 403
         try:
             data = request.json or {}
-            title = data.get('title')
+            title = (data.get('title') or '').strip()
             description = data.get('description', '')
-            doc_type = data.get('doc_type', 'ALL')
-            max_loops = data.get('max_loops', 3)
-            project_id = data.get('project_id') or None
+            doc_type = (data.get('doc_type') or 'ALL').strip() or 'ALL'
+            is_active = bool(data.get('is_active', True))
+            max_loops = max(1, min(10, int(data.get('max_loops') or 3)))
+            raw_pid = data.get('project_id')
+            project_id = str(raw_pid).strip() if (raw_pid and str(raw_pid).strip() and str(raw_pid).lower() not in ('none', 'all', 'global')) else None
             items = data.get('items', [])
             
             if not title:
@@ -6209,23 +6317,25 @@ def handle_exit_criteria_templates():
             
             cur.execute("""
                 INSERT INTO exit_criteria_templates (project_id, title, description, doc_type, is_active, max_loops)
-                VALUES (%s, %s, %s, %s, TRUE, %s)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 RETURNING template_id;
-            """, (project_id, title, description, doc_type, max_loops))
+            """, (project_id, title, description, doc_type, is_active, max_loops))
             template_id = cur.fetchone()[0]
             
             for idx, item in enumerate(items, 1):
+                i_code = str(item.get('item_code') or f"{idx}").strip()
+                norm_cat = normalize_exit_criteria_category(item.get('category'), i_code)
                 cur.execute("""
                     INSERT INTO exit_criteria_items (template_id, item_code, category, question_text, target_metric, severity, is_mandatory, order_index)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s);
                 """, (
                     template_id,
-                    item.get('item_code', f"{idx}"),
-                    item.get('category', 'General'),
+                    i_code,
+                    norm_cat,
                     item.get('question_text', ''),
                     item.get('target_metric', '100% (ผ่านบริบูรณ์)'),
                     item.get('severity', 'Major'),
-                    item.get('is_mandatory', True),
+                    bool(item.get('is_mandatory', norm_cat != 'Format & Consistency')),
                     item.get('order_index', idx)
                 ))
                 
@@ -6239,17 +6349,28 @@ def handle_exit_criteria_templates():
             logger.error(f"Error creating exit criteria template: {e}", exc_info=True)
             return jsonify({'error': str(e)}), 500
 
-@app.route('/api/exit-criteria/templates/<template_id>', methods=['GET', 'PUT', 'DELETE'])
+
+@app.route('/api/exit-criteria/templates/<template_id>', methods=['GET', 'PUT', 'PATCH', 'DELETE'])
 def handle_single_exit_criteria_template(template_id):
     from db_ingestion import get_db_connection
+    if request.method in ('PUT', 'PATCH', 'DELETE'):
+        payload = get_request_user_payload()
+        if not payload:
+            return jsonify({'error': 'Unauthorized, please login'}), 401
+        if payload.get('role') != 'admin':
+            return jsonify({'error': 'Forbidden: Admin privileges required'}), 403
+
     conn = get_db_connection()
     
     if request.method == 'GET':
         try:
             cur = conn.cursor()
             cur.execute("""
-                SELECT template_id, project_id, title, description, doc_type, is_active, max_loops, created_at, updated_at
-                FROM exit_criteria_templates WHERE template_id = %s;
+                SELECT t.template_id, t.project_id, t.title, t.description, t.doc_type, t.is_active, t.max_loops,
+                       t.created_at, t.updated_at, p.project_name, p.project_code
+                FROM exit_criteria_templates t
+                LEFT JOIN projects p ON t.project_id = p.project_id
+                WHERE t.template_id = %s;
             """, (template_id,))
             t = cur.fetchone()
             if not t:
@@ -6268,11 +6389,12 @@ def handle_single_exit_criteria_template(template_id):
                 items.append({
                     'item_id': str(i[0]),
                     'item_code': i[1],
-                    'category': i[2],
+                    'category': normalize_exit_criteria_category(i[2], i[1]),
+                    'raw_category': i[2],
                     'question_text': i[3],
                     'target_metric': i[4] or '100% (ผ่านบริบูรณ์)',
                     'severity': i[5],
-                    'is_mandatory': i[6],
+                    'is_mandatory': bool(i[6]),
                     'order_index': i[7]
                 })
                 
@@ -6282,10 +6404,12 @@ def handle_single_exit_criteria_template(template_id):
                 'title': t[2],
                 'description': t[3],
                 'doc_type': t[4],
-                'is_active': t[5],
-                'max_loops': t[6],
+                'is_active': bool(t[5]),
+                'max_loops': t[6] or 3,
                 'created_at': str(t[7]) if t[7] else None,
                 'updated_at': str(t[8]) if t[8] else None,
+                'project_name': t[9],
+                'project_code': t[10],
                 'items': items
             }
             cur.close()
@@ -6295,48 +6419,61 @@ def handle_single_exit_criteria_template(template_id):
             logger.error(f"Error fetching template {template_id}: {e}", exc_info=True)
             return jsonify({'error': str(e)}), 500
 
-    elif request.method == 'PUT':
+    elif request.method in ('PUT', 'PATCH'):
         try:
             data = request.json or {}
-            title = data.get('title')
-            description = data.get('description', '')
-            doc_type = data.get('doc_type', 'ALL')
-            is_active = data.get('is_active', True)
-            max_loops = data.get('max_loops', 3)
-            items = data.get('items', [])
-            
             conn.autocommit = False
             cur = conn.cursor()
-            
+            cur.execute("SELECT title, description, doc_type, is_active, max_loops, project_id FROM exit_criteria_templates WHERE template_id = %s;", (template_id,))
+            existing = cur.fetchone()
+            if not existing:
+                cur.close()
+                conn.close()
+                return jsonify({'error': 'Template not found'}), 404
+
+            old_title = existing[0]
+            title = (data.get('title') if 'title' in data else existing[0]) or existing[0]
+            description = data.get('description') if 'description' in data else existing[1]
+            doc_type = (data.get('doc_type') if 'doc_type' in data else existing[2]) or 'ALL'
+            is_active = bool(data.get('is_active')) if 'is_active' in data else bool(existing[3])
+            max_loops = max(1, min(10, int(data.get('max_loops') or existing[4] or 3))) if 'max_loops' in data else (existing[4] or 3)
+            if 'project_id' in data:
+                raw_pid = data.get('project_id')
+                project_id = str(raw_pid).strip() if (raw_pid and str(raw_pid).strip() and str(raw_pid).lower() not in ('none', 'all', 'global')) else None
+            else:
+                project_id = existing[5]
+
             cur.execute("""
                 UPDATE exit_criteria_templates
-                SET title = %s, description = %s, doc_type = %s, is_active = %s, max_loops = %s, updated_at = NOW()
+                SET project_id = %s, title = %s, description = %s, doc_type = %s, is_active = %s, max_loops = %s, updated_at = NOW()
                 WHERE template_id = %s;
-            """, (title, description, doc_type, is_active, max_loops, template_id))
+            """, (project_id, title, description, doc_type, is_active, max_loops, template_id))
             
-            # Replace items
-            cur.execute("DELETE FROM exit_criteria_items WHERE template_id = %s;", (template_id,))
-            
-            for idx, item in enumerate(items, 1):
-                cur.execute("""
-                    INSERT INTO exit_criteria_items (template_id, item_code, category, question_text, target_metric, severity, is_mandatory, order_index)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s);
-                """, (
-                    template_id,
-                    item.get('item_code', f"{idx}"),
-                    item.get('category', 'General'),
-                    item.get('question_text', ''),
-                    item.get('target_metric', '100% (ผ่านบริบูรณ์)'),
-                    item.get('severity', 'Major'),
-                    item.get('is_mandatory', True),
-                    item.get('order_index', idx)
-                ))
+            # Replace items ONLY when 'items' is explicitly sent in payload (allows safe quick-toggle PATCH)
+            if 'items' in data and isinstance(data['items'], list):
+                cur.execute("DELETE FROM exit_criteria_items WHERE template_id = %s;", (template_id,))
+                for idx, item in enumerate(data['items'], 1):
+                    i_code = str(item.get('item_code') or f"{idx}").strip()
+                    norm_cat = normalize_exit_criteria_category(item.get('category'), i_code)
+                    cur.execute("""
+                        INSERT INTO exit_criteria_items (template_id, item_code, category, question_text, target_metric, severity, is_mandatory, order_index)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s);
+                    """, (
+                        template_id,
+                        i_code,
+                        norm_cat,
+                        item.get('question_text', ''),
+                        item.get('target_metric', '100% (ผ่านบริบูรณ์)'),
+                        item.get('severity', 'Major'),
+                        bool(item.get('is_mandatory', norm_cat != 'Format & Consistency')),
+                        item.get('order_index', idx)
+                    ))
                 
             conn.commit()
             cur.close()
             conn.close()
             
-            sync_exit_criteria_to_agent_skills(template_id)
+            sync_exit_criteria_to_agent_skills(template_id, old_title=old_title)
             return jsonify({'success': True, 'message': 'Template updated successfully'})
         except Exception as e:
             logger.error(f"Error updating template {template_id}: {e}", exc_info=True)
@@ -6346,17 +6483,23 @@ def handle_single_exit_criteria_template(template_id):
         try:
             conn.autocommit = True
             cur = conn.cursor()
+            cur.execute("SELECT title FROM exit_criteria_templates WHERE template_id = %s;", (template_id,))
+            t_row = cur.fetchone()
+            t_title = t_row[0] if t_row else None
             cur.execute("DELETE FROM exit_criteria_templates WHERE template_id = %s;", (template_id,))
             cur.close()
             conn.close()
+            delete_exit_criteria_agent_skill(template_id, title=t_title)
             return jsonify({'success': True, 'message': 'Template deleted successfully'})
         except Exception as e:
             logger.error(f"Error deleting template {template_id}: {e}", exc_info=True)
             return jsonify({'error': str(e)}), 500
 
+
 @app.route('/api/exit-criteria/reset-universal', methods=['POST'])
+@admin_required
 def reset_universal_exit_criteria():
-    """Reset or re-seed the standard Universal Exit Criteria Checklist"""
+    """Reset or re-seed the standard Universal Exit Criteria Checklist (restores 13 items & sets Active)"""
     try:
         try:
             from scripts.add_exit_criteria_tables import add_exit_criteria_tables
@@ -6367,6 +6510,219 @@ def reset_universal_exit_criteria():
     except Exception as e:
         logger.error(f"Error resetting universal exit criteria: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/exit-criteria/effective-preview', methods=['GET'])
+@token_required
+def preview_effective_exit_criteria():
+    """Preview which active templates & items will actually run together for a given doc_type and project_id."""
+    try:
+        from db_ingestion import get_db_connection
+        doc_type = (request.args.get('doc_type') or 'ALL').strip() or 'ALL'
+        raw_pid = request.args.get('project_id')
+        safe_p_id = str(raw_pid).strip() if (raw_pid and str(raw_pid).strip() and str(raw_pid).lower() not in ('none', 'all', 'global')) else None
+        candidate_types = _normalize_doc_type_aliases(doc_type, '')
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+        matched_templates = []
+        seen_ids = set()
+
+        # Check Universal ALL status (both active and inactive so UI can warn if Universal is turned off!)
+        cur.execute("""
+            SELECT template_id, title, is_active, project_id
+            FROM exit_criteria_templates
+            WHERE UPPER(TRIM(doc_type)) = 'ALL'
+            ORDER BY is_active DESC, created_at DESC;
+        """)
+        universal_rows = cur.fetchall()
+        universal_active = any(bool(r[2]) for r in universal_rows)
+
+        if safe_p_id:
+            cur.execute("""
+                SELECT t.template_id, t.title, t.doc_type, t.project_id, p.project_code, COUNT(i.item_id)
+                FROM exit_criteria_templates t
+                LEFT JOIN exit_criteria_items i ON t.template_id = i.template_id
+                LEFT JOIN projects p ON t.project_id = p.project_id
+                WHERE t.is_active = TRUE AND UPPER(TRIM(t.doc_type)) = 'ALL'
+                  AND (t.project_id = %s::uuid OR t.project_id IS NULL)
+                GROUP BY t.template_id, p.project_code
+                ORDER BY (CASE WHEN t.project_id = %s::uuid THEN 0 ELSE 1 END), t.created_at DESC;
+            """, (safe_p_id, safe_p_id))
+        else:
+            cur.execute("""
+                SELECT t.template_id, t.title, t.doc_type, t.project_id, p.project_code, COUNT(i.item_id)
+                FROM exit_criteria_templates t
+                LEFT JOIN exit_criteria_items i ON t.template_id = i.template_id
+                LEFT JOIN projects p ON t.project_id = p.project_id
+                WHERE t.is_active = TRUE AND UPPER(TRIM(t.doc_type)) = 'ALL' AND t.project_id IS NULL
+                GROUP BY t.template_id, p.project_code
+                ORDER BY t.created_at DESC;
+            """)
+        for r in cur.fetchall():
+            if str(r[0]) not in seen_ids:
+                seen_ids.add(str(r[0]))
+                matched_templates.append({
+                    'template_id': str(r[0]),
+                    'title': r[1],
+                    'doc_type': 'ALL',
+                    'project_id': str(r[3]) if r[3] else None,
+                    'project_code': r[4],
+                    'item_count': int(r[5] or 0)
+                })
+
+        for cand in candidate_types:
+            if not cand or cand.upper() == 'ALL':
+                continue
+            cand_compact = re.sub(r'\s+', '', cand).upper()
+            if safe_p_id:
+                cur.execute("""
+                    SELECT t.template_id, t.title, t.doc_type, t.project_id, p.project_code, COUNT(i.item_id)
+                    FROM exit_criteria_templates t
+                    LEFT JOIN exit_criteria_items i ON t.template_id = i.template_id
+                    LEFT JOIN projects p ON t.project_id = p.project_id
+                    WHERE t.is_active = TRUE AND UPPER(TRIM(t.doc_type)) != 'ALL'
+                      AND (t.project_id = %s::uuid OR t.project_id IS NULL)
+                      AND (UPPER(TRIM(t.doc_type)) = UPPER(TRIM(%s)) OR UPPER(REPLACE(TRIM(t.doc_type), ' ', '')) = %s)
+                    GROUP BY t.template_id, p.project_code
+                    ORDER BY (CASE WHEN t.project_id = %s::uuid THEN 0 ELSE 1 END), t.created_at DESC;
+                """, (safe_p_id, cand, cand_compact, safe_p_id))
+            else:
+                cur.execute("""
+                    SELECT t.template_id, t.title, t.doc_type, t.project_id, p.project_code, COUNT(i.item_id)
+                    FROM exit_criteria_templates t
+                    LEFT JOIN exit_criteria_items i ON t.template_id = i.template_id
+                    LEFT JOIN projects p ON t.project_id = p.project_id
+                    WHERE t.is_active = TRUE AND UPPER(TRIM(t.doc_type)) != 'ALL' AND t.project_id IS NULL
+                      AND (UPPER(TRIM(t.doc_type)) = UPPER(TRIM(%s)) OR UPPER(REPLACE(TRIM(t.doc_type), ' ', '')) = %s)
+                    GROUP BY t.template_id, p.project_code
+                    ORDER BY t.created_at DESC;
+                """, (cand, cand_compact))
+            for r in cur.fetchall():
+                if str(r[0]) not in seen_ids:
+                    seen_ids.add(str(r[0]))
+                    matched_templates.append({
+                        'template_id': str(r[0]),
+                        'title': r[1],
+                        'doc_type': r[2],
+                        'project_id': str(r[3]) if r[3] else None,
+                        'project_code': r[4],
+                        'item_count': int(r[5] or 0)
+                    })
+
+        cur.close()
+        conn.close()
+        total_effective_items = sum(t['item_count'] for t in matched_templates)
+        return jsonify({
+            'success': True,
+            'doc_type': doc_type,
+            'universal_active': universal_active,
+            'using_fallback': total_effective_items == 0,
+            'total_items': total_effective_items if total_effective_items > 0 else 13,
+            'matched_templates': matched_templates
+        })
+    except Exception as e:
+        logger.error(f"Error building effective exit criteria preview: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/exit-criteria/ai-suggest', methods=['POST'])
+@admin_required
+def ai_suggest_exit_criteria():
+    """Generate high-precision Exit Criteria items tailored for a specific doc_type using Gemini."""
+    try:
+        from ocr_engine import _get_gemini_client
+        data = request.json or {}
+        doc_type = (data.get('doc_type') or 'SRS').strip()
+        hint = (data.get('hint') or '').strip()
+
+        prompt = f"""คุณคือ Principal QA Architect ผู้เชี่ยวชาญการกำหนด Quality Gate (Exit Criteria) สำหรับเอกสารซอฟต์แวร์
+กรุณาออกแบบรายการตรวจสอบ Exit Criteria ที่ชัดเจน วัดผลได้จริง และไม่คลุมเครือ สำหรับเอกสารประเภท: "{doc_type}"
+{f'บริบทเพิ่มเติมจากผู้ใช้: {hint}' if hint else ''}
+
+สร้างรายการรวม 8–10 ข้อ ครอบคลุมทั้ง 4 หมวดมาตรฐาน (ใช้ชื่อ category ภาษาอังกฤษตามนี้เป๊ะๆ เท่านั้น):
+1. "Defect & Comment Resolution" (รหัส 1.1, 1.2 ... — เน้นไม่มีข้อผิดพลาดร้ายแรง/การแก้ไขครบถ้วน, is_mandatory: true)
+2. "Content Accuracy & Completeness" (รหัส 2.1, 2.2 ... — เน้นความครบถ้วนของเนื้อหาเฉพาะของเอกสาร {doc_type}, is_mandatory: true)
+3. "Format & Consistency" (รหัส 3.1, 3.2 ... — เน้นรูปแบบ/คำผิด/ความสม่ำเสมอ, severity: "Minor", is_mandatory: false เพื่อให้เข้าเกณฑ์ CONDITIONAL PASSED ได้)
+4. "Governance & Control" (รหัส 4.1, 4.2 ... — เน้น Metadata, Version, Revision History, Clean Copy)
+
+ส่งกลับเป็น JSON Array เท่านั้น (ห้ามมีข้อความอื่นนอก JSON):
+[
+  {{
+    "item_code": "1.1",
+    "category": "Defect & Comment Resolution",
+    "question_text": "รายละเอียดข้อตรวจภาษาไทยที่ชัดเจน ตรวจสอบจากเนื้อหาเอกสารได้จริง",
+    "target_metric": "ตัวชี้วัดสั้นกระชับ เช่น 0 Critical Defects / 100% Traceable",
+    "severity": "Critical" | "Major" | "Minor",
+    "is_mandatory": true | false
+  }}
+]
+"""
+        client = _get_gemini_client()
+        model_name = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash')
+        res = client.models.generate_content(model=model_name, contents=prompt)
+        raw = (res.text or '').strip()
+        if raw.startswith("```"):
+            raw = re.sub(r'^```(?:json)?\s*', '', raw)
+            raw = re.sub(r'\s*```$', '', raw)
+        m = re.search(r'\[[\s\S]*\]', raw)
+        if m:
+            raw = m.group(0)
+        suggested = json.loads(raw)
+        if hasattr(res, 'usage_metadata'):
+            try:
+                from db_ingestion import log_api_usage
+                log_api_usage("Exit_Criteria_AI_Suggest", model_name, res.usage_metadata)
+            except Exception:
+                pass
+
+        cleaned = []
+        for idx, it in enumerate(suggested, 1):
+            code = str(it.get('item_code') or f"{idx}").strip()
+            cat = normalize_exit_criteria_category(it.get('category'), code)
+            sev = it.get('severity') if it.get('severity') in ('Critical', 'Major', 'Minor') else ('Minor' if cat == 'Format & Consistency' else 'Major')
+            mand = bool(it.get('is_mandatory', cat != 'Format & Consistency'))
+            cleaned.append({
+                'item_code': code,
+                'category': cat,
+                'question_text': str(it.get('question_text') or '').strip(),
+                'target_metric': str(it.get('target_metric') or '100% Complete').strip(),
+                'severity': sev,
+                'is_mandatory': mand,
+                'order_index': idx
+            })
+        return jsonify({'success': True, 'items': cleaned})
+    except Exception as e:
+        logger.error(f"Error generating AI suggested exit criteria: {e}", exc_info=True)
+        return jsonify({'error': f'ไม่สามารถสร้างรายการด้วย AI ได้: {e}'}), 500
+
+
+@app.route('/api/exit-criteria/test-evaluate', methods=['POST'])
+@admin_required
+def test_evaluate_exit_criteria_sandbox():
+    """Dry-run sandbox to test draft or active Exit Criteria against sample text without saving to qa_transactions."""
+    try:
+        data = request.json or {}
+        sample_text = (data.get('sample_text') or '').strip()
+        if not sample_text:
+            return jsonify({'error': 'กรุณาวางข้อความตัวอย่างเอกสารสำหรับทดลองตรวจ'}), 400
+        doc_type = (data.get('doc_type') or 'ALL').strip() or 'ALL'
+        project_id = data.get('project_id')
+        use_draft = bool(data.get('use_draft', True))
+        draft_items = data.get('items') if use_draft else None
+
+        result = evaluate_document_exit_criteria(
+            doc_text=sample_text,
+            doc_type=doc_type,
+            project_id=project_id,
+            qa_findings=[],
+            custom_items_override=draft_items if (use_draft and isinstance(draft_items, list) and len(draft_items) > 0) else None,
+            dry_run=True
+        )
+        return jsonify({'success': True, 'evaluation': result})
+    except Exception as e:
+        logger.error(f"Error in Exit Criteria sandbox test-evaluate: {e}", exc_info=True)
+        return jsonify({'error': f'ทดลองประเมินไม่สำเร็จ: {e}'}), 500
 @app.route('/api/admin/usage', methods=['GET'])
 def admin_usage_stats():
     try:

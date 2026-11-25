@@ -48,13 +48,14 @@ def add_exit_criteria_tables(force_reset=False):
         print("Creating table: document_exit_evaluations...")
         cur.execute("""
             CREATE TABLE IF NOT EXISTS document_exit_evaluations (
-                evaluation_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                eval_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 doc_id UUID REFERENCES documents(doc_id) ON DELETE CASCADE,
                 project_id UUID REFERENCES projects(project_id) ON DELETE CASCADE,
                 template_id UUID REFERENCES exit_criteria_templates(template_id) ON DELETE SET NULL,
                 version INT DEFAULT 1,
                 review_round INT DEFAULT 1,
                 status VARCHAR(30) DEFAULT 'PENDING',
+                evaluation_status VARCHAR(30) DEFAULT 'PENDING',
                 total_items INT DEFAULT 0,
                 passed_items INT DEFAULT 0,
                 failed_items INT DEFAULT 0,
@@ -67,6 +68,8 @@ def add_exit_criteria_tables(force_reset=False):
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
+        cur.execute("ALTER TABLE document_exit_evaluations ADD COLUMN IF NOT EXISTS eval_id UUID DEFAULT gen_random_uuid();")
+        cur.execute("ALTER TABLE document_exit_evaluations ADD COLUMN IF NOT EXISTS evaluation_status VARCHAR(30) DEFAULT 'PENDING';")
 
         print("Creating table: document_exit_evaluation_items...")
         cur.execute("""
@@ -87,6 +90,10 @@ def add_exit_criteria_tables(force_reset=False):
             );
         """)
         cur.execute("ALTER TABLE document_exit_evaluation_items ADD COLUMN IF NOT EXISTS target_metric VARCHAR(100);")
+        cur.execute("ALTER TABLE document_exit_evaluation_items ADD COLUMN IF NOT EXISTS category VARCHAR(100);")
+        cur.execute("ALTER TABLE document_exit_evaluation_items ADD COLUMN IF NOT EXISTS question_text TEXT;")
+        cur.execute("ALTER TABLE document_exit_evaluation_items ADD COLUMN IF NOT EXISTS severity VARCHAR(20);")
+        cur.execute("ALTER TABLE document_exit_evaluation_items ADD COLUMN IF NOT EXISTS is_mandatory BOOLEAN DEFAULT TRUE;")
 
         # Indexes
         print("Creating indexes...")
@@ -114,10 +121,15 @@ def add_exit_criteria_tables(force_reset=False):
             ('4.3', 'Governance & Control', 'จัดทำเอกสารฉบับสะอาด (Clean Version) ที่ปิด Track Changes และ Remove Comment ร่างออกเรียบร้อย', '0 Draft Comments (ฉบับสะอาด 100%)', 'Major', True, 13)
         ]
 
-        # Seed Default Universal Template
-        cur.execute("SELECT template_id FROM exit_criteria_templates WHERE title = 'Universal Document Exit Criteria';")
+        # Seed or Force-Reset Default Universal Template
+        cur.execute(
+            "SELECT template_id FROM exit_criteria_templates WHERE title = 'Universal Document Exit Criteria' AND project_id IS NULL LIMIT 1;"
+        )
         res = cur.fetchone()
-        
+        if not res:
+            cur.execute("SELECT template_id FROM exit_criteria_templates WHERE title = 'Universal Document Exit Criteria' LIMIT 1;")
+            res = cur.fetchone()
+
         if not res:
             print("Seeding Universal Exit Criteria Template...")
             cur.execute("""
@@ -139,6 +151,25 @@ def add_exit_criteria_tables(force_reset=False):
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s);
                 """, (template_id, code, cat, q, metric, sev, mand, idx))
             print(f"Universal Template seeded successfully with ID: {template_id}")
+        elif force_reset:
+            template_id = res[0]
+            print(f"Force-resetting Universal Exit Criteria Template ({template_id})...")
+            cur.execute("""
+                UPDATE exit_criteria_templates
+                SET description = 'เกณฑ์การผ่านมาตรฐานกลางสำหรับการตรวจเอกสารทุกประเภท (General Document Review Gate)',
+                    doc_type = 'ALL',
+                    is_active = TRUE,
+                    max_loops = 3,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE template_id = %s;
+            """, (template_id,))
+            cur.execute("DELETE FROM exit_criteria_items WHERE template_id = %s;", (template_id,))
+            for code, cat, q, metric, sev, mand, idx in default_items:
+                cur.execute("""
+                    INSERT INTO exit_criteria_items (template_id, item_code, category, question_text, target_metric, severity, is_mandatory, order_index)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s);
+                """, (template_id, code, cat, q, metric, sev, mand, idx))
+            print("Universal Exit Criteria Template restored to 13 standard items & set Active.")
         else:
             template_id = res[0]
             print("Universal Exit Criteria Template already exists.")
