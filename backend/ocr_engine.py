@@ -464,6 +464,13 @@ def ocr_image(pil_image: Image.Image, lang: str = 'tha+eng', filename: str = Non
                         max_output_tokens=8192,
                     )
                 )
+                if retry_resp and hasattr(retry_resp, 'usage_metadata') and retry_resp.usage_metadata:
+                    try:
+                        from db_ingestion import log_api_usage
+                        retry_model = getattr(retry_resp, 'model_version', None) or fallback_models[0]
+                        log_api_usage("OCR_Scan_Retry", retry_model, retry_resp.usage_metadata, filename=filename)
+                    except Exception as retry_log_err:
+                        logger.warning(f"Failed to log OCR retry usage: {retry_log_err}")
                 if retry_resp and retry_resp.text:
                     text = retry_resp.text
                     logger.info("Anti-loop OCR retry succeeded.")

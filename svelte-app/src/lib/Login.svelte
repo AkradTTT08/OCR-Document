@@ -3,6 +3,7 @@
     import { login } from './authStore.js';
     import { toast } from './toastStore.js';
     import LegalModal from "./LegalModal.svelte";
+    import McpLogo from "./McpLogo.svelte";
 
     let email = localStorage.getItem('remembered_email') || '';
     let password = '';
@@ -133,6 +134,10 @@
                     <span class="pillar-pill">AI QA Agents</span>
                     <span class="pillar-pill">API &amp; Security</span>
                     <span class="pillar-pill">Thai / EN OCR</span>
+                    <span class="pillar-pill pillar-mcp" title="รองรับ Model Context Protocol (MCP)">
+                        <McpLogo size={13} />
+                        <span>MCP Supported</span>
+                    </span>
                 </div>
                 
                 <div class="footer-text">
@@ -418,6 +423,9 @@
     }
 
     .pillar-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
         font-family: var(--font-en);
         font-size: 12px;
         font-weight: 500;
@@ -427,6 +435,12 @@
         padding: 5px 14px;
         border-radius: 20px;
         letter-spacing: 0.3px;
+    }
+
+    .pillar-mcp {
+        color: #a5f3fc;
+        background: rgba(6, 182, 212, 0.12);
+        border-color: rgba(6, 182, 212, 0.34);
     }
     
     .footer-text {

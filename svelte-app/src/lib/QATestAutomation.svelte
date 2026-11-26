@@ -359,12 +359,13 @@
     };
   }
 
-  function getDocReqCount(doc) {
+  function getDocReqCount(doc, reqList = requirements) {
     const docId = String(doc.id || doc.doc_id || '');
-    const docName = (doc.original_filename || doc.name || doc.filename || '').trim();
-    return requirements.filter(r => {
+    const docName = (doc.original_filename || doc.name || doc.filename || '').trim().toLowerCase();
+    return (reqList || []).filter(r => {
       if (docId && String(r.doc_id || '') === docId) return true;
-      if (docName && r.doc_name && r.doc_name === docName) return true;
+      const rName = (r.doc_name || '').trim().toLowerCase();
+      if (docName && rName && rName === docName) return true;
       return false;
     }).length;
   }
@@ -972,10 +973,10 @@
           aria-selected={activePhase === 2}
           class="phase-step-btn"
           class:active={activePhase === 2}
-          class:done={projectTestCases.length > 0 || !!(exploreResult && exploreResult.file_saved)}
+          class:done={!!alignResult}
           on:click={() => (activePhase = 2)}
         >
-          2. ดึง Test Case ระบบ & เล่นเว็บจริง (MCP)
+          2. วิเคราะห์ Flow & Gap Analysis
         </button>
         <button
           type="button"
@@ -983,10 +984,10 @@
           aria-selected={activePhase === 3}
           class="phase-step-btn"
           class:active={activePhase === 3}
-          class:done={!!alignResult}
+          class:done={projectTestCases.length > 0 || !!(exploreResult && exploreResult.file_saved)}
           on:click={() => (activePhase = 3)}
         >
-          3. ตรวจสอบ Flow & Gap Analysis
+          3. ดึง Test Case ระบบ & เล่นเว็บจริง (MCP)
         </button>
         <button
           type="button"
@@ -1096,7 +1097,7 @@
                       📄 ส่งแผนไปสร้างเอกสารใน QA Doc Creation
                     </button>
                     <button type="button" class="btn-next-phase" on:click={() => (activePhase = 2)}>
-                      นำแผนที่เลือก ({selectedStrategyReqCodes.length} ข้อ) ไปสร้างสคริปต์ต่อ →
+                      นำแผนที่เลือก ({selectedStrategyReqCodes.length} ข้อ) ไปวิเคราะห์ Flow & Gap (Phase 2) →
                     </button>
                   </div>
                 </div>
@@ -1260,7 +1261,7 @@
                   <span class="doc-req-count">{requirements.length} ข้อ</span>
                 </button>
                 {#each projectDocuments as doc}
-                  {@const count = getDocReqCount(doc)}
+                  {@const count = getDocReqCount(doc, requirements)}
                   <button
                     type="button"
                     class="doc-chip-btn"
@@ -1288,7 +1289,7 @@
                 </div>
               </div>
 
-              <div class="requirements-list" style="margin-top: 12px; max-height: 360px; overflow-y: auto;">
+              <div class="requirements-list" style="margin-top: 12px; max-height: 520px; overflow-y: auto;">
                 {#each filteredRequirements as req (req.req_id)}
                   {@const docInfo = getReqDocInfo(req)}
                   <div class="req-card" class:expanded={expandedReqId === req.req_id}>
@@ -1305,7 +1306,24 @@
                         <h4>{req.title}</h4>
                         <span class="req-doc-chip">{docInfo.name}</span>
                       </div>
-                      <span class="status-badge">{req.status || 'Active'}</span>
+                      <div class="req-header-right">
+                        <span class="status-badge">{req.status || 'Active'}</span>
+                        <svg
+                          class="req-chevron"
+                          class:rotated={expandedReqId === req.req_id}
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          width="16"
+                          height="16"
+                          aria-hidden="true"
+                        >
+                          <polyline points="6 9 12 15 18 9"></polyline>
+                        </svg>
+                      </div>
                     </div>
                     {#if expandedReqId === req.req_id}
                       <div class="req-body" transition:slide>
@@ -1339,13 +1357,111 @@
       {/if}
 
       <!-- ===================================================================== -->
-      <!-- PHASE 2: DUAL-SOURCE INPUT (SYSTEM TEST CASES & PLAYWRIGHT MCP PLAY)  -->
+      <!-- PHASE 2: STLC FLOW ANALYSIS & BUSINESS GAP ANALYSIS (AGENT 3)         -->
       <!-- ===================================================================== -->
       {#if activePhase === 'all' || activePhase === 2}
         <div class="glass-panel">
           <div class="panel-header">
             <div class="header-left-cluster">
-              <h3>Phase 2: เลือกแหล่งข้อมูลสร้าง Automate — จาก Test Case ของระบบ หรือ เข้าเล่นระบบบน Web จริง (Playwright MCP)</h3>
+              <h3>Phase 2: วิเคราะห์ Flow การทำงาน & Business Gap Analysis (STLC Test Analysis)</h3>
+              {#if alignResult}
+                <span class="badge">✓ วิเคราะห์ Flow & Gap แล้ว</span>
+              {:else if exploreResult?.file_saved}
+                <span class="badge badge-cyan">พร้อมเทียบกับหน้าเว็บจริง (MCP)</span>
+              {:else}
+                <span class="badge badge-cyan">STLC Pre-Test Analysis</span>
+              {/if}
+            </div>
+          </div>
+          <p class="desc-text">
+            วิเคราะห์ความสอดคล้องของ <strong>Requirements</strong> และผัง <strong>QA Analysis Diagram</strong> ก่อนออกแบบ Test Case และเข้าเล่นเว็บจริงผ่าน MCP เพื่อหาจุดเสี่ยง, ช่องว่าง (Gap), Edge Cases และลำดับ Flow ธุรกิจที่ถูกต้อง (หากรัน MCP ใน Phase 3 แล้ว สามารถกลับมากดวิเคราะห์เทียบกับหน้าเว็บจริงซ้ำได้)
+          </p>
+
+          <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+            <button
+              type="button"
+              class="btn-primary-action"
+              on:click={startAlignment}
+              disabled={isAligning || requirements.length === 0}
+            >
+              {#if isAligning}
+                <div class="spinner-small"></div> กำลังวิเคราะห์ Flow & Business Gaps...
+              {:else if exploreResult?.file_saved}
+                🔍 วิเคราะห์ Flow & เทียบกับหน้าเว็บจริง (Live Web Alignment)
+              {:else}
+                🔍 เริ่มวิเคราะห์ Flow & Gap Analysis (ก่อนสร้าง Test Case)
+              {/if}
+            </button>
+            <button
+              type="button"
+              class="btn-secondary-sm"
+              on:click={() => (activePhase = 3)}
+            >
+              ไป Phase 3 (ดึง Test Case & เล่นเว็บจริง MCP) →
+            </button>
+          </div>
+
+          {#if alignResult}
+            <div class="align-result" transition:slide>
+              <h4>
+                ผลการวิเคราะห์ Flow & Business Gap
+                {#if alignResult.analysis_mode === 'live_web_alignment'}
+                  (เทียบกับหน้าเว็บจริง MCP)
+                {:else}
+                  (STLC Pre-Test Flow Analysis)
+                {/if}
+              </h4>
+              <div class="align-summary">
+                <p><strong>สรุปผล:</strong> {alignResult.analysis_summary}</p>
+              </div>
+
+              {#if alignResult.matched_elements && alignResult.matched_elements.length > 0}
+                <div class="matched-elements-box" style="margin-bottom: 14px;">
+                  <strong style="color: #34d399;">✅ Core Flow และองค์ประกอบที่ชัดเจนพร้อมทดสอบ ({alignResult.matched_elements.length}):</strong>
+                  <ul style="margin: 6px 0 0 0; padding-left: 20px; color: #cbd5e1; font-size: 13.5px;">
+                    {#each alignResult.matched_elements as m}
+                      <li>{m}</li>
+                    {/each}
+                  </ul>
+                </div>
+              {/if}
+
+              <div class="align-issues">
+                <strong>⚠️ จุดต่าง / ช่องว่าง (Discrepancies / Gaps) ที่ควรระวัง:</strong>
+                {#if alignResult.discrepancies && alignResult.discrepancies.length > 0}
+                  <ul>
+                    {#each alignResult.discrepancies as issue}
+                      <li class="issue-item severity-{issue.severity?.toLowerCase() || 'low'}">
+                        <span class="issue-req">[{issue.req_code}]</span> {issue.issue}
+                      </li>
+                    {/each}
+                  </ul>
+                {:else}
+                  <p class="no-issue">✓ ไม่พบจุดขัดแย้ง! โครงสร้างและ Flow การทำงานสอดคล้องกับ Requirement</p>
+                {/if}
+              </div>
+
+              <div class="align-recommendation">
+                <p><strong>💡 แนวทางออกแบบ Test Case & การเล่นผ่าน MCP ใน Phase 3:</strong> {alignResult.recommendation}</p>
+              </div>
+            </div>
+          {/if}
+          {#if alignError}
+            <div class="explore-error" transition:slide>
+              <p>{alignError}</p>
+            </div>
+          {/if}
+        </div>
+      {/if}
+
+      <!-- ===================================================================== -->
+      <!-- PHASE 3: DUAL-SOURCE INPUT (SYSTEM TEST CASES & PLAYWRIGHT MCP PLAY)  -->
+      <!-- ===================================================================== -->
+      {#if activePhase === 'all' || activePhase === 3}
+        <div class="glass-panel">
+          <div class="panel-header">
+            <div class="header-left-cluster">
+              <h3>Phase 3: เลือกแหล่งข้อมูลสร้าง Automate — จาก Test Case ของระบบ หรือ เข้าเล่นระบบบน Web จริง (Playwright MCP)</h3>
               <span class="badge badge-cyan">Dual-Engine Ready</span>
             </div>
           </div>
@@ -1677,91 +1793,25 @@
               {/if}
             </div>
           {/if}
-        </div>
-      {/if}
 
-      <!-- ===================================================================== -->
-      <!-- PHASE 3: SEMANTIC ALIGNMENT & FLOW GAP ANALYSIS                       -->
-      <!-- ===================================================================== -->
-      {#if activePhase === 'all' || activePhase === 3}
-        <div class="glass-panel">
-          <div class="panel-header">
-            <h3>Phase 3: ตรวจสอบความสอดคล้องของ Flow การทำงาน & Business Gap Analysis (Agent 3)</h3>
-            {#if alignResult}
-              <span class="badge">✓ ตรวจสอบความสอดคล้องแล้ว</span>
-            {:else}
-              <span class="badge badge-cyan">พร้อมเปรียบเทียบ</span>
+          <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-top: 18px; padding-top: 14px; border-top: 1px solid rgba(255, 255, 255, 0.08);">
+            {#if exploreResult?.file_saved}
+              <button
+                type="button"
+                class="btn-secondary-sm"
+                on:click={() => (activePhase = 2)}
+              >
+                🔍 กลับไป Phase 2 เพื่อเทียบผล MCP กับ Flow & Gap Analysis
+              </button>
             {/if}
-          </div>
-          <p class="desc-text">
-            เปรียบเทียบ Requirements, Test Cases และผัง QA Analysis Diagram กับโครงสร้างหน้าเว็บจริงที่ Playwright MCP สำรวจพบ เพื่อค้นหาจุดที่ตรงกันและจุดต่าง (Gap Analysis) ก่อนสร้างสคริปต์
-          </p>
-
-          <div style="display: flex; gap: 12px; flex-wrap: wrap;">
             <button
               type="button"
-              class="btn-primary-action"
-              on:click={startAlignment}
-              disabled={isAligning || !exploreResult || !exploreResult.file_saved}
-            >
-              {#if isAligning}
-                <div class="spinner-small"></div> กำลังเปรียบเทียบ Flow & Business Gaps...
-              {:else}
-                🔍 เริ่มวิเคราะห์ความสอดคล้อง (Run Flow & Business Alignment)
-              {/if}
-            </button>
-            <button
-              type="button"
-              class="btn-secondary-sm"
+              class="btn-next-phase"
               on:click={() => (activePhase = 4)}
             >
-              ข้ามไป Phase 4 (สร้างสคริปต์จาก Test Case / ผลสำรวจทันที) →
+              ไป Phase 4 (สร้าง Playwright Script .spec.ts) →
             </button>
           </div>
-
-          {#if alignResult}
-            <div class="align-result" transition:slide>
-              <h4>ผลการตรวจสอบความสอดคล้อง (Flow & Business Alignment Report)</h4>
-              <div class="align-summary">
-                <p><strong>สรุปผล:</strong> {alignResult.analysis_summary}</p>
-              </div>
-
-              {#if alignResult.matched_elements && alignResult.matched_elements.length > 0}
-                <div class="matched-elements-box" style="margin-bottom: 14px;">
-                  <strong style="color: #34d399;">✅ องค์ประกอบและ Flow ที่ตรงตาม Requirement ({alignResult.matched_elements.length}):</strong>
-                  <ul style="margin: 6px 0 0 0; padding-left: 20px; color: #cbd5e1; font-size: 13.5px;">
-                    {#each alignResult.matched_elements as m}
-                      <li>{m}</li>
-                    {/each}
-                  </ul>
-                </div>
-              {/if}
-
-              <div class="align-issues">
-                <strong>⚠️ จุดต่างหรือข้อควรระวังที่พบ (Discrepancies / Gaps):</strong>
-                {#if alignResult.discrepancies && alignResult.discrepancies.length > 0}
-                  <ul>
-                    {#each alignResult.discrepancies as issue}
-                      <li class="issue-item severity-{issue.severity?.toLowerCase() || 'low'}">
-                        <span class="issue-req">[{issue.req_code}]</span> {issue.issue}
-                      </li>
-                    {/each}
-                  </ul>
-                {:else}
-                  <p class="no-issue">✓ ไม่พบจุดขัดแย้ง! โครงสร้างหน้าเว็บจริงสอดคล้องกับ Requirement และ Flow การทำงาน</p>
-                {/if}
-              </div>
-
-              <div class="align-recommendation">
-                <p><strong>💡 ข้อเสนอแนะในการสร้าง Automate Script:</strong> {alignResult.recommendation}</p>
-              </div>
-            </div>
-          {/if}
-          {#if alignError}
-            <div class="explore-error" transition:slide>
-              <p>{alignError}</p>
-            </div>
-          {/if}
         </div>
       {/if}
 
@@ -3596,23 +3646,53 @@
     display: flex;
     flex-direction: column;
     gap: 10px;
+    padding-right: 4px;
   }
 
   .req-card {
+    flex-shrink: 0;
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 10px;
     overflow: hidden;
+    transition: border-color 0.18s ease, background-color 0.18s ease;
+  }
+
+  .req-card:hover {
+    border-color: rgba(167, 139, 250, 0.3);
+    background: rgba(255, 255, 255, 0.045);
+  }
+
+  .req-card.expanded {
+    border-color: rgba(167, 139, 250, 0.42);
+    background: rgba(255, 255, 255, 0.05);
   }
 
   .req-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    gap: 10px;
+    gap: 12px;
     flex-wrap: wrap;
-    padding: 12px 16px;
+    padding: 13px 16px;
     cursor: pointer;
+  }
+
+  .req-header-right {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+  }
+
+  .req-chevron {
+    color: #94a3b8;
+    transition: transform 0.2s ease, color 0.2s ease;
+  }
+
+  .req-chevron.rotated {
+    transform: rotate(180deg);
+    color: #c4b5fd;
   }
 
   .req-header:focus-visible {
@@ -3625,6 +3705,8 @@
     align-items: center;
     gap: 10px;
     flex-wrap: wrap;
+    flex: 1;
+    min-width: 0;
   }
 
   .req-code {

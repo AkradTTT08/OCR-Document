@@ -10,6 +10,8 @@
   import ProjectManagement from './lib/ProjectManagement.svelte';
 
   import Toast from "./lib/Toast.svelte";
+  import ConfirmModal from "./lib/ConfirmModal.svelte";
+  import McpLogo from "./lib/McpLogo.svelte";
   import Login from "./lib/Login.svelte";
   import ComingSoon from "./lib/ComingSoon.svelte";
   import QAConsult from "./lib/QAConsult.svelte";
@@ -35,7 +37,7 @@
   import { showLogin, authRole, authUser, authDisplayName, authAvatar, authAllowedMenus, authAllowedProjects, authMustChangePassword, DEFAULT_USER_MENUS, DEFAULT_ADMIN_MENUS, logout, updateAuthProfile } from "./lib/authStore.js";
   import { globalSearchQuery, triggerGlobalSearch } from "./lib/globalStore.js";
   import { onMount, onDestroy } from "svelte";
-  import { toast } from "./lib/toastStore.js";
+  import { toast, confirmDialog, resolveConfirmDialog } from "./lib/toastStore.js";
 
   let showNotifications = false;
   let notiTriggerBtn = null;
@@ -1552,6 +1554,10 @@
               />
             {/if}
           </div>
+          <div class="mcp-badge" title="รองรับ Model Context Protocol (MCP) สำหรับเชื่อมต่อ Claude Desktop, Cursor และ AI Clients">
+            <McpLogo size={14} />
+            <span class="mcp-badge-label">MCP Ready</span>
+          </div>
           <div class="status-badge" class:error={!systemReady}>
             <span class="dot"></span> {systemReady ? 'System Ready' : 'System Unavailable'}
           </div>
@@ -1598,7 +1604,7 @@
       </header>
 
       <!-- Content Area -->
-      <div class="content-scroll" id="main-content" class:no-padding={['kb', 'ocr', 'exit_criteria', 'qa_consult', 'qa_doc_creation', 'qa_member', 'qa_analysis_diagram', 'qa_performance', 'qa_research', 'qa_security', 'qa_automate', 'qa_board', 'master_agent', 'workflow_builder'].includes(activeView)}>
+      <div class="content-scroll" id="main-content" class:no-padding={['kb', 'ocr', 'exit_criteria', 'api_collection', 'qa_consult', 'qa_doc_creation', 'qa_member', 'qa_analysis_diagram', 'qa_performance', 'qa_research', 'qa_security', 'qa_automate', 'qa_board', 'master_agent', 'workflow_builder'].includes(activeView)}>
         {#key activeView}
           <div class="view-wrapper" in:fade="{{ duration: 300, delay: 150 }}">
             {#if activeView === "ocr" && $authRole === "admin"}
@@ -1658,7 +1664,12 @@
       <!-- ── Footer ── -->
       <footer class="app-footer">
         <div class="footer-left">
-          &copy; 2026 Spectra QA v1.0.4. Powered by Prism AI.
+          <span>&copy; 2026 Spectra QA v1.0.4. Powered by Prism AI.</span>
+          <span class="footer-sep" aria-hidden="true">·</span>
+          <span class="footer-mcp" title="Model Context Protocol Compatible">
+            <McpLogo size={13} />
+            <span>MCP Compatible</span>
+          </span>
         </div>
         <div class="footer-links">
           <a href="#" on:click|preventDefault={() => legalModalType = 'privacy'}>Privacy Policy</a>
@@ -1673,6 +1684,21 @@
 
 <!-- Global Toast Notifications -->
 <Toast />
+
+<!-- Global Spectra QA Confirm Modal (powers customConfirm across all modules) -->
+{#if $confirmDialog}
+  <ConfirmModal
+    open={$confirmDialog.open}
+    title={$confirmDialog.title}
+    message={$confirmDialog.message}
+    detail={$confirmDialog.detail}
+    confirmText={$confirmDialog.confirmText}
+    cancelText={$confirmDialog.cancelText}
+    variant={$confirmDialog.variant}
+    on:confirm={() => resolveConfirmDialog(true)}
+    on:cancel={() => resolveConfirmDialog(false)}
+  />
+{/if}
 
 <!-- Tutorial Overlay -->
 {#if showTutorial}
@@ -3054,6 +3080,28 @@
     font-variant-numeric: tabular-nums;
   }
 
+  .mcp-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(99, 102, 241, 0.12);
+    border: 1px solid rgba(99, 102, 241, 0.28);
+    padding: 6px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 500;
+    color: #a5b4fc;
+    font-family: var(--font-en);
+    letter-spacing: 0.01em;
+    white-space: nowrap;
+    transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+  }
+  .mcp-badge:hover {
+    background: rgba(99, 102, 241, 0.2);
+    border-color: rgba(129, 140, 248, 0.45);
+    color: #e0e7ff;
+  }
+
   .status-badge {
     display: flex; align-items: center; gap: 6px;
     background: rgba(16, 185, 129, 0.1);
@@ -3245,6 +3293,8 @@
     .topbar-right { gap: 10px; }
     .search-box { display: none; }
     .user-info { display: none; }
+    .mcp-badge { padding: 4px 8px; }
+    .mcp-badge-label { display: none; }
     .status-badge { padding: 4px 10px; font-size: 11px; }
     .breadcrumb { font-size: 11px; }
   }
@@ -3272,6 +3322,22 @@
     color: var(--text-dim);
     flex-shrink: 0;
     font-family: var(--font-en);
+  }
+  .footer-left {
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .footer-sep {
+    opacity: 0.4;
+  }
+  .footer-mcp {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: #a5b4fc;
+    font-weight: 500;
   }
   .footer-links {
     display: flex;

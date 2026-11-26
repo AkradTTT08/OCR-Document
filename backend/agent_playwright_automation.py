@@ -424,7 +424,7 @@ def analyze_requirement_automation_strategy(project_id: str, custom_focus: str =
 4. วิเคราะห์ **ข้อดี (Pros)** และ **ข้อเสีย/ข้อควรระวัง (Cons)** ของการทำ Automate ในแต่ละข้ออย่างชัดเจน พร้อมวางแผน Roadmap การทำ Automate Test ให้ผู้ใช้เข้าใจง่าย
 
 ### ข้อมูล Structured Requirements ของโครงการ ({len(reqs_context)} รายการ):
-{json.dumps(reqs_context[:35], ensure_ascii=False, indent=2) if reqs_context else "ยังไม่มีการสกัดรายข้อ ให้วิเคราะห์จากเนื้อหาเอกสารด้านล่าง"}
+{json.dumps(reqs_context[:80], ensure_ascii=False, indent=2) if reqs_context else "ยังไม่มีการสกัดรายข้อ ให้วิเคราะห์จากเนื้อหาเอกสารด้านล่าง"}
 
 ### เนื้อหาเอกสารเพิ่มเติม (ถ้ามี):
 {chr(10).join(doc_snippets)[:6000] if doc_snippets else "ใช้ข้อมูลจาก Structured Requirements"}
@@ -1670,8 +1670,9 @@ test.describe('Spectra QA Business & Flow Verification Suite', () => {{
                 ]
             }
 
-        # Save generated suites to tests/<project_id>/
-        project_tests_dir = os.path.join(os.getcwd(), "tests", str(project_id))
+        # Save generated suites to deterministic PLAYWRIGHT_TESTS_DIR/<project_id>/
+        from agent_5_test_runner import PLAYWRIGHT_TESTS_DIR
+        project_tests_dir = os.path.join(PLAYWRIGHT_TESTS_DIR, str(project_id))
         os.makedirs(project_tests_dir, exist_ok=True)
 
         saved_suites = []

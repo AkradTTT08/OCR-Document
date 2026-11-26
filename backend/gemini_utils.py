@@ -1,8 +1,33 @@
 import os
 import logging
+import threading
 from typing import Tuple, Any
 
 logger = logging.getLogger(__name__)
+
+_LAST_MODEL_LOCAL = threading.local()
+
+
+def _record_last_used_model(usage_metadata: Any, model_name: str):
+    try:
+        _LAST_MODEL_LOCAL.usage_id = id(usage_metadata) if usage_metadata is not None else None
+        _LAST_MODEL_LOCAL.model_name = str(model_name or "").strip()
+    except Exception:
+        pass
+
+
+def get_actual_model_for_usage(usage_metadata: Any, fallback_model: str = None) -> str:
+    """Returns the exact model that produced usage_metadata if it came from call_gemini() fallback."""
+    try:
+        if (
+            usage_metadata is not None
+            and getattr(_LAST_MODEL_LOCAL, "usage_id", None) == id(usage_metadata)
+            and getattr(_LAST_MODEL_LOCAL, "model_name", None)
+        ):
+            return _LAST_MODEL_LOCAL.model_name
+    except Exception:
+        pass
+    return fallback_model or "gemini-2.5-flash"
 
 def get_gemini_api_key():
     try:
@@ -68,7 +93,10 @@ def call_gemini(
                     config=config
                 )
                 if response and (response.text or "").strip():
-                    return (response.text or "").strip(), getattr(response, 'usage_metadata', None)
+                    usage_meta = getattr(response, 'usage_metadata', None)
+                    actual_model = getattr(response, 'model_version', None) or m
+                    _record_last_used_model(usage_meta, actual_model)
+                    return (response.text or "").strip(), usage_meta
             except Exception as m_err:
                 last_error = m_err
                 logger.warning(f"google-genai model '{m}' failed: {m_err}")
@@ -105,7 +133,10 @@ def call_gemini(
                     
                 response = model.generate_content(prompt)
                 if response and (response.text or "").strip():
-                    return (response.text or "").strip(), getattr(response, 'usage_metadata', None)
+                    usage_meta = getattr(response, 'usage_metadata', None)
+                    actual_model = getattr(response, 'model_version', None) or m
+                    _record_last_used_model(usage_meta, actual_model)
+                    return (response.text or "").strip(), usage_meta
             except Exception as leg_m_err:
                 last_error = leg_m_err
                 logger.warning(f"legacy google.generativeai model '{m}' failed: {leg_m_err}")

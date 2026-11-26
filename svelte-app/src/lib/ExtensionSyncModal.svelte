@@ -7,7 +7,7 @@
   export let collections = [];
 
   const dispatch = createEventDispatcher();
-  const API_BASE = "http://localhost:5001";
+  const API_BASE = "";
 
   let liveApis = [];
   let selectedKeys = new Set();

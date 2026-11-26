@@ -38,6 +38,7 @@ export const unreadCount = derived(notifications, $notifications => {
 // Set of already-seen notification IDs to avoid alerting repeatedly
 const seenNotificationIds = new Set();
 let isInitialFetch = true;
+let syncedUsername = '';
 let syncInterval = null;
 let isFetching = false;
 let visibilityListener = null;
@@ -63,7 +64,24 @@ function getCurrentUsername() {
  */
 export async function fetchUserNotifications() {
   const username = getCurrentUsername();
-  if (!username || isFetching) return;
+  if (!username) {
+    if (syncedUsername) {
+      syncedUsername = '';
+      isInitialFetch = true;
+      seenNotificationIds.clear();
+      notifications.set([]);
+    }
+    return;
+  }
+  if (isFetching) return;
+
+  // Reset initial-fetch baseline whenever a user logs in or switches accounts
+  // so historical unread notifications populate the bell badge silently without flooding toasts
+  if (username !== syncedUsername) {
+    syncedUsername = username;
+    isInitialFetch = true;
+    seenNotificationIds.clear();
+  }
 
   isFetching = true;
   try {
@@ -74,15 +92,29 @@ export async function fetchUserNotifications() {
 
     const data = await res.json();
     if (data.success && Array.isArray(data.notifications)) {
+      // Guard against account switch while request was in flight
+      if (getCurrentUsername() !== username) return;
+
       const incoming = data.notifications;
 
-      // Check for newly arrived unread notifications that haven't been shown yet
+      // Only toast genuinely new notifications arriving after the initial login sync
       if (!isInitialFetch) {
-        for (const item of incoming) {
-          if (!item.read && !seenNotificationIds.has(item.id)) {
-            // Trigger toast alert for the specific user
+        const newlyArrived = incoming.filter(
+          item => !item.read && !seenNotificationIds.has(item.id)
+        );
+        if (newlyArrived.length > 2) {
+          const hasError = newlyArrived.some(n => n.type === 'error');
+          const hasWarn = newlyArrived.some(n => n.type === 'warning');
+          const summaryType = hasError ? 'error' : hasWarn ? 'warning' : 'info';
+          toast(
+            `มีการแจ้งเตือนใหม่ ${newlyArrived.length} รายการ (ดูรายละเอียดที่ไอคอนกระดิ่ง)`,
+            summaryType,
+            5000
+          );
+        } else {
+          for (const item of newlyArrived) {
             const toastType = item.type === 'error' ? 'error' : item.type === 'warning' ? 'warning' : 'success';
-            toast(`${item.title}: ${item.message}`, toastType, 7000);
+            toast(`${item.title}: ${item.message}`, toastType, 6000);
           }
         }
       }
@@ -131,6 +163,9 @@ export function stopNotificationSync() {
     document.removeEventListener('visibilitychange', visibilityListener);
     visibilityListener = null;
   }
+  syncedUsername = '';
+  isInitialFetch = true;
+  seenNotificationIds.clear();
 }
 
 export async function markAsRead(id) {

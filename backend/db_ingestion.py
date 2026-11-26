@@ -1984,10 +1984,146 @@ def init_api_usage_logs():
         if cursor: cursor.close()
         if conn: conn.close()
 
+# Official Google AI Studio / Gemini API Paid Tier Pricing (USD per 1M tokens)
+# Thinking tokens (thoughts_token_count) are billed at the full output token rate.
+# Context caching read tokens are billed at ~10% of the regular input token rate.
+GEMINI_MODEL_PRICING = [
+    {
+        "match": "3.1-pro",
+        "label": "Gemini 3.1 Pro",
+        "input_le_200k": 2.00,
+        "output_le_200k": 12.00,
+        "input_gt_200k": 4.00,
+        "output_gt_200k": 18.00,
+        "tier_threshold": 200_000,
+        "cache_multiplier": 0.10,
+    },
+    {
+        "match": "2.5-pro",
+        "label": "Gemini 2.5 Pro",
+        "input_le_200k": 1.25,
+        "output_le_200k": 10.00,
+        "input_gt_200k": 2.50,
+        "output_gt_200k": 15.00,
+        "tier_threshold": 200_000,
+        "cache_multiplier": 0.10,
+    },
+    {
+        "match": "2.5-flash-lite",
+        "label": "Gemini 2.5 Flash-Lite",
+        "input_le_200k": 0.10,
+        "output_le_200k": 0.40,
+        "input_gt_200k": 0.10,
+        "output_gt_200k": 0.40,
+        "tier_threshold": 200_000,
+        "cache_multiplier": 0.10,
+    },
+    {
+        "match": "2.5-flash",
+        "label": "Gemini 2.5 Flash",
+        "input_le_200k": 0.30,
+        "output_le_200k": 2.50,
+        "input_gt_200k": 0.30,
+        "output_gt_200k": 2.50,
+        "tier_threshold": 200_000,
+        "cache_multiplier": 0.10,
+    },
+    {
+        "match": "2.0-flash-lite",
+        "label": "Gemini 2.0 Flash-Lite",
+        "input_le_200k": 0.075,
+        "output_le_200k": 0.30,
+        "input_gt_200k": 0.075,
+        "output_gt_200k": 0.30,
+        "tier_threshold": 200_000,
+        "cache_multiplier": 0.10,
+    },
+    {
+        "match": "2.0-flash",
+        "label": "Gemini 2.0 Flash",
+        "input_le_200k": 0.10,
+        "output_le_200k": 0.40,
+        "input_gt_200k": 0.10,
+        "output_gt_200k": 0.40,
+        "tier_threshold": 200_000,
+        "cache_multiplier": 0.10,
+    },
+    {
+        "match": "1.5-pro",
+        "label": "Gemini 1.5 Pro",
+        "input_le_200k": 1.25,
+        "output_le_200k": 5.00,
+        "input_gt_200k": 2.50,
+        "output_gt_200k": 10.00,
+        "tier_threshold": 128_000,
+        "cache_multiplier": 0.25,
+    },
+    {
+        "match": "1.5-flash",
+        "label": "Gemini 1.5 Flash",
+        "input_le_200k": 0.075,
+        "output_le_200k": 0.30,
+        "input_gt_200k": 0.15,
+        "output_gt_200k": 0.60,
+        "tier_threshold": 128_000,
+        "cache_multiplier": 0.25,
+    },
+]
+
+
+def _resolve_model_pricing(model_name: str) -> dict:
+    model_str = str(model_name or "gemini-2.5-flash").lower().strip()
+    for entry in GEMINI_MODEL_PRICING:
+        if entry["match"] in model_str:
+            return entry
+    if "pro" in model_str:
+        return GEMINI_MODEL_PRICING[1]  # fallback to 2.5-pro
+    if "lite" in model_str:
+        return GEMINI_MODEL_PRICING[2]  # fallback to 2.5-flash-lite
+    return GEMINI_MODEL_PRICING[3]      # fallback to 2.5-flash
+
+
+def calculate_gemini_cost_usd(
+    model_name: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+    thinking_tokens: int = 0,
+    cached_tokens: int = 0,
+) -> float:
+    """Calculates exact USD cost using current Google AI pricing including thinking tokens, caching, and >200K context tier."""
+    pricing = _resolve_model_pricing(model_name)
+    p_tok = max(0, int(prompt_tokens or 0))
+    c_tok = max(0, int(completion_tokens or 0))
+    th_tok = max(0, int(thinking_tokens or 0))
+    ca_tok = max(0, min(p_tok, int(cached_tokens or 0)))
+
+    is_long_ctx = p_tok > pricing.get("tier_threshold", 200_000)
+    in_rate = pricing["input_gt_200k"] if is_long_ctx else pricing["input_le_200k"]
+    out_rate = pricing["output_gt_200k"] if is_long_ctx else pricing["output_le_200k"]
+    cache_rate = in_rate * pricing.get("cache_multiplier", 0.10)
+
+    regular_in = max(0, p_tok - ca_tok)
+    billable_out = c_tok + th_tok
+
+    cost = (
+        (regular_in / 1_000_000.0) * in_rate
+        + (ca_tok / 1_000_000.0) * cache_rate
+        + (billable_out / 1_000_000.0) * out_rate
+    )
+    return round(cost, 6)
+
+
 def log_api_usage(endpoint_name, model_name, usage_metadata, filename=None, username=None):
-    """Logs API token usage and calculates estimated cost across all agents and endpoints."""
+    """Logs API token usage (prompt, completion, thinking, cached) and calculates exact USD cost."""
     if not usage_metadata:
         return
+
+    # Resolve exact model name if call_gemini() fell back to another candidate model
+    try:
+        from gemini_utils import get_actual_model_for_usage
+        model_name = get_actual_model_for_usage(usage_metadata, fallback_model=model_name)
+    except Exception:
+        pass
 
     if not username:
         try:
@@ -1997,55 +2133,80 @@ def log_api_usage(endpoint_name, model_name, usage_metadata, filename=None, user
         except Exception:
             pass
     username = (str(username).strip() if username else None)
-        
+
     prompt_tokens = 0
     completion_tokens = 0
+    thinking_tokens = 0
+    cached_tokens = 0
     total_tokens = 0
-    
+
     if isinstance(usage_metadata, dict):
         prompt_tokens = int(usage_metadata.get('prompt_token_count') or usage_metadata.get('prompt_tokens') or 0)
         completion_tokens = int(usage_metadata.get('candidates_token_count') or usage_metadata.get('completion_tokens') or 0)
-        total_tokens = int(usage_metadata.get('total_token_count') or usage_metadata.get('total_tokens') or (prompt_tokens + completion_tokens))
+        thinking_tokens = int(usage_metadata.get('thoughts_token_count') or usage_metadata.get('thinking_tokens') or 0)
+        cached_tokens = int(usage_metadata.get('cached_content_token_count') or usage_metadata.get('cached_tokens') or 0)
+        total_tokens = int(usage_metadata.get('total_token_count') or usage_metadata.get('total_tokens') or 0)
     else:
         prompt_tokens = int(getattr(usage_metadata, 'prompt_token_count', 0) or 0)
         completion_tokens = int(getattr(usage_metadata, 'candidates_token_count', 0) or 0)
-        total_tokens = int(getattr(usage_metadata, 'total_token_count', 0) or (prompt_tokens + completion_tokens))
-        
+        thinking_tokens = int(getattr(usage_metadata, 'thoughts_token_count', 0) or 0)
+        cached_tokens = int(getattr(usage_metadata, 'cached_content_token_count', 0) or 0)
+        total_tokens = int(getattr(usage_metadata, 'total_token_count', 0) or 0)
+
+    # If SDK reported total_token_count > prompt + completion but omitted thoughts_token_count, infer thinking tokens
+    if thinking_tokens == 0 and total_tokens > (prompt_tokens + completion_tokens):
+        thinking_tokens = total_tokens - prompt_tokens - completion_tokens
+    if total_tokens == 0:
+        total_tokens = prompt_tokens + completion_tokens + thinking_tokens
+
     if total_tokens == 0 and prompt_tokens == 0 and completion_tokens == 0:
         return
 
-    # Approximate Gemini pricing in USD
-    cost_usd = 0.0
-    model_str = str(model_name or 'gemini-2.5-flash').lower()
-    
-    if 'pro' in model_str:
-        cost_usd = (prompt_tokens / 1_000_000 * 1.25) + (completion_tokens / 1_000_000 * 5.00)
-    elif '2.5-flash' in model_str:
-        cost_usd = (prompt_tokens / 1_000_000 * 0.15) + (completion_tokens / 1_000_000 * 0.60)
-    elif 'flash' in model_str:
-        cost_usd = (prompt_tokens / 1_000_000 * 0.075) + (completion_tokens / 1_000_000 * 0.30)
-    else:
-        cost_usd = (prompt_tokens / 1_000_000 * 0.10) + (completion_tokens / 1_000_000 * 0.40)
+    cost_usd = calculate_gemini_cost_usd(
+        model_name=model_name,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        thinking_tokens=thinking_tokens,
+        cached_tokens=cached_tokens,
+    )
 
     conn = None
     cursor = None
     try:
         conn = get_ocr_db_connection()
         cursor = conn.cursor()
-        
+
         insert_query = """
-            INSERT INTO api_usage_logs (endpoint_name, service_name, model_name, filename, prompt_tokens, completion_tokens, total_tokens, estimated_cost_usd, username)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO api_usage_logs (
+                endpoint_name, service_name, model_name, filename,
+                prompt_tokens, completion_tokens, thinking_tokens, cached_tokens,
+                total_tokens, estimated_cost_usd, username
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
-        params = (endpoint_name or 'AI_Agent', endpoint_name or 'AI_Agent', model_name or 'gemini-2.5-flash', filename, prompt_tokens, completion_tokens, total_tokens, cost_usd, username)
-        
+        params = (
+            endpoint_name or 'AI_Agent',
+            endpoint_name or 'AI_Agent',
+            model_name or 'gemini-2.5-flash',
+            filename,
+            prompt_tokens,
+            completion_tokens,
+            thinking_tokens,
+            cached_tokens,
+            total_tokens,
+            cost_usd,
+            username,
+        )
+
         try:
             cursor.execute(insert_query, params)
             conn.commit()
-            logger.info(f"Logged API usage for {endpoint_name} ({model_name}) user={username or 'system'}: {total_tokens} tokens, ${cost_usd:.6f}")
+            logger.info(
+                f"Logged API usage for {endpoint_name} ({model_name}) user={username or 'system'}: "
+                f"in={prompt_tokens} out={completion_tokens} think={thinking_tokens} tot={total_tokens}, ${cost_usd:.6f}"
+            )
         except Exception as insert_err:
             conn.rollback()
-            # If columns missing, perform self-healing migration and retry
             logger.warning(f"Initial insert into api_usage_logs failed ({insert_err}), self-healing schema...")
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS api_usage_logs (
@@ -2056,6 +2217,8 @@ def log_api_usage(endpoint_name, model_name, usage_metadata, filename=None, user
                     filename VARCHAR(255),
                     prompt_tokens INT DEFAULT 0,
                     completion_tokens INT DEFAULT 0,
+                    thinking_tokens INT DEFAULT 0,
+                    cached_tokens INT DEFAULT 0,
                     total_tokens INT DEFAULT 0,
                     estimated_cost_usd DECIMAL(10, 6) DEFAULT 0,
                     username VARCHAR(120),
@@ -2068,6 +2231,8 @@ def log_api_usage(endpoint_name, model_name, usage_metadata, filename=None, user
                 ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS filename VARCHAR(255);
                 ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS prompt_tokens INT DEFAULT 0;
                 ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS completion_tokens INT DEFAULT 0;
+                ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS thinking_tokens INT DEFAULT 0;
+                ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS cached_tokens INT DEFAULT 0;
                 ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS total_tokens INT DEFAULT 0;
                 ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS estimated_cost_usd DECIMAL(10, 6) DEFAULT 0;
                 ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS username VARCHAR(120);
@@ -2083,11 +2248,80 @@ def log_api_usage(endpoint_name, model_name, usage_metadata, filename=None, user
         if cursor: cursor.close()
         if conn: conn.close()
 
+
+def recalculate_api_usage_costs():
+    """Backfills thinking_tokens and recalculates estimated_cost_usd for all historical rows using current official pricing."""
+    conn = None
+    cursor = None
+    try:
+        conn = get_ocr_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS thinking_tokens INT DEFAULT 0;
+            ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS cached_tokens INT DEFAULT 0;
+        """)
+        conn.commit()
+
+        cursor.execute("""
+            SELECT ctid, COALESCE(model_name, 'gemini-2.5-flash'),
+                   COALESCE(prompt_tokens, 0), COALESCE(completion_tokens, 0),
+                   COALESCE(thinking_tokens, 0), COALESCE(cached_tokens, 0),
+                   COALESCE(total_tokens, 0)
+            FROM api_usage_logs;
+        """)
+        rows = cursor.fetchall()
+        updated = 0
+        for ctid, model_name, p_tok, c_tok, th_tok, ca_tok, tot_tok in rows:
+            inferred_th = th_tok if th_tok > 0 else max(0, tot_tok - p_tok - c_tok)
+            new_cost = calculate_gemini_cost_usd(
+                model_name=model_name,
+                prompt_tokens=p_tok,
+                completion_tokens=c_tok,
+                thinking_tokens=inferred_th,
+                cached_tokens=ca_tok,
+            )
+            cursor.execute(
+                "UPDATE api_usage_logs SET thinking_tokens = %s, estimated_cost_usd = %s WHERE ctid = %s",
+                (inferred_th, new_cost, ctid),
+            )
+            updated += 1
+        conn.commit()
+        logger.info(f"Recalculated API usage costs for {updated} rows using current Gemini pricing.")
+        return {"success": True, "updated_rows": updated}
+    except Exception as e:
+        if conn: conn.rollback()
+        logger.error(f"Error recalculating API usage costs: {e}", exc_info=True)
+        return {"success": False, "error": str(e)}
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+
+
 def get_api_usage_stats(time_filter='all'):
-    """Retrieves aggregated API usage statistics with optional time filtering."""
+    """Retrieves aggregated API usage statistics with optional time filtering plus all-time totals for accurate balance."""
+    usd_to_thb = float(os.environ.get("USD_TO_THB_RATE", "35.0") or 35.0)
     default_stats = {
         'total_tokens': 0,
+        'total_prompt_tokens': 0,
+        'total_completion_tokens': 0,
+        'total_thinking_tokens': 0,
+        'total_requests': 0,
         'total_cost_usd': 0.0,
+        'all_time_tokens': 0,
+        'all_time_cost_usd': 0.0,
+        'usd_to_thb_rate': usd_to_thb,
+        'pricing_table': [
+            {
+                'model': p['label'],
+                'match': p['match'],
+                'input_per_1m': p['input_le_200k'],
+                'output_per_1m': p['output_le_200k'],
+                'long_ctx_input_per_1m': p['input_gt_200k'],
+                'long_ctx_output_per_1m': p['output_gt_200k'],
+                'tier_threshold': p['tier_threshold'],
+            }
+            for p in GEMINI_MODEL_PRICING[:6]
+        ],
         'by_model': [],
         'by_endpoint': [],
         'document_history': [],
@@ -2099,8 +2333,7 @@ def get_api_usage_stats(time_filter='all'):
     try:
         conn = get_ocr_db_connection()
         cursor = conn.cursor()
-        
-        # Ensure table exists and has necessary columns
+
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS api_usage_logs (
                 log_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -2109,6 +2342,8 @@ def get_api_usage_stats(time_filter='all'):
                 filename VARCHAR(255),
                 prompt_tokens INT DEFAULT 0,
                 completion_tokens INT DEFAULT 0,
+                thinking_tokens INT DEFAULT 0,
+                cached_tokens INT DEFAULT 0,
                 total_tokens INT DEFAULT 0,
                 estimated_cost_usd DECIMAL(10, 6) DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -2118,12 +2353,13 @@ def get_api_usage_stats(time_filter='all'):
             ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS filename VARCHAR(255);
             ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS prompt_tokens INT DEFAULT 0;
             ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS completion_tokens INT DEFAULT 0;
+            ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS thinking_tokens INT DEFAULT 0;
+            ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS cached_tokens INT DEFAULT 0;
             ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS total_tokens INT DEFAULT 0;
             ALTER TABLE api_usage_logs ADD COLUMN IF NOT EXISTS estimated_cost_usd DECIMAL(10, 6) DEFAULT 0;
         """)
         conn.commit()
-        
-        # Build WHERE clause based on time filter
+
         where_clause = ""
         if time_filter == 'daily':
             where_clause = "WHERE created_at >= CURRENT_DATE"
@@ -2131,58 +2367,120 @@ def get_api_usage_stats(time_filter='all'):
             where_clause = "WHERE created_at >= date_trunc('month', CURRENT_DATE)"
         elif time_filter == 'yearly':
             where_clause = "WHERE created_at >= date_trunc('year', CURRENT_DATE)"
-            
+
         stats = dict(default_stats)
-        
-        # Total cost and tokens
-        cursor.execute(f"SELECT COALESCE(SUM(total_tokens), 0), COALESCE(SUM(estimated_cost_usd), 0) FROM api_usage_logs {where_clause}")
+
+        # Always compute All-Time cumulative totals so Remaining Balance stays accurate across time filters
+        cursor.execute("SELECT COALESCE(SUM(total_tokens), 0), COALESCE(SUM(estimated_cost_usd), 0) FROM api_usage_logs")
+        all_row = cursor.fetchone()
+        if all_row:
+            stats['all_time_tokens'] = int(all_row[0] or 0)
+            stats['all_time_cost_usd'] = float(all_row[1] or 0.0)
+
+        # Filtered period totals (including prompt / completion / thinking breakdown)
+        cursor.execute(f"""
+            SELECT
+                COALESCE(SUM(total_tokens), 0),
+                COALESCE(SUM(estimated_cost_usd), 0),
+                COALESCE(SUM(prompt_tokens), 0),
+                COALESCE(SUM(completion_tokens), 0),
+                COALESCE(SUM(GREATEST(COALESCE(thinking_tokens, 0), GREATEST(total_tokens - prompt_tokens - completion_tokens, 0))), 0),
+                COUNT(*)
+            FROM api_usage_logs {where_clause}
+        """)
         row = cursor.fetchone()
         if row:
             stats['total_tokens'] = int(row[0] or 0)
             stats['total_cost_usd'] = float(row[1] or 0.0)
-        
-        # Usage by model
-        cursor.execute(f"SELECT COALESCE(model_name, 'gemini-2.5-flash'), COUNT(*), COALESCE(SUM(total_tokens), 0), COALESCE(SUM(estimated_cost_usd), 0) FROM api_usage_logs {where_clause} GROUP BY model_name")
-        stats['by_model'] = [
-            {'model': r[0], 'requests': r[1], 'tokens': int(r[2] or 0), 'cost_usd': float(r[3] or 0.0)}
-            for r in cursor.fetchall()
-        ]
-        
-        # Usage by endpoint
-        cursor.execute(f"SELECT COALESCE(endpoint_name, 'AI_Agent'), COUNT(*), COALESCE(SUM(total_tokens), 0), COALESCE(SUM(estimated_cost_usd), 0) FROM api_usage_logs {where_clause} GROUP BY endpoint_name")
-        stats['by_endpoint'] = [
-            {'endpoint': r[0], 'requests': r[1], 'tokens': int(r[2] or 0), 'cost_usd': float(r[3] or 0.0)}
-            for r in cursor.fetchall()
-        ]
-        
-        # Document History (Grouped by Document and Day)
+            stats['total_prompt_tokens'] = int(row[2] or 0)
+            stats['total_completion_tokens'] = int(row[3] or 0)
+            stats['total_thinking_tokens'] = int(row[4] or 0)
+            stats['total_requests'] = int(row[5] or 0)
+
+        # Usage by model (sorted by cost DESC)
         cursor.execute(f"""
-            SELECT 
-                COALESCE(filename, 'Unknown Document') as fname, 
+            SELECT
+                COALESCE(model_name, 'gemini-2.5-flash'),
+                COUNT(*),
+                COALESCE(SUM(total_tokens), 0),
+                COALESCE(SUM(estimated_cost_usd), 0),
+                COALESCE(SUM(prompt_tokens), 0),
+                COALESCE(SUM(completion_tokens), 0),
+                COALESCE(SUM(GREATEST(COALESCE(thinking_tokens, 0), GREATEST(total_tokens - prompt_tokens - completion_tokens, 0))), 0)
+            FROM api_usage_logs {where_clause}
+            GROUP BY model_name
+            ORDER BY COALESCE(SUM(estimated_cost_usd), 0) DESC
+        """)
+        stats['by_model'] = [
+            {
+                'model': r[0],
+                'requests': r[1],
+                'tokens': int(r[2] or 0),
+                'cost_usd': float(r[3] or 0.0),
+                'prompt_tokens': int(r[4] or 0),
+                'completion_tokens': int(r[5] or 0),
+                'thinking_tokens': int(r[6] or 0),
+            }
+            for r in cursor.fetchall()
+        ]
+
+        # Usage by endpoint (sorted by cost DESC)
+        cursor.execute(f"""
+            SELECT
+                COALESCE(endpoint_name, 'AI_Agent'),
+                COUNT(*),
+                COALESCE(SUM(total_tokens), 0),
+                COALESCE(SUM(estimated_cost_usd), 0),
+                COALESCE(SUM(prompt_tokens), 0),
+                COALESCE(SUM(completion_tokens), 0),
+                COALESCE(SUM(GREATEST(COALESCE(thinking_tokens, 0), GREATEST(total_tokens - prompt_tokens - completion_tokens, 0))), 0)
+            FROM api_usage_logs {where_clause}
+            GROUP BY endpoint_name
+            ORDER BY COALESCE(SUM(estimated_cost_usd), 0) DESC
+        """)
+        stats['by_endpoint'] = [
+            {
+                'endpoint': r[0],
+                'requests': r[1],
+                'tokens': int(r[2] or 0),
+                'cost_usd': float(r[3] or 0.0),
+                'prompt_tokens': int(r[4] or 0),
+                'completion_tokens': int(r[5] or 0),
+                'thinking_tokens': int(r[6] or 0),
+            }
+            for r in cursor.fetchall()
+        ]
+
+        # Activity / Document History (label non-file Agent runs by endpoint instead of 'Unknown Document')
+        cursor.execute(f"""
+            SELECT
+                COALESCE(NULLIF(TRIM(filename), ''), COALESCE(endpoint_name, 'AI_Agent')) as fname,
                 MAX(created_at) as latest_date,
                 STRING_AGG(DISTINCT COALESCE(endpoint_name, 'AI_Agent'), ', ') as endpoints,
                 STRING_AGG(DISTINCT COALESCE(model_name, 'gemini-2.5-flash'), ', ') as models,
                 COALESCE(SUM(total_tokens), 0) as total_tokens,
                 COALESCE(SUM(estimated_cost_usd), 0) as total_cost,
-                date_trunc('day', created_at) as scan_day
-            FROM api_usage_logs 
-            {where_clause} 
+                date_trunc('day', created_at) as scan_day,
+                COUNT(*) as req_count
+            FROM api_usage_logs
+            {where_clause}
             GROUP BY fname, scan_day
-            ORDER BY latest_date DESC 
+            ORDER BY latest_date DESC
             LIMIT 100
         """)
         stats['document_history'] = [
             {
-                'filename': r[0] or 'Unknown Document',
+                'filename': r[0] or 'AI_Agent',
                 'date': r[1].isoformat() if r[1] else None,
                 'endpoint': r[2],
                 'model': r[3],
                 'tokens': int(r[4] or 0),
-                'cost_usd': float(r[5] or 0.0)
+                'cost_usd': float(r[5] or 0.0),
+                'requests': int(r[7] or 1),
             }
             for r in cursor.fetchall()
         ]
-        
+
         # Chart Data (Grouped by time interval)
         if time_filter == 'yearly':
             date_trunc_expr = "date_trunc('month', created_at)"
@@ -2191,8 +2489,8 @@ def get_api_usage_stats(time_filter='all'):
         elif time_filter == 'daily':
             date_trunc_expr = "date_trunc('hour', created_at)"
         else:
-            date_trunc_expr = "date_trunc('day', created_at)" # default to daily groups
-            
+            date_trunc_expr = "date_trunc('day', created_at)"
+
         cursor.execute(f"""
             SELECT {date_trunc_expr} as time_group, COALESCE(SUM(total_tokens), 0), COALESCE(SUM(estimated_cost_usd), 0)
             FROM api_usage_logs
@@ -2208,9 +2506,14 @@ def get_api_usage_stats(time_filter='all'):
             }
             for r in cursor.fetchall()
         ]
-        
+
         cursor.execute(f"""
-            SELECT {date_trunc_expr} as time_group, COALESCE(model_name, 'gemini-2.5-flash'), COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0), COUNT(*)
+            SELECT
+                {date_trunc_expr} as time_group,
+                COALESCE(model_name, 'gemini-2.5-flash'),
+                COALESCE(SUM(prompt_tokens), 0),
+                COALESCE(SUM(completion_tokens + GREATEST(COALESCE(thinking_tokens, 0), GREATEST(total_tokens - prompt_tokens - completion_tokens, 0))), 0),
+                COUNT(*)
             FROM api_usage_logs
             {where_clause}
             GROUP BY time_group, model_name
@@ -2226,7 +2529,7 @@ def get_api_usage_stats(time_filter='all'):
             }
             for r in cursor.fetchall()
         ]
-        
+
         return stats
     except Exception as e:
         logger.error(f"Error getting API usage stats: {e}", exc_info=True)

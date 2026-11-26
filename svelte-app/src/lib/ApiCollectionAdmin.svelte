@@ -4,103 +4,131 @@
   import CustomSelect from "./CustomSelect.svelte";
   import ExtensionSyncModal from "./ExtensionSyncModal.svelte";
 
-  const API_BASE = "http://localhost:5001";
+  const API_BASE = "";
+  const STORAGE_PROJECT_KEY = "spectra_api_selected_project";
+  const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
+
+  const METHOD_META = {
+    GET: { short: "GET", color: "#34d399" },
+    POST: { short: "POST", color: "#fbbf24" },
+    PUT: { short: "PUT", color: "#38bdf8" },
+    PATCH: { short: "PATCH", color: "#c084fc" },
+    DELETE: { short: "DEL", color: "#fb7185" },
+    HEAD: { short: "HEAD", color: "#94a3b8" },
+    OPTIONS: { short: "OPT", color: "#94a3b8" },
+  };
+
+  function formatVerb(method) {
+    const m = (method || "GET").toUpperCase();
+    return METHOD_META[m]?.short || m.slice(0, 5);
+  }
+
+  function verbColor(method) {
+    const m = (method || "GET").toUpperCase();
+    return METHOD_META[m]?.color || "#94a3b8";
+  }
+
+  const METHOD_SELECT_OPTIONS = HTTP_METHODS.map((m) => ({
+    value: m,
+    label: m,
+    color: METHOD_META[m].color,
+    dotColor: METHOD_META[m].color,
+  }));
+
+  const SIDEBAR_METHOD_OPTIONS = [
+    { value: "ALL", label: "All Methods", dotColor: "#94a3b8" },
+    ...METHOD_SELECT_OPTIONS,
+  ];
+
+  const AUTH_TYPE_OPTIONS = [
+    { value: "none", label: "No Auth", description: "ไม่ส่ง Header ยืนยันตัวตนเพิ่มเติม" },
+    { value: "bearer", label: "Bearer Token", description: "แนบ Authorization: Bearer <token> (JWT / OAuth2)" },
+    { value: "apikey", label: "API Key", description: "ส่ง Key-Value ผ่าน HTTP Header หรือ Query Param" },
+    { value: "basic", label: "Basic Auth", description: "เข้ารหัส Base64 Username:Password อัตโนมัติ" },
+  ];
+
+  const API_KEY_IN_OPTIONS = [
+    { value: "header", label: "HTTP Header" },
+    { value: "query", label: "Query Params" },
+  ];
 
   export let projectsList = [];
   export let selectedProject = "";
 
+  // Core data state
+  let isLoadingProjects = false;
+  let projectsError = "";
   let collections = [];
-  let isLoading = false;
-  let isUploading = false;
-  let isSniffing = false;
-  let isDragOver = false;
+  let isLoadingCollections = false;
+  let expandedCollectionIds = new Set();
+  let collapsedFolderKeys = new Set();
 
-  // Upload Form State
+  // Environment / Base URL Switcher state (per project)
+  let selectedEnvUrl = "";
+
+  // Sidebar state
+  let sidebarTab = "collections"; // 'collections' | 'history'
+  let sidebarSearch = "";
+  let sidebarMethodFilter = "ALL";
+  let requestHistory = [];
+
+  // Multi-tab Postman workbench state (preserved per project!)
+  let tabsByProject = {};
+  let tabs = [];
+  let activeTabId = "";
+  let activeAbortControllers = {}; // tabId -> AbortController
+
+  // Secret visibility toggles
+  let showBearerSecret = false;
+  let showApiKeySecret = false;
+  let showBasicPass = false;
+
+  // Split pane height (Request vs Response)
+  let responsePaneHeight = 290;
+  let isResizingSplit = false;
+  let workbenchRightEl;
+
+  // Modals (scoped strictly to secondary workflows)
+  let showImportModal = false;
+  let importModalTab = "file"; // 'file' | 'curl'
+  let importCurlTarget = "active"; // 'active' | 'new'
   let uploadFile = null;
   let fileInput;
-  let customName = "";
+  let customImportName = "";
+  let isUploading = false;
+  let isDragOver = false;
+  let importCurlText = "";
 
-  // Repository Filtering & Bulk Actions
-  let repoSearchQuery = "";
-  let repoFormatFilter = "ALL";
-  let repoMethodFilter = "ALL";
-  let selectedCollectionIds = new Set();
+  let showCollectionModal = false;
+  let collectionModalMode = "create"; // 'create' | 'edit'
+  let colModalId = "";
+  let colModalName = "";
+  let colModalBaseUrl = "";
+  let colModalVersion = "1.0";
+  let isSavingCollection = false;
 
-  // Sniffer Modal State
+  let showSaveModal = false;
+  let saveModalMode = "existing"; // 'existing' | 'new'
+  let saveModalTargetColId = "";
+  let saveModalNewColName = "";
+  let saveModalRequestName = "";
+  let saveModalCategory = "General";
+
   let showSnifferModal = false;
+  let isSniffing = false;
   let snifferUrl = "";
+  let snifferShowAuth = false;
   let snifferUsername = "";
   let snifferPassword = "";
   let sniffedEndpoints = [];
   let selectedSniffedIndices = new Set();
-  let snifferImportMode = "new"; // 'new' | 'append'
+  let snifferImportMode = "new";
   let snifferCollectionName = "";
   let snifferTargetCollectionId = "";
 
-  // Chrome Extension Live Sync Modal
   let showExtensionModal = false;
 
-  // Collection Workspace & Endpoint Inspector Modal
-  let showWorkspaceModal = false;
-  let activeCollection = null;
-  let wsName = "";
-  let wsVersion = "";
-  let wsBaseUrl = "";
-  let wsEndpoints = [];
-  let wsSearch = "";
-  let wsMethodFilter = "ALL";
-  let isSavingWorkspace = false;
-  let wsTestingIndex = null;
-  let wsTestResult = null;
-  let wsActiveTestEndpoint = null;
-
-  // Spectra API Studio (Add / Edit API Manual & cURL Builder Modal)
-  let showStudioModal = false;
-  let studioMode = "create"; // 'create' | 'edit'
-  let studioSaveMode = "new_collection"; // 'new_collection' | 'existing_collection'
-  let studioCollectionName = "";
-  let studioTargetCollectionId = "";
-  let studioEditCollectionId = "";
-  let studioEditEndpointIndex = -1;
-
-  let studioName = "";
-  let studioCategory = "General";
-  let studioMethod = "GET";
-  let studioUrl = "";
-  let studioBaseUrl = "";
-  let studioSummary = "";
-  let studioActiveTab = "params"; // 'params' | 'auth' | 'headers' | 'body'
-  let studioQueryParams = [{ key: "", value: "", enabled: true }];
-  let studioAuthType = "none"; // 'none' | 'bearer' | 'apikey' | 'basic'
-  let studioAuthBearer = "";
-  let studioAuthApiKeyName = "X-API-Key";
-  let studioAuthApiKeyValue = "";
-  let studioAuthApiKeyIn = "header";
-  let studioAuthBasicUser = "";
-  let studioAuthBasicPass = "";
-  let studioHeaderMode = "table"; // 'table' | 'json'
-  let studioHeaderRows = [
-    { key: "Content-Type", value: "application/json", enabled: true },
-  ];
-  let studioHeadersJson = '{\n  "Content-Type": "application/json"\n}';
-  let studioBodyMode = "json"; // 'none' | 'json' | 'raw'
-  let studioBodyText = "";
-  let studioCurlInput = "";
-  let showCurlDrawer = false;
-  let isSavingStudio = false;
-  let isTestingDirect = false;
-  let studioDirectResult = null;
-
-  const HTTP_METHODS = [
-    "GET",
-    "POST",
-    "PUT",
-    "PATCH",
-    "DELETE",
-    "HEAD",
-    "OPTIONS",
-  ];
-
+  // Helpers
   function getAuthHeaders(extra = {}) {
     const token =
       typeof localStorage !== "undefined"
@@ -111,300 +139,1478 @@
     return headers;
   }
 
+  function uid(prefix = "tab") {
+    return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  }
+
+  function ensureTrailingBlankRow(rows) {
+    const list = Array.isArray(rows) ? rows : [];
+    if (list.length === 0) return [{ key: "", value: "", enabled: true }];
+    const last = list[list.length - 1];
+    if ((last.key || "").trim() || (last.value || "").trim()) {
+      return [...list, { key: "", value: "", enabled: true }];
+    }
+    return list;
+  }
+
+  function createBlankTab(overrides = {}) {
+    return {
+      id: uid("req"),
+      collectionId: overrides.collectionId || "",
+      endpointIndex:
+        typeof overrides.endpointIndex === "number"
+          ? overrides.endpointIndex
+          : -1,
+      name: overrides.name || "Untitled Request",
+      category: overrides.category || "General",
+      description: overrides.description || "",
+      method: (overrides.method || "GET").toUpperCase(),
+      url: overrides.url || "",
+      baseUrl: overrides.baseUrl || "",
+      queryParams: ensureTrailingBlankRow(overrides.queryParams || []),
+      auth: {
+        type: overrides.auth?.type || "none",
+        token: overrides.auth?.token || "",
+        key: overrides.auth?.key || "X-API-Key",
+        value: overrides.auth?.value || "",
+        in: overrides.auth?.in || "header",
+        username: overrides.auth?.username || "",
+        password: overrides.auth?.password || "",
+      },
+      headerMode: "table",
+      headers: ensureTrailingBlankRow(
+        overrides.headers || [
+          { key: "Accept", value: "application/json", enabled: true },
+        ],
+      ),
+      headersJson: overrides.headersJson || '{\n  "Accept": "application/json"\n}',
+      bodyMode: overrides.bodyMode || "none", // 'none' | 'json' | 'urlencoded' | 'raw'
+      bodyText: overrides.bodyText || "",
+      formRows: ensureTrailingBlankRow(overrides.formRows || []),
+      activeReqTab: overrides.activeReqTab || "params", // 'params' | 'auth' | 'headers' | 'body' | 'info'
+      activeResTab: "body", // 'body' | 'headers' | 'curl'
+      responseViewMode: "pretty", // 'pretty' | 'raw'
+      isSending: false,
+      isSaving: false,
+      isDirty: overrides.isDirty ?? false,
+      response: overrides.response || null,
+    };
+  }
+
+  function endpointToTab(col, ep, index) {
+    const rawHeaders =
+      ep.headers && typeof ep.headers === "object" && !Array.isArray(ep.headers)
+        ? ep.headers
+        : {};
+    const headerRows = Object.entries(rawHeaders).map(([key, value]) => ({
+      key,
+      value: String(value ?? ""),
+      enabled: true,
+    }));
+
+    const qpRows = Array.isArray(ep.query_params)
+      ? ep.query_params.map((q) => ({
+          key: q.key || "",
+          value: q.value ?? "",
+          enabled: q.enabled !== false,
+        }))
+      : [];
+
+    const rawUrl = ep.url || ep.path || "";
+    if (qpRows.length === 0 && rawUrl.includes("?")) {
+      try {
+        const fakeBase = /^https?:\/\//i.test(rawUrl)
+          ? rawUrl
+          : `http://placeholder.local${rawUrl.startsWith("/") ? "" : "/"}${rawUrl}`;
+        const parsed = new URL(fakeBase);
+        parsed.searchParams.forEach((v, k) => {
+          qpRows.push({ key: k, value: v, enabled: true });
+        });
+      } catch (_) {}
+    }
+
+    const bodyStr =
+      typeof ep.body === "string"
+        ? ep.body
+        : ep.body
+          ? JSON.stringify(ep.body, null, 2)
+          : "";
+    let bodyMode = "none";
+    if (bodyStr.trim()) {
+      try {
+        JSON.parse(bodyStr);
+        bodyMode = "json";
+      } catch (_) {
+        bodyMode = "raw";
+      }
+    }
+
+    const auth = ep.auth_config && typeof ep.auth_config === "object" ? ep.auth_config : {};
+    const effectiveBase = col.base_url || selectedEnvUrl || "";
+    const fullDisplayUrl =
+      rawUrl && !/^https?:\/\//i.test(rawUrl) && effectiveBase
+        ? `${effectiveBase.replace(/\/+$/, "")}/${rawUrl.replace(/^\/+/, "")}`
+        : rawUrl;
+
+    return createBlankTab({
+      collectionId: col.id,
+      endpointIndex: index,
+      name: ep.name || ep.summary || `${(ep.method || "GET").toUpperCase()} ${ep.path || ""}`,
+      category: ep.category || ep.folder || "General",
+      description: ep.description || "",
+      method: (ep.method || "GET").toUpperCase(),
+      url: fullDisplayUrl,
+      baseUrl: col.base_url || "",
+      queryParams: qpRows,
+      auth,
+      headers: headerRows.length > 0 ? headerRows : [{ key: "Accept", value: "application/json", enabled: true }],
+      headersJson: JSON.stringify(rawHeaders, null, 2),
+      bodyMode,
+      bodyText: bodyStr,
+      activeReqTab: bodyStr.trim() ? "body" : "params",
+      isDirty: false,
+    });
+  }
+
+  // Reactive derived data
   $: projectOptions = (projectsList || []).map((p) => ({
     value:
       typeof p === "string"
         ? p
-        : p.id || p.project_id || p.project_name || p.name,
-    label: typeof p === "string" ? p : p.name || p.project_name || p.id,
+        : String(p.id || p.project_id || p.project_name || p.name),
+    label: typeof p === "string" ? p : p.name || p.project_name || String(p.id),
+    badge:
+      typeof p === "object" && p !== null && p.project_code
+        ? p.project_code
+        : "",
   }));
 
-  $: selectedProjectLabel = (() => {
-    const found = projectOptions.find((o) => o.value === selectedProject);
-    return found ? found.label : selectedProject;
+  $: selectedProjectObj = (projectsList || []).find(
+    (p) =>
+      typeof p === "object" &&
+      p !== null &&
+      String(p.id || p.project_id || p.name) === String(selectedProject),
+  );
+
+  // Environment / Base URL options built from project's site_urls & default_base_url
+  $: envOptions = (() => {
+    const opts = [];
+    const seen = new Set();
+    const sites = Array.isArray(selectedProjectObj?.site_urls)
+      ? selectedProjectObj.site_urls
+      : [];
+    for (const s of sites) {
+      const u = (s?.url || "").trim().replace(/\/+$/, "");
+      if (!u || seen.has(u)) continue;
+      seen.add(u);
+      const envName = (s.env_type || s.label || "ENV").toUpperCase();
+      const dot =
+        envName.includes("PROD")
+          ? "#fb7185"
+          : envName.includes("STAG") || envName.includes("UAT")
+            ? "#fbbf24"
+            : "#34d399";
+      opts.push({
+        value: u,
+        label: u.replace(/^https?:\/\//i, ""),
+        badge: envName,
+        dotColor: dot,
+        description: u,
+      });
+    }
+    const defUrl = (selectedProjectObj?.default_base_url || "").trim().replace(/\/+$/, "");
+    if (defUrl && !seen.has(defUrl)) {
+      seen.add(defUrl);
+      opts.push({
+        value: defUrl,
+        label: defUrl.replace(/^https?:\/\//i, ""),
+        badge: "DEFAULT",
+        dotColor: "#38bdf8",
+        description: defUrl,
+      });
+    }
+    opts.push({
+      value: "",
+      label: "No Environment",
+      dotColor: "#64748b",
+      description: "ใช้ URL เต็มหรือ Base URL ของแต่ละ Collection",
+    });
+    return opts;
   })();
+
+  $: collectionSelectOptions = collections.map((col) => ({
+    value: col.id,
+    label: col.name,
+    badge: `${col.endpoints.length}`,
+    description: col.base_url || "",
+  }));
 
   $: totalEndpointsCount = collections.reduce(
     (acc, c) =>
       acc +
-      (c.endpoint_count ||
-        c.endpoints_count ||
-        (c.endpoints || []).length ||
-        0),
+      (Array.isArray(c.endpoints)
+        ? c.endpoints.length
+        : c.endpoint_count || c.endpoints_count || 0),
     0,
   );
 
-  $: filteredCollections = collections.filter((col) => {
-    const q = repoSearchQuery.trim().toLowerCase();
-    const eps = Array.isArray(col.endpoints) ? col.endpoints : [];
-    const fmt = col.format_type || col.format || "";
-    const matchesSearch =
-      !q ||
-      (col.name || "").toLowerCase().includes(q) ||
-      fmt.toLowerCase().includes(q) ||
-      (col.base_url || "").toLowerCase().includes(q) ||
-      eps.some(
-        (ep) =>
+  $: activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0] || null;
+
+  $: activeTabCollection = activeTab?.collectionId
+    ? collections.find((c) => c.id === activeTab.collectionId) || null
+    : null;
+
+  // Group filtered endpoints into nested Category folders per Collection
+  $: filteredSidebarCollections = collections
+    .map((col) => {
+      const q = sidebarSearch.trim().toLowerCase();
+      const eps = (Array.isArray(col.endpoints) ? col.endpoints : []).map(
+        (ep, idx) => ({ ...ep, _idx: idx }),
+      );
+      const colNameMatch =
+        !q ||
+        (col.name || "").toLowerCase().includes(q) ||
+        (col.base_url || "").toLowerCase().includes(q);
+      const matchedEps = eps.filter((ep) => {
+        const mOk =
+          sidebarMethodFilter === "ALL" ||
+          (ep.method || "GET").toUpperCase() === sidebarMethodFilter;
+        if (!mOk) return false;
+        if (!q || colNameMatch) return true;
+        return (
+          (ep.name || "").toLowerCase().includes(q) ||
+          (ep.summary || "").toLowerCase().includes(q) ||
           (ep.path || "").toLowerCase().includes(q) ||
           (ep.url || "").toLowerCase().includes(q) ||
-          (ep.summary || "").toLowerCase().includes(q) ||
-          (ep.name || "").toLowerCase().includes(q),
+          (ep.category || "").toLowerCase().includes(q)
+        );
+      });
+
+      const folderMap = new Map();
+      for (const ep of matchedEps) {
+        const cat = (ep.category || ep.folder || "General").trim() || "General";
+        if (!folderMap.has(cat)) folderMap.set(cat, []);
+        folderMap.get(cat).push(ep);
+      }
+      const folders = Array.from(folderMap.entries()).map(([category, items]) => ({
+        key: `${col.id}::${category}`,
+        category,
+        items,
+      }));
+
+      return {
+        ...col,
+        _filteredEndpoints: matchedEps,
+        _folders: folders,
+        _totalEndpoints: eps.length,
+      };
+    })
+    .filter((col) => {
+      const q = sidebarSearch.trim().toLowerCase();
+      if (sidebarMethodFilter !== "ALL") return col._filteredEndpoints.length > 0;
+      if (!q) return true;
+      return (
+        (col.name || "").toLowerCase().includes(q) ||
+        col._filteredEndpoints.length > 0
       );
-
-    const matchesFormat =
-      repoFormatFilter === "ALL" ||
-      fmt.toLowerCase().includes(repoFormatFilter.toLowerCase());
-
-    const matchesMethod =
-      repoMethodFilter === "ALL" ||
-      eps.some((ep) => (ep.method || "GET").toUpperCase() === repoMethodFilter);
-
-    return matchesSearch && matchesFormat && matchesMethod;
-  });
-
-  $: filteredWorkspaceEndpoints = wsEndpoints
-    .map((ep, index) => ({ ...ep, _idx: index }))
-    .filter((ep) => {
-      const q = wsSearch.trim().toLowerCase();
-      const matchesMethod =
-        wsMethodFilter === "ALL" ||
-        (ep.method || "GET").toUpperCase() === wsMethodFilter;
-      const matchesQuery =
-        !q ||
-        (ep.path || "").toLowerCase().includes(q) ||
-        (ep.url || "").toLowerCase().includes(q) ||
-        (ep.summary || "").toLowerCase().includes(q) ||
-        (ep.name || "").toLowerCase().includes(q) ||
-        (ep.category || "").toLowerCase().includes(q);
-      return matchesMethod && matchesQuery;
     });
 
-  onMount(async () => {
-    if (!projectsList || projectsList.length === 0) {
-      try {
-        const res = await fetch(`${API_BASE}/api/projects`, {
-          headers: getAuthHeaders(),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (Array.isArray(data.projects)) {
-            projectsList = data.projects;
-          } else if (Array.isArray(data)) {
-            projectsList = data;
+  $: activeParamsCount = activeTab
+    ? activeTab.queryParams.filter((r) => r.enabled !== false && r.key.trim()).length
+    : 0;
+
+  $: activeHeadersCount = activeTab
+    ? activeTab.headerMode === "json"
+      ? (() => {
+          try {
+            return Object.keys(JSON.parse(activeTab.headersJson || "{}")).length;
+          } catch (_) {
+            return 0;
           }
-        }
-      } catch (_) {}
+        })()
+      : activeTab.headers.filter((r) => r.enabled !== false && r.key.trim()).length
+    : 0;
+
+  $: activeJsonValidation = (() => {
+    if (!activeTab || activeTab.bodyMode !== "json" || !activeTab.bodyText.trim()) {
+      return { valid: true, message: "" };
     }
-    if (!selectedProject && projectsList.length > 0) {
-      const first = projectsList[0];
-      selectedProject =
-        typeof first === "string"
-          ? first
-          : first.id || first.project_id || first.project_name || first.name;
+    try {
+      JSON.parse(activeTab.bodyText);
+      return { valid: true, message: "JSON ถูกต้อง" };
+    } catch (e) {
+      return { valid: false, message: e.message };
     }
-    if (selectedProject) {
-      loadCollections();
+  })();
+
+  $: formattedResponseBody = (() => {
+    const raw = activeTab?.response?.response_body ?? activeTab?.response?.preview ?? "";
+    if (!raw) return "(Empty Response Body)";
+    if (activeTab?.responseViewMode === "raw") {
+      return raw;
     }
+    try {
+      return JSON.stringify(JSON.parse(raw), null, 2);
+    } catch (_) {
+      return raw;
+    }
+  })();
+
+  // Lifecycle
+  onMount(async () => {
+    const initialTab = createBlankTab();
+    tabs = [initialTab];
+    activeTabId = initialTab.id;
+    await loadProjects();
   });
 
-  $: if (selectedProject) {
-    loadCollections();
+  function syncDefaultEnvForProject(projObj) {
+    if (!projObj) {
+      selectedEnvUrl = "";
+      return;
+    }
+    const sites = Array.isArray(projObj.site_urls) ? projObj.site_urls : [];
+    const defSite = sites.find((s) => s?.is_default && s?.url) || sites[0];
+    selectedEnvUrl = (defSite?.url || projObj.default_base_url || "").trim().replace(/\/+$/, "");
   }
 
-  async function loadCollections() {
-    if (!selectedProject) return;
-    isLoading = true;
+  async function loadProjects() {
+    isLoadingProjects = true;
+    projectsError = "";
+    try {
+      const res = await fetch(`${API_BASE}/api/projects`, {
+        headers: getAuthHeaders(),
+      });
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      const list = Array.isArray(data.projects)
+        ? data.projects
+        : Array.isArray(data)
+          ? data
+          : [];
+      projectsList = list;
+
+      if (list.length > 0) {
+        const savedPid =
+          typeof localStorage !== "undefined"
+            ? localStorage.getItem(STORAGE_PROJECT_KEY)
+            : "";
+        const validIds = list.map((p) =>
+          typeof p === "string"
+            ? p
+            : String(p.id || p.project_id || p.project_name || p.name),
+        );
+        const targetPid =
+          selectedProject && validIds.includes(String(selectedProject))
+            ? String(selectedProject)
+            : savedPid && validIds.includes(savedPid)
+              ? savedPid
+              : validIds[0];
+
+        selectedProject = targetPid;
+        const matchedProj = list.find(
+          (p) =>
+            typeof p === "object" &&
+            p !== null &&
+            String(p.id || p.project_id || p.name) === targetPid,
+        );
+        syncDefaultEnvForProject(matchedProj);
+        await loadCollections(targetPid);
+      } else {
+        collections = [];
+      }
+    } catch (e) {
+      projectsError = e.message || "ไม่สามารถโหลดรายการโครงการได้";
+      showToast(`โหลดรายการโครงการไม่สำเร็จ: ${projectsError}`, "error");
+    } finally {
+      isLoadingProjects = false;
+    }
+  }
+
+  function handleProjectChange(e) {
+    const prevPid = selectedProject;
+    const nextPid = String(e.detail ?? selectedProject ?? "");
+
+    // Preserve open tabs for previous project so switching never loses unsaved work!
+    if (prevPid && tabs.length > 0) {
+      tabsByProject = {
+        ...tabsByProject,
+        [prevPid]: { tabs, activeTabId },
+      };
+    }
+
+    selectedProject = nextPid;
+    if (typeof localStorage !== "undefined" && nextPid) {
+      localStorage.setItem(STORAGE_PROJECT_KEY, nextPid);
+    }
+
+    const nextProjObj = (projectsList || []).find(
+      (p) =>
+        typeof p === "object" &&
+        p !== null &&
+        String(p.id || p.project_id || p.name) === nextPid,
+    );
+    syncDefaultEnvForProject(nextProjObj);
+
+    if (nextPid && tabsByProject[nextPid]?.tabs?.length > 0) {
+      tabs = tabsByProject[nextPid].tabs;
+      activeTabId = tabsByProject[nextPid].activeTabId || tabs[0].id;
+    } else {
+      const fresh = createBlankTab({
+        baseUrl: selectedEnvUrl,
+      });
+      tabs = [fresh];
+      activeTabId = fresh.id;
+    }
+
+    expandedCollectionIds = new Set();
+    collapsedFolderKeys = new Set();
+    if (nextPid) {
+      loadCollections(nextPid);
+    } else {
+      collections = [];
+    }
+  }
+
+  async function loadCollections(pid = selectedProject) {
+    if (!pid) return;
+    isLoadingCollections = true;
     try {
       const res = await fetch(
-        `${API_BASE}/api/projects/${encodeURIComponent(selectedProject)}/api-collections`,
-        {
-          headers: getAuthHeaders(),
-        },
+        `${API_BASE}/api/projects/${encodeURIComponent(pid)}/api-collections`,
+        { headers: getAuthHeaders() },
       );
-      if (res.ok) {
-        const data = await res.json();
-        const rawList = Array.isArray(data) ? data : data.collections || [];
-        collections = rawList.map((c) => ({
-          ...c,
-          format_type: c.format_type || c.format || "OpenAPI",
-          endpoint_count:
-            c.endpoint_count ?? c.endpoints_count ?? (c.endpoints || []).length,
-          created_at:
-            c.created_at ||
-            c.updated_at ||
-            c.uploaded_at ||
-            new Date().toISOString(),
-        }));
-        selectedCollectionIds = new Set();
-        if (activeCollection) {
-          const refreshed = collections.find(
-            (c) => c.id === activeCollection.id,
-          );
-          if (refreshed) syncWorkspaceFromCollection(refreshed);
-        }
-      } else {
-        showToast("ไม่สามารถโหลดรายการ API Collection ได้", "error");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const rawList = Array.isArray(data) ? data : data.collections || [];
+      collections = rawList.map((c) => ({
+        ...c,
+        format_type: c.format_type || c.format || "Manual Collection",
+        endpoints: Array.isArray(c.endpoints) ? c.endpoints : [],
+        endpoint_count: Array.isArray(c.endpoints)
+          ? c.endpoints.length
+          : (c.endpoint_count ?? c.endpoints_count ?? 0),
+        created_at:
+          c.updated_at || c.created_at || c.uploaded_at || new Date().toISOString(),
+      }));
+
+      if (expandedCollectionIds.size === 0 && collections.length > 0) {
+        expandedCollectionIds = new Set([collections[0].id]);
       }
-    } catch (e) {
-      showToast("ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ API Collections ได้", "error");
+    } catch (_) {
+      showToast("ไม่สามารถโหลดรายการ API Collections ของโครงการนี้ได้", "error");
     } finally {
-      isLoading = false;
+      isLoadingCollections = false;
     }
   }
 
-  // --- Drag & Drop + File Upload (P0.2) ---
-  function applySelectedFile(file) {
-    if (!file) return;
-    uploadFile = file;
-    if (!customName) {
-      customName = file.name.replace(/\.(json|yaml|yml)$/i, "");
+  // Tab mutations
+  function patchActiveTab(updater) {
+    if (!activeTab) return;
+    tabs = tabs.map((t) => {
+      if (t.id !== activeTab.id) return t;
+      return typeof updater === "function" ? updater(t) : { ...t, ...updater };
+    });
+  }
+
+  function openNewRequestTab(preselectedCollection = null, defaultCategory = "General") {
+    const tab = createBlankTab({
+      collectionId: preselectedCollection?.id || "",
+      category: defaultCategory || "General",
+      baseUrl: preselectedCollection?.base_url || selectedEnvUrl || "",
+      isDirty: false,
+    });
+    tabs = [...tabs, tab];
+    activeTabId = tab.id;
+  }
+
+  function openEndpointInTab(col, ep, index) {
+    const existing = tabs.find(
+      (t) => t.collectionId === col.id && t.endpointIndex === index,
+    );
+    if (existing) {
+      activeTabId = existing.id;
+      return;
     }
-  }
-
-  function handleFileChange(e) {
-    const files = e.target.files;
-    if (files && files.length > 0) {
-      applySelectedFile(files[0]);
+    const newTab = endpointToTab(col, ep, index);
+    if (
+      tabs.length === 1 &&
+      !tabs[0].collectionId &&
+      !tabs[0].url.trim() &&
+      !tabs[0].isDirty
+    ) {
+      tabs = [newTab];
+    } else {
+      tabs = [...tabs, newTab];
     }
+    activeTabId = newTab.id;
   }
 
-  function handleDragOver(e) {
-    e.preventDefault();
-    isDragOver = true;
-  }
-
-  function handleDragLeave(e) {
-    e.preventDefault();
-    isDragOver = false;
-  }
-
-  function handleFileDrop(e) {
-    e.preventDefault();
-    isDragOver = false;
-    const files = e.dataTransfer?.files;
-    if (files && files.length > 0) {
-      applySelectedFile(files[0]);
-    }
-  }
-
-  function clearSelectedFile(e) {
+  async function closeTab(tabId, e) {
     if (e) e.stopPropagation();
-    uploadFile = null;
-    customName = "";
-    if (fileInput) fileInput.value = "";
+    const target = tabs.find((t) => t.id === tabId);
+    if (!target) return;
+
+    if (target.isDirty) {
+      const ok = await customConfirm(
+        `แท็บ "${target.name || "Untitled Request"}" มีการแก้ไขที่ยังไม่บันทึก ยืนยันการปิดแท็บ?`,
+      );
+      if (!ok) return;
+    }
+
+    if (activeAbortControllers[tabId]) {
+      activeAbortControllers[tabId].abort();
+      delete activeAbortControllers[tabId];
+    }
+
+    const idx = tabs.findIndex((t) => t.id === tabId);
+    const remaining = tabs.filter((t) => t.id !== tabId);
+    if (remaining.length === 0) {
+      const fresh = createBlankTab({ baseUrl: selectedEnvUrl });
+      tabs = [fresh];
+      activeTabId = fresh.id;
+      return;
+    }
+    tabs = remaining;
+    if (activeTabId === tabId) {
+      const nextIdx = Math.min(idx, remaining.length - 1);
+      activeTabId = remaining[nextIdx].id;
+    }
   }
 
-  async function handleUpload() {
-    if (!selectedProject) {
-      showToast("กรุณาเลือกโครงการก่อนอัปโหลด", "warning");
-      return;
+  function handleTabKeydown(e, idx) {
+    if (e.key === "ArrowRight") {
+      e.preventDefault();
+      activeTabId = tabs[(idx + 1) % tabs.length].id;
+    } else if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      activeTabId = tabs[(idx - 1 + tabs.length) % tabs.length].id;
+    } else if (e.key === "Home") {
+      e.preventDefault();
+      activeTabId = tabs[0].id;
+    } else if (e.key === "End") {
+      e.preventDefault();
+      activeTabId = tabs[tabs.length - 1].id;
     }
-    if (!uploadFile) {
-      showToast(
-        "กรุณาเลือกไฟล์ OpenAPI / Swagger หรือ Postman (.json, .yaml)",
-        "warning",
+  }
+
+  function toggleCollectionExpand(colId) {
+    const next = new Set(expandedCollectionIds);
+    if (next.has(colId)) next.delete(colId);
+    else next.add(colId);
+    expandedCollectionIds = next;
+  }
+
+  function toggleFolderExpand(folderKey) {
+    const next = new Set(collapsedFolderKeys);
+    if (next.has(folderKey)) next.delete(folderKey);
+    else next.add(folderKey);
+    collapsedFolderKeys = next;
+  }
+
+  // Bidirectional URL <-> Query Params sync
+  function syncParamsFromUrl(urlStr) {
+    if (!urlStr || !urlStr.includes("?")) return null;
+    try {
+      const fake = /^https?:\/\//i.test(urlStr)
+        ? urlStr
+        : `http://placeholder.local${urlStr.startsWith("/") ? "" : "/"}${urlStr}`;
+      const u = new URL(fake);
+      const parsedRows = [];
+      u.searchParams.forEach((value, key) => {
+        parsedRows.push({ key, value, enabled: true });
+      });
+      return ensureTrailingBlankRow(parsedRows);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function rebuildUrlWithParams(rawUrl, params) {
+    const basePart = (rawUrl || "").split("?")[0];
+    const active = (params || []).filter((p) => p.enabled !== false && p.key.trim());
+    if (active.length === 0) return basePart;
+    const qs = active
+      .map((p) => `${encodeURIComponent(p.key.trim())}=${encodeURIComponent(p.value ?? "")}`)
+      .join("&");
+    return `${basePart}?${qs}`;
+  }
+
+  function handleUrlInput(val) {
+    patchActiveTab((t) => {
+      const updated = { ...t, url: val, isDirty: true };
+      const synced = syncParamsFromUrl(val);
+      if (synced) updated.queryParams = synced;
+      return updated;
+    });
+  }
+
+  function handleUrlPaste(e) {
+    const pasted = e.clipboardData?.getData("text") || "";
+    if (/^\s*curl\s+/i.test(pasted)) {
+      e.preventDefault();
+      applyCurlToActiveTab(pasted);
+    }
+  }
+
+  function updateQueryParam(idx, field, val) {
+    patchActiveTab((t) => {
+      const next = t.queryParams.map((row, i) =>
+        i === idx ? { ...row, [field]: val } : row,
       );
-      return;
+      const padded = ensureTrailingBlankRow(next);
+      return {
+        ...t,
+        queryParams: padded,
+        url: t.url.trim() ? rebuildUrlWithParams(t.url, padded) : t.url,
+        isDirty: true,
+      };
+    });
+  }
+
+  function removeQueryParam(idx) {
+    patchActiveTab((t) => {
+      const next = ensureTrailingBlankRow(t.queryParams.filter((_, i) => i !== idx));
+      return {
+        ...t,
+        queryParams: next,
+        url: t.url.trim() ? rebuildUrlWithParams(t.url, next) : t.url,
+        isDirty: true,
+      };
+    });
+  }
+
+  function updateHeaderRow(idx, field, val) {
+    patchActiveTab((t) => ({
+      ...t,
+      headers: ensureTrailingBlankRow(
+        t.headers.map((row, i) => (i === idx ? { ...row, [field]: val } : row)),
+      ),
+      isDirty: true,
+    }));
+  }
+
+  function removeHeaderRow(idx) {
+    patchActiveTab((t) => ({
+      ...t,
+      headers: ensureTrailingBlankRow(t.headers.filter((_, i) => i !== idx)),
+      isDirty: true,
+    }));
+  }
+
+  function updateFormRow(idx, field, val) {
+    patchActiveTab((t) => ({
+      ...t,
+      formRows: ensureTrailingBlankRow(
+        t.formRows.map((row, i) => (i === idx ? { ...row, [field]: val } : row)),
+      ),
+      isDirty: true,
+    }));
+  }
+
+  function removeFormRow(idx) {
+    patchActiveTab((t) => ({
+      ...t,
+      formRows: ensureTrailingBlankRow(t.formRows.filter((_, i) => i !== idx)),
+      isDirty: true,
+    }));
+  }
+
+  function switchHeaderMode(mode) {
+    if (!activeTab || activeTab.headerMode === mode) return;
+    if (mode === "json") {
+      const obj = collectHeadersObject(activeTab) || {};
+      patchActiveTab({ headerMode: "json", headersJson: JSON.stringify(obj, null, 2) });
+    } else {
+      try {
+        const parsed = JSON.parse(activeTab.headersJson || "{}");
+        const rows = Object.entries(parsed).map(([key, value]) => ({
+          key,
+          value: String(value ?? ""),
+          enabled: true,
+        }));
+        patchActiveTab({ headerMode: "table", headers: ensureTrailingBlankRow(rows) });
+      } catch (_) {
+        showToast("รูปแบบ JSON ของ Headers ไม่ถูกต้อง กรุณาแก้ไขก่อนสลับเป็นตาราง", "warning");
+      }
+    }
+  }
+
+  function collectHeadersObject(tab) {
+    if (!tab) return {};
+    if (tab.headerMode === "json") {
+      try {
+        const parsed = JSON.parse(tab.headersJson || "{}");
+        return typeof parsed === "object" && parsed !== null ? parsed : {};
+      } catch (_) {
+        return null;
+      }
+    }
+    const obj = {};
+    for (const row of tab.headers) {
+      if (row.enabled !== false && row.key && row.key.trim()) {
+        obj[row.key.trim()] = row.value ?? "";
+      }
+    }
+    if (tab.bodyMode === "json" && !Object.keys(obj).some((k) => k.toLowerCase() === "content-type")) {
+      obj["Content-Type"] = "application/json";
+    }
+    if (
+      tab.bodyMode === "urlencoded" &&
+      !Object.keys(obj).some((k) => k.toLowerCase() === "content-type")
+    ) {
+      obj["Content-Type"] = "application/x-www-form-urlencoded";
+    }
+    return obj;
+  }
+
+  function collectBodyString(tab) {
+    if (!tab || tab.bodyMode === "none") return "";
+    if (tab.bodyMode === "urlencoded") {
+      const pairs = tab.formRows
+        .filter((r) => r.enabled !== false && r.key.trim())
+        .map((r) => `${encodeURIComponent(r.key.trim())}=${encodeURIComponent(r.value ?? "")}`);
+      return pairs.join("&");
+    }
+    return tab.bodyText || "";
+  }
+
+  function collectAuthObject(tab) {
+    const a = tab?.auth || { type: "none" };
+    if (a.type === "bearer") return { type: "bearer", token: (a.token || "").trim() };
+    if (a.type === "apikey") {
+      return {
+        type: "apikey",
+        key: (a.key || "X-API-Key").trim(),
+        value: (a.value || "").trim(),
+        in: a.in || "header",
+      };
+    }
+    if (a.type === "basic") {
+      return { type: "basic", username: a.username || "", password: a.password || "" };
+    }
+    return { type: "none" };
+  }
+
+  function resolveEffectiveBaseUrl(tab) {
+    return (tab?.baseUrl || "").trim() || (selectedEnvUrl || "").trim();
+  }
+
+  function buildCurlFromTab(tab) {
+    if (!tab) return "";
+    const method = (tab.method || "GET").toUpperCase();
+    let fullUrl = (tab.url || "").trim();
+    const effBase = resolveEffectiveBaseUrl(tab);
+    if (fullUrl && !/^https?:\/\//i.test(fullUrl) && effBase) {
+      fullUrl = `${effBase.replace(/\/+$/, "")}/${fullUrl.replace(/^\/+/, "")}`;
+    }
+    const headers = collectHeadersObject(tab) || {};
+    const auth = collectAuthObject(tab);
+    if (auth.type === "bearer" && auth.token) {
+      headers["Authorization"] = auth.token.toLowerCase().startsWith("bearer ")
+        ? auth.token
+        : `Bearer ${auth.token}`;
+    } else if (auth.type === "apikey" && auth.in === "header" && auth.key) {
+      headers[auth.key] = auth.value;
     }
 
-    isUploading = true;
-    const formData = new FormData();
-    formData.append("project_id", selectedProject);
-    formData.append("file", uploadFile);
-    if (customName.trim()) {
-      formData.append("name", customName.trim());
+    const parts = [`curl -X ${method} "${fullUrl || "https://api.example.com"}"`];
+    for (const [k, v] of Object.entries(headers)) {
+      parts.push(`  -H "${k}: ${String(v).replace(/"/g, '\\"')}"`);
     }
+    if (auth.type === "basic" && (auth.username || auth.password)) {
+      parts.push(`  -u "${auth.username}:${auth.password}"`);
+    }
+    const body = collectBodyString(tab);
+    if (body && ["POST", "PUT", "PATCH", "DELETE"].includes(method)) {
+      parts.push(`  -d '${body.replace(/'/g, "'\\''")}'`);
+    }
+    return parts.join(" \\\n");
+  }
+
+  function parseCurlString(rawCurl) {
+    const cmd = rawCurl
+      .replace(/\\\r?\n/g, " ")
+      .replace(/\^\r?\n/g, " ")
+      .trim();
+
+    const methodMatch = cmd.match(
+      /(?:-X|--request)\s+['"]?(GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD)['"]?/i,
+    );
+    let detectedMethod = methodMatch ? methodMatch[1].toUpperCase() : "";
+
+    const urlMatch =
+      cmd.match(/--url\s+['"]?(https?:\/\/[^\s'"]+)['"]?/i) ||
+      cmd.match(/['"]?(https?:\/\/[^\s'"]+)['"]?/i);
+
+    let url = urlMatch ? urlMatch[1] : "";
+    let baseUrl = "";
+    let suggestedName = "";
+    let queryParams = [];
+
+    if (url) {
+      try {
+        const u = new URL(url);
+        baseUrl = `${u.protocol}//${u.host}`;
+        suggestedName = `${detectedMethod || "GET"} ${u.pathname}`;
+        u.searchParams.forEach((v, k) => {
+          queryParams.push({ key: k, value: v, enabled: true });
+        });
+      } catch (_) {}
+    }
+
+    const headers = {};
+    const auth = {
+      type: "none",
+      token: "",
+      key: "X-API-Key",
+      value: "",
+      in: "header",
+      username: "",
+      password: "",
+    };
+    const headerRegex = /(?:-H|--header)\s+(['"])(.*?)\1/gi;
+    let m;
+    while ((m = headerRegex.exec(cmd)) !== null) {
+      const parts = m[2].split(":");
+      if (parts.length >= 2) {
+        const key = parts.shift().trim();
+        const val = parts.join(":").trim();
+        if (key.toLowerCase() === "authorization" && /^bearer\s+/i.test(val)) {
+          auth.type = "bearer";
+          auth.token = val.replace(/^bearer\s+/i, "").trim();
+        } else {
+          headers[key] = val;
+        }
+      }
+    }
+
+    const userMatch = cmd.match(/(?:-u|--user)\s+(['"]?)([^'"\s]+)\1/i);
+    if (userMatch) {
+      const [usr, pwd = ""] = userMatch[2].split(":");
+      auth.type = "basic";
+      auth.username = usr;
+      auth.password = pwd;
+    }
+
+    const cookieMatch = cmd.match(/(?:-b|--cookie)\s+(['"])(.*?)\1/i);
+    if (cookieMatch) {
+      headers["Cookie"] = cookieMatch[2];
+    }
+
+    let bodyMode = "none";
+    let bodyText = "";
+    const dataMatch = cmd.match(
+      /(?:-d|--data|--data-raw|--data-binary)\s+(['"])([\s\S]*?)\1/i,
+    );
+    if (dataMatch) {
+      let rawData = dataMatch[2];
+      try {
+        rawData = JSON.stringify(JSON.parse(rawData), null, 2);
+        bodyMode = "json";
+      } catch (_) {
+        bodyMode = "raw";
+      }
+      bodyText = rawData;
+      if (!detectedMethod) detectedMethod = "POST";
+    }
+
+    const finalMethod = detectedMethod || "GET";
+    if (suggestedName && !methodMatch && finalMethod !== "GET") {
+      suggestedName = suggestedName.replace(/^GET\s+/, `${finalMethod} `);
+    }
+
+    const headerRows = Object.entries(headers).map(([key, value]) => ({
+      key,
+      value: String(value),
+      enabled: true,
+    }));
+
+    return {
+      method: finalMethod,
+      url,
+      baseUrl,
+      name: suggestedName || "Imported cURL Request",
+      queryParams: ensureTrailingBlankRow(queryParams),
+      headers: ensureTrailingBlankRow(headerRows),
+      headersJson: JSON.stringify(headers, null, 2),
+      auth,
+      bodyMode,
+      bodyText,
+    };
+  }
+
+  function applyCurlToActiveTab(rawCurl) {
+    if (!rawCurl.trim()) {
+      showToast("กรุณาวางคำสั่ง cURL ก่อนนำเข้า", "warning");
+      return;
+    }
+    try {
+      const parsed = parseCurlString(rawCurl);
+      patchActiveTab((t) => ({
+        ...t,
+        method: parsed.method,
+        url: parsed.url || t.url,
+        baseUrl: parsed.baseUrl || t.baseUrl,
+        name: !t.name || t.name === "Untitled Request" ? parsed.name : t.name,
+        queryParams: parsed.queryParams,
+        headers: parsed.headers,
+        headersJson: parsed.headersJson,
+        auth: parsed.auth,
+        bodyMode: parsed.bodyMode,
+        bodyText: parsed.bodyText,
+        activeReqTab: parsed.bodyText ? "body" : "params",
+        isDirty: true,
+      }));
+      showToast("แยกข้อมูล Method, URL, Headers, Auth และ Body จาก cURL แล้ว", "success");
+    } catch (_) {
+      showToast("ไม่สามารถแยกคำสั่ง cURL ได้ กรุณาตรวจสอบรูปแบบ", "error");
+    }
+  }
+
+  function beautifyActiveBody() {
+    if (!activeTab || !activeTab.bodyText.trim()) return;
+    try {
+      const formatted = JSON.stringify(JSON.parse(activeTab.bodyText), null, 2);
+      patchActiveTab({ bodyText: formatted, bodyMode: "json", isDirty: true });
+      showToast("จัดรูปแบบ JSON เรียบร้อยแล้ว", "success");
+    } catch (e) {
+      showToast(`JSON ไม่ถูกต้อง: ${e.message}`, "error");
+    }
+  }
+
+  async function copyText(str, label = "ข้อความ") {
+    try {
+      await navigator.clipboard.writeText(str);
+      showToast(`คัดลอก${label}ไปยังคลิปบอร์ดแล้ว`, "info");
+    } catch (_) {
+      showToast(`ไม่สามารถคัดลอก${label}ได้`, "error");
+    }
+  }
+
+  // Live Request Send + AbortController Cancel
+  function cancelActiveRequest() {
+    if (!activeTab) return;
+    const ctrl = activeAbortControllers[activeTab.id];
+    if (ctrl) {
+      ctrl.abort();
+      delete activeAbortControllers[activeTab.id];
+    }
+    patchActiveTab({ isSending: false });
+    showToast("ยกเลิกการส่งคำขอแล้ว", "info");
+  }
+
+  async function sendActiveRequest() {
+    if (!activeTab) return;
+    if (activeTab.isSending) {
+      cancelActiveRequest();
+      return;
+    }
+    if (!activeTab.url.trim()) {
+      showToast("กรุณาระบุ URL หรือ Endpoint Path ก่อนกด Send", "warning");
+      return;
+    }
+    const headersObj = collectHeadersObject(activeTab);
+    if (headersObj === null) {
+      showToast("รูปแบบ JSON ในแท็บ Headers ไม่ถูกต้อง", "error");
+      return;
+    }
+    if (activeTab.bodyMode === "json" && activeTab.bodyText.trim() && !activeJsonValidation.valid) {
+      const proceed = await customConfirm(
+        `Request Body มีรูปแบบ JSON ไม่ถูกต้อง (${activeJsonValidation.message}) ต้องการส่งต่อหรือไม่?`,
+      );
+      if (!proceed) return;
+    }
+
+    const sendingTabId = activeTab.id;
+    const reqSnapshot = JSON.parse(JSON.stringify(activeTab));
+    const controller = new AbortController();
+    activeAbortControllers[sendingTabId] = controller;
+    patchActiveTab({ isSending: true, response: null });
 
     try {
-      const res = await fetch(`${API_BASE}/api/api-collections/upload`, {
+      const res = await fetch(`${API_BASE}/api/api-collections/test-direct`, {
         method: "POST",
-        headers: getAuthHeaders(),
-        body: formData,
+        headers: getAuthHeaders({ "Content-Type": "application/json" }),
+        signal: controller.signal,
+        body: JSON.stringify({
+          method: reqSnapshot.method,
+          url: reqSnapshot.url.trim(),
+          base_url: resolveEffectiveBaseUrl(reqSnapshot),
+          headers: headersObj,
+          query_params: reqSnapshot.queryParams.filter(
+            (q) => q.enabled !== false && q.key.trim(),
+          ),
+          auth_config: collectAuthObject(reqSnapshot),
+          body: collectBodyString(reqSnapshot),
+        }),
       });
       const data = await res.json();
-      if (res.ok && data.success) {
-        const savedCol = data.collection || data;
-        showToast(
-          `นำเข้า "${savedCol.name || customName}" (${savedCol.endpoints_count ?? savedCol.endpoint_count ?? 0} Endpoints) สำเร็จ`,
-          "success",
-        );
-        clearSelectedFile();
-        await loadCollections();
-      } else {
-        showToast(data.error || "อัปโหลดไฟล์ API Spec ไม่สำเร็จ", "error");
+      delete activeAbortControllers[sendingTabId];
+
+      tabs = tabs.map((t) =>
+        t.id === sendingTabId ? { ...t, isSending: false, response: data } : t,
+      );
+
+      requestHistory = [
+        {
+          id: uid("hist"),
+          method: reqSnapshot.method,
+          url: data.url || reqSnapshot.url,
+          name: reqSnapshot.name,
+          status: data.status_code || (data.success ? 200 : "ERR"),
+          latency: data.latency_ms ?? null,
+          time: new Date().toLocaleTimeString("th-TH", {
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit",
+          }),
+          snapshot: reqSnapshot,
+        },
+        ...requestHistory,
+      ].slice(0, 30);
+
+      if (!data.success && !data.status_code) {
+        showToast(data.error || "ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ปลายทางได้", "warning");
       }
     } catch (e) {
-      showToast("เกิดข้อผิดพลาดในการเชื่อมต่อเพื่ออัปโหลดไฟล์", "error");
-    } finally {
-      isUploading = false;
+      delete activeAbortControllers[sendingTabId];
+      if (e.name === "AbortError") return;
+      tabs = tabs.map((t) =>
+        t.id === sendingTabId
+          ? { ...t, isSending: false, response: { success: false, error: e.message } }
+          : t,
+      );
+      showToast("เกิดข้อผิดพลาดระหว่างส่งคำขอ API", "error");
     }
   }
 
-  // --- Repository Actions (Test / Delete / Bulk Delete / Export) ---
-  function toggleCollectionCheck(id) {
-    const next = new Set(selectedCollectionIds);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    selectedCollectionIds = next;
-  }
-
-  function toggleSelectAllCollections() {
-    if (selectedCollectionIds.size === filteredCollections.length) {
-      selectedCollectionIds = new Set();
-    } else {
-      selectedCollectionIds = new Set(filteredCollections.map((c) => c.id));
+  async function clearHistory() {
+    if (requestHistory.length === 0) return;
+    const ok = await customConfirm(`ล้างประวัติการยิงทดสอบทั้งหมด ${requestHistory.length} รายการ?`);
+    if (ok) {
+      requestHistory = [];
+      showToast("ล้างประวัติการทดสอบแล้ว", "info");
     }
   }
 
-  async function handleDeleteCollection(id, name) {
-    const confirmed = await customConfirm(
-      `ยืนยันการลบชุด API "${name}" ออกจากโครงการ ${selectedProject}?`,
-    );
-    if (!confirmed) return;
+  function reopenFromHistory(item) {
+    const snap = item.snapshot;
+    if (!snap) return;
+    const newTab = createBlankTab({
+      name: snap.name,
+      category: snap.category,
+      description: snap.description,
+      method: snap.method,
+      url: snap.url,
+      baseUrl: snap.baseUrl,
+      queryParams: snap.queryParams,
+      auth: snap.auth,
+      headers: snap.headers,
+      headersJson: snap.headersJson,
+      bodyMode: snap.bodyMode,
+      bodyText: snap.bodyText,
+      formRows: snap.formRows,
+      isDirty: true,
+    });
+    tabs = [...tabs, newTab];
+    activeTabId = newTab.id;
+  }
 
+  // Save Active Request (Ctrl+S)
+  function buildEndpointPayloadFromTab(tab) {
+    const headersObj = collectHeadersObject(tab) || {};
+    let pathPart = tab.url.trim();
+    let derivedBase = (tab.baseUrl || "").trim();
     try {
-      const res = await fetch(`${API_BASE}/api/api-collections/${id}`, {
+      if (/^https?:\/\//i.test(pathPart)) {
+        const parsed = new URL(pathPart);
+        pathPart = `${parsed.pathname}${parsed.search || ""}`;
+        if (!derivedBase) derivedBase = `${parsed.protocol}//${parsed.host}`;
+      }
+    } catch (_) {}
+
+    return {
+      endpoint: {
+        method: tab.method,
+        path: pathPart,
+        url: tab.url.trim(),
+        name: (tab.name || "").trim() || `${tab.method} ${pathPart}`,
+        summary: (tab.name || "").trim() || `${tab.method} ${pathPart}`,
+        description: (tab.description || "").trim(),
+        category: (tab.category || "General").trim() || "General",
+        headers: headersObj,
+        query_params: tab.queryParams.filter((q) => q.key && q.key.trim()),
+        auth_config: collectAuthObject(tab),
+        body: collectBodyString(tab),
+        curl: buildCurlFromTab(tab),
+      },
+      baseUrl: derivedBase,
+    };
+  }
+
+  async function handleSaveActiveTab(forceChooseCollection = false) {
+    if (!activeTab) return;
+    if (!selectedProject) {
+      showToast("กรุณาเลือกโครงการก่อนบันทึก API", "warning");
+      return;
+    }
+    if (!activeTab.url.trim()) {
+      showToast("กรุณาระบุ URL หรือ Endpoint Path ก่อนบันทึก", "warning");
+      return;
+    }
+    if (collectHeadersObject(activeTab) === null) {
+      showToast("รูปแบบ JSON ในแท็บ Headers ไม่ถูกต้อง", "error");
+      return;
+    }
+
+    if (
+      !forceChooseCollection &&
+      activeTab.collectionId &&
+      activeTab.endpointIndex >= 0
+    ) {
+      await persistUpdateExistingEndpoint(activeTab);
+      return;
+    }
+
+    if (
+      !forceChooseCollection &&
+      activeTab.collectionId &&
+      activeTab.endpointIndex < 0 &&
+      collections.some((c) => c.id === activeTab.collectionId)
+    ) {
+      await persistAppendToCollection(activeTab, activeTab.collectionId);
+      return;
+    }
+
+    saveModalRequestName =
+      activeTab.name === "Untitled Request"
+        ? `${activeTab.method} ${activeTab.url.replace(/^https?:\/\/[^/]+/, "") || "/"}`
+        : activeTab.name;
+    saveModalCategory = activeTab.category || "General";
+    if (collections.length > 0) {
+      saveModalMode = "existing";
+      saveModalTargetColId = activeTab.collectionId || collections[0].id;
+    } else {
+      saveModalMode = "new";
+      saveModalTargetColId = "";
+    }
+    saveModalNewColName = "";
+    showSaveModal = true;
+  }
+
+  async function persistUpdateExistingEndpoint(tab) {
+    const col = collections.find((c) => c.id === tab.collectionId);
+    if (!col) {
+      showToast("ไม่พบ Collection ปลายทาง", "error");
+      return;
+    }
+    patchActiveTab({ isSaving: true });
+    try {
+      const { endpoint, baseUrl } = buildEndpointPayloadFromTab(tab);
+      const nextEndpoints = [...(col.endpoints || [])];
+      nextEndpoints[tab.endpointIndex] = endpoint;
+
+      const res = await fetch(`${API_BASE}/api/api-collections/${col.id}`, {
+        method: "PUT",
+        headers: getAuthHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({
+          name: col.name,
+          version: col.version || "1.0",
+          base_url: baseUrl || col.base_url || "",
+          endpoints: nextEndpoints,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || "บันทึกไม่สำเร็จ");
+
+      patchActiveTab({
+        name: endpoint.name,
+        baseUrl: baseUrl || col.base_url || "",
+        isDirty: false,
+        isSaving: false,
+      });
+      await loadCollections();
+      showToast(`บันทึก "${endpoint.name}" แล้ว`, "success");
+    } catch (e) {
+      patchActiveTab({ isSaving: false });
+      showToast(e.message || "บันทึกการแก้ไขไม่สำเร็จ", "error");
+    }
+  }
+
+  async function persistAppendToCollection(tab, targetColId) {
+    patchActiveTab({ isSaving: true });
+    try {
+      const { endpoint, baseUrl } = buildEndpointPayloadFromTab(tab);
+      const res = await fetch(`${API_BASE}/api/api-collections/manual`, {
+        method: "POST",
+        headers: getAuthHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({
+          project_id: selectedProject,
+          target_collection_id: targetColId,
+          base_url: baseUrl,
+          name: endpoint.name,
+          category: endpoint.category,
+          description: endpoint.description,
+          method: endpoint.method,
+          url: endpoint.url,
+          headers: endpoint.headers,
+          query_params: endpoint.query_params,
+          auth_config: endpoint.auth_config,
+          body: endpoint.body,
+          curl: endpoint.curl,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || "บันทึกไม่สำเร็จ");
+
+      const updatedCol = data.collection;
+      const newIdx = Math.max(0, (updatedCol?.endpoints?.length || 1) - 1);
+      patchActiveTab({
+        collectionId: targetColId,
+        endpointIndex: newIdx,
+        name: endpoint.name,
+        baseUrl,
+        isDirty: false,
+        isSaving: false,
+      });
+      expandedCollectionIds = new Set([...expandedCollectionIds, targetColId]);
+      await loadCollections();
+      showToast(`เพิ่ม "${endpoint.name}" เข้า Collection แล้ว`, "success");
+    } catch (e) {
+      patchActiveTab({ isSaving: false });
+      showToast(e.message || "บันทึก API ไม่สำเร็จ", "error");
+    }
+  }
+
+  async function confirmSaveModal() {
+    if (!activeTab) return;
+    const reqName = saveModalRequestName.trim() || `${activeTab.method} ${activeTab.url}`;
+    const cat = saveModalCategory.trim() || "General";
+
+    patchActiveTab({ name: reqName, category: cat });
+    const latestTab = tabs.find((t) => t.id === activeTab.id);
+
+    if (saveModalMode === "existing" && saveModalTargetColId) {
+      showSaveModal = false;
+      await persistAppendToCollection(latestTab, saveModalTargetColId);
+      return;
+    }
+
+    const newColName = saveModalNewColName.trim();
+    if (!newColName) {
+      showToast("กรุณาระบุชื่อ Collection ใหม่", "warning");
+      return;
+    }
+
+    patchActiveTab({ isSaving: true });
+    showSaveModal = false;
+    try {
+      const { endpoint, baseUrl } = buildEndpointPayloadFromTab(latestTab);
+      const res = await fetch(`${API_BASE}/api/api-collections/manual`, {
+        method: "POST",
+        headers: getAuthHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({
+          project_id: selectedProject,
+          collection_name: newColName,
+          base_url: baseUrl,
+          name: endpoint.name,
+          category: endpoint.category,
+          description: endpoint.description,
+          method: endpoint.method,
+          url: endpoint.url,
+          headers: endpoint.headers,
+          query_params: endpoint.query_params,
+          auth_config: endpoint.auth_config,
+          body: endpoint.body,
+          curl: endpoint.curl,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || "สร้าง Collection ไม่สำเร็จ");
+
+      const createdColId = data.collection?.id || "";
+      patchActiveTab({
+        collectionId: createdColId,
+        endpointIndex: 0,
+        name: endpoint.name,
+        baseUrl,
+        isDirty: false,
+        isSaving: false,
+      });
+      if (createdColId) {
+        expandedCollectionIds = new Set([...expandedCollectionIds, createdColId]);
+      }
+      await loadCollections();
+      showToast(`สร้าง Collection "${newColName}" และบันทึก API แล้ว`, "success");
+    } catch (e) {
+      patchActiveTab({ isSaving: false });
+      showToast(e.message || "บันทึกไม่สำเร็จ", "error");
+    }
+  }
+
+  // Collection CRUD
+  function openCreateCollectionModal() {
+    if (!selectedProject) {
+      showToast("กรุณาเลือกโครงการก่อนสร้าง Collection", "warning");
+      return;
+    }
+    collectionModalMode = "create";
+    colModalId = "";
+    colModalName = "";
+    colModalBaseUrl = selectedEnvUrl || "";
+    colModalVersion = "1.0";
+    showCollectionModal = true;
+  }
+
+  function openEditCollectionModal(col, e) {
+    if (e) e.stopPropagation();
+    collectionModalMode = "edit";
+    colModalId = col.id;
+    colModalName = col.name || "";
+    colModalBaseUrl = col.base_url || "";
+    colModalVersion = col.version || "1.0";
+    showCollectionModal = true;
+  }
+
+  async function saveCollectionModal() {
+    if (!colModalName.trim()) {
+      showToast("กรุณาระบุชื่อ Collection", "warning");
+      return;
+    }
+    isSavingCollection = true;
+    try {
+      if (collectionModalMode === "create") {
+        const res = await fetch(`${API_BASE}/api/api-collections/manual`, {
+          method: "POST",
+          headers: getAuthHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify({
+            project_id: selectedProject,
+            create_empty: true,
+            collection_name: colModalName.trim(),
+            base_url: colModalBaseUrl.trim(),
+            version: colModalVersion.trim() || "1.0",
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || "สร้าง Collection ไม่สำเร็จ");
+        if (data.collection?.id) {
+          expandedCollectionIds = new Set([...expandedCollectionIds, data.collection.id]);
+        }
+        showToast(`สร้าง Collection "${colModalName.trim()}" แล้ว`, "success");
+      } else {
+        const col = collections.find((c) => c.id === colModalId);
+        const res = await fetch(`${API_BASE}/api/api-collections/${colModalId}`, {
+          method: "PUT",
+          headers: getAuthHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify({
+            name: colModalName.trim(),
+            base_url: colModalBaseUrl.trim(),
+            version: colModalVersion.trim() || "1.0",
+            endpoints: col?.endpoints || [],
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || "อัปเดตไม่สำเร็จ");
+        showToast(`อัปเดต Collection "${colModalName.trim()}" แล้ว`, "success");
+      }
+      showCollectionModal = false;
+      await loadCollections();
+    } catch (e) {
+      showToast(e.message || "เกิดข้อผิดพลาดในการบันทึก Collection", "error");
+    } finally {
+      isSavingCollection = false;
+    }
+  }
+
+  async function deleteCollection(col, e) {
+    if (e) e.stopPropagation();
+    const ok = await customConfirm(`ยืนยันการลบ Collection "${col.name}" (${col.endpoints.length} Endpoints)?`);
+    if (!ok) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/api-collections/${col.id}`, {
         method: "DELETE",
         headers: getAuthHeaders(),
       });
-      if (res.ok) {
-        showToast(`ลบ "${name}" เรียบร้อยแล้ว`, "success");
-        if (activeCollection && activeCollection.id === id) {
-          showWorkspaceModal = false;
-          activeCollection = null;
+      if (!res.ok) throw new Error("ลบไม่สำเร็จ");
+      tabs = tabs.map((t) =>
+        t.collectionId === col.id ? { ...t, collectionId: "", endpointIndex: -1, isDirty: true } : t,
+      );
+      await loadCollections();
+      showToast(`ลบ "${col.name}" เรียบร้อยแล้ว`, "success");
+    } catch (err) {
+      showToast(err.message || "ไม่สามารถลบ Collection ได้", "error");
+    }
+  }
+
+  async function duplicateEndpoint(col, ep, e) {
+    if (e) e.stopPropagation();
+    const copy = {
+      ...JSON.parse(JSON.stringify(ep)),
+      id: undefined,
+      name: `${ep.name || ep.summary || ep.path} (Copy)`,
+      summary: `${ep.name || ep.summary || ep.path} (Copy)`,
+    };
+    try {
+      const res = await fetch(`${API_BASE}/api/api-collections/${col.id}`, {
+        method: "PUT",
+        headers: getAuthHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({
+          name: col.name,
+          version: col.version || "1.0",
+          base_url: col.base_url || "",
+          endpoints: [...col.endpoints, copy],
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || "ทำสำเนาไม่สำเร็จ");
+      await loadCollections();
+      showToast(`ทำสำเนา "${copy.name}" แล้ว`, "success");
+    } catch (err) {
+      showToast(err.message || "ทำสำเนา Endpoint ไม่สำเร็จ", "error");
+    }
+  }
+
+  async function deleteEndpoint(col, ep, index, e) {
+    if (e) e.stopPropagation();
+    const ok = await customConfirm(`ลบ Endpoint "${ep.method} ${ep.path || ep.url}" ออกจาก "${col.name}"?`);
+    if (!ok) return;
+    try {
+      const nextEps = col.endpoints.filter((_, idx) => idx !== index);
+      const res = await fetch(`${API_BASE}/api/api-collections/${col.id}`, {
+        method: "PUT",
+        headers: getAuthHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({
+          name: col.name,
+          version: col.version || "1.0",
+          base_url: col.base_url || "",
+          endpoints: nextEps,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || "ลบ Endpoint ไม่สำเร็จ");
+
+      tabs = tabs.map((t) => {
+        if (t.collectionId !== col.id) return t;
+        if (t.endpointIndex === index) {
+          return { ...t, collectionId: "", endpointIndex: -1, isDirty: true };
         }
-        await loadCollections();
-      } else {
-        showToast("ไม่สามารถลบ API Collection ได้", "error");
-      }
-    } catch (e) {
-      showToast("เกิดข้อผิดพลาดในการลบ API Collection", "error");
+        if (t.endpointIndex > index) {
+          return { ...t, endpointIndex: t.endpointIndex - 1 };
+        }
+        return t;
+      });
+      await loadCollections();
+      showToast("ลบ Endpoint เรียบร้อยแล้ว", "success");
+    } catch (err) {
+      showToast(err.message || "ลบ Endpoint ไม่สำเร็จ", "error");
     }
   }
 
-  async function handleBulkDeleteCollections() {
-    if (selectedCollectionIds.size === 0) return;
-    const confirmed = await customConfirm(
-      `ยืนยันการลบ API Collection ที่เลือกทั้งหมด ${selectedCollectionIds.size} รายการ?`,
-    );
-    if (!confirmed) return;
-
-    let deletedCount = 0;
-    for (const id of selectedCollectionIds) {
-      try {
-        const res = await fetch(`${API_BASE}/api/api-collections/${id}`, {
-          method: "DELETE",
-          headers: getAuthHeaders(),
-        });
-        if (res.ok) deletedCount++;
-      } catch (_) {}
-    }
-    showToast(`ลบสำเร็จ ${deletedCount} Collection`, "success");
-    selectedCollectionIds = new Set();
-    await loadCollections();
-  }
-
-  function exportCollectionJson(col) {
+  function exportCollectionJson(col, e) {
+    if (e) e.stopPropagation();
     const payload = {
       name: col.name,
       project_id: col.project_id,
@@ -424,658 +1630,117 @@
     a.download = `${(col.name || "api-collection").replace(/[^a-zA-Z0-9_-ก-๙]/g, "_")}.json`;
     a.click();
     URL.revokeObjectURL(url);
-    showToast(`ส่งออกไฟล์ JSON ของ "${col.name}" เรียบร้อยแล้ว`, "info");
+    showToast(`ส่งออก "${col.name}" เป็น JSON แล้ว`, "info");
   }
 
-  // --- Interactive Collection Workspace & Endpoint Test Runner (A2) ---
-  function openWorkspace(col) {
-    syncWorkspaceFromCollection(col);
-    wsSearch = "";
-    wsMethodFilter = "ALL";
-    wsTestResult = null;
-    wsActiveTestEndpoint = null;
-    showWorkspaceModal = true;
+  // Import Modal (File Upload + Paste cURL)
+  function openImportModal(defaultTab = "file", targetMode = "new") {
+    importModalTab = defaultTab;
+    importCurlTarget = targetMode;
+    uploadFile = null;
+    customImportName = "";
+    importCurlText = "";
+    showImportModal = true;
   }
 
-  function syncWorkspaceFromCollection(col) {
-    activeCollection = col;
-    wsName = col.name || "";
-    wsVersion = col.version || "1.0.0";
-    wsBaseUrl = col.base_url || "";
-    wsEndpoints = Array.isArray(col.endpoints)
-      ? JSON.parse(JSON.stringify(col.endpoints))
-      : [];
-  }
-
-  async function saveWorkspaceMetadata() {
-    if (!activeCollection) return;
-    isSavingWorkspace = true;
-    try {
-      const res = await fetch(
-        `${API_BASE}/api/api-collections/${activeCollection.id}`,
-        {
-          method: "PUT",
-          headers: getAuthHeaders({ "Content-Type": "application/json" }),
-          body: JSON.stringify({
-            name: wsName.trim() || activeCollection.name,
-            version: wsVersion.trim() || "1.0.0",
-            base_url: wsBaseUrl.trim(),
-            endpoints: wsEndpoints,
-          }),
-        },
-      );
-      const data = await res.json();
-      if (res.ok && data.success) {
-        showToast(
-          "บันทึกการตั้งค่า Collection และ Endpoints เรียบร้อยแล้ว",
-          "success",
-        );
-        await loadCollections();
-      } else {
-        showToast(data.error || "บันทึกการแก้ไขไม่สำเร็จ", "error");
-      }
-    } catch (e) {
-      showToast("เกิดข้อผิดพลาดในการบันทึกข้อมูล Collection", "error");
-    } finally {
-      isSavingWorkspace = false;
+  function applySelectedFile(file) {
+    if (!file) return;
+    uploadFile = file;
+    if (!customImportName) {
+      customImportName = file.name.replace(/\.(json|yaml|yml)$/i, "");
     }
   }
 
-  async function testEndpointInWorkspace(ep, index) {
-    if (!activeCollection) return;
-    wsTestingIndex = index;
-    wsActiveTestEndpoint = ep;
-    wsTestResult = null;
-    try {
-      const res = await fetch(
-        `${API_BASE}/api/api-collections/${activeCollection.id}/test`,
-        {
-          method: "POST",
-          headers: getAuthHeaders({ "Content-Type": "application/json" }),
-          body: JSON.stringify({
-            endpoint_index: index,
-            base_url: wsBaseUrl.trim(),
-          }),
-        },
-      );
-      const data = await res.json();
-      wsTestResult = data;
-      if (data.success) {
-        showToast(
-          `ยิงทดสอบ ${ep.method} ${ep.path} สำเร็จ (${data.status_code} • ${data.latency_ms} ms)`,
-          "success",
-        );
-      } else {
-        showToast(data.error || "การยิงทดสอบไม่สำเร็จ", "warning");
-      }
-    } catch (e) {
-      wsTestResult = { success: false, error: e.message };
-      showToast("เกิดข้อผิดพลาดในการยิงทดสอบ API", "error");
-    } finally {
-      wsTestingIndex = null;
-    }
+  function handleFileChange(e) {
+    const files = e.target.files;
+    if (files && files.length > 0) applySelectedFile(files[0]);
   }
 
-  async function deleteEndpointInWorkspace(index) {
-    const target = wsEndpoints[index];
-    if (!target) return;
-    const confirmed = await customConfirm(
-      `ลบ Endpoint "${target.method} ${target.path}" ออกจากชุดนี้?`,
-    );
-    if (!confirmed) return;
-
-    wsEndpoints = wsEndpoints.filter((_, idx) => idx !== index);
-    await saveWorkspaceMetadata();
+  function handleFileDrop(e) {
+    e.preventDefault();
+    isDragOver = false;
+    const files = e.dataTransfer?.files;
+    if (files && files.length > 0) applySelectedFile(files[0]);
   }
 
-  function buildCurlFromEndpoint(ep, baseUrl = "") {
-    const method = (ep.method || "GET").toUpperCase();
-    let fullUrl = ep.url || ep.path || "";
-    if (!/^https?:\/\//i.test(fullUrl) && baseUrl) {
-      fullUrl = `${baseUrl.replace(/\/+$/, "")}/${fullUrl.replace(/^\/+/, "")}`;
-    }
-    const parts = [`curl -X ${method} "${fullUrl}"`];
-    const headers =
-      ep.headers && typeof ep.headers === "object" ? ep.headers : {};
-    for (const [k, v] of Object.entries(headers)) {
-      if (k) parts.push(`  -H "${k}: ${String(v).replace(/"/g, '\\"')}"`);
-    }
-    if (ep.body && ["POST", "PUT", "PATCH", "DELETE"].includes(method)) {
-      const bodyStr =
-        typeof ep.body === "string" ? ep.body : JSON.stringify(ep.body);
-      parts.push(`  -d '${bodyStr.replace(/'/g, "'\\''")}'`);
-    }
-    return parts.join(" \\\n");
-  }
-
-  async function copyEndpointCurl(ep, baseUrl = "") {
-    const cmd = ep.curl || buildCurlFromEndpoint(ep, baseUrl);
-    try {
-      await navigator.clipboard.writeText(cmd);
-      showToast("คัดลอกคำสั่ง cURL ไปยังคลิปบอร์ดแล้ว", "info");
-    } catch (_) {
-      showToast("ไม่สามารถคัดลอก cURL ได้", "error");
-    }
-  }
-
-  // --- Spectra API Studio (Manual & cURL Builder + Edit Endpoint + Live Test Send) ---
-  function openStudioForNew(preselectedCollectionId = "") {
-    studioMode = "create";
-    if (preselectedCollectionId) {
-      studioSaveMode = "existing_collection";
-      studioTargetCollectionId = preselectedCollectionId;
-    } else if (collections.length > 0) {
-      studioSaveMode = "new_collection";
-      studioTargetCollectionId = collections[0].id;
-    } else {
-      studioSaveMode = "new_collection";
-      studioTargetCollectionId = "";
-    }
-    studioCollectionName = "";
-    studioName = "";
-    studioCategory = "General";
-    studioMethod = "GET";
-    studioUrl = "";
-    studioBaseUrl = "";
-    studioSummary = "";
-    studioActiveTab = "params";
-    studioQueryParams = [{ key: "", value: "", enabled: true }];
-    studioAuthType = "none";
-    studioAuthBearer = "";
-    studioAuthApiKeyName = "X-API-Key";
-    studioAuthApiKeyValue = "";
-    studioAuthApiKeyIn = "header";
-    studioAuthBasicUser = "";
-    studioAuthBasicPass = "";
-    studioHeaderMode = "table";
-    studioHeaderRows = [
-      { key: "Content-Type", value: "application/json", enabled: true },
-    ];
-    studioHeadersJson = '{\n  "Content-Type": "application/json"\n}';
-    studioBodyMode = "json";
-    studioBodyText = "";
-    studioCurlInput = "";
-    showCurlDrawer = false;
-    studioDirectResult = null;
-    showStudioModal = true;
-  }
-
-  function openStudioForEdit(collection, ep, index) {
-    studioMode = "edit";
-    studioEditCollectionId = collection.id;
-    studioEditEndpointIndex = index;
-    studioCollectionName = collection.name;
-    studioBaseUrl = collection.base_url || "";
-
-    studioName =
-      ep.name || ep.summary || `${ep.method || "GET"} ${ep.path || ""}`;
-    studioCategory = ep.category || "General";
-    studioMethod = (ep.method || "GET").toUpperCase();
-    studioUrl = ep.url || ep.path || "";
-    studioSummary = ep.summary || ep.description || "";
-    studioActiveTab = "headers";
-
-    const qp =
-      Array.isArray(ep.query_params) && ep.query_params.length > 0
-        ? JSON.parse(JSON.stringify(ep.query_params))
-        : [{ key: "", value: "", enabled: true }];
-    studioQueryParams = qp;
-
-    const auth =
-      ep.auth_config && typeof ep.auth_config === "object"
-        ? ep.auth_config
-        : { type: "none" };
-    studioAuthType = auth.type || "none";
-    studioAuthBearer = auth.token || "";
-    studioAuthApiKeyName = auth.key || "X-API-Key";
-    studioAuthApiKeyValue = auth.value || "";
-    studioAuthApiKeyIn = auth.in || "header";
-    studioAuthBasicUser = auth.username || "";
-    studioAuthBasicPass = auth.password || "";
-
-    const hdrs =
-      ep.headers && typeof ep.headers === "object"
-        ? ep.headers
-        : { "Content-Type": "application/json" };
-    const rows = Object.entries(hdrs).map(([key, value]) => ({
-      key,
-      value: String(value),
-      enabled: true,
-    }));
-    studioHeaderRows =
-      rows.length > 0 ? rows : [{ key: "", value: "", enabled: true }];
-    studioHeadersJson = JSON.stringify(hdrs, null, 2);
-    studioHeaderMode = "table";
-
-    studioBodyText =
-      typeof ep.body === "string"
-        ? ep.body
-        : ep.body
-          ? JSON.stringify(ep.body, null, 2)
-          : "";
-    studioBodyMode = studioBodyText ? "json" : "none";
-    studioCurlInput = ep.curl || "";
-    showCurlDrawer = false;
-    studioDirectResult = null;
-    showStudioModal = true;
-  }
-
-  function collectStudioHeadersObject() {
-    if (studioHeaderMode === "json") {
-      try {
-        const parsed = JSON.parse(studioHeadersJson || "{}");
-        return typeof parsed === "object" && parsed !== null ? parsed : {};
-      } catch (_) {
-        return null;
-      }
-    }
-    const out = {};
-    for (const row of studioHeaderRows) {
-      if (row.enabled !== false && row.key && row.key.trim()) {
-        out[row.key.trim()] = row.value ?? "";
-      }
-    }
-    return out;
-  }
-
-  function collectStudioAuthConfig() {
-    if (studioAuthType === "bearer") {
-      return { type: "bearer", token: studioAuthBearer.trim() };
-    }
-    if (studioAuthType === "apikey") {
-      return {
-        type: "apikey",
-        key: studioAuthApiKeyName.trim() || "X-API-Key",
-        value: studioAuthApiKeyValue.trim(),
-        in: studioAuthApiKeyIn,
-      };
-    }
-    if (studioAuthType === "basic") {
-      return {
-        type: "basic",
-        username: studioAuthBasicUser,
-        password: studioAuthBasicPass,
-      };
-    }
-    return { type: "none" };
-  }
-
-  function addQueryParamRow() {
-    studioQueryParams = [
-      ...studioQueryParams,
-      { key: "", value: "", enabled: true },
-    ];
-  }
-
-  function removeQueryParamRow(idx) {
-    studioQueryParams = studioQueryParams.filter((_, i) => i !== idx);
-    if (studioQueryParams.length === 0) {
-      studioQueryParams = [{ key: "", value: "", enabled: true }];
-    }
-  }
-
-  function addHeaderRow() {
-    studioHeaderRows = [
-      ...studioHeaderRows,
-      { key: "", value: "", enabled: true },
-    ];
-  }
-
-  function removeHeaderRow(idx) {
-    studioHeaderRows = studioHeaderRows.filter((_, i) => i !== idx);
-    if (studioHeaderRows.length === 0) {
-      studioHeaderRows = [{ key: "", value: "", enabled: true }];
-    }
-  }
-
-  function toggleHeaderViewMode(mode) {
-    if (mode === studioHeaderMode) return;
-    if (mode === "json") {
-      const obj = collectStudioHeadersObject() || {};
-      studioHeadersJson = JSON.stringify(obj, null, 2);
-    } else {
-      try {
-        const parsed = JSON.parse(studioHeadersJson || "{}");
-        const rows = Object.entries(parsed).map(([key, value]) => ({
-          key,
-          value: String(value),
-          enabled: true,
-        }));
-        studioHeaderRows =
-          rows.length > 0 ? rows : [{ key: "", value: "", enabled: true }];
-      } catch (e) {
-        showToast(
-          "รูปแบบ JSON ของ Headers ไม่ถูกต้อง กรุณาแก้ไขก่อนสลับมุมมอง",
-          "warning",
-        );
-        return;
-      }
-    }
-    studioHeaderMode = mode;
-  }
-
-  function prettifyStudioBody() {
-    if (!studioBodyText.trim()) return;
-    try {
-      const parsed = JSON.parse(studioBodyText);
-      studioBodyText = JSON.stringify(parsed, null, 2);
-      showToast("จัดรูปแบบและตรวจสอบ JSON เรียบร้อยแล้ว", "success");
-    } catch (e) {
-      showToast(`JSON ไม่ถูกต้อง: ${e.message}`, "error");
-    }
-  }
-
-  function parseCurlCommand() {
-    if (!studioCurlInput.trim()) {
-      showToast("กรุณาวางคำสั่ง cURL ก่อนกดแปลงข้อมูล", "warning");
+  async function handleUploadSpec() {
+    if (!selectedProject) {
+      showToast("กรุณาเลือกโครงการก่อนนำเข้าไฟล์", "warning");
       return;
     }
-    try {
-      // Normalize bash line continuations and Windows CMD ^ continuations
-      const cmd = studioCurlInput
-        .replace(/\\\r?\n/g, " ")
-        .replace(/\^\r?\n/g, " ")
-        .trim();
-
-      const methodMatch = cmd.match(
-        /(?:-X|--request)\s+['"]?(GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD)['"]?/i,
-      );
-      let detectedMethod = methodMatch ? methodMatch[1].toUpperCase() : "";
-
-      const urlMatch =
-        cmd.match(/--url\s+['"]?(https?:\/\/[^\s'"]+)['"]?/i) ||
-        cmd.match(/['"]?(https?:\/\/[^\s'"]+)['"]?/i);
-
-      if (urlMatch) {
-        const fullUrl = urlMatch[1];
-        studioUrl = fullUrl;
-        try {
-          const u = new URL(fullUrl);
-          if (!studioName) {
-            studioName = `${detectedMethod || "API"} ${u.pathname}`;
-          }
-          if (!studioBaseUrl) {
-            studioBaseUrl = `${u.protocol}//${u.host}`;
-          }
-          if (u.searchParams && Array.from(u.searchParams.keys()).length > 0) {
-            const qRows = [];
-            u.searchParams.forEach((v, k) =>
-              qRows.push({ key: k, value: v, enabled: true }),
-            );
-            studioQueryParams = qRows;
-          }
-        } catch (_) {}
-      }
-
-      const headers = {};
-      const headerRegex = /(?:-H|--header)\s+(['"])(.*?)\1/gi;
-      let m;
-      while ((m = headerRegex.exec(cmd)) !== null) {
-        const parts = m[2].split(":");
-        if (parts.length >= 2) {
-          const key = parts.shift().trim();
-          const val = parts.join(":").trim();
-          headers[key] = val;
-          if (
-            key.toLowerCase() === "authorization" &&
-            /^bearer\s+/i.test(val)
-          ) {
-            studioAuthType = "bearer";
-            studioAuthBearer = val.replace(/^bearer\s+/i, "").trim();
-          }
-        }
-      }
-
-      const userMatch = cmd.match(/(?:-u|--user)\s+(['"]?)([^'"\s]+)\1/i);
-      if (userMatch) {
-        const [usr, pwd = ""] = userMatch[2].split(":");
-        studioAuthType = "basic";
-        studioAuthBasicUser = usr;
-        studioAuthBasicPass = pwd;
-      }
-
-      const cookieMatch = cmd.match(/(?:-b|--cookie)\s+(['"])(.*?)\1/i);
-      if (cookieMatch) {
-        headers["Cookie"] = cookieMatch[2];
-      }
-
-      if (Object.keys(headers).length > 0) {
-        studioHeaderRows = Object.entries(headers).map(([key, value]) => ({
-          key,
-          value: String(value),
-          enabled: true,
-        }));
-        studioHeadersJson = JSON.stringify(headers, null, 2);
-      }
-
-      const dataMatch = cmd.match(
-        /(?:-d|--data|--data-raw|--data-binary)\s+(['"])([\s\S]*?)\1/i,
-      );
-      if (dataMatch) {
-        let rawData = dataMatch[2];
-        try {
-          rawData = JSON.stringify(JSON.parse(rawData), null, 2);
-          studioBodyMode = "json";
-        } catch (_) {
-          studioBodyMode = "raw";
-        }
-        studioBodyText = rawData;
-        if (!detectedMethod) detectedMethod = "POST";
-      }
-
-      studioMethod = detectedMethod || "GET";
-      showCurlDrawer = false;
-      showToast(
-        "แยกข้อมูล Method, URL, Headers, Auth และ Body จาก cURL สำเร็จ!",
-        "success",
-      );
-    } catch (e) {
-      showToast("รูปแบบคำสั่ง cURL ไม่สมบูรณ์ กรุณาตรวจสอบอีกครั้ง", "error");
-    }
-  }
-
-  async function handleStudioTestSend() {
-    if (!studioUrl.trim()) {
-      showToast("กรุณาระบุ URL หรือ Path ของ Endpoint ก่อนยิงทดสอบ", "warning");
+    if (!uploadFile) {
+      showToast("กรุณาเลือกไฟล์ OpenAPI / Swagger / Postman (.json, .yaml)", "warning");
       return;
     }
-    const headersObj = collectStudioHeadersObject();
-    if (headersObj === null) {
-      showToast("รูปแบบ JSON ของ Headers ไม่ถูกต้อง", "error");
-      return;
-    }
+    isUploading = true;
+    const formData = new FormData();
+    formData.append("project_id", selectedProject);
+    formData.append("file", uploadFile);
+    if (customImportName.trim()) formData.append("name", customImportName.trim());
 
-    isTestingDirect = true;
-    studioDirectResult = null;
     try {
-      const res = await fetch(`${API_BASE}/api/api-collections/test-direct`, {
+      const res = await fetch(`${API_BASE}/api/api-collections/upload`, {
         method: "POST",
-        headers: getAuthHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify({
-          method: studioMethod,
-          url: studioUrl.trim(),
-          base_url: studioBaseUrl.trim(),
-          headers: headersObj,
-          query_params: studioQueryParams.filter(
-            (q) => q.enabled !== false && q.key.trim(),
-          ),
-          auth_config: collectStudioAuthConfig(),
-          body: studioBodyMode === "none" ? "" : studioBodyText,
-        }),
+        headers: getAuthHeaders(),
+        body: formData,
       });
       const data = await res.json();
-      studioDirectResult = data;
-      if (data.success) {
-        showToast(
-          `ผลทดสอบ: HTTP ${data.status_code} (${data.latency_ms} ms)`,
-          "success",
-        );
-      } else {
-        showToast(data.error || "ยิงทดสอบไม่สำเร็จ", "warning");
+      if (!res.ok || !data.success) throw new Error(data.error || "นำเข้าไฟล์ไม่สำเร็จ");
+      const saved = data.collection || data;
+      if (saved.id) {
+        expandedCollectionIds = new Set([...expandedCollectionIds, saved.id]);
       }
-    } catch (e) {
-      studioDirectResult = { success: false, error: e.message };
-      showToast("เกิดข้อผิดพลาดในการเชื่อมต่อเพื่อยิงทดสอบ", "error");
-    } finally {
-      isTestingDirect = false;
-    }
-  }
-
-  async function handleSaveStudio() {
-    if (!selectedProject) {
-      showToast("กรุณาเลือกโครงการ", "warning");
-      return;
-    }
-    if (!studioUrl.trim()) {
-      showToast("กรุณาระบุ Endpoint URL หรือ Path", "warning");
-      return;
-    }
-    const headersObj = collectStudioHeadersObject();
-    if (headersObj === null) {
-      showToast("รูปแบบ JSON ในแท็บ Headers ไม่ถูกต้อง", "error");
-      return;
-    }
-
-    isSavingStudio = true;
-    try {
-      let pathPart = studioUrl.trim();
-      try {
-        if (/^https?:\/\//i.test(pathPart)) {
-          const parsedUrl = new URL(pathPart);
-          pathPart = `${parsedUrl.pathname}${parsedUrl.search || ""}`;
-          if (!studioBaseUrl.trim()) {
-            studioBaseUrl = `${parsedUrl.protocol}//${parsedUrl.host}`;
-          }
-        }
-      } catch (_) {}
-
-      const endpointRecord = {
-        method: studioMethod,
-        path: pathPart,
-        url: studioUrl.trim(),
-        name: studioName.trim() || `${studioMethod} ${pathPart}`,
-        summary:
-          studioSummary.trim() ||
-          studioName.trim() ||
-          `${studioMethod} ${pathPart}`,
-        description: studioSummary.trim(),
-        category: studioCategory.trim() || "General",
-        headers: headersObj,
-        query_params: studioQueryParams.filter((q) => q.key && q.key.trim()),
-        auth_config: collectStudioAuthConfig(),
-        body: studioBodyMode === "none" ? "" : studioBodyText,
-        curl:
-          studioCurlInput.trim() ||
-          buildCurlFromEndpoint(
-            {
-              method: studioMethod,
-              url: studioUrl.trim(),
-              path: pathPart,
-              headers: headersObj,
-              body: studioBodyMode === "none" ? "" : studioBodyText,
-            },
-            studioBaseUrl.trim(),
-          ),
-      };
-
-      if (studioMode === "edit" && studioEditCollectionId) {
-        const col =
-          collections.find((c) => c.id === studioEditCollectionId) ||
-          activeCollection;
-        if (!col) throw new Error("ไม่พบ Collection ที่ต้องการแก้ไข");
-        const nextEndpoints = Array.isArray(col.endpoints)
-          ? [...col.endpoints]
-          : [];
-        nextEndpoints[studioEditEndpointIndex] = endpointRecord;
-
-        const res = await fetch(
-          `${API_BASE}/api/api-collections/${studioEditCollectionId}`,
-          {
-            method: "PUT",
-            headers: getAuthHeaders({ "Content-Type": "application/json" }),
-            body: JSON.stringify({
-              name: col.name,
-              version: col.version,
-              base_url: studioBaseUrl.trim() || col.base_url || "",
-              endpoints: nextEndpoints,
-            }),
-          },
-        );
-        const data = await res.json();
-        if (!res.ok || !data.success)
-          throw new Error(data.error || "บันทึกการแก้ไขไม่สำเร็จ");
-        showToast(
-          `อัปเดต Endpoint "${endpointRecord.name}" เรียบร้อยแล้ว`,
-          "success",
-        );
-      } else {
-        const res = await fetch(`${API_BASE}/api/api-collections/manual`, {
-          method: "POST",
-          headers: getAuthHeaders({ "Content-Type": "application/json" }),
-          body: JSON.stringify({
-            project_id: selectedProject,
-            target_collection_id:
-              studioSaveMode === "existing_collection"
-                ? studioTargetCollectionId
-                : null,
-            collection_name:
-              studioSaveMode === "new_collection"
-                ? studioCollectionName.trim() ||
-                  studioName.trim() ||
-                  `Manual API Collection`
-                : undefined,
-            base_url: studioBaseUrl.trim(),
-            name: endpointRecord.name,
-            category: endpointRecord.category,
-            description: endpointRecord.summary,
-            method: endpointRecord.method,
-            url: endpointRecord.url,
-            headers: endpointRecord.headers,
-            query_params: endpointRecord.query_params,
-            auth_config: endpointRecord.auth_config,
-            body: endpointRecord.body,
-            curl: endpointRecord.curl,
-          }),
-        });
-        const data = await res.json();
-        if (!res.ok || !data.success)
-          throw new Error(data.error || "บันทึก API ไม่สำเร็จ");
-        showToast(
-          studioSaveMode === "existing_collection"
-            ? `เพิ่ม Endpoint เข้า Collection เรียบร้อยแล้ว`
-            : `สร้าง API Collection ใหม่เรียบร้อยแล้ว`,
-          "success",
-        );
-      }
-
-      showStudioModal = false;
+      showToast(
+        `นำเข้า "${saved.name || customImportName}" (${saved.endpoints_count ?? saved.endpoint_count ?? 0} Endpoints) สำเร็จ`,
+        "success",
+      );
+      showImportModal = false;
       await loadCollections();
     } catch (e) {
-      showToast(e.message || "เกิดข้อผิดพลาดในการบันทึก API", "error");
+      showToast(e.message || "เกิดข้อผิดพลาดในการอัปโหลดไฟล์ Spec", "error");
     } finally {
-      isSavingStudio = false;
+      isUploading = false;
     }
   }
 
-  // --- Web API Sniffer (Real OpenAPI/Swagger Probing + Grouped Save A3) ---
+  function handleImportCurlSubmit() {
+    if (!importCurlText.trim()) {
+      showToast("กรุณาวางคำสั่ง cURL", "warning");
+      return;
+    }
+    if (importCurlTarget === "active" && activeTab) {
+      applyCurlToActiveTab(importCurlText);
+      showImportModal = false;
+      return;
+    }
+    const parsed = parseCurlString(importCurlText);
+    const newTab = createBlankTab({ ...parsed, isDirty: true });
+    tabs = [...tabs, newTab];
+    activeTabId = newTab.id;
+    showImportModal = false;
+    showToast("นำเข้า cURL เปิดในแท็บใหม่พร้อมทดสอบแล้ว", "success");
+  }
+
+  // Web API Sniffer
   function openSnifferModal() {
     showSnifferModal = true;
     sniffedEndpoints = [];
     selectedSniffedIndices = new Set();
     snifferImportMode = "new";
     snifferCollectionName = "";
+    snifferShowAuth = false;
+    snifferUrl = snifferUrl || selectedEnvUrl || "";
     snifferTargetCollectionId = collections.length > 0 ? collections[0].id : "";
   }
 
   async function handleStartSniffing() {
     if (!snifferUrl.trim()) {
-      showToast("กรุณาระบุ Target URL ของระบบที่ต้องการสำรวจ API", "warning");
+      showToast("กรุณาระบุ Target URL ของระบบเป้าหมาย", "warning");
       return;
     }
     isSniffing = true;
     sniffedEndpoints = [];
     selectedSniffedIndices = new Set();
-
     try {
       const res = await fetch(`${API_BASE}/api/api-collections/sniff`, {
         method: "POST",
@@ -1088,23 +1753,19 @@
         }),
       });
       const data = await res.json();
-      if (res.ok && data.success) {
-        sniffedEndpoints = data.endpoints || [];
-        selectedSniffedIndices = new Set(sniffedEndpoints.map((_, idx) => idx));
-        if (!snifferCollectionName) {
-          try {
-            const host = new URL(snifferUrl.trim()).host;
-            snifferCollectionName = `Discovered APIs (${host})`;
-          } catch (_) {
-            snifferCollectionName = `Discovered APIs (${snifferUrl.trim()})`;
-          }
+      if (!res.ok || !data.success) throw new Error(data.error || "สำรวจ API ไม่สำเร็จ");
+      sniffedEndpoints = data.endpoints || [];
+      selectedSniffedIndices = new Set(sniffedEndpoints.map((_, i) => i));
+      if (!snifferCollectionName) {
+        try {
+          snifferCollectionName = `Discovered (${new URL(snifferUrl.trim()).host})`;
+        } catch (_) {
+          snifferCollectionName = "Discovered APIs";
         }
-        showToast(`สำรวจพบ ${sniffedEndpoints.length} Endpoints`, "success");
-      } else {
-        showToast(data.error || "สำรวจ API ไม่สำเร็จ", "error");
       }
+      showToast(`สำรวจพบ ${sniffedEndpoints.length} Endpoints`, "success");
     } catch (e) {
-      showToast("เกิดข้อผิดพลาดในการเชื่อมต่อเพื่อสำรวจ API", "error");
+      showToast(e.message || "เกิดข้อผิดพลาดในการสำรวจ API", "error");
     } finally {
       isSniffing = false;
     }
@@ -1121,7 +1782,7 @@
     if (selectedSniffedIndices.size === sniffedEndpoints.length) {
       selectedSniffedIndices = new Set();
     } else {
-      selectedSniffedIndices = new Set(sniffedEndpoints.map((_, idx) => idx));
+      selectedSniffedIndices = new Set(sniffedEndpoints.map((_, i) => i));
     }
   }
 
@@ -1130,9 +1791,7 @@
       showToast("กรุณาเลือกอย่างน้อย 1 Endpoint", "warning");
       return;
     }
-    const toSave = Array.from(selectedSniffedIndices).map(
-      (idx) => sniffedEndpoints[idx],
-    );
+    const toSave = Array.from(selectedSniffedIndices).map((i) => sniffedEndpoints[i]);
     isSniffing = true;
     try {
       let baseOrigin = "";
@@ -1148,8 +1807,7 @@
           project_id: selectedProject,
           collection_name:
             snifferImportMode === "new"
-              ? snifferCollectionName.trim() ||
-                `Web Sniffer (${baseOrigin || "Target"})`
+              ? snifferCollectionName.trim() || `Web Sniffer (${baseOrigin || "Target"})`
               : undefined,
           target_collection_id:
             snifferImportMode === "append" ? snifferTargetCollectionId : null,
@@ -1159,1580 +1817,1863 @@
         }),
       });
       const data = await res.json();
-      if (res.ok && data.success) {
-        showToast(
-          snifferImportMode === "append"
-            ? `เพิ่ม ${toSave.length} Endpoints เข้า Collection เดิมเรียบร้อยแล้ว`
-            : `บันทึกเป็น 1 Collection ใหม่ (${toSave.length} Endpoints) สำเร็จ`,
-          "success",
-        );
-        showSnifferModal = false;
-        await loadCollections();
-      } else {
-        showToast(data.error || "บันทึกผลการสำรวจ API ไม่สำเร็จ", "error");
+      if (!res.ok || !data.success) throw new Error(data.error || "บันทึกไม่สำเร็จ");
+      if (data.collection?.id) {
+        expandedCollectionIds = new Set([...expandedCollectionIds, data.collection.id]);
       }
+      showSnifferModal = false;
+      await loadCollections();
+      showToast(`บันทึก ${toSave.length} Endpoints เรียบร้อยแล้ว`, "success");
     } catch (e) {
-      showToast("เกิดข้อผิดพลาดในการบันทึก API ที่สำรวจพบ", "error");
+      showToast(e.message || "เกิดข้อผิดพลาดในการบันทึก", "error");
     } finally {
       isSniffing = false;
     }
   }
 
+  // Resizable vertical splitter (Mouse + Keyboard ArrowUp/ArrowDown)
+  function startSplitResize(e) {
+    e.preventDefault();
+    isResizingSplit = true;
+  }
+
+  function handleSplitterKeydown(e) {
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      responsePaneHeight = Math.min(540, responsePaneHeight + 24);
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      responsePaneHeight = Math.max(170, responsePaneHeight - 24);
+    }
+  }
+
+  function handleWindowMouseMove(e) {
+    if (!isResizingSplit || !workbenchRightEl) return;
+    const rect = workbenchRightEl.getBoundingClientRect();
+    const nextHeight = Math.round(rect.bottom - e.clientY);
+    responsePaneHeight = Math.max(170, Math.min(rect.height - 220, nextHeight));
+  }
+
+  function handleWindowMouseUp() {
+    isResizingSplit = false;
+  }
+
+  // Global keyboard shortcuts
   function handleGlobalKeydown(e) {
     if (e.key === "Escape") {
-      if (showStudioModal) showStudioModal = false;
+      if (showSaveModal) showSaveModal = false;
+      else if (showCollectionModal) showCollectionModal = false;
+      else if (showImportModal) showImportModal = false;
       else if (showSnifferModal) showSnifferModal = false;
-      else if (showWorkspaceModal) showWorkspaceModal = false;
+      return;
+    }
+    const isModalOpen =
+      showSaveModal || showCollectionModal || showImportModal || showSnifferModal || showExtensionModal;
+    if (isModalOpen) return;
+
+    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+      e.preventDefault();
+      sendActiveRequest();
+    } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+      e.preventDefault();
+      handleSaveActiveTab(false);
     }
   }
 </script>
 
-<svelte:window on:keydown={handleGlobalKeydown} />
+<svelte:window
+  on:keydown={handleGlobalKeydown}
+  on:mousemove={handleWindowMouseMove}
+  on:mouseup={handleWindowMouseUp}
+/>
 
-<div class="api-admin-container">
-  <!-- Header Banner -->
-  <header class="page-header">
-    <div class="header-main">
-      <div class="header-icon-box" aria-hidden="true">
-        <svg
-          width="24"
-          height="24"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-        >
-          <path
-            d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"
+<div class="pm-shell" class:resizing={isResizingSplit}>
+  <!-- =========================================================================
+       TOP WORKSPACE BAR (Project Scope + Environment Base URL + Quick Tools)
+       ========================================================================= -->
+  <header class="pm-topbar">
+    <div class="pm-topbar-left">
+      <div class="pm-picker-group">
+        <label for="pm-project-select" class="pm-field-label">โครงการ</label>
+        <div class="pm-project-select-wrap">
+          <CustomSelect
+            id="pm-project-select"
+            ariaLabel="เลือกโครงการ"
+            variant="compact"
+            size="sm"
+            options={projectOptions}
+            bind:value={selectedProject}
+            on:change={handleProjectChange}
+            minWidth="190px"
+            dropdownMinWidth="260px"
+            placeholder={isLoadingProjects
+              ? "กำลังโหลดโครงการ..."
+              : projectOptions.length === 0
+                ? "ยังไม่มีโครงการในระบบ"
+                : "เลือกโครงการ"}
           />
-          <path
-            d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"
-          />
-        </svg>
-      </div>
-      <div>
-        <div class="header-badge-row">
-          <span class="eyebrow-pill">SPECTRA API REPOSITORY & LIVE STUDIO</span>
-          <span class="stat-pill">{collections.length} Collections</span>
-          <span class="stat-pill cyan">{totalEndpointsCount} Endpoints</span>
         </div>
-        <h2>API Collection & Endpoint Studio</h2>
-        <p class="subtitle">
-          ศูนย์กลางจัดเก็บ สำรวจ และยิงทดสอบ API ประจำโครงการ เพื่อเชื่อมต่อกับ
-          AI QA Analysis Diagram และสร้าง Test Case อัตโนมัติ
-        </p>
+        <button
+          type="button"
+          class="pm-icon-btn"
+          title="รีเฟรชรายการโครงการและ Collections"
+          on:click={() => loadProjects()}
+          aria-label="รีเฟรชข้อมูล"
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            class:spin={isLoadingProjects || isLoadingCollections}
+          >
+            <polyline points="23 4 23 10 17 10" />
+            <polyline points="1 20 1 14 7 14" />
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+          </svg>
+        </button>
       </div>
-    </div>
 
-    <div class="project-selector-box">
-      <span class="selector-label">โครงการ (Project Scope)</span>
-      <div class="select-wrapper">
-        <CustomSelect
-          options={projectOptions}
-          bind:value={selectedProject}
-          placeholder="-- เลือกโครงการ --"
-        />
-      </div>
-    </div>
-  </header>
+      {#if selectedProject}
+        <div class="pm-divider-v" aria-hidden="true"></div>
 
-  <div class="content-grid">
-    <!-- Left Column: Unified Ingestion Hub -->
-    <aside class="ingestion-panel">
-      <div class="panel-card">
-        <div class="card-head">
-          <div>
-            <h3>นำเข้า API Spec มาตรฐาน</h3>
-            <p class="card-desc">
-              รองรับ OpenAPI 3.0, Swagger 2.0 และ Postman Collection v2.1
-              (.json, .yaml)
-            </p>
+        <!-- Environment / Base URL Switcher -->
+        <div class="pm-picker-group env-group">
+          <label for="pm-env-select" class="pm-field-label">Base URL</label>
+          <div class="pm-env-select-wrap">
+            <CustomSelect
+              id="pm-env-select"
+              ariaLabel="เลือก Environment / Base URL"
+              variant="compact"
+              size="sm"
+              options={envOptions}
+              bind:value={selectedEnvUrl}
+              minWidth="170px"
+              dropdownMinWidth="290px"
+              placeholder="No Environment"
+            />
           </div>
         </div>
+      {/if}
 
-        <!-- Drag & Drop Zone (P0.2 Fixed) -->
-        <!-- svelte-ignore a11y-click-events-have-key-events -->
-        <!-- svelte-ignore a11y-no-static-element-interactions -->
-        <div
-          class="upload-dropzone"
-          class:has-file={uploadFile !== null}
-          class:drag-over={isDragOver}
-          on:click={() => fileInput.click()}
-          on:dragover={handleDragOver}
-          on:dragleave={handleDragLeave}
-          on:drop={handleFileDrop}
+      <div class="pm-telemetry-summary">
+        <span class="pm-stat-chip">
+          <strong>{collections.length}</strong> Col
+        </span>
+        <span class="pm-stat-chip">
+          <strong>{totalEndpointsCount}</strong> APIs
+        </span>
+        {#if projectsError}
+          <button type="button" class="pm-error-pill" on:click={loadProjects}>
+            โหลดไม่สำเร็จ — ลองใหม่
+          </button>
+        {/if}
+      </div>
+    </div>
+
+    <div class="pm-topbar-right">
+      <div class="pm-tool-group" role="group" aria-label="เครื่องมือนำเข้าและสำรวจ API">
+        <button
+          type="button"
+          class="pm-tool-btn"
+          disabled={!selectedProject}
+          on:click={() => openImportModal("file", "new")}
+          title="นำเข้า OpenAPI 3.0, Swagger, Postman Collection หรือ cURL"
         >
-          <input
-            type="file"
-            accept=".json,.yaml,.yml"
-            bind:this={fileInput}
-            on:change={handleFileChange}
-            style="display: none;"
-          />
-          {#if uploadFile}
-            <div class="file-picked">
-              <div class="picked-icon" aria-hidden="true">
-                <svg
-                  width="24"
-                  height="24"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                >
-                  <path
-                    d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"
-                  />
-                  <polyline points="14 2 14 8 20 8" />
-                  <polyline points="9 15 11 17 15 13" />
-                </svg>
-              </div>
-              <div class="picked-meta">
-                <span class="file-name">{uploadFile.name}</span>
-                <span class="file-size"
-                  >{(uploadFile.size / 1024).toFixed(1)} KB • พร้อมนำเข้า</span
-                >
-              </div>
-              <button
-                type="button"
-                class="clear-file-btn"
-                on:click={clearSelectedFile}
-                title="ล้างไฟล์ที่เลือก"
-              >
-                ล้างไฟล์
-              </button>
-            </div>
-          {:else}
-            <div class="drop-prompt">
-              <div class="drop-icon-circle" aria-hidden="true">
-                <svg
-                  width="24"
-                  height="24"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                >
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                  <polyline points="17 8 12 3 7 8" />
-                  <line x1="12" y1="3" x2="12" y2="15" />
-                </svg>
-              </div>
-              <span class="prompt-title"
-                >คลิกเลือกไฟล์ หรือลากไฟล์มาวางที่นี่</span
-              >
-              <span class="prompt-sub"
-                >ระบบจะสกัด Base URL, Paths, Methods และ Parameters อัตโนมัติ</span
-              >
-            </div>
-          {/if}
-        </div>
-
-        <div class="form-group">
-          <label for="spec-custom-name"
-            >ตั้งชื่อชุด API Collection (ทางเลือก)</label
-          >
-          <input
-            id="spec-custom-name"
-            type="text"
-            class="spectra-input"
-            placeholder="เช่น Payment Gateway API v2"
-            bind:value={customName}
-          />
-        </div>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="17 8 12 3 7 8" />
+            <line x1="12" y1="3" x2="12" y2="15" />
+          </svg>
+          <span>Import</span>
+        </button>
 
         <button
           type="button"
-          class="btn-primary-gradient"
-          disabled={!uploadFile || isUploading || !selectedProject}
-          on:click={handleUpload}
+          class="pm-tool-btn"
+          disabled={!selectedProject}
+          on:click={openSnifferModal}
+          title="สแกนหา OpenAPI / Swagger / Routes จาก URL ระบบเป้าหมาย"
         >
-          {#if isUploading}
-            <span class="spinner"></span> กำลังประมวลผลไฟล์ Spec...
-          {:else}
-            <svg
-              width="17"
-              height="17"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2.2"
-            >
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-              <polyline points="17 8 12 3 7 8" />
-              <line x1="12" y1="3" x2="12" y2="15" />
-            </svg>
-            นำเข้าไฟล์ API Spec เข้าโครงการ
-          {/if}
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8" />
+            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
+          <span>Sniffer</span>
         </button>
 
-        <div class="section-divider">
-          <span>หรือสร้าง / ดักจับ API ด้วยเครื่องมือ Spectra</span>
-        </div>
+        <button
+          type="button"
+          class="pm-tool-btn"
+          disabled={!selectedProject}
+          on:click={() => (showExtensionModal = true)}
+          title="ดักจับ API จริงจากเบราว์เซอร์ผ่าน Chrome Extension"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10" />
+            <circle cx="12" cy="12" r="4" />
+            <line x1="21.17" y1="8" x2="12" y2="8" />
+          </svg>
+          <span>Chrome Sync</span>
+        </button>
+      </div>
 
-        <!-- Cohesive Secondary Tools (Spectra Obsidian Glass Cards) -->
-        <div class="tools-stack">
-          <button
-            type="button"
-            class="tool-action-card"
-            disabled={!selectedProject}
-            on:click={() => openStudioForNew("")}
-          >
-            <div class="tool-icon violet" aria-hidden="true">
-              <svg
-                width="18"
-                height="18"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <polyline points="16 18 22 12 16 6" />
-                <polyline points="8 6 2 12 8 18" />
-              </svg>
-            </div>
-            <div class="tool-copy">
-              <span class="tool-title">API Studio (Manual & cURL Builder)</span>
-              <span class="tool-sub"
-                >สร้างหรือวาง cURL พร้อมตั้งค่า Params, Auth, Headers
-                และกดยิงทดสอบสด</span
-              >
-            </div>
-          </button>
+      <button
+        type="button"
+        class="pm-btn-secondary-accent"
+        on:click={() => openNewRequestTab(null)}
+        title="เปิดแท็บ Request ใหม่"
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+          <line x1="12" y1="5" x2="12" y2="19" />
+          <line x1="5" y1="12" x2="19" y2="12" />
+        </svg>
+        <span>New Request</span>
+      </button>
+    </div>
+  </header>
 
-          <button
-            type="button"
-            class="tool-action-card"
-            disabled={!selectedProject}
-            on:click={openSnifferModal}
-          >
-            <div class="tool-icon cyan" aria-hidden="true">
-              <svg
-                width="18"
-                height="18"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-              >
+  <!-- =========================================================================
+       POSTMAN 2-PANE WORKBENCH (Left Explorer + Right Request/Response Studio)
+       ========================================================================= -->
+  <div class="pm-body">
+    <!-- LEFT SIDEBAR: Collections Tree (with Category Sub-Folders) & History -->
+    <aside class="pm-sidebar">
+      <div class="pm-sidebar-tabs" role="tablist" aria-label="มุมมอง Sidebar">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={sidebarTab === "collections"}
+          class="pm-side-tab"
+          class:active={sidebarTab === "collections"}
+          on:click={() => (sidebarTab = "collections")}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+          </svg>
+          <span>Collections</span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={sidebarTab === "history"}
+          class="pm-side-tab"
+          class:active={sidebarTab === "history"}
+          on:click={() => (sidebarTab = "history")}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10" />
+            <polyline points="12 6 12 12 16 14" />
+          </svg>
+          <span>History {#if requestHistory.length > 0}({requestHistory.length}){/if}</span>
+        </button>
+      </div>
+
+      {#if sidebarTab === "collections"}
+        <div class="pm-sidebar-controls">
+          <div class="pm-search-row">
+            <div class="pm-search-input-wrap">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                 <circle cx="11" cy="11" r="8" />
                 <line x1="21" y1="21" x2="16.65" y2="16.65" />
               </svg>
+              <input
+                type="text"
+                aria-label="ค้นหา Collection หรือ Endpoint"
+                placeholder="กรอง Collection, หมวดหมู่, URL..."
+                bind:value={sidebarSearch}
+              />
+              {#if sidebarSearch}
+                <button
+                  type="button"
+                  class="pm-clear-x"
+                  on:click={() => (sidebarSearch = "")}
+                  aria-label="ล้างคำค้นหา"
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
+              {/if}
             </div>
-            <div class="tool-copy">
-              <span class="tool-title"
-                >Web API Discovery (OpenAPI / Route Sniffer)</span
-              >
-              <span class="tool-sub"
-                >สแกนหา /openapi.json, /swagger.json และ API Routes จาก URL
-                ระบบเป้าหมาย</span
-              >
-            </div>
-          </button>
-
-          <button
-            type="button"
-            class="tool-action-card"
-            disabled={!selectedProject}
-            on:click={() => (showExtensionModal = true)}
-          >
-            <div class="tool-icon emerald" aria-hidden="true">
-              <svg
-                width="18"
-                height="18"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <circle cx="12" cy="12" r="10" />
-                <circle cx="12" cy="12" r="4" />
-                <line x1="21.17" y1="8" x2="12" y2="8" />
-              </svg>
-            </div>
-            <div class="tool-copy">
-              <span class="tool-title">Chrome Extension Live Sync</span>
-              <span class="tool-sub"
-                >ดักจับ XHR / Fetch จริงจากเบราว์เซอร์แล้วรวบเป็น 1 Collection
-                ทันที</span
-              >
-            </div>
-          </button>
-        </div>
-      </div>
-    </aside>
-
-    <!-- Right Column: Repository & Endpoint Explorer -->
-    <section class="repository-panel">
-      <div class="panel-card full-height">
-        <div class="repo-header">
-          <div class="repo-title-group">
-            <h3>คลัง API Collections ของโครงการ</h3>
-            <span class="project-tag"
-              >{selectedProjectLabel || "ยังไม่ได้เลือกโครงการ"}</span
-            >
-          </div>
-
-          <div class="repo-top-actions">
-            {#if selectedCollectionIds.size > 0}
-              <button
-                type="button"
-                class="btn-bulk-danger"
-                on:click={handleBulkDeleteCollections}
-              >
-                ลบที่เลือก ({selectedCollectionIds.size})
-              </button>
-            {/if}
             <button
               type="button"
-              class="btn-studio-quick"
-              on:click={() => openStudioForNew("")}
+              class="pm-new-col-btn"
+              disabled={!selectedProject}
+              title="สร้าง Collection ใหม่"
+              aria-label="สร้าง Collection ใหม่"
+              on:click={openCreateCollectionModal}
             >
-              + สร้าง API / วาง cURL
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
             </button>
           </div>
+
+          <CustomSelect
+            ariaLabel="กรองตาม HTTP Method"
+            variant="compact"
+            size="sm"
+            options={SIDEBAR_METHOD_OPTIONS}
+            bind:value={sidebarMethodFilter}
+            minWidth="100%"
+            dropdownMinWidth="220px"
+          />
         </div>
 
-        <!-- Search & Filter Toolbar -->
-        <div class="repo-toolbar">
-          <div class="search-box">
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-            >
-              <circle cx="11" cy="11" r="8" />
-              <line x1="21" y1="21" x2="16.65" y2="16.65" />
-            </svg>
-            <input
-              type="text"
-              placeholder="ค้นหาชื่อ Collection, Base URL หรือ Endpoint Path (/api/...)..."
-              bind:value={repoSearchQuery}
-            />
-            {#if repoSearchQuery}
-              <button
-                type="button"
-                class="clear-search"
-                on:click={() => (repoSearchQuery = "")}>ล้าง</button
-              >
-            {/if}
-          </div>
-
-          <div class="filter-group">
-            <select
-              class="filter-select"
-              bind:value={repoMethodFilter}
-              aria-label="กรองตาม HTTP Method"
-            >
-              <option value="ALL">ทุก Method</option>
-              <option value="GET">GET</option>
-              <option value="POST">POST</option>
-              <option value="PUT">PUT</option>
-              <option value="PATCH">PATCH</option>
-              <option value="DELETE">DELETE</option>
-            </select>
-
-            <select
-              class="filter-select"
-              bind:value={repoFormatFilter}
-              aria-label="กรองตามประเภทแหล่งที่มา"
-            >
-              <option value="ALL">ทุกประเภทแหล่งที่มา</option>
-              <option value="OpenAPI">OpenAPI / Swagger</option>
-              <option value="Postman">Postman</option>
-              <option value="Manual">Manual / cURL</option>
-              <option value="Chrome">Chrome Live Sync</option>
-              <option value="Discovery">Web Discovery</option>
-            </select>
-          </div>
-        </div>
-
-        {#if collections.length > 0}
-          <div class="bulk-bar">
-            <label class="bulk-check-label">
-              <input
-                type="checkbox"
-                checked={filteredCollections.length > 0 &&
-                  selectedCollectionIds.size === filteredCollections.length}
-                on:change={toggleSelectAllCollections}
-              />
-              <span
-                >เลือกทั้งหมด ({filteredCollections.length} Collections)</span
-              >
-            </label>
-            <span class="bulk-hint"
-              >คลิกที่ปุ่ม "เปิดจัดการ & ทดสอบ Endpoints" เพื่อดูรายละเอียด
-              แก้ไข หรือยิงทดสอบรายตัว</span
-            >
-          </div>
-        {/if}
-
-        {#if isLoading}
-          <div class="state-box">
-            <span class="spinner large"></span>
-            <p>กำลังโหลดคลัง API Collection...</p>
-          </div>
-        {:else if filteredCollections.length === 0}
-          <div class="state-box empty">
-            <div class="empty-orb" aria-hidden="true">
-              <svg
-                width="32"
-                height="32"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.8"
-              >
-                <polyline points="16 18 22 12 16 6" />
-                <polyline points="8 6 2 12 8 18" />
-              </svg>
+        <div class="pm-tree-scroll" role="tree" aria-label="รายการ API Collections">
+          {#if isLoadingCollections}
+            <div class="pm-skeleton-list" aria-busy="true">
+              <div class="pm-skel-row"></div>
+              <div class="pm-skel-row short"></div>
+              <div class="pm-skel-row"></div>
+              <div class="pm-skel-row short"></div>
             </div>
-            {#if collections.length === 0}
-              <h4>ยังไม่มี API Collection ในโครงการ {selectedProject}</h4>
-              <p>
-                อัปโหลดไฟล์ OpenAPI/Postman ทางซ้าย หรือเปิด API Studio
-                เพื่อสร้าง Endpoint ตัวแรกของโครงการ
-              </p>
-              <button
-                type="button"
-                class="btn-primary-inline"
-                on:click={() => openStudioForNew("")}
-              >
-                + เปิด API Studio สร้าง Endpoint แรก
-              </button>
-            {:else}
-              <h4>ไม่พบ API Collection ที่ตรงกับคำค้นหา</h4>
-              <p>ลองเปลี่ยนคำค้นหาหรือรีเซ็ตตัวกรอง Method / แหล่งที่มา</p>
-            {/if}
-          </div>
-        {:else}
-          <div class="collections-list">
-            {#each filteredCollections as col (col.id)}
-              {@const eps = Array.isArray(col.endpoints) ? col.endpoints : []}
-              <article
-                class="collection-card"
-                class:checked={selectedCollectionIds.has(col.id)}
-              >
-                <div class="col-card-top">
-                  <div class="col-title-area">
-                    <input
-                      type="checkbox"
-                      checked={selectedCollectionIds.has(col.id)}
-                      on:change={() => toggleCollectionCheck(col.id)}
-                      aria-label={`เลือกชุด API ${col.name}`}
-                    />
-                    <div>
-                      <div class="col-name-row">
-                        <h4>{col.name}</h4>
-                        <span class="format-badge">{col.format_type}</span>
-                        {#if col.version}
-                          <span class="version-chip">v{col.version}</span>
-                        {/if}
-                      </div>
-                      <div class="col-sub-meta">
-                        <span class="ep-count-pill">{eps.length} Endpoints</span
-                        >
-                        {#if col.base_url}
-                          <span
-                            class="base-url-chip"
-                            title="Base URL ของ Collection">{col.base_url}</span
-                          >
-                        {/if}
-                        <span class="date-label">
-                          อัปเดต {new Date(col.created_at).toLocaleDateString(
-                            "th-TH",
-                            {
-                              day: "2-digit",
-                              month: "short",
-                              year: "numeric",
-                            },
-                          )}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
+          {:else if !selectedProject}
+            <div class="pm-side-empty">
+              <p>เลือกโครงการด้านบนเพื่อเปิดคลัง API Collection</p>
+            </div>
+          {:else if filteredSidebarCollections.length === 0}
+            <div class="pm-side-empty">
+              {#if collections.length === 0}
+                <p>ยังไม่มี Collection ในโครงการนี้</p>
+                <div class="pm-empty-actions">
+                  <button type="button" class="pm-btn-ghost-sm" on:click={openCreateCollectionModal}>
+                    + สร้าง Collection
+                  </button>
+                  <button type="button" class="pm-btn-ghost-sm" on:click={() => openImportModal("file", "new")}>
+                    Import Spec
+                  </button>
+                </div>
+              {:else}
+                <p>ไม่พบ Endpoint ที่ตรงกับตัวกรอง</p>
+              {/if}
+            </div>
+          {:else}
+            {#each filteredSidebarCollections as col (col.id)}
+              {@const isExpanded = expandedCollectionIds.has(col.id) || Boolean(sidebarSearch.trim())}
+              <div class="pm-col-node" role="treeitem" aria-expanded={isExpanded} aria-selected="false">
+                <div class="pm-tree-item-wrap pm-col-wrap" class:expanded={isExpanded}>
+                  <button
+                    type="button"
+                    class="pm-col-trigger"
+                    aria-expanded={isExpanded}
+                    on:click={() => toggleCollectionExpand(col.id)}
+                  >
+                    <span class="pm-chevron" class:open={isExpanded} aria-hidden="true">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4">
+                        <polyline points="9 18 15 12 9 6" />
+                      </svg>
+                    </span>
+                    <svg class="pm-folder-ico" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                    </svg>
+                    <span class="pm-col-title" title={col.name}>{col.name}</span>
+                    <span class="pm-col-count">{col._totalEndpoints}</span>
+                  </button>
 
-                  <div class="col-actions">
+                  <div class="pm-row-actions">
                     <button
                       type="button"
-                      class="btn-workspace"
-                      on:click={() => openWorkspace(col)}
+                      class="pm-mini-ico"
+                      title="เพิ่ม Request ใหม่ใน Collection นี้"
+                      aria-label={`เพิ่ม Request ใหม่ใน ${col.name}`}
+                      on:click={() => openNewRequestTab(col)}
                     >
-                      เปิดจัดการ & ทดสอบ ({eps.length})
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4">
+                        <line x1="12" y1="5" x2="12" y2="19" />
+                        <line x1="5" y1="12" x2="19" y2="12" />
+                      </svg>
                     </button>
                     <button
                       type="button"
-                      class="btn-icon-action"
-                      title="เพิ่ม Endpoint เข้าชุดนี้"
-                      on:click={() => openStudioForNew(col.id)}
+                      class="pm-mini-ico"
+                      title="ตั้งค่า Collection (ชื่อ / Base URL)"
+                      aria-label={`ตั้งค่า ${col.name}`}
+                      on:click={(e) => openEditCollectionModal(col, e)}
                     >
-                      + เพิ่ม API
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                      </svg>
                     </button>
                     <button
                       type="button"
-                      class="btn-icon-action"
-                      title="ส่งออกเป็นไฟล์ JSON"
-                      on:click={() => exportCollectionJson(col)}
+                      class="pm-mini-ico"
+                      title="ส่งออก JSON"
+                      aria-label={`ส่งออก JSON ของ ${col.name}`}
+                      on:click={(e) => exportCollectionJson(col, e)}
                     >
-                      Export
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                        <polyline points="7 10 12 15 17 10" />
+                        <line x1="12" y1="15" x2="12" y2="3" />
+                      </svg>
                     </button>
                     <button
                       type="button"
-                      class="btn-icon-action danger"
-                      title="ลบชุด API Collection นี้"
-                      on:click={() => handleDeleteCollection(col.id, col.name)}
+                      class="pm-mini-ico danger"
+                      title="ลบ Collection"
+                      aria-label={`ลบ ${col.name}`}
+                      on:click={(e) => deleteCollection(col, e)}
                     >
-                      ลบ
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="3 6 5 6 21 6" />
+                        <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                      </svg>
                     </button>
                   </div>
                 </div>
 
-                <!-- Preview up to 4 endpoints -->
-                {#if eps.length > 0}
-                  <div class="endpoints-preview-bar">
-                    {#each eps.slice(0, 4) as ep, idx}
+                {#if isExpanded}
+                  <div class="pm-ep-children" role="group">
+                    {#if col._folders.length === 0}
                       <button
                         type="button"
-                        class="ep-preview-pill"
-                        on:click={() => openWorkspace(col)}
-                        title={`คลิกเพื่อเปิดจัดการและยิงทดสอบ ${ep.method} ${ep.path}`}
+                        class="pm-ep-add-inline"
+                        on:click={() => openNewRequestTab(col)}
                       >
-                        <span class="m-tag {(ep.method || 'GET').toLowerCase()}"
-                          >{ep.method || "GET"}</span
-                        >
-                        <span class="p-text">{ep.path || ep.url}</span>
+                        + เพิ่ม Request แรกในชุดนี้
                       </button>
-                    {/each}
-                    {#if eps.length > 4}
-                      <button
-                        type="button"
-                        class="ep-more-pill"
-                        on:click={() => openWorkspace(col)}
-                      >
-                        ดูทั้งหมด +{eps.length - 4} รายการ
-                      </button>
+                    {:else}
+                      {#each col._folders as folder (folder.key)}
+                        {@const folderOpen = !collapsedFolderKeys.has(folder.key) || Boolean(sidebarSearch.trim())}
+                        <div class="pm-cat-node">
+                          <div class="pm-tree-item-wrap pm-cat-wrap">
+                            <button
+                              type="button"
+                              class="pm-cat-trigger"
+                              aria-expanded={folderOpen}
+                              on:click={() => toggleFolderExpand(folder.key)}
+                            >
+                              <span class="pm-chevron sm" class:open={folderOpen} aria-hidden="true">
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4">
+                                  <polyline points="9 18 15 12 9 6" />
+                                </svg>
+                              </span>
+                              <svg class="pm-sub-folder-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                              </svg>
+                              <span class="pm-cat-name" title={folder.category}>{folder.category}</span>
+                              <span class="pm-col-count">{folder.items.length}</span>
+                            </button>
+                            <div class="pm-row-actions">
+                              <button
+                                type="button"
+                                class="pm-mini-ico"
+                                title={`เพิ่ม Request ในหมวดหมู่ ${folder.category}`}
+                                aria-label={`เพิ่ม Request ในหมวดหมู่ ${folder.category}`}
+                                on:click={() => openNewRequestTab(col, folder.category)}
+                              >
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4">
+                                  <line x1="12" y1="5" x2="12" y2="19" />
+                                  <line x1="5" y1="12" x2="19" y2="12" />
+                                </svg>
+                              </button>
+                            </div>
+                          </div>
+
+                          {#if folderOpen}
+                            <div class="pm-cat-items">
+                              {#each folder.items as ep (ep._idx)}
+                                {@const isActive =
+                                  activeTab &&
+                                  activeTab.collectionId === col.id &&
+                                  activeTab.endpointIndex === ep._idx}
+                                <div class="pm-tree-item-wrap pm-ep-wrap" class:active={isActive}>
+                                  <button
+                                    type="button"
+                                    class="pm-ep-trigger"
+                                    aria-current={isActive ? "page" : undefined}
+                                    on:click={() => openEndpointInTab(col, ep, ep._idx)}
+                                    title={`${ep.method} ${ep.url || ep.path}`}
+                                  >
+                                    <span class="pm-verb" style="color: {verbColor(ep.method)};">
+                                      {formatVerb(ep.method)}
+                                    </span>
+                                    <span class="pm-ep-label">
+                                      {ep.name || ep.summary || ep.path || ep.url}
+                                    </span>
+                                  </button>
+                                  <div class="pm-row-actions">
+                                    <button
+                                      type="button"
+                                      class="pm-mini-ico"
+                                      title="ทำสำเนา Request"
+                                      aria-label={`ทำสำเนา ${ep.name || ep.path}`}
+                                      on:click={(e) => duplicateEndpoint(col, ep, e)}
+                                    >
+                                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                                      </svg>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      class="pm-mini-ico danger"
+                                      title="ลบ Request"
+                                      aria-label={`ลบ ${ep.name || ep.path}`}
+                                      on:click={(e) => deleteEndpoint(col, ep, ep._idx, e)}
+                                    >
+                                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <polyline points="3 6 5 6 21 6" />
+                                        <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                                      </svg>
+                                    </button>
+                                  </div>
+                                </div>
+                              {/each}
+                            </div>
+                          {/if}
+                        </div>
+                      {/each}
                     {/if}
                   </div>
                 {/if}
-              </article>
+              </div>
             {/each}
-          </div>
-        {/if}
+          {/if}
+        </div>
+      {:else}
+        <!-- History Sidebar -->
+        <div class="pm-history-head">
+          <span>ประวัติการยิงทดสอบล่าสุด</span>
+          {#if requestHistory.length > 0}
+            <button type="button" class="pm-link-btn" on:click={clearHistory}>
+              ล้างทั้งหมด
+            </button>
+          {/if}
+        </div>
+        <div class="pm-tree-scroll">
+          {#if requestHistory.length === 0}
+            <div class="pm-side-empty">
+              <p>ยังไม่มีประวัติการทดสอบ กด <strong>Send</strong> ที่ Request ใดก็ได้เพื่อบันทึกประวัติ</p>
+            </div>
+          {:else}
+            {#each requestHistory as item (item.id)}
+              <button
+                type="button"
+                class="pm-hist-row"
+                on:click={() => reopenFromHistory(item)}
+              >
+                <div class="pm-hist-top">
+                  <span class="pm-verb" style="color: {verbColor(item.method)};">
+                    {formatVerb(item.method)}
+                  </span>
+                  <span class="pm-hist-url">{item.url}</span>
+                </div>
+                <div class="pm-hist-meta">
+                  <span
+                    class="pm-hist-status"
+                    class:ok={typeof item.status === "number" && item.status < 400}
+                    class:err={typeof item.status !== "number" || item.status >= 400}
+                  >
+                    {item.status}
+                  </span>
+                  {#if item.latency !== null}
+                    <span>{item.latency} ms</span>
+                  {/if}
+                  <span>{item.time}</span>
+                </div>
+              </button>
+            {/each}
+          {/if}
+        </div>
+      {/if}
+    </aside>
+
+    <!-- RIGHT WORKBENCH: Tabs + Request Builder + Resizable Response Viewer -->
+    <main class="pm-workbench" bind:this={workbenchRightEl}>
+      <!-- Multi-Tab Strip (Full Keyboard Support) -->
+      <div class="pm-tabbar" role="tablist" aria-label="แท็บ Request ที่เปิดอยู่">
+        <div class="pm-tabs-scroll">
+          {#each tabs as tab, idx (tab.id)}
+            {@const isTabActive = activeTab && tab.id === activeTab.id}
+            <div class="pm-tab-wrap" class:active={isTabActive}>
+              <button
+                type="button"
+                class="pm-tab-trigger"
+                role="tab"
+                aria-selected={isTabActive}
+                tabindex={isTabActive ? 0 : -1}
+                on:click={() => (activeTabId = tab.id)}
+                on:keydown={(e) => handleTabKeydown(e, idx)}
+              >
+                <span class="pm-verb" style="color: {verbColor(tab.method)};">
+                  {formatVerb(tab.method)}
+                </span>
+                <span class="pm-tab-name" title={tab.name}>{tab.name || "Untitled Request"}</span>
+                {#if tab.isDirty}
+                  <span class="pm-dirty-dot" title="มีการเปลี่ยนแปลงที่ยังไม่บันทึก" aria-label="ยังไม่บันทึก"></span>
+                {/if}
+              </button>
+              <button
+                type="button"
+                class="pm-tab-close"
+                aria-label={`ปิดแท็บ ${tab.name || "Untitled Request"}`}
+                on:click={(e) => closeTab(tab.id, e)}
+              >
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+          {/each}
+          <button
+            type="button"
+            class="pm-tab-add"
+            title="เปิดแท็บ Request ใหม่"
+            aria-label="เปิดแท็บ Request ใหม่"
+            on:click={() => openNewRequestTab(null)}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+          </button>
+        </div>
       </div>
-    </section>
+
+      {#if activeTab}
+        <!-- Request Identity Row -->
+        <div class="pm-req-header">
+          <div class="pm-req-identity">
+            {#if activeTabCollection}
+              <span class="pm-crumb">{activeTabCollection.name}</span>
+              <span class="pm-crumb-sep" aria-hidden="true">/</span>
+              <span class="pm-crumb cat">{activeTab.category || "General"}</span>
+              <span class="pm-crumb-sep" aria-hidden="true">/</span>
+            {:else}
+              <span class="pm-crumb draft">Draft</span>
+              <span class="pm-crumb-sep" aria-hidden="true">/</span>
+            {/if}
+            <input
+              type="text"
+              class="pm-req-name-input"
+              aria-label="ชื่อ Request"
+              value={activeTab.name}
+              placeholder="ตั้งชื่อ Request (เช่น Get Users List)"
+              on:input={(e) => patchActiveTab({ name: e.currentTarget.value, isDirty: true })}
+            />
+          </div>
+
+          <div class="pm-req-actions">
+            <button
+              type="button"
+              class="pm-subtle-btn"
+              title="วางคำสั่ง cURL ลงในแท็บนี้"
+              on:click={() => openImportModal("curl", "active")}
+            >
+              วาง cURL
+            </button>
+            <button
+              type="button"
+              class="pm-save-btn"
+              disabled={activeTab.isSaving || !selectedProject}
+              on:click={() => handleSaveActiveTab(false)}
+              title="บันทึก Request (Ctrl+S)"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+                <polyline points="17 21 17 13 7 13 7 21" />
+                <polyline points="7 3 7 8 15 8" />
+              </svg>
+              <span>{activeTab.isSaving ? "กำลังบันทึก..." : "บันทึก"}</span>
+            </button>
+            {#if activeTab.collectionId}
+              <button
+                type="button"
+                class="pm-subtle-btn"
+                title="บันทึกสำเนาลง Collection อื่น"
+                on:click={() => handleSaveActiveTab(true)}
+              >
+                บันทึกเป็น...
+              </button>
+            {/if}
+          </div>
+        </div>
+
+        <!-- Postman URL Bar: CustomSelect Method Picker + URL Input + Primary Send/Cancel Button -->
+        <div class="pm-url-bar-row">
+          <div class="pm-url-bar">
+            <div class="pm-method-wrap">
+              <CustomSelect
+                ariaLabel="HTTP Method"
+                variant="inline-method"
+                options={METHOD_SELECT_OPTIONS}
+                value={activeTab.method}
+                minWidth="104px"
+                dropdownMinWidth="136px"
+                on:change={(e) => patchActiveTab({ method: e.detail, isDirty: true })}
+              />
+            </div>
+            <div class="pm-url-sep" aria-hidden="true"></div>
+            <input
+              type="text"
+              class="pm-url-input"
+              aria-label="Endpoint URL"
+              value={activeTab.url}
+              placeholder="กรอก URL (เช่น https://api.example.com/v1/users หรือวางคำสั่ง curl ได้เลย)"
+              on:input={(e) => handleUrlInput(e.currentTarget.value)}
+              on:paste={handleUrlPaste}
+              on:keydown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  sendActiveRequest();
+                }
+              }}
+            />
+            {#if activeTab.url.startsWith("/") && resolveEffectiveBaseUrl(activeTab)}
+              <span class="pm-base-pill" title={`จะต่อท้าย ${resolveEffectiveBaseUrl(activeTab)}`}>
+                {resolveEffectiveBaseUrl(activeTab).replace(/^https?:\/\//i, "")}
+              </span>
+            {/if}
+          </div>
+
+          <button
+            type="button"
+            class="pm-send-btn"
+            class:canceling={activeTab.isSending}
+            disabled={!activeTab.isSending && !activeTab.url.trim()}
+            on:click={sendActiveRequest}
+            title={activeTab.isSending ? "คลิกเพื่อยกเลิกคำขอ" : "ส่งคำขอ API (Ctrl+Enter)"}
+          >
+            {#if activeTab.isSending}
+              <span class="pm-spinner"></span>
+              <span>Cancel</span>
+            {:else}
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                <line x1="22" y1="2" x2="11" y2="13" />
+                <polygon points="22 2 15 22 11 13 2 9 22 2" />
+              </svg>
+              <span>Send</span>
+            {/if}
+          </button>
+        </div>
+
+        <!-- REQUEST CONFIG PANE -->
+        <section class="pm-request-pane">
+          <div class="pm-subtabs" role="tablist" aria-label="การตั้งค่าคำขอ">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab.activeReqTab === "params"}
+              class="pm-subtab"
+              class:active={activeTab.activeReqTab === "params"}
+              on:click={() => patchActiveTab({ activeReqTab: "params" })}
+            >
+              Params
+              {#if activeParamsCount > 0}
+                <span class="pm-badge-count">{activeParamsCount}</span>
+              {/if}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab.activeReqTab === "auth"}
+              class="pm-subtab"
+              class:active={activeTab.activeReqTab === "auth"}
+              on:click={() => patchActiveTab({ activeReqTab: "auth" })}
+            >
+              Authorization
+              {#if activeTab.auth.type !== "none"}
+                <span class="pm-active-dot" aria-label="เปิดใช้งาน"></span>
+              {/if}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab.activeReqTab === "headers"}
+              class="pm-subtab"
+              class:active={activeTab.activeReqTab === "headers"}
+              on:click={() => patchActiveTab({ activeReqTab: "headers" })}
+            >
+              Headers
+              {#if activeHeadersCount > 0}
+                <span class="pm-badge-count">{activeHeadersCount}</span>
+              {/if}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab.activeReqTab === "body"}
+              class="pm-subtab"
+              class:active={activeTab.activeReqTab === "body"}
+              on:click={() => patchActiveTab({ activeReqTab: "body" })}
+            >
+              Body
+              {#if activeTab.bodyMode !== "none" && (activeTab.bodyText.trim() || activeTab.formRows.some((r) => r.key.trim()))}
+                <span class="pm-active-dot" aria-label="มีเนื้อหา"></span>
+              {/if}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab.activeReqTab === "info"}
+              class="pm-subtab"
+              class:active={activeTab.activeReqTab === "info"}
+              on:click={() => patchActiveTab({ activeReqTab: "info" })}
+            >
+              Settings
+            </button>
+          </div>
+
+          <div class="pm-req-content">
+            {#if activeTab.activeReqTab === "params"}
+              <div class="pm-kv-table">
+                <div class="pm-kv-head">
+                  <span class="col-chk"></span>
+                  <span>KEY</span>
+                  <span>VALUE</span>
+                  <span class="col-act"></span>
+                </div>
+                {#each activeTab.queryParams as row, idx}
+                  <div class="pm-kv-row" class:disabled={row.enabled === false}>
+                    <div class="col-chk">
+                      <input
+                        type="checkbox"
+                        checked={row.enabled !== false}
+                        aria-label="เปิดใช้งานพารามิเตอร์"
+                        on:change={(e) => updateQueryParam(idx, "enabled", e.currentTarget.checked)}
+                      />
+                    </div>
+                    <input
+                      type="text"
+                      class="pm-cell-input mono"
+                      aria-label="Query Parameter Key"
+                      placeholder="Key (เช่น page)"
+                      value={row.key}
+                      on:input={(e) => updateQueryParam(idx, "key", e.currentTarget.value)}
+                    />
+                    <input
+                      type="text"
+                      class="pm-cell-input mono"
+                      aria-label="Query Parameter Value"
+                      placeholder="Value (เช่น 1)"
+                      value={row.value}
+                      on:input={(e) => updateQueryParam(idx, "value", e.currentTarget.value)}
+                    />
+                    <div class="col-act">
+                      {#if row.key || row.value || activeTab.queryParams.length > 1}
+                        <button
+                          type="button"
+                          class="pm-row-del"
+                          aria-label="ลบแถวพารามิเตอร์"
+                          on:click={() => removeQueryParam(idx)}
+                        >
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="18" y1="6" x2="6" y2="18" />
+                            <line x1="6" y1="6" x2="18" y2="18" />
+                          </svg>
+                        </button>
+                      {/if}
+                    </div>
+                  </div>
+                {/each}
+              </div>
+            {:else if activeTab.activeReqTab === "auth"}
+              <div class="pm-auth-split">
+                <div class="pm-auth-left">
+                  <label for="pm-auth-type">รูปแบบการยืนยันตัวตน (Auth Type)</label>
+                  <CustomSelect
+                    id="pm-auth-type"
+                    ariaLabel="เลือกรูปแบบ Authorization"
+                    variant="compact"
+                    size="md"
+                    options={AUTH_TYPE_OPTIONS}
+                    value={activeTab.auth.type}
+                    minWidth="100%"
+                    dropdownMinWidth="280px"
+                    on:change={(e) =>
+                      patchActiveTab((t) => ({
+                        ...t,
+                        auth: { ...t.auth, type: e.detail },
+                        isDirty: true,
+                      }))}
+                  />
+                  <p class="pm-auth-hint">
+                    ระบบจะแนบ Header หรือ Query Auth ให้อัตโนมัติเมื่อกด Send และบันทึกไว้กับ Endpoint
+                  </p>
+                </div>
+
+                <div class="pm-auth-right">
+                  {#if activeTab.auth.type === "none"}
+                    <div class="pm-auth-empty">
+                      Request นี้ไม่ได้ตั้งค่า Authorization — เลือกรูปแบบทางซ้ายหาก API ต้องการ Token หรือ Key
+                    </div>
+                  {:else if activeTab.auth.type === "bearer"}
+                    <div class="pm-field">
+                      <label for="pm-bearer-token">Bearer Token</label>
+                      <div class="pm-secret-wrap">
+                        <input
+                          id="pm-bearer-token"
+                          type={showBearerSecret ? "text" : "password"}
+                          class="pm-input mono"
+                          placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                          value={activeTab.auth.token}
+                          on:input={(e) =>
+                            patchActiveTab((t) => ({
+                              ...t,
+                              auth: { ...t.auth, token: e.currentTarget.value },
+                              isDirty: true,
+                            }))}
+                        />
+                        <button
+                          type="button"
+                          class="pm-eye-btn"
+                          aria-label={showBearerSecret ? "ซ่อน Token" : "แสดง Token"}
+                          on:click={() => (showBearerSecret = !showBearerSecret)}
+                        >
+                          {#if showBearerSecret}
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                              <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+                              <line x1="1" y1="1" x2="23" y2="23" />
+                            </svg>
+                          {:else}
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                              <circle cx="12" cy="12" r="3" />
+                            </svg>
+                          {/if}
+                        </button>
+                      </div>
+                    </div>
+                  {:else if activeTab.auth.type === "apikey"}
+                    <div class="pm-form-grid-3">
+                      <div class="pm-field">
+                        <label for="pm-apikey-key">Key</label>
+                        <input
+                          id="pm-apikey-key"
+                          type="text"
+                          class="pm-input mono"
+                          value={activeTab.auth.key}
+                          on:input={(e) =>
+                            patchActiveTab((t) => ({
+                              ...t,
+                              auth: { ...t.auth, key: e.currentTarget.value },
+                              isDirty: true,
+                            }))}
+                        />
+                      </div>
+                      <div class="pm-field">
+                        <label for="pm-apikey-val">Value</label>
+                        <div class="pm-secret-wrap">
+                          <input
+                            id="pm-apikey-val"
+                            type={showApiKeySecret ? "text" : "password"}
+                            class="pm-input mono"
+                            value={activeTab.auth.value}
+                            on:input={(e) =>
+                              patchActiveTab((t) => ({
+                                ...t,
+                                auth: { ...t.auth, value: e.currentTarget.value },
+                                isDirty: true,
+                              }))}
+                          />
+                          <button
+                            type="button"
+                            class="pm-eye-btn"
+                            aria-label={showApiKeySecret ? "ซ่อน API Key" : "แสดง API Key"}
+                            on:click={() => (showApiKeySecret = !showApiKeySecret)}
+                          >
+                            {#if showApiKeySecret}
+                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+                                <line x1="1" y1="1" x2="23" y2="23" />
+                              </svg>
+                            {:else}
+                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                                <circle cx="12" cy="12" r="3" />
+                              </svg>
+                            {/if}
+                          </button>
+                        </div>
+                      </div>
+                      <div class="pm-field">
+                        <label for="pm-apikey-in">ส่งไปที่</label>
+                        <CustomSelect
+                          id="pm-apikey-in"
+                          ariaLabel="ตำแหน่งการส่ง API Key"
+                          variant="compact"
+                          size="md"
+                          options={API_KEY_IN_OPTIONS}
+                          value={activeTab.auth.in}
+                          minWidth="100%"
+                          on:change={(e) =>
+                            patchActiveTab((t) => ({
+                              ...t,
+                              auth: { ...t.auth, in: e.detail },
+                              isDirty: true,
+                            }))}
+                        />
+                      </div>
+                    </div>
+                  {:else if activeTab.auth.type === "basic"}
+                    <div class="pm-form-grid-2">
+                      <div class="pm-field">
+                        <label for="pm-basic-user">Username</label>
+                        <input
+                          id="pm-basic-user"
+                          type="text"
+                          class="pm-input"
+                          value={activeTab.auth.username}
+                          on:input={(e) =>
+                            patchActiveTab((t) => ({
+                              ...t,
+                              auth: { ...t.auth, username: e.currentTarget.value },
+                              isDirty: true,
+                            }))}
+                        />
+                      </div>
+                      <div class="pm-field">
+                        <label for="pm-basic-pass">Password</label>
+                        <div class="pm-secret-wrap">
+                          <input
+                            id="pm-basic-pass"
+                            type={showBasicPass ? "text" : "password"}
+                            class="pm-input"
+                            value={activeTab.auth.password}
+                            on:input={(e) =>
+                              patchActiveTab((t) => ({
+                                ...t,
+                                auth: { ...t.auth, password: e.currentTarget.value },
+                                isDirty: true,
+                              }))}
+                          />
+                          <button
+                            type="button"
+                            class="pm-eye-btn"
+                            aria-label={showBasicPass ? "ซ่อนรหัสผ่าน" : "แสดงรหัสผ่าน"}
+                            on:click={() => (showBasicPass = !showBasicPass)}
+                          >
+                            {#if showBasicPass}
+                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+                                <line x1="1" y1="1" x2="23" y2="23" />
+                              </svg>
+                            {:else}
+                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                                <circle cx="12" cy="12" r="3" />
+                              </svg>
+                            {/if}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  {/if}
+                </div>
+              </div>
+            {:else if activeTab.activeReqTab === "headers"}
+              <div class="pm-inline-toolbar">
+                <div class="pm-segmented">
+                  <button
+                    type="button"
+                    class:active={activeTab.headerMode === "table"}
+                    on:click={() => switchHeaderMode("table")}
+                  >
+                    Key-Value
+                  </button>
+                  <button
+                    type="button"
+                    class:active={activeTab.headerMode === "json"}
+                    on:click={() => switchHeaderMode("json")}
+                  >
+                    Bulk JSON
+                  </button>
+                </div>
+              </div>
+
+              {#if activeTab.headerMode === "table"}
+                <div class="pm-kv-table">
+                  <div class="pm-kv-head">
+                    <span class="col-chk"></span>
+                    <span>HEADER KEY</span>
+                    <span>VALUE</span>
+                    <span class="col-act"></span>
+                  </div>
+                  {#each activeTab.headers as row, idx}
+                    <div class="pm-kv-row" class:disabled={row.enabled === false}>
+                      <div class="col-chk">
+                        <input
+                          type="checkbox"
+                          checked={row.enabled !== false}
+                          aria-label="เปิดใช้งาน Header"
+                          on:change={(e) => updateHeaderRow(idx, "enabled", e.currentTarget.checked)}
+                        />
+                      </div>
+                      <input
+                        type="text"
+                        class="pm-cell-input mono"
+                        aria-label="Header Key"
+                        placeholder="Header (เช่น Content-Type)"
+                        value={row.key}
+                        on:input={(e) => updateHeaderRow(idx, "key", e.currentTarget.value)}
+                      />
+                      <input
+                        type="text"
+                        class="pm-cell-input mono"
+                        aria-label="Header Value"
+                        placeholder="Value (เช่น application/json)"
+                        value={row.value}
+                        on:input={(e) => updateHeaderRow(idx, "value", e.currentTarget.value)}
+                      />
+                      <div class="col-act">
+                        {#if row.key || row.value || activeTab.headers.length > 1}
+                          <button
+                            type="button"
+                            class="pm-row-del"
+                            aria-label="ลบ Header"
+                            on:click={() => removeHeaderRow(idx)}
+                          >
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                              <line x1="18" y1="6" x2="6" y2="18" />
+                              <line x1="6" y1="6" x2="18" y2="18" />
+                            </svg>
+                          </button>
+                        {/if}
+                      </div>
+                    </div>
+                  {/each}
+                </div>
+              {:else}
+                <textarea
+                  class="pm-code-editor"
+                  aria-label="Headers JSON"
+                  spellcheck="false"
+                  value={activeTab.headersJson}
+                  on:input={(e) => patchActiveTab({ headersJson: e.currentTarget.value, isDirty: true })}
+                ></textarea>
+              {/if}
+            {:else if activeTab.activeReqTab === "body"}
+              <div class="pm-inline-toolbar">
+                <div class="pm-radio-group" role="radiogroup" aria-label="รูปแบบ Request Body">
+                  {#each [
+                    { id: "none", label: "none" },
+                    { id: "json", label: "raw (JSON)" },
+                    { id: "urlencoded", label: "x-www-form-urlencoded" },
+                    { id: "raw", label: "raw (Text)" },
+                  ] as opt}
+                    <label class="pm-radio-pill" class:active={activeTab.bodyMode === opt.id}>
+                      <input
+                        type="radio"
+                        name={`body-mode-${activeTab.id}`}
+                        checked={activeTab.bodyMode === opt.id}
+                        on:change={() => patchActiveTab({ bodyMode: opt.id, isDirty: true })}
+                      />
+                      <span>{opt.label}</span>
+                    </label>
+                  {/each}
+                </div>
+
+                {#if activeTab.bodyMode === "json"}
+                  <div class="pm-body-tools">
+                    {#if activeTab.bodyText.trim()}
+                      <span class="pm-json-badge" class:invalid={!activeJsonValidation.valid}>
+                        {activeJsonValidation.valid ? "JSON ถูกต้อง" : "JSON ไม่ถูกต้อง"}
+                      </span>
+                    {/if}
+                    <button type="button" class="pm-link-btn" on:click={beautifyActiveBody}>
+                      จัดรูปแบบ (Beautify)
+                    </button>
+                  </div>
+                {/if}
+              </div>
+
+              {#if activeTab.bodyMode === "json" && activeTab.bodyText.trim() && !activeJsonValidation.valid}
+                <div class="pm-inline-error" role="alert">
+                  ข้อผิดพลาด JSON: {activeJsonValidation.message}
+                </div>
+              {/if}
+
+              {#if activeTab.bodyMode === "none"}
+                <div class="pm-body-empty">Request นี้ไม่มี Body — เลือก <strong>raw (JSON)</strong> เพื่อส่งข้อมูล JSON</div>
+              {:else if activeTab.bodyMode === "urlencoded"}
+                <div class="pm-kv-table">
+                  <div class="pm-kv-head">
+                    <span class="col-chk"></span>
+                    <span>KEY</span>
+                    <span>VALUE</span>
+                    <span class="col-act"></span>
+                  </div>
+                  {#each activeTab.formRows as row, idx}
+                    <div class="pm-kv-row" class:disabled={row.enabled === false}>
+                      <div class="col-chk">
+                        <input
+                          type="checkbox"
+                          checked={row.enabled !== false}
+                          aria-label="เปิดใช้งาน Form field"
+                          on:change={(e) => updateFormRow(idx, "enabled", e.currentTarget.checked)}
+                        />
+                      </div>
+                      <input
+                        type="text"
+                        class="pm-cell-input mono"
+                        aria-label="Form Key"
+                        placeholder="Field key"
+                        value={row.key}
+                        on:input={(e) => updateFormRow(idx, "key", e.currentTarget.value)}
+                      />
+                      <input
+                        type="text"
+                        class="pm-cell-input mono"
+                        aria-label="Form Value"
+                        placeholder="Field value"
+                        value={row.value}
+                        on:input={(e) => updateFormRow(idx, "value", e.currentTarget.value)}
+                      />
+                      <div class="col-act">
+                        {#if row.key || row.value || activeTab.formRows.length > 1}
+                          <button
+                            type="button"
+                            class="pm-row-del"
+                            aria-label="ลบแถว"
+                            on:click={() => removeFormRow(idx)}
+                          >
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                              <line x1="18" y1="6" x2="6" y2="18" />
+                              <line x1="6" y1="6" x2="18" y2="18" />
+                            </svg>
+                          </button>
+                        {/if}
+                      </div>
+                    </div>
+                  {/each}
+                </div>
+              {:else}
+                <textarea
+                  class="pm-code-editor"
+                  aria-label="Request Body"
+                  spellcheck="false"
+                  placeholder={activeTab.bodyMode === "json"
+                    ? '{\n  "username": "qa_tester",\n  "action": "verify"\n}'
+                    : "ระบุข้อความ Raw Body ที่ต้องการส่ง..."}
+                  value={activeTab.bodyText}
+                  on:input={(e) => patchActiveTab({ bodyText: e.currentTarget.value, isDirty: true })}
+                ></textarea>
+              {/if}
+            {:else if activeTab.activeReqTab === "info"}
+              <div class="pm-settings-form">
+                <div class="pm-form-grid-2">
+                  <div class="pm-field">
+                    <label for="pm-info-cat">หมวดหมู่ / โฟลเดอร์ใน Sidebar (Category)</label>
+                    <input
+                      id="pm-info-cat"
+                      type="text"
+                      class="pm-input"
+                      placeholder="เช่น Auth, Orders, Users"
+                      value={activeTab.category}
+                      on:input={(e) => patchActiveTab({ category: e.currentTarget.value, isDirty: true })}
+                    />
+                  </div>
+                  <div class="pm-field">
+                    <label for="pm-info-base">Base URL เฉพาะรายการ (ใช้เติมหน้า Path แบบ <code>/api/...</code>)</label>
+                    <input
+                      id="pm-info-base"
+                      type="text"
+                      class="pm-input mono"
+                      placeholder={selectedEnvUrl || "https://api.example.com"}
+                      value={activeTab.baseUrl}
+                      on:input={(e) => patchActiveTab({ baseUrl: e.currentTarget.value, isDirty: true })}
+                    />
+                  </div>
+                </div>
+                <div class="pm-field">
+                  <label for="pm-info-desc">คำอธิบาย Endpoint (ช่วยให้ AI QA วิเคราะห์ได้แม่นยำขึ้น)</label>
+                  <textarea
+                    id="pm-info-desc"
+                    rows="3"
+                    class="pm-input"
+                    placeholder="อธิบายหน้าที่ เงื่อนไข หรือผลลัพธ์ที่คาดหวังของ API นี้..."
+                    value={activeTab.description}
+                    on:input={(e) => patchActiveTab({ description: e.currentTarget.value, isDirty: true })}
+                  ></textarea>
+                </div>
+              </div>
+            {/if}
+          </div>
+        </section>
+
+        <!-- ACCESSIBLE DRAGGABLE SPLITTER -->
+        <div
+          class="pm-splitter"
+          role="separator"
+          tabindex="0"
+          aria-orientation="horizontal"
+          aria-label="ปรับขนาดพื้นที่ Response (กดลูกศรขึ้น/ลงได้)"
+          aria-valuemin={170}
+          aria-valuemax={540}
+          aria-valuenow={responsePaneHeight}
+          on:mousedown={startSplitResize}
+          on:keydown={handleSplitterKeydown}
+        >
+          <span class="pm-splitter-grip" aria-hidden="true"></span>
+        </div>
+
+        <!-- RESPONSE INSPECTOR PANE -->
+        <section class="pm-response-pane" style={`height: ${responsePaneHeight}px;`}>
+          <div class="pm-res-header">
+            <div class="pm-res-tabs" role="tablist" aria-label="ผลลัพธ์จากเซิร์ฟเวอร์">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeTab.activeResTab === "body"}
+                class="pm-subtab"
+                class:active={activeTab.activeResTab === "body"}
+                on:click={() => patchActiveTab({ activeResTab: "body" })}
+              >
+                Response Body
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeTab.activeResTab === "headers"}
+                class="pm-subtab"
+                class:active={activeTab.activeResTab === "headers"}
+                on:click={() => patchActiveTab({ activeResTab: "headers" })}
+              >
+                Headers
+                {#if activeTab.response?.response_headers}
+                  <span class="pm-badge-count">
+                    {Object.keys(activeTab.response.response_headers).length}
+                  </span>
+                {/if}
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeTab.activeResTab === "curl"}
+                class="pm-subtab"
+                class:active={activeTab.activeResTab === "curl"}
+                on:click={() => patchActiveTab({ activeResTab: "curl" })}
+              >
+                cURL Snippet
+              </button>
+            </div>
+
+            <div class="pm-res-meta">
+              {#if activeTab.response && activeTab.response.status_code}
+                <span
+                  class="pm-status-badge"
+                  class:ok={activeTab.response.status_code >= 200 && activeTab.response.status_code < 300}
+                  class:redir={activeTab.response.status_code >= 300 && activeTab.response.status_code < 400}
+                  class:warn={activeTab.response.status_code >= 400 && activeTab.response.status_code < 500}
+                  class:err={activeTab.response.status_code >= 500}
+                >
+                  {activeTab.response.status_code} {activeTab.response.status_text || ""}
+                </span>
+                <span class="pm-metric">{activeTab.response.latency_ms} ms</span>
+                {#if activeTab.response.response_size_bytes !== undefined}
+                  <span class="pm-metric">
+                    {(activeTab.response.response_size_bytes / 1024).toFixed(2)} KB
+                  </span>
+                {/if}
+                {#if activeTab.activeResTab === "body"}
+                  <div class="pm-segmented compact">
+                    <button
+                      type="button"
+                      class:active={activeTab.responseViewMode === "pretty"}
+                      on:click={() => patchActiveTab({ responseViewMode: "pretty" })}
+                    >
+                      Pretty
+                    </button>
+                    <button
+                      type="button"
+                      class:active={activeTab.responseViewMode === "raw"}
+                      on:click={() => patchActiveTab({ responseViewMode: "raw" })}
+                    >
+                      Raw
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    class="pm-mini-copy"
+                    on:click={() => copyText(formattedResponseBody, "Response Body")}
+                  >
+                    Copy
+                  </button>
+                {/if}
+              {/if}
+            </div>
+          </div>
+
+          <div class="pm-res-content">
+            {#if activeTab.activeResTab === "curl"}
+              <div class="pm-code-wrap">
+                <button
+                  type="button"
+                  class="pm-floating-copy"
+                  on:click={() => copyText(buildCurlFromTab(activeTab), "คำสั่ง cURL")}
+                >
+                  Copy cURL
+                </button>
+                <pre class="pm-response-pre">{buildCurlFromTab(activeTab)}</pre>
+              </div>
+            {:else if activeTab.isSending}
+              <div class="pm-res-state">
+                <span class="pm-spinner lg"></span>
+                <span>กำลังส่งคำขอ {activeTab.method} ไปยังเซิร์ฟเวอร์เป้าหมาย...</span>
+                <button type="button" class="pm-btn-ghost-sm" on:click={cancelActiveRequest}>
+                  ยกเลิกคำขอ
+                </button>
+              </div>
+            {:else if !activeTab.response}
+              <div class="pm-res-state idle">
+                <div class="pm-res-idle-title">กรอก URL แล้วกด Send เพื่อดูผลลัพธ์จริงทันที</div>
+                <div class="pm-shortcuts-row">
+                  <span><kbd>Ctrl</kbd> + <kbd>Enter</kbd> ยิงทดสอบ</span>
+                  <span><kbd>Ctrl</kbd> + <kbd>S</kbd> บันทึกเข้า Collection</span>
+                  <span>วางคำสั่ง <code>curl</code> ลงในช่อง URL ได้ทันที</span>
+                </div>
+              </div>
+            {:else if !activeTab.response.status_code && activeTab.response.error}
+              <div class="pm-res-error" role="alert">
+                <div class="pm-res-error-head">
+                  <strong>ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์เป้าหมายได้</strong>
+                  <button type="button" class="pm-btn-ghost-sm" on:click={sendActiveRequest}>
+                    ลองยิงใหม่ (Retry)
+                  </button>
+                </div>
+                <p>{activeTab.response.error}</p>
+                {#if activeTab.response.url}
+                  <span class="pm-res-url">URL ที่เรียก: {activeTab.response.url}</span>
+                {/if}
+              </div>
+            {:else if activeTab.activeResTab === "headers"}
+              {@const rHeaders = Object.entries(activeTab.response.response_headers || {})}
+              {#if rHeaders.length === 0}
+                <div class="pm-res-state idle">ไม่มี Response Headers</div>
+              {:else}
+                <div class="pm-res-headers-table">
+                  {#each rHeaders as [hk, hv]}
+                    <div class="pm-res-h-row">
+                      <span class="h-key">{hk}</span>
+                      <span class="h-val">{hv}</span>
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+            {:else}
+              <pre class="pm-response-pre">{formattedResponseBody}</pre>
+            {/if}
+          </div>
+        </section>
+      {/if}
+    </main>
   </div>
 </div>
 
 <!-- =========================================================================
-     MODAL 1: INTERACTIVE COLLECTION WORKSPACE & LIVE ENDPOINT TEST RUNNER
+     MODAL: SAVE REQUEST TO COLLECTION
      ========================================================================= -->
-{#if showWorkspaceModal && activeCollection}
-  <!-- svelte-ignore a11y-click-events-have-key-events -->
-  <!-- svelte-ignore a11y-no-static-element-interactions -->
-  <div
-    class="modal-backdrop"
-    on:click|self={() => (showWorkspaceModal = false)}
-  >
-    <div
-      class="modal-window workspace-modal"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="ws-modal-title"
-    >
-      <div class="modal-header">
-        <div class="modal-title-block">
-          <span class="modal-eyebrow"
-            >COLLECTION WORKSPACE & ENDPOINT RUNNER</span
-          >
-          <h3 id="ws-modal-title">{wsName || activeCollection.name}</h3>
-        </div>
-        <div class="modal-header-actions">
-          <button
-            type="button"
-            class="btn-secondary-sm"
-            on:click={() =>
-              exportCollectionJson({
-                ...activeCollection,
-                name: wsName,
-                version: wsVersion,
-                base_url: wsBaseUrl,
-                endpoints: wsEndpoints,
-              })}
-          >
-            Export JSON
-          </button>
-          <button
-            type="button"
-            class="btn-primary-sm"
-            on:click={() => openStudioForNew(activeCollection.id)}
-          >
-            + เพิ่ม Endpoint ในชุดนี้
-          </button>
-          <button
-            type="button"
-            class="modal-close-btn"
-            on:click={() => (showWorkspaceModal = false)}
-            aria-label="ปิดหน้าต่างจัดการ Collection"
-          >
-            ✕
-          </button>
-        </div>
+{#if showSaveModal}
+  <div class="pm-modal-backdrop" role="presentation" on:click|self={() => (showSaveModal = false)}>
+    <div class="pm-modal sm" role="dialog" aria-modal="true" aria-labelledby="save-modal-title">
+      <div class="pm-modal-head">
+        <h3 id="save-modal-title">บันทึก Request เข้า Collection</h3>
+        <button type="button" class="pm-modal-close" on:click={() => (showSaveModal = false)} aria-label="ปิด">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
       </div>
-
-      <div class="modal-body workspace-body">
-        <!-- Collection Settings Bar (Editable Name, Version, Base URL) -->
-        <div class="ws-settings-grid">
-          <div class="ws-field">
-            <label for="ws-col-name">ชื่อชุด API Collection</label>
-            <input
-              id="ws-col-name"
-              type="text"
-              class="spectra-input"
-              bind:value={wsName}
-            />
-          </div>
-          <div class="ws-field">
-            <label for="ws-col-base"
-              >Base URL (ใช้เติมหน้า Path เช่น `/api/v1/...` เวลายิงทดสอบ)</label
-            >
-            <input
-              id="ws-col-base"
-              type="text"
-              class="spectra-input mono"
-              placeholder="https://api.example.com"
-              bind:value={wsBaseUrl}
-            />
-          </div>
-          <div class="ws-field small">
-            <label for="ws-col-ver">Version</label>
-            <input
-              id="ws-col-ver"
-              type="text"
-              class="spectra-input"
-              bind:value={wsVersion}
-            />
-          </div>
-          <div class="ws-field action">
-            <button
-              type="button"
-              class="btn-save-meta"
-              disabled={isSavingWorkspace}
-              on:click={saveWorkspaceMetadata}
-            >
-              {isSavingWorkspace ? "กำลังบันทึก..." : "บันทึกการตั้งค่าชุดนี้"}
-            </button>
-          </div>
+      <div class="pm-modal-body">
+        <div class="pm-field">
+          <label for="save-req-name">ชื่อ Request</label>
+          <input id="save-req-name" type="text" class="pm-input" bind:value={saveModalRequestName} />
+        </div>
+        <div class="pm-field">
+          <label for="save-req-cat">หมวดหมู่ / โฟลเดอร์ใน Sidebar (Category)</label>
+          <input id="save-req-cat" type="text" class="pm-input" bind:value={saveModalCategory} placeholder="General" />
         </div>
 
-        <!-- Endpoint Filter Bar -->
-        <div class="ws-filter-bar">
-          <div class="ws-search">
-            <input
-              type="text"
-              class="spectra-input"
-              placeholder="ค้นหา Endpoint จาก Path, ชื่อ หรือหมวดหมู่..."
-              bind:value={wsSearch}
-            />
-          </div>
-          <div
-            class="method-pills"
-            role="group"
-            aria-label="กรองตาม HTTP Method"
+        <div class="pm-segmented full">
+          <button
+            type="button"
+            class:active={saveModalMode === "existing"}
+            disabled={collections.length === 0}
+            on:click={() => (saveModalMode = "existing")}
           >
-            {#each ["ALL", "GET", "POST", "PUT", "PATCH", "DELETE"] as m}
-              <button
-                type="button"
-                class="m-filter-pill"
-                class:active={wsMethodFilter === m}
-                on:click={() => (wsMethodFilter = m)}
-              >
-                {m}
-              </button>
-            {/each}
-          </div>
+            บันทึกเข้า Collection เดิม ({collections.length})
+          </button>
+          <button
+            type="button"
+            class:active={saveModalMode === "new"}
+            on:click={() => (saveModalMode = "new")}
+          >
+            สร้าง Collection ใหม่
+          </button>
         </div>
 
-        <div class="ws-split-layout">
-          <!-- Left: Endpoint List -->
-          <div class="ws-endpoints-list">
-            {#if filteredWorkspaceEndpoints.length === 0}
-              <div class="ws-empty">
-                <p>ไม่พบ Endpoint ตามเงื่อนไขที่ค้นหา</p>
-              </div>
-            {:else}
-              {#each filteredWorkspaceEndpoints as ep (ep._idx)}
-                <div
-                  class="ws-ep-card"
-                  class:active-test={wsActiveTestEndpoint === ep}
-                >
-                  <div class="ws-ep-main">
-                    <span
-                      class="method-badge {(ep.method || 'GET').toLowerCase()}"
-                    >
-                      {(ep.method || "GET").toUpperCase()}
-                    </span>
-                    <div class="ws-ep-info">
-                      <div class="ws-ep-path">{ep.path || ep.url}</div>
-                      <div class="ws-ep-summary">
-                        <span>{ep.name || ep.summary || "ไม่มีคำอธิบาย"}</span>
-                        {#if ep.category}
-                          <span class="cat-chip">{ep.category}</span>
-                        {/if}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div class="ws-ep-actions">
-                    <button
-                      type="button"
-                      class="btn-ep-test"
-                      disabled={wsTestingIndex === ep._idx}
-                      on:click={() => testEndpointInWorkspace(ep, ep._idx)}
-                    >
-                      {wsTestingIndex === ep._idx ? "กำลังยิง..." : "ยิงทดสอบ"}
-                    </button>
-                    <button
-                      type="button"
-                      class="btn-ep-sub"
-                      on:click={() =>
-                        openStudioForEdit(activeCollection, ep, ep._idx)}
-                    >
-                      แก้ไข
-                    </button>
-                    <button
-                      type="button"
-                      class="btn-ep-sub"
-                      on:click={() => copyEndpointCurl(ep, wsBaseUrl)}
-                    >
-                      cURL
-                    </button>
-                    <button
-                      type="button"
-                      class="btn-ep-sub danger"
-                      on:click={() => deleteEndpointInWorkspace(ep._idx)}
-                    >
-                      ลบ
-                    </button>
-                  </div>
-                </div>
-              {/each}
-            {/if}
+        {#if saveModalMode === "existing"}
+          <div class="pm-field">
+            <label for="save-target-col">เลือก Collection ปลายทาง</label>
+            <CustomSelect
+              id="save-target-col"
+              ariaLabel="เลือก Collection ปลายทาง"
+              variant="compact"
+              size="md"
+              options={collectionSelectOptions}
+              bind:value={saveModalTargetColId}
+              minWidth="100%"
+            />
           </div>
-
-          <!-- Right: Live Test Response Inspector -->
-          <div class="ws-inspector-pane">
-            <div class="inspector-head">
-              <h4>Live Response Inspector</h4>
-              {#if wsTestResult && wsTestResult.status_code}
-                <div class="telemetry-pills">
-                  <span
-                    class="status-pill"
-                    class:ok={wsTestResult.status_code < 400}
-                    class:err={wsTestResult.status_code >= 400}
-                  >
-                    HTTP {wsTestResult.status_code}
-                    {wsTestResult.status_text || ""}
-                  </span>
-                  <span class="metric-pill">{wsTestResult.latency_ms} ms</span>
-                  {#if wsTestResult.response_size_bytes !== undefined}
-                    <span class="metric-pill"
-                      >{(wsTestResult.response_size_bytes / 1024).toFixed(2)} KB</span
-                    >
-                  {/if}
-                </div>
-              {/if}
-            </div>
-
-            {#if wsTestingIndex !== null}
-              <div class="inspector-empty">
-                <span class="spinner"></span>
-                <p>กำลังส่งคำขอไปยัง Endpoint เป้าหมาย...</p>
-              </div>
-            {:else if !wsTestResult}
-              <div class="inspector-empty">
-                <p>
-                  กดปุ่ม <strong>"ยิงทดสอบ"</strong> ที่ Endpoint ด้านซ้าย เพื่อตรวจสอบ
-                  Status Code, Latency และ Response Body จริง
-                </p>
-              </div>
-            {:else if !wsTestResult.success}
-              <div class="inspector-error">
-                <strong>การเชื่อมต่อล้มเหลวหรือต้องการ Base URL</strong>
-                <p>{wsTestResult.error}</p>
-                {#if wsTestResult.tested_url}
-                  <span class="tested-url"
-                    >URL ที่ใช้ทดสอบ: {wsTestResult.tested_url}</span
-                  >
-                {/if}
-              </div>
-            {:else}
-              <div class="inspector-content">
-                <div class="tested-url-bar">
-                  <span
-                    class="m-tag {(wsTestResult.method || 'GET').toLowerCase()}"
-                    >{wsTestResult.method}</span
-                  >
-                  <code>{wsTestResult.tested_url}</code>
-                </div>
-                <div class="code-label">Response Body</div>
-                <pre class="response-pre">{wsTestResult.response_body ||
-                    wsTestResult.preview ||
-                    "(Empty Response Body)"}</pre>
-
-                {#if wsTestResult.response_headers && Object.keys(wsTestResult.response_headers).length > 0}
-                  <div class="code-label">Response Headers</div>
-                  <pre class="response-pre headers">{JSON.stringify(
-                      wsTestResult.response_headers,
-                      null,
-                      2,
-                    )}</pre>
-                {/if}
-              </div>
-            {/if}
+        {:else}
+          <div class="pm-field">
+            <label for="save-new-col">ชื่อ Collection ใหม่</label>
+            <input
+              id="save-new-col"
+              type="text"
+              class="pm-input"
+              placeholder="เช่น Auth Service API"
+              bind:value={saveModalNewColName}
+            />
           </div>
-        </div>
+        {/if}
+      </div>
+      <div class="pm-modal-foot">
+        <button type="button" class="pm-tool-btn" on:click={() => (showSaveModal = false)}>ยกเลิก</button>
+        <button type="button" class="pm-btn-primary-sm" on:click={confirmSaveModal}>บันทึก Request</button>
       </div>
     </div>
   </div>
 {/if}
 
 <!-- =========================================================================
-     MODAL 2: SPECTRA API STUDIO (MANUAL / CURL BUILDER & LIVE TEST SEND)
+     MODAL: CREATE / EDIT COLLECTION SETTINGS
      ========================================================================= -->
-{#if showStudioModal}
-  <!-- svelte-ignore a11y-click-events-have-key-events -->
-  <!-- svelte-ignore a11y-no-static-element-interactions -->
-  <div class="modal-backdrop" on:click|self={() => (showStudioModal = false)}>
-    <div
-      class="modal-window studio-modal"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="studio-modal-title"
-    >
-      <div class="modal-header">
-        <div class="modal-title-block">
-          <span class="modal-eyebrow">SPECTRA API STUDIO</span>
-          <h3 id="studio-modal-title">
-            {studioMode === "edit"
-              ? `แก้ไข Endpoint: ${studioName}`
-              : "สร้างหรือนำเข้า API Endpoint (Manual & cURL)"}
-          </h3>
+{#if showCollectionModal}
+  <div class="pm-modal-backdrop" role="presentation" on:click|self={() => (showCollectionModal = false)}>
+    <div class="pm-modal sm" role="dialog" aria-modal="true" aria-labelledby="col-modal-title">
+      <div class="pm-modal-head">
+        <h3 id="col-modal-title">
+          {collectionModalMode === "create" ? "สร้าง API Collection ใหม่" : "ตั้งค่า API Collection"}
+        </h3>
+        <button type="button" class="pm-modal-close" on:click={() => (showCollectionModal = false)} aria-label="ปิด">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      </div>
+      <div class="pm-modal-body">
+        <div class="pm-field">
+          <label for="col-m-name">ชื่อ Collection</label>
+          <input
+            id="col-m-name"
+            type="text"
+            class="pm-input"
+            placeholder="เช่น Payment API v2"
+            bind:value={colModalName}
+          />
         </div>
-        <div class="modal-header-actions">
-          <button
-            type="button"
-            class="btn-secondary-sm"
-            on:click={() => (showCurlDrawer = !showCurlDrawer)}
-          >
-            {showCurlDrawer
-              ? "ซ่อนช่องวาง cURL"
-              : "วางคำสั่ง cURL (Import cURL)"}
-          </button>
-          <button
-            type="button"
-            class="modal-close-btn"
-            on:click={() => (showStudioModal = false)}
-            aria-label="ปิดหน้าต่าง API Studio"
-          >
-            ✕
-          </button>
+        <div class="pm-field">
+          <label for="col-m-base">Base URL (ทางเลือก)</label>
+          <input
+            id="col-m-base"
+            type="text"
+            class="pm-input mono"
+            placeholder="https://api.example.com"
+            bind:value={colModalBaseUrl}
+          />
+        </div>
+        <div class="pm-field">
+          <label for="col-m-ver">Version</label>
+          <input id="col-m-ver" type="text" class="pm-input" bind:value={colModalVersion} />
         </div>
       </div>
+      <div class="pm-modal-foot">
+        <button type="button" class="pm-tool-btn" on:click={() => (showCollectionModal = false)}>ยกเลิก</button>
+        <button
+          type="button"
+          class="pm-btn-primary-sm"
+          disabled={isSavingCollection}
+          on:click={saveCollectionModal}
+        >
+          {isSavingCollection ? "กำลังบันทึก..." : "บันทึก"}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
 
-      <div class="modal-body studio-body">
-        {#if showCurlDrawer}
-          <div class="curl-drawer">
-            <div class="curl-drawer-head">
-              <strong
-                >นำเข้าจากคำสั่ง cURL (รองรับทั้ง Bash และ Windows
-                PowerShell/CMD)</strong
-              >
-              <span
-                >คัดลอกจาก Chrome DevTools (Copy as cURL) หรือ Postman
-                แล้วกดแปลงข้อมูล</span
-              >
-            </div>
-            <textarea
-              rows="4"
-              class="spectra-textarea mono"
-              placeholder={'curl -X POST "https://api.example.com/v1/login" -H "Content-Type: application/json" -d \'{"username":"admin"}\''}
-              bind:value={studioCurlInput}></textarea>
-            <div class="curl-drawer-actions">
-              <button
-                type="button"
-                class="btn-primary-sm"
-                on:click={parseCurlCommand}
-              >
-                แยกข้อมูลจาก cURL เข้าฟอร์มอัตโนมัติ
-              </button>
-            </div>
-          </div>
-        {/if}
-
-        <!-- Target Collection Selection (when creating new endpoint) -->
-        {#if studioMode === "create"}
-          <div class="studio-collection-bar">
-            <div class="save-mode-switch">
-              <button
-                type="button"
-                class="switch-pill"
-                class:active={studioSaveMode === "new_collection"}
-                on:click={() => (studioSaveMode = "new_collection")}
-              >
-                สร้างเป็น Collection ใหม่
-              </button>
-              <button
-                type="button"
-                class="switch-pill"
-                class:active={studioSaveMode === "existing_collection"}
-                disabled={collections.length === 0}
-                on:click={() => (studioSaveMode = "existing_collection")}
-              >
-                เพิ่มเข้า Collection เดิมที่มีอยู่ ({collections.length})
-              </button>
-            </div>
-
-            <div class="studio-meta-grid">
-              {#if studioSaveMode === "new_collection"}
-                <div class="form-field">
-                  <label for="studio-col-name">ชื่อ Collection ใหม่</label>
-                  <input
-                    id="studio-col-name"
-                    type="text"
-                    class="spectra-input"
-                    placeholder="เช่น Authentication Service API"
-                    bind:value={studioCollectionName}
-                  />
-                </div>
-              {:else}
-                <div class="form-field">
-                  <label for="studio-target-col">เลือก Collection ปลายทาง</label
-                  >
-                  <select
-                    id="studio-target-col"
-                    class="spectra-input"
-                    bind:value={studioTargetCollectionId}
-                  >
-                    {#each collections as col}
-                      <option value={col.id}
-                        >{col.name} ({col.endpoint_count || 0} endpoints)</option
-                      >
-                    {/each}
-                  </select>
-                </div>
-              {/if}
-
-              <div class="form-field">
-                <label for="studio-ep-name">ชื่อเรียก Endpoint</label>
-                <input
-                  id="studio-ep-name"
-                  type="text"
-                  class="spectra-input"
-                  placeholder="เช่น เข้าสู่ระบบผู้ใช้งาน (User Login)"
-                  bind:value={studioName}
-                />
-              </div>
-
-              <div class="form-field">
-                <label for="studio-ep-cat">หมวดหมู่ / โฟลเดอร์ (Category)</label
-                >
-                <input
-                  id="studio-ep-cat"
-                  type="text"
-                  class="spectra-input"
-                  placeholder="เช่น Auth, Orders, Users"
-                  bind:value={studioCategory}
-                />
-              </div>
-            </div>
-          </div>
-        {:else}
-          <div class="studio-meta-grid">
-            <div class="form-field">
-              <label for="studio-edit-name">ชื่อเรียก Endpoint</label>
-              <input
-                id="studio-edit-name"
-                type="text"
-                class="spectra-input"
-                bind:value={studioName}
-              />
-            </div>
-            <div class="form-field">
-              <label for="studio-edit-cat">หมวดหมู่ (Category)</label>
-              <input
-                id="studio-edit-cat"
-                type="text"
-                class="spectra-input"
-                bind:value={studioCategory}
-              />
-            </div>
-            <div class="form-field">
-              <label for="studio-edit-base">Base URL ของชุดนี้</label>
-              <input
-                id="studio-edit-base"
-                type="text"
-                class="spectra-input mono"
-                placeholder="https://api.example.com"
-                bind:value={studioBaseUrl}
-              />
-            </div>
-          </div>
-        {/if}
-
-        <!-- Request Bar: Method + URL + Live Test Send -->
-        <div class="studio-request-bar">
-          <select
-            class="method-select {studioMethod.toLowerCase()}"
-            bind:value={studioMethod}
-            aria-label="HTTP Method"
+<!-- =========================================================================
+     MODAL: IMPORT (OpenAPI / Swagger / Postman File OR Raw cURL)
+     ========================================================================= -->
+{#if showImportModal}
+  <div class="pm-modal-backdrop" role="presentation" on:click|self={() => (showImportModal = false)}>
+    <div class="pm-modal md" role="dialog" aria-modal="true" aria-labelledby="import-modal-title">
+      <div class="pm-modal-head">
+        <h3 id="import-modal-title">นำเข้า API (Import Spec หรือ cURL)</h3>
+        <button type="button" class="pm-modal-close" on:click={() => (showImportModal = false)} aria-label="ปิด">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      </div>
+      <div class="pm-modal-body">
+        <div class="pm-segmented full">
+          <button
+            type="button"
+            class:active={importModalTab === "file"}
+            on:click={() => (importModalTab = "file")}
           >
-            {#each HTTP_METHODS as m}
-              <option value={m}>{m}</option>
-            {/each}
-          </select>
+            ไฟล์ OpenAPI / Swagger / Postman
+          </button>
+          <button
+            type="button"
+            class:active={importModalTab === "curl"}
+            on:click={() => (importModalTab = "curl")}
+          >
+            วางคำสั่ง cURL (Raw Text)
+          </button>
+        </div>
+
+        {#if importModalTab === "file"}
           <input
-            type="text"
-            class="url-input mono"
-            placeholder="https://api.example.com/v1/users หรือ /api/v1/users"
-            bind:value={studioUrl}
+            id="pm-spec-file-input"
+            type="file"
+            accept=".json,.yaml,.yml"
+            bind:this={fileInput}
+            on:change={handleFileChange}
+            class="sr-only-input"
           />
           <button
             type="button"
-            class="btn-test-send"
-            disabled={isTestingDirect || !studioUrl.trim()}
-            on:click={handleStudioTestSend}
+            class="pm-dropzone"
+            class:drag-over={isDragOver}
+            class:has-file={uploadFile !== null}
+            on:click={() => fileInput.click()}
+            on:dragover|preventDefault={() => (isDragOver = true)}
+            on:dragleave|preventDefault={() => (isDragOver = false)}
+            on:drop={handleFileDrop}
           >
-            {isTestingDirect ? "กำลังยิง..." : "ยิงทดสอบสด (Test Send)"}
-          </button>
-        </div>
-
-        <!-- Tabs: Params | Auth | Headers | Body -->
-        <div class="studio-tabs-header">
-          <button
-            type="button"
-            class="studio-tab"
-            class:active={studioActiveTab === "params"}
-            on:click={() => (studioActiveTab = "params")}
-          >
-            Query Params ({studioQueryParams.filter((q) => q.key.trim())
-              .length})
-          </button>
-          <button
-            type="button"
-            class="studio-tab"
-            class:active={studioActiveTab === "auth"}
-            on:click={() => (studioActiveTab = "auth")}
-          >
-            Authorization ({studioAuthType.toUpperCase()})
-          </button>
-          <button
-            type="button"
-            class="studio-tab"
-            class:active={studioActiveTab === "headers"}
-            on:click={() => (studioActiveTab = "headers")}
-          >
-            Headers
-          </button>
-          <button
-            type="button"
-            class="studio-tab"
-            class:active={studioActiveTab === "body"}
-            on:click={() => (studioActiveTab = "body")}
-          >
-            Request Body
-          </button>
-        </div>
-
-        <div class="studio-tab-panel">
-          {#if studioActiveTab === "params"}
-            <div class="kv-header">
-              <span>พารามิเตอร์แนบท้าย URL (Query Parameters)</span>
-              <button
-                type="button"
-                class="btn-add-row"
-                on:click={addQueryParamRow}>+ เพิ่มพารามิเตอร์</button
-              >
-            </div>
-            <div class="kv-rows">
-              {#each studioQueryParams as row, idx}
-                <div class="kv-row">
-                  <input
-                    type="checkbox"
-                    bind:checked={row.enabled}
-                    aria-label="เปิดใช้งานพารามิเตอร์"
-                  />
-                  <input
-                    type="text"
-                    class="spectra-input mono"
-                    placeholder="Key (เช่น page)"
-                    bind:value={row.key}
-                  />
-                  <input
-                    type="text"
-                    class="spectra-input mono"
-                    placeholder="Value (เช่น 1)"
-                    bind:value={row.value}
-                  />
-                  <button
-                    type="button"
-                    class="btn-del-row"
-                    on:click={() => removeQueryParamRow(idx)}>ลบ</button
-                  >
-                </div>
-              {/each}
-            </div>
-          {:else if studioActiveTab === "auth"}
-            <div class="auth-config-box">
-              <div class="form-field">
-                <label for="studio-auth-type"
-                  >รูปแบบการยืนยันตัวตน (Auth Type)</label
-                >
-                <select
-                  id="studio-auth-type"
-                  class="spectra-input"
-                  bind:value={studioAuthType}
-                >
-                  <option value="none">No Auth (ไม่ระบุ)</option>
-                  <option value="bearer">Bearer Token (JWT / OAuth2)</option>
-                  <option value="apikey"
-                    >API Key (Header หรือ Query Param)</option
-                  >
-                  <option value="basic">Basic Auth (Username / Password)</option
-                  >
-                </select>
-              </div>
-
-              {#if studioAuthType === "bearer"}
-                <div class="form-field">
-                  <label for="studio-bearer-token">Bearer Token</label>
-                  <input
-                    id="studio-bearer-token"
-                    type="text"
-                    class="spectra-input mono"
-                    placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-                    bind:value={studioAuthBearer}
-                  />
-                </div>
-              {:else if studioAuthType === "apikey"}
-                <div class="auth-grid">
-                  <div class="form-field">
-                    <label for="studio-apikey-name">ชื่อ Key</label>
-                    <input
-                      id="studio-apikey-name"
-                      type="text"
-                      class="spectra-input mono"
-                      bind:value={studioAuthApiKeyName}
-                    />
-                  </div>
-                  <div class="form-field">
-                    <label for="studio-apikey-val">ค่า API Key</label>
-                    <input
-                      id="studio-apikey-val"
-                      type="text"
-                      class="spectra-input mono"
-                      bind:value={studioAuthApiKeyValue}
-                    />
-                  </div>
-                  <div class="form-field">
-                    <label for="studio-apikey-in">ส่งไปที่</label>
-                    <select
-                      id="studio-apikey-in"
-                      class="spectra-input"
-                      bind:value={studioAuthApiKeyIn}
-                    >
-                      <option value="header">HTTP Header</option>
-                      <option value="query">Query Parameter</option>
-                    </select>
-                  </div>
-                </div>
-              {:else if studioAuthType === "basic"}
-                <div class="auth-grid">
-                  <div class="form-field">
-                    <label for="studio-basic-user">Username</label>
-                    <input
-                      id="studio-basic-user"
-                      type="text"
-                      class="spectra-input"
-                      bind:value={studioAuthBasicUser}
-                    />
-                  </div>
-                  <div class="form-field">
-                    <label for="studio-basic-pass">Password</label>
-                    <input
-                      id="studio-basic-pass"
-                      type="password"
-                      class="spectra-input"
-                      bind:value={studioAuthBasicPass}
-                    />
-                  </div>
-                </div>
-              {/if}
-            </div>
-          {:else if studioActiveTab === "headers"}
-            <div class="kv-header">
-              <div class="mode-pills">
-                <button
-                  type="button"
-                  class="mini-pill"
-                  class:active={studioHeaderMode === "table"}
-                  on:click={() => toggleHeaderViewMode("table")}
-                >
-                  ตาราง Key-Value
-                </button>
-                <button
-                  type="button"
-                  class="mini-pill"
-                  class:active={studioHeaderMode === "json"}
-                  on:click={() => toggleHeaderViewMode("json")}
-                >
-                  Raw JSON
-                </button>
-              </div>
-              {#if studioHeaderMode === "table"}
-                <button
-                  type="button"
-                  class="btn-add-row"
-                  on:click={addHeaderRow}>+ เพิ่ม Header</button
-                >
-              {/if}
-            </div>
-
-            {#if studioHeaderMode === "table"}
-              <div class="kv-rows">
-                {#each studioHeaderRows as row, idx}
-                  <div class="kv-row">
-                    <input
-                      type="checkbox"
-                      bind:checked={row.enabled}
-                      aria-label="เปิดใช้งาน Header"
-                    />
-                    <input
-                      type="text"
-                      class="spectra-input mono"
-                      placeholder="Header Name (เช่น Authorization)"
-                      bind:value={row.key}
-                    />
-                    <input
-                      type="text"
-                      class="spectra-input mono"
-                      placeholder="Header Value"
-                      bind:value={row.value}
-                    />
-                    <button
-                      type="button"
-                      class="btn-del-row"
-                      on:click={() => removeHeaderRow(idx)}>ลบ</button
-                    >
-                  </div>
-                {/each}
+            {#if uploadFile}
+              <div class="pm-file-selected">
+                <strong>{uploadFile.name}</strong>
+                <span>{(uploadFile.size / 1024).toFixed(1)} KB • พร้อมนำเข้า</span>
               </div>
             {:else}
-              <textarea
-                rows="5"
-                class="spectra-textarea mono"
-                bind:value={studioHeadersJson}></textarea>
+              <p>คลิกเลือกไฟล์ หรือลากไฟล์ <code>.json</code> / <code>.yaml</code> มาวางที่นี่</p>
+              <span>รองรับ OpenAPI 3.0, Swagger 2.0 และ Postman Collection v2.1</span>
             {/if}
-          {:else if studioActiveTab === "body"}
-            <div class="kv-header">
-              <div class="mode-pills">
-                <button
-                  type="button"
-                  class="mini-pill"
-                  class:active={studioBodyMode === "none"}
-                  on:click={() => (studioBodyMode = "none")}
-                >
-                  ไม่มี Body
-                </button>
-                <button
-                  type="button"
-                  class="mini-pill"
-                  class:active={studioBodyMode === "json"}
-                  on:click={() => (studioBodyMode = "json")}
-                >
-                  JSON Payload
-                </button>
-                <button
-                  type="button"
-                  class="mini-pill"
-                  class:active={studioBodyMode === "raw"}
-                  on:click={() => (studioBodyMode = "raw")}
-                >
-                  Raw / Form Data
-                </button>
-              </div>
-              {#if studioBodyMode === "json"}
-                <button
-                  type="button"
-                  class="btn-add-row"
-                  on:click={prettifyStudioBody}
-                >
-                  จัดรูปแบบ & ตรวจ JSON
-                </button>
-              {/if}
-            </div>
+          </button>
 
-            {#if studioBodyMode !== "none"}
-              <textarea
-                rows="6"
-                class="spectra-textarea mono"
-                placeholder={'{\n  "username": "qa_tester",\n  "role": "admin"\n}'}
-                bind:value={studioBodyText}></textarea>
-            {/if}
-          {/if}
-        </div>
-
-        <!-- Live Test Result inside Studio Modal -->
-        {#if studioDirectResult}
-          <div class="studio-response-box">
-            <div class="studio-res-head">
-              <strong>ผลลัพธ์การยิงทดสอบสด (Live Response)</strong>
-              {#if studioDirectResult.status_code}
-                <div class="telemetry-pills">
-                  <span
-                    class="status-pill"
-                    class:ok={studioDirectResult.status_code < 400}
-                    class:err={studioDirectResult.status_code >= 400}
-                  >
-                    HTTP {studioDirectResult.status_code}
-                    {studioDirectResult.status_text || ""}
-                  </span>
-                  <span class="metric-pill"
-                    >{studioDirectResult.latency_ms} ms</span
-                  >
-                </div>
-              {/if}
-            </div>
-            {#if studioDirectResult.success}
-              <pre
-                class="response-pre compact">{studioDirectResult.response_body ||
-                  studioDirectResult.preview ||
-                  "(Empty Response)"}</pre>
-            {:else}
-              <div class="inspector-error compact">
-                {studioDirectResult.error}
-              </div>
-            {/if}
+          <div class="pm-field">
+            <label for="imp-col-name">ตั้งชื่อ Collection (ทางเลือก)</label>
+            <input
+              id="imp-col-name"
+              type="text"
+              class="pm-input"
+              placeholder="เว้นว่างเพื่อใช้ชื่อจากไฟล์ Spec"
+              bind:value={customImportName}
+            />
+          </div>
+        {:else}
+          <div class="pm-segmented full">
+            <button
+              type="button"
+              class:active={importCurlTarget === "active"}
+              on:click={() => (importCurlTarget = "active")}
+            >
+              เติมลงแท็บปัจจุบัน
+            </button>
+            <button
+              type="button"
+              class:active={importCurlTarget === "new"}
+              on:click={() => (importCurlTarget = "new")}
+            >
+              เปิดเป็นแท็บใหม่
+            </button>
+          </div>
+          <div class="pm-field">
+            <label for="imp-curl-area">วางคำสั่ง cURL จาก Chrome DevTools หรือ Postman</label>
+            <textarea
+              id="imp-curl-area"
+              rows="6"
+              class="pm-input mono"
+              placeholder={'curl -X POST "https://api.example.com/v1/login" -H "Content-Type: application/json" -d \'{"username":"admin"}\''}
+              bind:value={importCurlText}
+            ></textarea>
           </div>
         {/if}
       </div>
-
-      <div class="modal-footer">
-        <button
-          type="button"
-          class="btn-cancel"
-          on:click={() => (showStudioModal = false)}>ยกเลิก</button
-        >
-        <button
-          type="button"
-          class="btn-primary-spectra"
-          disabled={isSavingStudio || !studioUrl.trim()}
-          on:click={handleSaveStudio}
-        >
-          {#if isSavingStudio}
-            กำลังบันทึก...
-          {:else if studioMode === "edit"}
-            บันทึกการแก้ไข Endpoint
-          {:else if studioSaveMode === "existing_collection"}
-            เพิ่ม Endpoint เข้า Collection ที่เลือก
-          {:else}
-            บันทึกเป็น API Collection ใหม่
-          {/if}
-        </button>
+      <div class="pm-modal-foot">
+        <button type="button" class="pm-tool-btn" on:click={() => (showImportModal = false)}>ยกเลิก</button>
+        {#if importModalTab === "file"}
+          <button
+            type="button"
+            class="pm-btn-primary-sm"
+            disabled={!uploadFile || isUploading}
+            on:click={handleUploadSpec}
+          >
+            {isUploading ? "กำลังนำเข้า..." : "นำเข้าไฟล์ Spec"}
+          </button>
+        {:else}
+          <button type="button" class="pm-btn-primary-sm" on:click={handleImportCurlSubmit}>
+            {importCurlTarget === "active" ? "แยกข้อมูลลงแท็บปัจจุบัน" : "นำเข้าและเปิดในแท็บใหม่"}
+          </button>
+        {/if}
       </div>
     </div>
   </div>
 {/if}
 
 <!-- =========================================================================
-     MODAL 3: WEB API DISCOVERY (OPENAPI / SWAGGER & ROUTE SNIFFER)
+     MODAL: WEB API DISCOVERY (SNIFFER)
      ========================================================================= -->
 {#if showSnifferModal}
-  <!-- svelte-ignore a11y-click-events-have-key-events -->
-  <!-- svelte-ignore a11y-no-static-element-interactions -->
-  <div class="modal-backdrop" on:click|self={() => (showSnifferModal = false)}>
-    <div
-      class="modal-window sniffer-modal"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="sniffer-modal-title"
-    >
-      <div class="modal-header">
-        <div class="modal-title-block">
-          <span class="modal-eyebrow">AUTOMATED OPENAPI & ROUTE DISCOVERY</span>
-          <h3 id="sniffer-modal-title">สำรวจและดึง API จาก URL ระบบเป้าหมาย</h3>
-        </div>
-        <button
-          type="button"
-          class="modal-close-btn"
-          on:click={() => (showSnifferModal = false)}
-          aria-label="ปิดหน้าต่าง Web API Discovery"
-        >
-          ✕
+  <div class="pm-modal-backdrop" role="presentation" on:click|self={() => (showSnifferModal = false)}>
+    <div class="pm-modal lg" role="dialog" aria-modal="true" aria-labelledby="sniffer-modal-title">
+      <div class="pm-modal-head">
+        <h3 id="sniffer-modal-title">Web API Discovery (OpenAPI / Route Sniffer)</h3>
+        <button type="button" class="pm-modal-close" on:click={() => (showSnifferModal = false)} aria-label="ปิด">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
         </button>
       </div>
 
-      <div class="modal-body">
-        <div class="sniffer-form-grid">
-          <div class="form-field full">
-            <label for="sniffer-target-url"
-              >Target System URL (ระบบจะสแกนหา `/openapi.json`, `/swagger.json`,
-              `/v3/api-docs` และ API Routes)</label
-            >
-            <input
-              id="sniffer-target-url"
-              type="text"
-              class="spectra-input mono"
-              placeholder="https://api.example.com หรือ http://localhost:5001"
-              bind:value={snifferUrl}
-            />
-          </div>
-          <div class="form-field">
-            <label for="sniffer-user">Username (ทางเลือก)</label>
-            <input
-              id="sniffer-user"
-              type="text"
-              class="spectra-input"
-              bind:value={snifferUsername}
-            />
-          </div>
-          <div class="form-field">
-            <label for="sniffer-pass">Password (ทางเลือก)</label>
-            <input
-              id="sniffer-pass"
-              type="password"
-              class="spectra-input"
-              bind:value={snifferPassword}
-            />
-          </div>
+      <div class="pm-modal-body">
+        <div class="pm-sniffer-bar">
+          <input
+            type="text"
+            aria-label="Target URL สำหรับสำรวจ API"
+            class="pm-input mono"
+            placeholder="https://api.example.com หรือ http://127.0.0.1:5000"
+            bind:value={snifferUrl}
+            on:keydown={(e) => e.key === "Enter" && handleStartSniffing()}
+          />
+          <button
+            type="button"
+            class="pm-btn-primary-sm"
+            disabled={isSniffing || !snifferUrl.trim()}
+            on:click={handleStartSniffing}
+          >
+            {isSniffing ? "กำลังสแกน..." : "เริ่มสำรวจ API"}
+          </button>
         </div>
 
         <button
           type="button"
-          class="btn-primary-gradient"
-          disabled={isSniffing || !snifferUrl.trim()}
-          on:click={handleStartSniffing}
+          class="pm-link-btn align-left"
+          on:click={() => (snifferShowAuth = !snifferShowAuth)}
         >
-          {isSniffing
-            ? "กำลังสำรวจ OpenAPI Manifest และ API Routes..."
-            : "เริ่มสำรวจ API บนระบบเป้าหมาย"}
+          {snifferShowAuth ? "ซ่อนข้อมูลเข้าสู่ระบบ (Optional Auth)" : "+ เพิ่ม Username / Password หากระบบเป้าหมายต้องล็อกอิน"}
         </button>
 
-        {#if sniffedEndpoints.length > 0}
-          <div class="sniffer-results-box">
-            <!-- Grouped Target Configuration (A3) -->
-            <div class="studio-collection-bar">
-              <div class="save-mode-switch">
-                <button
-                  type="button"
-                  class="switch-pill"
-                  class:active={snifferImportMode === "new"}
-                  on:click={() => (snifferImportMode = "new")}
-                >
-                  รวบเป็น 1 Collection ใหม่
-                </button>
-                <button
-                  type="button"
-                  class="switch-pill"
-                  class:active={snifferImportMode === "append"}
-                  disabled={collections.length === 0}
-                  on:click={() => (snifferImportMode = "append")}
-                >
-                  เพิ่มเข้า Collection เดิม ({collections.length})
-                </button>
-              </div>
-
-              {#if snifferImportMode === "new"}
-                <div class="form-field">
-                  <label for="sniffer-col-name"
-                    >ชื่อ Collection ที่จะสร้าง</label
-                  >
-                  <input
-                    id="sniffer-col-name"
-                    type="text"
-                    class="spectra-input"
-                    bind:value={snifferCollectionName}
-                  />
-                </div>
-              {:else}
-                <div class="form-field">
-                  <label for="sniffer-target-col"
-                    >เลือก Collection ปลายทาง</label
-                  >
-                  <select
-                    id="sniffer-target-col"
-                    class="spectra-input"
-                    bind:value={snifferTargetCollectionId}
-                  >
-                    {#each collections as col}
-                      <option value={col.id}
-                        >{col.name} ({col.endpoint_count || 0} endpoints)</option
-                      >
-                    {/each}
-                  </select>
-                </div>
-              {/if}
+        {#if snifferShowAuth}
+          <div class="pm-form-grid-2">
+            <div class="pm-field">
+              <label for="sniff-user">Username (ทางเลือก)</label>
+              <input id="sniff-user" type="text" class="pm-input" bind:value={snifferUsername} />
             </div>
+            <div class="pm-field">
+              <label for="sniff-pass">Password (ทางเลือก)</label>
+              <input id="sniff-pass" type="password" class="pm-input" bind:value={snifferPassword} />
+            </div>
+          </div>
+        {/if}
 
-            <div class="sniffer-list-head">
-              <label class="bulk-check-label">
+        {#if sniffedEndpoints.length > 0}
+          <div class="pm-sniffer-toolbar">
+            <label class="pm-chk-label">
+              <input
+                type="checkbox"
+                checked={selectedSniffedIndices.size === sniffedEndpoints.length}
+                on:change={toggleAllSniffed}
+              />
+              <span>เลือกทั้งหมด ({selectedSniffedIndices.size}/{sniffedEndpoints.length})</span>
+            </label>
+            <div class="pm-segmented compact">
+              <button
+                type="button"
+                class:active={snifferImportMode === "new"}
+                on:click={() => (snifferImportMode = "new")}
+              >
+                สร้างชุดใหม่
+              </button>
+              <button
+                type="button"
+                class:active={snifferImportMode === "append"}
+                disabled={collections.length === 0}
+                on:click={() => (snifferImportMode = "append")}
+              >
+                เพิ่มเข้าชุดเดิม
+              </button>
+            </div>
+          </div>
+
+          {#if snifferImportMode === "new"}
+            <div class="pm-field">
+              <label for="sniff-col-name">ชื่อ Collection ใหม่</label>
+              <input
+                id="sniff-col-name"
+                type="text"
+                class="pm-input"
+                placeholder="ตั้งชื่อ Collection ใหม่..."
+                bind:value={snifferCollectionName}
+              />
+            </div>
+          {:else}
+            <div class="pm-field">
+              <label for="sniff-target-col">เลือก Collection ปลายทาง</label>
+              <CustomSelect
+                id="sniff-target-col"
+                ariaLabel="เลือก Collection ปลายทางสำหรับบันทึกผล Sniffer"
+                variant="compact"
+                size="md"
+                options={collectionSelectOptions}
+                bind:value={snifferTargetCollectionId}
+                minWidth="100%"
+              />
+            </div>
+          {/if}
+
+          <div class="pm-sniffer-list">
+            {#each sniffedEndpoints as ep, idx}
+              <label class="pm-sniffer-item">
                 <input
                   type="checkbox"
-                  checked={selectedSniffedIndices.size ===
-                    sniffedEndpoints.length}
-                  on:change={toggleAllSniffed}
+                  checked={selectedSniffedIndices.has(idx)}
+                  on:change={() => toggleSniffedSelection(idx)}
                 />
-                <span
-                  >เลือกทั้งหมด ({selectedSniffedIndices.size}/{sniffedEndpoints.length}
-                  Endpoints)</span
-                >
+                <span class="pm-verb" style="color: {verbColor(ep.method)};">
+                  {formatVerb(ep.method)}
+                </span>
+                <span class="mono">{ep.path || ep.url}</span>
               </label>
-            </div>
-
-            <div class="sniffer-list">
-              {#each sniffedEndpoints as ep, idx}
-                <!-- svelte-ignore a11y-click-events-have-key-events -->
-                <!-- svelte-ignore a11y-no-static-element-interactions -->
-                <div
-                  class="sniffer-item"
-                  class:selected={selectedSniffedIndices.has(idx)}
-                  on:click={() => toggleSniffedSelection(idx)}
-                >
-                  <input
-                    type="checkbox"
-                    checked={selectedSniffedIndices.has(idx)}
-                    on:click|stopPropagation
-                    on:change={() => toggleSniffedSelection(idx)}
-                  />
-                  <span
-                    class="method-badge {(ep.method || 'GET').toLowerCase()}"
-                    >{ep.method || "GET"}</span
-                  >
-                  <span class="sniffer-path">{ep.path}</span>
-                  <span class="sniffer-summary">{ep.summary || ""}</span>
-                </div>
-              {/each}
-            </div>
+            {/each}
+          </div>
+        {:else}
+          <div class="pm-side-empty">
+            <p>
+              กรอก URL ของระบบเป้าหมายแล้วกด <strong>เริ่มสำรวจ API</strong> เพื่อค้นหา
+              <code>/openapi.json</code>, <code>/swagger.json</code> และ API routes อัตโนมัติ
+            </p>
           </div>
         {/if}
       </div>
 
-      <div class="modal-footer">
-        <button
-          type="button"
-          class="btn-cancel"
-          on:click={() => (showSnifferModal = false)}>ปิด</button
-        >
+      <div class="pm-modal-foot">
+        <button type="button" class="pm-tool-btn" on:click={() => (showSnifferModal = false)}>ปิด</button>
         {#if sniffedEndpoints.length > 0}
           <button
             type="button"
-            class="btn-primary-spectra"
+            class="pm-btn-primary-sm"
             disabled={isSniffing || selectedSniffedIndices.size === 0}
             on:click={handleSaveSniffed}
           >
-            บันทึก {selectedSniffedIndices.size} Endpoints เป็น 1 ชุดข้อมูล
+            บันทึกที่เลือก ({selectedSniffedIndices.size})
           </button>
         {/if}
       </div>
@@ -2740,1631 +3681,1973 @@
   </div>
 {/if}
 
+<!-- Chrome Extension Live Sync Modal -->
 <ExtensionSyncModal
   bind:show={showExtensionModal}
   {selectedProject}
   {collections}
   on:close={() => (showExtensionModal = false)}
-  on:imported={loadCollections}
+  on:imported={() => loadCollections()}
 />
 
 <style>
-  .api-admin-container {
+  .pm-shell {
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 70px);
     width: 100%;
-    padding: 0 0 32px;
-    color: var(--text, #f8fafc);
-    font-family: "Prompt", sans-serif;
-  }
-
-  /* Header Banner */
-  .page-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 20px;
-    flex-wrap: wrap;
-    margin-bottom: 24px;
-    background: var(--surface-card, rgba(24, 19, 38, 0.72));
-    padding: 20px 24px;
-    border-radius: 20px;
-    border: 1px solid var(--surface-border, rgba(168, 85, 247, 0.18));
-    backdrop-filter: blur(16px);
-  }
-
-  .header-main {
-    display: flex;
-    align-items: flex-start;
-    gap: 16px;
-  }
-
-  .header-icon-box {
-    width: 48px;
-    height: 48px;
-    border-radius: 12px;
-    background: rgba(168, 85, 247, 0.14);
-    border: 1px solid rgba(168, 85, 247, 0.35);
-    color: var(--primary-light, #c084fc);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-  }
-
-  .header-badge-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-    margin-bottom: 4px;
-  }
-
-  .eyebrow-pill {
-    font-family: "Outfit", sans-serif;
-    font-size: 0.7rem;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    color: var(--primary-light, #c084fc);
-    background: rgba(168, 85, 247, 0.14);
-    border: 1px solid rgba(168, 85, 247, 0.28);
-    padding: 2px 10px;
-    border-radius: 999px;
-  }
-
-  .stat-pill {
-    font-family: "Outfit", sans-serif;
-    font-size: 0.72rem;
-    font-weight: 600;
-    padding: 2px 9px;
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.06);
-    color: var(--text-secondary, #cbd5e1);
-  }
-
-  .stat-pill.cyan {
-    background: rgba(6, 182, 212, 0.14);
-    color: #22d3ee;
-    border: 1px solid rgba(6, 182, 212, 0.25);
-  }
-
-  .page-header h2 {
-    margin: 0;
-    font-family: "Outfit", "Prompt", sans-serif;
-    font-size: 1.45rem;
-    font-weight: 700;
-    color: var(--text, #f8fafc);
-  }
-
-  .subtitle {
-    margin: 4px 0 0;
-    font-size: 0.85rem;
-    color: var(--text-muted, #94a3b8);
-  }
-
-  .project-selector-box {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    min-width: 240px;
-  }
-
-  .selector-label {
-    font-size: 0.76rem;
-    font-weight: 600;
-    color: var(--text-secondary, #cbd5e1);
-  }
-
-  /* Two-Column Main Grid */
-  .content-grid {
-    display: grid;
-    grid-template-columns: 380px minmax(0, 1fr);
-    gap: 24px;
-    align-items: start;
-  }
-
-  .panel-card {
-    background: var(--surface-card, rgba(24, 19, 38, 0.72));
-    border: 1px solid var(--surface-border, rgba(168, 85, 247, 0.18));
-    border-radius: 20px;
-    padding: 22px;
-    backdrop-filter: blur(16px);
-  }
-
-  .card-head h3,
-  .repo-title-group h3 {
-    margin: 0;
-    font-family: "Outfit", "Prompt", sans-serif;
-    font-size: 1.1rem;
-    font-weight: 700;
-    color: var(--text, #f8fafc);
-  }
-
-  .card-desc {
-    margin: 4px 0 16px;
-    font-size: 0.8rem;
-    color: var(--text-muted, #94a3b8);
-    line-height: 1.45;
-  }
-
-  /* Drag & Drop Zone */
-  .upload-dropzone {
-    border: 1.5px dashed rgba(168, 85, 247, 0.35);
-    border-radius: 12px;
-    padding: 22px 16px;
-    text-align: center;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    background: rgba(9, 7, 17, 0.55);
-    margin-bottom: 16px;
-  }
-
-  .upload-dropzone:hover,
-  .upload-dropzone.drag-over {
-    border-color: var(--primary, #a855f7);
-    background: rgba(168, 85, 247, 0.1);
-    box-shadow: 0 0 24px rgba(168, 85, 247, 0.18);
-  }
-
-  .upload-dropzone.has-file {
-    border-style: solid;
-    border-color: rgba(16, 185, 129, 0.45);
-    background: rgba(16, 185, 129, 0.08);
-  }
-
-  .drop-prompt {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .drop-icon-circle {
-    width: 46px;
-    height: 46px;
-    border-radius: 12px;
-    background: rgba(168, 85, 247, 0.14);
-    color: var(--primary-light, #c084fc);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .prompt-title {
-    font-size: 0.88rem;
-    font-weight: 600;
-    color: var(--text, #f8fafc);
-  }
-
-  .prompt-sub {
-    font-size: 0.76rem;
-    color: var(--text-muted, #94a3b8);
-  }
-
-  .file-picked {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    text-align: left;
-  }
-
-  .picked-icon {
-    width: 40px;
-    height: 40px;
-    border-radius: 10px;
-    background: rgba(16, 185, 129, 0.16);
-    color: #34d399;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-  }
-
-  .picked-meta {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-  }
-
-  .file-name {
-    font-weight: 600;
-    font-size: 0.86rem;
-    color: #34d399;
-    white-space: nowrap;
+    background-color: transparent;
+    color: var(--text-main, #f8fafc);
+    font-family: var(--font-th, "Prompt", sans-serif);
     overflow: hidden;
-    text-overflow: ellipsis;
   }
 
-  .file-size {
-    font-size: 0.74rem;
+  .pm-shell.resizing {
+    user-select: none;
+    cursor: row-resize;
+  }
+
+  .mono {
+    font-family: "JetBrains Mono", "Fira Code", Consolas, monospace;
+  }
+
+  .sr-only-input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+  }
+
+  code {
+    font-family: "JetBrains Mono", "Fira Code", Consolas, monospace;
+    font-size: 0.9em;
+    padding: 1px 5px;
+    border-radius: 8px;
+    background-color: rgba(255, 255, 255, 0.07);
+    color: #c7d2fe;
+  }
+
+  /* ── Top Workspace Bar (Spectra Frosted Obsidian) ── */
+  .pm-topbar {
+    min-height: 54px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 16px;
+    background-color: rgba(18, 20, 28, 0.72);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .pm-topbar-left,
+  .pm-topbar-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+
+  .pm-picker-group {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+
+  .pm-field-label {
+    font-size: 12px;
+    font-weight: 600;
     color: var(--text-muted, #94a3b8);
+    white-space: nowrap;
   }
 
-  .clear-file-btn {
-    background: rgba(239, 68, 68, 0.14);
-    border: 1px solid rgba(239, 68, 68, 0.3);
-    color: #f87171;
-    font-size: 0.74rem;
+  .pm-project-select-wrap {
+    width: 210px;
+  }
+
+  .pm-env-select-wrap {
+    width: 210px;
+  }
+
+  .pm-divider-v {
+    width: 1px;
+    height: 22px;
+    background-color: rgba(255, 255, 255, 0.09);
+  }
+
+  .pm-telemetry-summary {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .pm-stat-chip {
+    font-family: var(--font-en, "Outfit", sans-serif);
+    font-size: 12px;
+    color: var(--text-muted, #94a3b8);
+    background-color: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    padding: 4px 9px;
+    border-radius: 8px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .pm-stat-chip strong {
+    color: var(--text-main, #f8fafc);
+    font-weight: 600;
+    margin-right: 3px;
+  }
+
+  .pm-error-pill {
+    font-size: 12px;
+    color: #fda4af;
+    background-color: rgba(244, 63, 94, 0.14);
+    border: 1px solid rgba(244, 63, 94, 0.35);
     padding: 4px 10px;
     border-radius: 8px;
     cursor: pointer;
   }
 
-  .form-group {
-    margin-bottom: 14px;
-    display: flex;
-    flex-direction: column;
+  .pm-tool-group {
+    display: inline-flex;
+    align-items: center;
     gap: 6px;
   }
 
-  .form-group label,
-  .form-field label,
-  .ws-field label {
-    font-size: 0.78rem;
-    font-weight: 600;
-    color: var(--text-secondary, #cbd5e1);
-  }
-
-  .spectra-input,
-  .spectra-textarea {
-    width: 100%;
-    padding: 9px 12px;
+  .pm-icon-btn {
+    width: 34px;
+    height: 34px;
     border-radius: 8px;
-    border: 1px solid rgba(168, 85, 247, 0.22);
-    background: var(--bg, #090711);
-    color: var(--text, #f8fafc);
-    font-family: "Prompt", sans-serif;
-    font-size: 0.85rem;
-    outline: none;
-    box-sizing: border-box;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background-color: rgba(255, 255, 255, 0.04);
+    color: var(--text-muted, #94a3b8);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
   }
 
-  .spectra-input.mono,
-  .spectra-textarea.mono {
-    font-family: "JetBrains Mono", monospace;
-    font-size: 0.81rem;
+  .pm-icon-btn:hover {
+    background-color: rgba(255, 255, 255, 0.09);
+    color: var(--text-main, #f8fafc);
+    border-color: rgba(255, 255, 255, 0.2);
   }
 
-  .spectra-input:focus,
-  .spectra-textarea:focus {
-    border-color: var(--primary, #a855f7);
-    box-shadow: 0 0 0 2px rgba(168, 85, 247, 0.22);
+  .pm-tool-btn {
+    height: 34px;
+    padding: 0 11px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.11);
+    background-color: rgba(255, 255, 255, 0.04);
+    color: var(--text-main, #f8fafc);
+    font-size: 12.5px;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
   }
 
-  .btn-primary-gradient {
-    width: 100%;
-    padding: 11px 16px;
-    border: none;
-    border-radius: 12px;
-    background: var(
-      --gradient-main,
-      linear-gradient(135deg, #a855f7 0%, #6366f1 50%, #06b6d4 100%)
-    );
-    color: #ffffff;
+  .pm-tool-btn:hover:not(:disabled) {
+    background-color: rgba(255, 255, 255, 0.09);
+    border-color: rgba(255, 255, 255, 0.22);
+  }
+
+  .pm-tool-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  /* Secondary Accent CTA (leaves Send as the sole primary gradient hero) */
+  .pm-btn-secondary-accent {
+    height: 34px;
+    padding: 0 12px;
+    border-radius: 8px;
+    border: 1px solid rgba(99, 102, 241, 0.48);
+    background-color: rgba(99, 102, 241, 0.16);
+    color: #e0e7ff;
+    font-size: 12.5px;
     font-weight: 600;
-    font-size: 0.88rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
+  }
+
+  .pm-btn-secondary-accent:hover {
+    background-color: rgba(99, 102, 241, 0.28);
+    border-color: rgba(129, 140, 248, 0.72);
+  }
+
+  /* Primary Gradient Button (Modals only) */
+  .pm-btn-primary-sm {
+    height: 36px;
+    padding: 0 16px;
+    border-radius: 8px;
+    border: none;
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    color: #ffffff;
+    font-size: 12.5px;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    white-space: nowrap;
+    box-shadow: 0 4px 14px rgba(99, 102, 241, 0.3);
+    transition: filter 0.15s ease;
+  }
+
+  .pm-btn-primary-sm:hover:not(:disabled) {
+    filter: brightness(1.08);
+  }
+
+  .pm-btn-primary-sm:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  /* ── 2-Pane Split Body ── */
+  .pm-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    overflow: hidden;
+  }
+
+  /* ── Left Sidebar (Frosted Explorer) ── */
+  .pm-sidebar {
+    width: 304px;
+    flex-shrink: 0;
+    background-color: rgba(16, 18, 26, 0.78);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border-right: 1px solid rgba(255, 255, 255, 0.08);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .pm-sidebar-tabs {
+    display: flex;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    padding: 0 8px;
+  }
+
+  .pm-side-tab {
+    flex: 1;
+    height: 40px;
+    background-color: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-muted, #94a3b8);
+    font-size: 12.5px;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    cursor: pointer;
+    transition: color 0.15s ease, border-color 0.15s ease;
+  }
+
+  .pm-side-tab:hover {
+    color: var(--text-main, #f8fafc);
+  }
+
+  .pm-side-tab.active {
+    color: #c7d2fe;
+    border-bottom-color: #6366f1;
+    font-weight: 600;
+  }
+
+  .pm-sidebar-controls {
+    padding: 10px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .pm-search-row {
+    display: flex;
+    gap: 6px;
+  }
+
+  .pm-search-input-wrap {
+    flex: 1;
+    position: relative;
+    display: flex;
+    align-items: center;
+    background-color: #0a0b12;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 8px;
+    padding: 0 8px;
+    color: var(--text-muted, #94a3b8);
+  }
+
+  .pm-search-input-wrap:focus-within {
+    border-color: #6366f1;
+  }
+
+  .pm-search-input-wrap input {
+    width: 100%;
+    height: 32px;
+    background-color: transparent;
+    border: none;
+    outline: none;
+    color: var(--text-main, #f8fafc);
+    font-size: 12.5px;
+    padding: 0 6px;
+  }
+
+  .pm-search-input-wrap input::placeholder {
+    color: #8494aa;
+  }
+
+  .pm-clear-x {
+    width: 24px;
+    height: 24px;
+    background-color: transparent;
+    border: none;
+    border-radius: 8px;
+    color: var(--text-muted, #94a3b8);
     cursor: pointer;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 8px;
-    box-shadow: 0 8px 24px rgba(168, 85, 247, 0.28);
-    transition: all 0.2s ease;
   }
 
-  .btn-primary-gradient:hover:not(:disabled) {
-    transform: translateY(-1px);
-    box-shadow: 0 12px 28px rgba(168, 85, 247, 0.4);
+  .pm-clear-x:hover {
+    color: #ffffff;
   }
 
-  .btn-primary-gradient:disabled {
-    opacity: 0.45;
-    cursor: not-allowed;
-    box-shadow: none;
-  }
-
-  .section-divider {
-    margin: 18px 0 14px;
-    text-align: center;
-    position: relative;
-  }
-
-  .section-divider::before {
-    content: "";
-    position: absolute;
-    left: 0;
-    right: 0;
-    top: 50%;
-    height: 1px;
-    background: rgba(168, 85, 247, 0.16);
-  }
-
-  .section-divider span {
-    position: relative;
-    background: #161124;
-    padding: 0 10px;
-    font-size: 0.74rem;
-    color: var(--text-muted, #94a3b8);
-  }
-
-  .tools-stack {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .tool-action-card {
-    width: 100%;
-    text-align: left;
-    display: flex;
-    align-items: flex-start;
-    gap: 12px;
-    padding: 12px 14px;
-    border-radius: 12px;
-    background: rgba(18, 15, 29, 0.75);
-    border: 1px solid rgba(168, 85, 247, 0.18);
-    color: var(--text, #f8fafc);
+  .pm-new-col-btn {
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+    border: 1px solid rgba(99, 102, 241, 0.4);
+    background-color: rgba(99, 102, 241, 0.14);
+    color: #c7d2fe;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     cursor: pointer;
-    transition: all 0.18s ease;
+    flex-shrink: 0;
+    transition: background-color 0.15s ease;
   }
 
-  .tool-action-card:hover:not(:disabled) {
-    border-color: rgba(168, 85, 247, 0.48);
-    background: rgba(168, 85, 247, 0.1);
-    transform: translateY(-1px);
+  .pm-new-col-btn:hover:not(:disabled) {
+    background-color: rgba(99, 102, 241, 0.28);
   }
 
-  .tool-action-card:disabled {
-    opacity: 0.45;
+  .pm-new-col-btn:disabled {
+    opacity: 0.4;
     cursor: not-allowed;
   }
 
-  .tool-icon {
-    width: 36px;
-    height: 36px;
+  .pm-tree-scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 6px;
+  }
+
+  .pm-col-node {
+    margin-bottom: 3px;
+  }
+
+  .pm-tree-item-wrap {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    border-radius: 8px;
+    position: relative;
+    transition: background-color 0.14s ease;
+  }
+
+  .pm-tree-item-wrap:hover,
+  .pm-tree-item-wrap:focus-within {
+    background-color: rgba(255, 255, 255, 0.05);
+  }
+
+  .pm-ep-wrap.active {
+    background-color: rgba(99, 102, 241, 0.2);
+  }
+
+  .pm-col-trigger,
+  .pm-cat-trigger,
+  .pm-ep-trigger {
+    flex: 1;
+    min-width: 0;
+    background-color: transparent;
+    border: none;
     border-radius: 8px;
     display: flex;
     align-items: center;
-    justify-content: center;
+    gap: 7px;
+    text-align: left;
+    cursor: pointer;
+    color: var(--text-main, #f8fafc);
+  }
+
+  .pm-col-trigger {
+    padding: 7px 8px;
+    font-size: 13px;
+    font-weight: 500;
+  }
+
+  .pm-cat-trigger {
+    padding: 5px 8px;
+    font-size: 12px;
+    font-weight: 500;
+    color: #cbd5e1;
+  }
+
+  .pm-ep-trigger {
+    padding: 6px 8px;
+    font-size: 12.5px;
+    color: #cbd5e1;
+  }
+
+  .pm-ep-wrap.active .pm-ep-trigger {
+    color: #ffffff;
+    font-weight: 500;
+  }
+
+  .pm-chevron {
+    color: var(--text-muted, #94a3b8);
+    display: inline-flex;
+    transition: transform 0.16s ease;
     flex-shrink: 0;
   }
 
-  .tool-icon.violet {
-    background: rgba(168, 85, 247, 0.16);
-    color: #c084fc;
+  .pm-chevron.open {
+    transform: rotate(90deg);
+    color: #a5b4fc;
   }
 
-  .tool-icon.cyan {
-    background: rgba(6, 182, 212, 0.16);
-    color: #22d3ee;
+  .pm-folder-ico {
+    color: #a5b4fc;
+    flex-shrink: 0;
   }
 
-  .tool-icon.emerald {
-    background: rgba(16, 185, 129, 0.16);
-    color: #34d399;
+  .pm-sub-folder-ico {
+    color: #94a3b8;
+    flex-shrink: 0;
   }
 
-  .tool-copy {
+  .pm-col-title,
+  .pm-cat-name,
+  .pm-ep-label {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .pm-col-count {
+    font-family: var(--font-en, "Outfit", sans-serif);
+    font-size: 11px;
+    color: var(--text-muted, #94a3b8);
+    font-variant-numeric: tabular-nums;
+    padding-right: 4px;
+  }
+
+  /* Accessible Row Actions (Visible on Hover, Keyboard Focus, Active, and Touch) */
+  .pm-row-actions {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px 4px 2px 0;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.12s ease;
+  }
+
+  .pm-tree-item-wrap:hover .pm-row-actions,
+  .pm-tree-item-wrap:focus-within .pm-row-actions,
+  .pm-ep-wrap.active .pm-row-actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  @media (hover: none), (pointer: coarse) {
+    .pm-row-actions {
+      opacity: 1;
+      pointer-events: auto;
+    }
+  }
+
+  .pm-mini-ico {
+    width: 26px;
+    height: 26px;
+    border-radius: 8px;
+    border: none;
+    background-color: transparent;
+    color: var(--text-muted, #94a3b8);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background-color 0.12s ease, color 0.12s ease;
+  }
+
+  .pm-mini-ico:hover {
+    background-color: rgba(255, 255, 255, 0.11);
+    color: var(--text-main, #f8fafc);
+  }
+
+  .pm-mini-ico.danger:hover {
+    background-color: rgba(244, 63, 94, 0.22);
+    color: #fda4af;
+  }
+
+  .pm-ep-children {
+    padding-left: 14px;
+    margin-top: 2px;
     display: flex;
     flex-direction: column;
     gap: 2px;
   }
 
-  .tool-title {
-    font-size: 0.85rem;
-    font-weight: 600;
-    color: var(--text, #f8fafc);
-  }
-
-  .tool-sub {
-    font-size: 0.75rem;
-    color: var(--text-muted, #94a3b8);
-    line-height: 1.35;
-  }
-
-  /* Right Panel: Repository */
-  .repo-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 12px;
-    flex-wrap: wrap;
-    margin-bottom: 16px;
-  }
-
-  .repo-title-group {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex-wrap: wrap;
-  }
-
-  .project-tag {
-    font-size: 0.75rem;
-    font-weight: 600;
-    padding: 3px 10px;
-    border-radius: 999px;
-    background: rgba(168, 85, 247, 0.16);
-    color: var(--primary-light, #c084fc);
-    border: 1px solid rgba(168, 85, 247, 0.3);
-  }
-
-  .repo-top-actions {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .btn-studio-quick {
-    background: rgba(168, 85, 247, 0.16);
-    border: 1px solid rgba(168, 85, 247, 0.38);
-    color: var(--primary-light, #c084fc);
-    padding: 7px 14px;
-    border-radius: 8px;
-    font-size: 0.82rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.16s ease;
-  }
-
-  .btn-studio-quick:hover {
-    background: rgba(168, 85, 247, 0.28);
-    color: #ffffff;
-  }
-
-  .btn-bulk-danger {
-    background: rgba(239, 68, 68, 0.15);
-    border: 1px solid rgba(239, 68, 68, 0.35);
-    color: #f87171;
-    padding: 7px 14px;
-    border-radius: 8px;
-    font-size: 0.82rem;
-    font-weight: 600;
-    cursor: pointer;
-  }
-
-  .repo-toolbar {
-    display: flex;
-    gap: 10px;
-    flex-wrap: wrap;
-    margin-bottom: 12px;
-  }
-
-  .search-box {
-    flex: 1;
-    min-width: 220px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    background: var(--bg, #090711);
-    border: 1px solid rgba(168, 85, 247, 0.22);
-    border-radius: 8px;
-    padding: 0 12px;
-    color: var(--text-muted, #94a3b8);
-  }
-
-  .search-box input {
-    flex: 1;
-    border: none;
-    background: transparent;
-    color: var(--text, #f8fafc);
-    padding: 9px 0;
-    font-size: 0.84rem;
-    outline: none;
-  }
-
-  .clear-search {
-    background: none;
-    border: none;
-    color: var(--primary-light, #c084fc);
-    font-size: 0.75rem;
-    cursor: pointer;
-  }
-
-  .filter-group {
-    display: flex;
-    gap: 8px;
-  }
-
-  .filter-select {
-    background: var(--bg, #090711);
-    border: 1px solid rgba(168, 85, 247, 0.22);
-    border-radius: 8px;
-    color: var(--text, #f8fafc);
-    padding: 8px 12px;
-    font-size: 0.82rem;
-    outline: none;
-  }
-
-  .bulk-bar {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 12px;
-    flex-wrap: wrap;
-    padding: 8px 12px;
-    border-radius: 8px;
-    background: rgba(18, 15, 29, 0.65);
-    border: 1px solid rgba(168, 85, 247, 0.12);
-    margin-bottom: 14px;
-    font-size: 0.78rem;
-  }
-
-  .bulk-check-label {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    font-weight: 600;
-    color: var(--text-secondary, #cbd5e1);
-    cursor: pointer;
-  }
-
-  .bulk-hint {
-    color: var(--text-muted, #94a3b8);
-    font-size: 0.75rem;
-  }
-
-  .collections-list {
+  .pm-cat-items {
+    padding-left: 14px;
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 1px;
   }
 
-  .collection-card {
-    background: rgba(18, 15, 29, 0.82);
-    border: 1px solid rgba(168, 85, 247, 0.18);
-    border-radius: 12px;
-    padding: 16px;
-    transition: all 0.18s ease;
+  .pm-ep-add-inline {
+    background-color: transparent;
+    border: 1px dashed rgba(255, 255, 255, 0.16);
+    border-radius: 8px;
+    color: var(--text-muted, #94a3b8);
+    font-size: 12px;
+    padding: 7px 10px;
+    text-align: left;
+    cursor: pointer;
+    margin: 4px 0;
   }
 
-  .collection-card:hover {
-    border-color: rgba(168, 85, 247, 0.38);
+  .pm-ep-add-inline:hover {
+    border-color: rgba(99, 102, 241, 0.55);
+    color: #c7d2fe;
   }
 
-  .collection-card.checked {
-    border-color: rgba(168, 85, 247, 0.55);
-    background: rgba(168, 85, 247, 0.08);
-  }
-
-  .col-card-top {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 14px;
-    flex-wrap: wrap;
-  }
-
-  .col-title-area {
-    display: flex;
-    align-items: flex-start;
-    gap: 12px;
-  }
-
-  .col-name-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-  }
-
-  .col-name-row h4 {
-    margin: 0;
-    font-size: 1rem;
+  .pm-verb {
+    font-family: var(--font-en, "Outfit", sans-serif);
+    font-size: 10.5px;
     font-weight: 700;
-    color: var(--text, #f8fafc);
-  }
-
-  .format-badge {
-    font-size: 0.7rem;
-    font-weight: 600;
-    padding: 2px 8px;
-    border-radius: 999px;
-    background: rgba(6, 182, 212, 0.14);
-    color: #22d3ee;
-    border: 1px solid rgba(6, 182, 212, 0.25);
-  }
-
-  .version-chip {
-    font-family: "Outfit", monospace;
-    font-size: 0.7rem;
-    padding: 1px 7px;
-    border-radius: 6px;
-    background: rgba(255, 255, 255, 0.06);
-    color: var(--text-muted, #94a3b8);
-  }
-
-  .col-sub-meta {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex-wrap: wrap;
-    margin-top: 6px;
-    font-size: 0.76rem;
-    color: var(--text-muted, #94a3b8);
-  }
-
-  .ep-count-pill {
-    font-weight: 600;
-    color: var(--primary-light, #c084fc);
-  }
-
-  .base-url-chip {
-    font-family: monospace;
-    background: rgba(255, 255, 255, 0.04);
-    padding: 1px 8px;
-    border-radius: 6px;
-    color: var(--text-secondary, #cbd5e1);
-  }
-
-  .col-actions {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex-wrap: wrap;
-  }
-
-  .btn-workspace {
-    background: var(
-      --gradient-main,
-      linear-gradient(135deg, #a855f7 0%, #6366f1 50%, #06b6d4 100%)
-    );
-    border: none;
-    color: #ffffff;
-    padding: 7px 13px;
-    border-radius: 8px;
-    font-size: 0.78rem;
-    font-weight: 600;
-    cursor: pointer;
-    box-shadow: 0 4px 14px rgba(168, 85, 247, 0.25);
-  }
-
-  .btn-icon-action {
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(168, 85, 247, 0.2);
-    color: var(--text-secondary, #cbd5e1);
-    padding: 6px 10px;
-    border-radius: 8px;
-    font-size: 0.76rem;
-    font-weight: 600;
-    cursor: pointer;
-  }
-
-  .btn-icon-action:hover {
-    border-color: rgba(168, 85, 247, 0.45);
-    color: #ffffff;
-  }
-
-  .btn-icon-action.danger {
-    color: #f87171;
-    border-color: rgba(239, 68, 68, 0.25);
-  }
-
-  .endpoints-preview-bar {
-    margin-top: 12px;
-    padding-top: 12px;
-    border-top: 1px solid rgba(168, 85, 247, 0.12);
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-  }
-
-  .ep-preview-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 4px 9px;
-    border-radius: 8px;
-    background: rgba(9, 7, 17, 0.7);
-    border: 1px solid rgba(168, 85, 247, 0.16);
-    color: var(--text-secondary, #cbd5e1);
-    font-size: 0.75rem;
-    cursor: pointer;
-    max-width: 260px;
-  }
-
-  .ep-preview-pill:hover {
-    border-color: rgba(168, 85, 247, 0.45);
-  }
-
-  .m-tag {
-    font-family: "Outfit", monospace;
-    font-size: 0.66rem;
-    font-weight: 700;
-    padding: 1px 5px;
-    border-radius: 4px;
-  }
-
-  .m-tag.get {
-    background: rgba(6, 182, 212, 0.18);
-    color: #22d3ee;
-  }
-  .m-tag.post {
-    background: rgba(16, 185, 129, 0.18);
-    color: #34d399;
-  }
-  .m-tag.put,
-  .m-tag.patch {
-    background: rgba(245, 158, 11, 0.18);
-    color: #fbbf24;
-  }
-  .m-tag.delete {
-    background: rgba(239, 68, 68, 0.18);
-    color: #f87171;
-  }
-
-  .p-text {
-    font-family: monospace;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .ep-more-pill {
-    background: rgba(168, 85, 247, 0.14);
-    border: 1px solid rgba(168, 85, 247, 0.3);
-    color: var(--primary-light, #c084fc);
-    border-radius: 8px;
-    padding: 4px 10px;
-    font-size: 0.74rem;
-    font-weight: 600;
-    cursor: pointer;
-  }
-
-  /* Empty / Loading State */
-  .state-box {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    min-height: 280px;
-    text-align: center;
-    padding: 28px;
-    color: var(--text-muted, #94a3b8);
-    gap: 10px;
-  }
-
-  .empty-orb {
-    width: 60px;
-    height: 60px;
-    border-radius: 16px;
-    background: rgba(168, 85, 247, 0.12);
-    border: 1px solid rgba(168, 85, 247, 0.28);
-    color: var(--primary-light, #c084fc);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .state-box h4 {
-    margin: 6px 0 0;
-    color: var(--text, #f8fafc);
-    font-size: 1.02rem;
-  }
-
-  .state-box p {
-    margin: 0;
-    font-size: 0.82rem;
-    max-width: 420px;
-  }
-
-  .btn-primary-inline {
-    margin-top: 8px;
-    background: var(
-      --gradient-main,
-      linear-gradient(135deg, #a855f7 0%, #6366f1 50%, #06b6d4 100%)
-    );
-    border: none;
-    color: #ffffff;
-    padding: 9px 18px;
-    border-radius: 8px;
-    font-weight: 600;
-    cursor: pointer;
-  }
-
-  /* =========================================================================
-     MODALS (Spectra Obsidian Glass Dialogs)
-     ========================================================================= */
-  .modal-backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(9, 7, 17, 0.8);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    z-index: 2050;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 20px;
-  }
-
-  .modal-window {
-    background: var(--bg2, #120f1d);
-    border: 1px solid rgba(168, 85, 247, 0.25);
-    border-radius: 20px;
-    width: 100%;
-    max-height: 92vh;
-    display: flex;
-    flex-direction: column;
-    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.7);
-    overflow: hidden;
-  }
-
-  .workspace-modal {
-    max-width: 1180px;
-  }
-
-  .studio-modal {
-    max-width: 880px;
-  }
-
-  .sniffer-modal {
-    max-width: 760px;
-  }
-
-  .modal-header {
-    padding: 18px 24px;
-    border-bottom: 1px solid rgba(168, 85, 247, 0.15);
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 14px;
-    background: rgba(24, 19, 38, 0.65);
-  }
-
-  .modal-eyebrow {
-    font-family: "Outfit", sans-serif;
-    font-size: 0.68rem;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    color: var(--primary-light, #c084fc);
-  }
-
-  .modal-title-block h3 {
-    margin: 2px 0 0;
-    font-family: "Outfit", "Prompt", sans-serif;
-    font-size: 1.15rem;
-    color: var(--text, #f8fafc);
-  }
-
-  .modal-header-actions {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .btn-primary-sm {
-    background: var(
-      --gradient-main,
-      linear-gradient(135deg, #a855f7 0%, #6366f1 50%, #06b6d4 100%)
-    );
-    border: none;
-    color: #ffffff;
-    padding: 7px 14px;
-    border-radius: 8px;
-    font-size: 0.8rem;
-    font-weight: 600;
-    cursor: pointer;
-  }
-
-  .btn-secondary-sm {
-    background: rgba(168, 85, 247, 0.14);
-    border: 1px solid rgba(168, 85, 247, 0.32);
-    color: var(--primary-light, #c084fc);
-    padding: 7px 13px;
-    border-radius: 8px;
-    font-size: 0.8rem;
-    font-weight: 600;
-    cursor: pointer;
-  }
-
-  .modal-close-btn {
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(168, 85, 247, 0.2);
-    color: var(--text-muted, #94a3b8);
-    width: 34px;
-    height: 34px;
-    border-radius: 8px;
-    cursor: pointer;
-  }
-
-  .modal-body {
-    padding: 20px 24px;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-  }
-
-  .modal-footer {
-    padding: 14px 24px;
-    border-top: 1px solid rgba(168, 85, 247, 0.15);
-    display: flex;
-    justify-content: flex-end;
-    gap: 10px;
-    background: rgba(18, 15, 29, 0.92);
-  }
-
-  /* Workspace Modal Details */
-  .ws-settings-grid {
-    display: grid;
-    grid-template-columns: 1.2fr 1.6fr 110px auto;
-    gap: 12px;
-    align-items: end;
-    background: rgba(24, 19, 38, 0.6);
-    padding: 14px;
-    border-radius: 12px;
-    border: 1px solid rgba(168, 85, 247, 0.16);
-  }
-
-  .ws-field {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-  }
-
-  .btn-save-meta {
-    background: rgba(168, 85, 247, 0.2);
-    border: 1px solid rgba(168, 85, 247, 0.45);
-    color: #ffffff;
-    padding: 9px 14px;
-    border-radius: 8px;
-    font-weight: 600;
-    font-size: 0.82rem;
-    cursor: pointer;
-    white-space: nowrap;
-  }
-
-  .ws-filter-bar {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 12px;
-    flex-wrap: wrap;
-  }
-
-  .ws-search {
-    flex: 1;
-    min-width: 240px;
-  }
-
-  .method-pills {
-    display: flex;
-    gap: 6px;
-    flex-wrap: wrap;
-  }
-
-  .m-filter-pill {
-    background: rgba(24, 19, 38, 0.7);
-    border: 1px solid rgba(168, 85, 247, 0.18);
-    color: var(--text-muted, #94a3b8);
-    padding: 6px 12px;
-    border-radius: 8px;
-    font-family: "Outfit", sans-serif;
-    font-size: 0.76rem;
-    font-weight: 700;
-    cursor: pointer;
-  }
-
-  .m-filter-pill.active {
-    background: rgba(168, 85, 247, 0.22);
-    color: #ffffff;
-    border-color: var(--primary, #a855f7);
-  }
-
-  .ws-split-layout {
-    display: grid;
-    grid-template-columns: 1.25fr 1fr;
-    gap: 16px;
-    min-height: 380px;
-  }
-
-  .ws-endpoints-list {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    max-height: 440px;
-    overflow-y: auto;
-    padding-right: 4px;
-  }
-
-  .ws-ep-card {
-    background: rgba(24, 19, 38, 0.65);
-    border: 1px solid rgba(168, 85, 247, 0.15);
-    border-radius: 10px;
-    padding: 10px 12px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 10px;
-  }
-
-  .ws-ep-card.active-test {
-    border-color: var(--secondary, #06b6d4);
-    background: rgba(6, 182, 212, 0.08);
-  }
-
-  .ws-ep-main {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    min-width: 0;
-    flex: 1;
-  }
-
-  .ws-ep-info {
-    min-width: 0;
-    flex: 1;
-  }
-
-  .ws-ep-path {
-    font-family: monospace;
-    font-size: 0.82rem;
-    color: var(--text, #f8fafc);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .ws-ep-summary {
-    font-size: 0.74rem;
-    color: var(--text-muted, #94a3b8);
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin-top: 2px;
-  }
-
-  .cat-chip {
-    background: rgba(168, 85, 247, 0.15);
-    color: var(--primary-light, #c084fc);
-    padding: 0 7px;
-    border-radius: 999px;
-    font-size: 0.68rem;
-  }
-
-  .ws-ep-actions {
-    display: flex;
-    align-items: center;
-    gap: 5px;
+    letter-spacing: 0.02em;
+    min-width: 40px;
+    text-align: left;
     flex-shrink: 0;
   }
 
-  .btn-ep-test {
-    background: rgba(6, 182, 212, 0.16);
-    border: 1px solid rgba(6, 182, 212, 0.38);
-    color: #22d3ee;
-    padding: 5px 10px;
-    border-radius: 6px;
-    font-size: 0.74rem;
-    font-weight: 600;
-    cursor: pointer;
-  }
-
-  .btn-ep-sub {
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(168, 85, 247, 0.18);
-    color: var(--text-secondary, #cbd5e1);
-    padding: 5px 8px;
-    border-radius: 6px;
-    font-size: 0.73rem;
-    cursor: pointer;
-  }
-
-  .btn-ep-sub.danger {
-    color: #f87171;
-    border-color: rgba(239, 68, 68, 0.25);
-  }
-
-  .ws-inspector-pane {
-    background: var(--bg, #090711);
-    border: 1px solid rgba(168, 85, 247, 0.2);
-    border-radius: 12px;
-    padding: 14px;
+  /* History List */
+  .pm-history-head {
     display: flex;
-    flex-direction: column;
-    max-height: 440px;
-    overflow-y: auto;
-  }
-
-  .inspector-head {
-    display: flex;
+    align-items: center;
     justify-content: space-between;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-    padding-bottom: 10px;
-    border-bottom: 1px solid rgba(168, 85, 247, 0.14);
-    margin-bottom: 10px;
+    padding: 10px 12px;
+    font-size: 12px;
+    color: var(--text-muted, #94a3b8);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   }
 
-  .inspector-head h4 {
-    margin: 0;
-    font-family: "Outfit", sans-serif;
-    font-size: 0.92rem;
-  }
-
-  .telemetry-pills {
-    display: flex;
-    gap: 6px;
-    align-items: center;
-  }
-
-  .status-pill {
-    font-family: "Outfit", monospace;
-    font-size: 0.74rem;
-    font-weight: 700;
-    padding: 2px 8px;
-    border-radius: 6px;
-  }
-
-  .status-pill.ok {
-    background: rgba(16, 185, 129, 0.16);
-    color: #34d399;
-  }
-
-  .status-pill.err {
-    background: rgba(239, 68, 68, 0.16);
-    color: #f87171;
-  }
-
-  .metric-pill {
-    font-family: "Outfit", monospace;
-    font-size: 0.72rem;
-    padding: 2px 8px;
-    border-radius: 6px;
-    background: rgba(255, 255, 255, 0.06);
-    color: var(--text-secondary, #cbd5e1);
-  }
-
-  .inspector-empty {
-    flex: 1;
+  .pm-hist-row {
+    width: 100%;
+    text-align: left;
+    background-color: transparent;
+    border: none;
+    border-radius: 8px;
+    padding: 8px;
+    cursor: pointer;
     display: flex;
     flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    text-align: center;
-    color: var(--text-muted, #94a3b8);
-    font-size: 0.82rem;
-    padding: 20px;
+    gap: 4px;
+    color: var(--text-main, #f8fafc);
   }
 
-  .inspector-error {
-    background: rgba(239, 68, 68, 0.1);
-    border: 1px solid rgba(239, 68, 68, 0.3);
-    color: #fca5a5;
-    padding: 12px;
-    border-radius: 8px;
-    font-size: 0.8rem;
+  .pm-hist-row:hover {
+    background-color: rgba(255, 255, 255, 0.05);
   }
 
-  .tested-url-bar {
+  .pm-hist-top {
     display: flex;
     align-items: center;
-    gap: 8px;
-    background: rgba(24, 19, 38, 0.8);
-    padding: 6px 10px;
-    border-radius: 6px;
-    margin-bottom: 10px;
-    font-size: 0.76rem;
-    overflow-x: auto;
-  }
-
-  .code-label {
-    font-size: 0.73rem;
-    font-weight: 600;
-    color: var(--text-muted, #94a3b8);
-    margin: 8px 0 4px;
-  }
-
-  .response-pre {
-    margin: 0;
-    padding: 10px;
-    border-radius: 8px;
-    background: rgba(18, 15, 29, 0.95);
-    border: 1px solid rgba(168, 85, 247, 0.14);
-    color: #e2e8f0;
-    font-family: "JetBrains Mono", monospace;
-    font-size: 0.76rem;
-    overflow-x: auto;
-    max-height: 220px;
-    white-space: pre-wrap;
-    word-break: break-all;
-  }
-
-  /* Studio Modal Specifics */
-  .curl-drawer {
-    background: rgba(24, 19, 38, 0.85);
-    border: 1px solid rgba(6, 182, 212, 0.32);
-    border-radius: 12px;
-    padding: 14px;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .curl-drawer-head {
-    display: flex;
-    justify-content: space-between;
-    font-size: 0.78rem;
-    color: var(--text-secondary, #cbd5e1);
-    flex-wrap: wrap;
     gap: 6px;
   }
 
-  .curl-drawer-actions {
-    display: flex;
-    justify-content: flex-end;
-  }
-
-  .studio-collection-bar {
-    background: rgba(24, 19, 38, 0.55);
-    border: 1px solid rgba(168, 85, 247, 0.16);
-    border-radius: 12px;
-    padding: 14px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  .save-mode-switch {
-    display: flex;
-    gap: 8px;
-  }
-
-  .switch-pill {
-    flex: 1;
-    padding: 8px 12px;
-    border-radius: 8px;
-    border: 1px solid rgba(168, 85, 247, 0.2);
-    background: rgba(9, 7, 17, 0.6);
-    color: var(--text-muted, #94a3b8);
-    font-size: 0.8rem;
-    font-weight: 600;
-    cursor: pointer;
-  }
-
-  .switch-pill.active {
-    background: rgba(168, 85, 247, 0.2);
-    color: #ffffff;
-    border-color: var(--primary, #a855f7);
-  }
-
-  .studio-meta-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 12px;
-  }
-
-  .form-field {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-  }
-
-  .form-field.full {
-    grid-column: 1 / -1;
-  }
-
-  .studio-request-bar {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-  }
-
-  .method-select {
-    padding: 10px 12px;
-    border-radius: 8px;
-    border: 1px solid rgba(168, 85, 247, 0.3);
-    background: var(--bg, #090711);
-    color: #ffffff;
-    font-family: "Outfit", monospace;
-    font-weight: 700;
-    font-size: 0.84rem;
-  }
-
-  .url-input {
-    flex: 1;
-    padding: 10px 12px;
-    border-radius: 8px;
-    border: 1px solid rgba(168, 85, 247, 0.25);
-    background: var(--bg, #090711);
-    color: var(--text, #f8fafc);
-    font-size: 0.84rem;
-  }
-
-  .btn-test-send {
-    background: rgba(6, 182, 212, 0.18);
-    border: 1px solid rgba(6, 182, 212, 0.45);
-    color: #22d3ee;
-    padding: 10px 16px;
-    border-radius: 8px;
-    font-weight: 700;
-    font-size: 0.82rem;
-    cursor: pointer;
+  .pm-hist-url {
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
   }
 
-  .studio-tabs-header {
+  .pm-hist-meta {
     display: flex;
-    gap: 6px;
-    border-bottom: 1px solid rgba(168, 85, 247, 0.16);
-    padding-bottom: 8px;
-  }
-
-  .studio-tab {
-    background: transparent;
-    border: 1px solid transparent;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
     color: var(--text-muted, #94a3b8);
-    padding: 7px 14px;
-    border-radius: 8px;
-    font-size: 0.8rem;
+    font-variant-numeric: tabular-nums;
+    padding-left: 46px;
+  }
+
+  .pm-hist-status.ok {
+    color: #34d399;
     font-weight: 600;
-    cursor: pointer;
+  }
+  .pm-hist-status.err {
+    color: #fb7185;
+    font-weight: 600;
   }
 
-  .studio-tab.active {
-    background: rgba(168, 85, 247, 0.18);
-    border-color: rgba(168, 85, 247, 0.4);
-    color: #ffffff;
-  }
-
-  .studio-tab-panel {
-    background: rgba(9, 7, 17, 0.55);
-    border: 1px solid rgba(168, 85, 247, 0.15);
-    border-radius: 12px;
-    padding: 14px;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .kv-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    font-size: 0.78rem;
-    color: var(--text-secondary, #cbd5e1);
-  }
-
-  .mode-pills {
-    display: flex;
-    gap: 6px;
-  }
-
-  .mini-pill {
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(168, 85, 247, 0.18);
+  .pm-side-empty {
+    padding: 28px 16px;
+    text-align: center;
     color: var(--text-muted, #94a3b8);
-    padding: 4px 10px;
-    border-radius: 6px;
-    font-size: 0.74rem;
-    font-weight: 600;
-    cursor: pointer;
+    font-size: 12.5px;
+    line-height: 1.6;
   }
 
-  .mini-pill.active {
-    background: rgba(168, 85, 247, 0.22);
-    color: #ffffff;
-    border-color: rgba(168, 85, 247, 0.45);
-  }
-
-  .btn-add-row {
-    background: rgba(168, 85, 247, 0.14);
-    border: 1px solid rgba(168, 85, 247, 0.3);
-    color: var(--primary-light, #c084fc);
-    padding: 4px 10px;
-    border-radius: 6px;
-    font-size: 0.75rem;
-    font-weight: 600;
-    cursor: pointer;
-  }
-
-  .kv-rows {
+  .pm-empty-actions {
+    margin-top: 12px;
     display: flex;
-    flex-direction: column;
     gap: 8px;
+    justify-content: center;
   }
 
-  .kv-row {
-    display: grid;
-    grid-template-columns: 22px 1fr 1.2fr auto;
-    gap: 8px;
-    align-items: center;
-  }
-
-  .btn-del-row {
-    background: rgba(239, 68, 68, 0.12);
-    border: 1px solid rgba(239, 68, 68, 0.25);
-    color: #f87171;
-    padding: 6px 10px;
-    border-radius: 6px;
-    font-size: 0.74rem;
-    cursor: pointer;
-  }
-
-  .auth-grid,
-  .sniffer-form-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 12px;
-  }
-
-  .studio-response-box {
-    background: var(--bg, #090711);
-    border: 1px solid rgba(6, 182, 212, 0.3);
-    border-radius: 12px;
-    padding: 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .studio-res-head {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    font-size: 0.8rem;
-  }
-
-  /* Sniffer Modal List */
-  .sniffer-results-box {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  .sniffer-list-head {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-
-  .sniffer-list {
-    max-height: 240px;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    background: var(--bg, #090711);
-    padding: 10px;
-    border-radius: 10px;
-    border: 1px solid rgba(168, 85, 247, 0.16);
-  }
-
-  .sniffer-item {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 8px 10px;
+  .pm-btn-ghost-sm {
+    height: 32px;
+    padding: 0 12px;
     border-radius: 8px;
-    background: rgba(24, 19, 38, 0.65);
-    border: 1px solid rgba(168, 85, 247, 0.12);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background-color: rgba(255, 255, 255, 0.04);
+    color: var(--text-main, #f8fafc);
+    font-size: 12px;
     cursor: pointer;
   }
 
-  .sniffer-item.selected {
-    border-color: rgba(168, 85, 247, 0.45);
-    background: rgba(168, 85, 247, 0.12);
+  .pm-btn-ghost-sm:hover {
+    border-color: #6366f1;
+    color: #c7d2fe;
   }
 
-  .sniffer-path {
-    font-family: monospace;
-    font-size: 0.8rem;
-    color: var(--text, #f8fafc);
+  .pm-skeleton-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 8px;
+  }
+
+  .pm-skel-row {
+    height: 28px;
+    border-radius: 8px;
+    background-color: rgba(255, 255, 255, 0.05);
+    animation: pmPulse 1.4s ease-in-out infinite;
+  }
+
+  .pm-skel-row.short {
+    width: 72%;
+    margin-left: 16px;
+  }
+
+  /* ── Right Main Workbench ── */
+  .pm-workbench {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    background-color: rgba(10, 11, 18, 0.72);
+  }
+
+  /* Multi-Tab Bar */
+  .pm-tabbar {
+    height: 40px;
+    flex-shrink: 0;
+    background-color: rgba(13, 15, 23, 0.85);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    display: flex;
+    align-items: stretch;
+  }
+
+  .pm-tabs-scroll {
+    display: flex;
+    align-items: stretch;
+    overflow-x: auto;
     flex: 1;
   }
 
-  .sniffer-summary {
-    font-size: 0.74rem;
-    color: var(--text-muted, #94a3b8);
+  .pm-tab-wrap {
+    display: flex;
+    align-items: center;
+    min-width: 148px;
+    max-width: 230px;
+    border-right: 1px solid rgba(255, 255, 255, 0.06);
+    border-top: 2px solid transparent;
+    flex-shrink: 0;
+    padding-right: 6px;
+    transition: background-color 0.14s ease;
   }
 
-  .method-badge {
-    font-family: "Outfit", monospace;
-    font-size: 0.7rem;
-    font-weight: 700;
-    padding: 3px 8px;
-    border-radius: 6px;
-    min-width: 52px;
-    text-align: center;
+  .pm-tab-wrap:hover {
+    background-color: rgba(255, 255, 255, 0.03);
   }
 
-  .method-badge.get {
-    background: rgba(6, 182, 212, 0.16);
-    color: #22d3ee;
-  }
-  .method-badge.post {
-    background: rgba(16, 185, 129, 0.16);
-    color: #34d399;
-  }
-  .method-badge.put,
-  .method-badge.patch {
-    background: rgba(245, 158, 11, 0.16);
-    color: #fbbf24;
-  }
-  .method-badge.delete {
-    background: rgba(239, 68, 68, 0.16);
-    color: #f87171;
+  .pm-tab-wrap.active {
+    background-color: rgba(10, 11, 18, 0.95);
+    border-top-color: #6366f1;
   }
 
-  .btn-cancel {
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(168, 85, 247, 0.2);
-    color: var(--text-secondary, #cbd5e1);
-    padding: 9px 18px;
-    border-radius: 8px;
-    font-weight: 600;
-    cursor: pointer;
-  }
-
-  .btn-primary-spectra {
-    background: var(
-      --gradient-main,
-      linear-gradient(135deg, #a855f7 0%, #6366f1 50%, #06b6d4 100%)
-    );
+  .pm-tab-trigger {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    padding: 0 6px 0 12px;
+    background-color: transparent;
     border: none;
-    color: #ffffff;
-    padding: 9px 20px;
-    border-radius: 8px;
-    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--text-muted, #94a3b8);
+    font-size: 12.5px;
     cursor: pointer;
-    box-shadow: 0 6px 20px rgba(168, 85, 247, 0.28);
+    text-align: left;
   }
 
-  .btn-primary-spectra:disabled {
+  .pm-tab-wrap.active .pm-tab-trigger {
+    color: #ffffff;
+  }
+
+  .pm-tab-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .pm-dirty-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background-color: #fbbf24;
+    flex-shrink: 0;
+  }
+
+  .pm-tab-close {
+    width: 24px;
+    height: 24px;
+    border-radius: 8px;
+    border: none;
+    background-color: transparent;
+    color: var(--text-muted, #94a3b8);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  .pm-tab-close:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+    color: #ffffff;
+  }
+
+  .pm-tab-add {
+    width: 38px;
+    border: none;
+    background-color: transparent;
+    color: var(--text-muted, #94a3b8);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  .pm-tab-add:hover {
+    color: #ffffff;
+    background-color: rgba(255, 255, 255, 0.06);
+  }
+
+  /* Request Identity Header */
+  .pm-req-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 16px 6px;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+  }
+
+  .pm-req-identity {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    flex: 1;
+    min-width: 220px;
+  }
+
+  .pm-crumb {
+    font-size: 12px;
+    color: #c7d2fe;
+    background-color: rgba(99, 102, 241, 0.14);
+    border: 1px solid rgba(99, 102, 241, 0.28);
+    padding: 2px 8px;
+    border-radius: 8px;
+    white-space: nowrap;
+  }
+
+  .pm-crumb.cat {
+    color: #cbd5e1;
+    background-color: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.1);
+  }
+
+  .pm-crumb.draft {
+    color: var(--text-muted, #94a3b8);
+    background-color: rgba(255, 255, 255, 0.04);
+    border-color: rgba(255, 255, 255, 0.08);
+  }
+
+  .pm-crumb-sep {
+    color: #8494aa;
+  }
+
+  .pm-req-name-input {
+    flex: 1;
+    min-width: 140px;
+    max-width: 420px;
+    height: 32px;
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    color: var(--text-main, #f8fafc);
+    font-size: 14px;
+    font-weight: 600;
+    padding: 0 8px;
+    outline: none;
+    transition: border-color 0.15s ease, background-color 0.15s ease;
+  }
+
+  .pm-req-name-input:hover {
+    border-color: rgba(255, 255, 255, 0.12);
+  }
+
+  .pm-req-name-input:focus {
+    background-color: #12141c;
+    border-color: #6366f1;
+  }
+
+  .pm-req-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+
+  .pm-subtle-btn {
+    height: 32px;
+    padding: 0 10px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background-color: rgba(255, 255, 255, 0.03);
+    color: #cbd5e1;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background-color 0.14s ease, color 0.14s ease;
+  }
+
+  .pm-subtle-btn:hover {
+    background-color: rgba(255, 255, 255, 0.09);
+    color: #ffffff;
+  }
+
+  .pm-save-btn {
+    height: 32px;
+    padding: 0 12px;
+    border-radius: 8px;
+    border: 1px solid rgba(99, 102, 241, 0.45);
+    background-color: rgba(99, 102, 241, 0.16);
+    color: #e0e7ff;
+    font-size: 12.5px;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    transition: background-color 0.14s ease;
+  }
+
+  .pm-save-btn:hover:not(:disabled) {
+    background-color: rgba(99, 102, 241, 0.28);
+  }
+
+  .pm-save-btn:disabled {
     opacity: 0.45;
     cursor: not-allowed;
   }
 
-  .spinner {
-    width: 15px;
-    height: 15px;
+  /* Postman Hero URL Bar (DESIGN.md 12px radius) */
+  .pm-url-bar-row {
+    display: flex;
+    align-items: stretch;
+    gap: 10px;
+    padding: 6px 16px 12px;
+    flex-shrink: 0;
+  }
+
+  .pm-url-bar {
+    flex: 1;
+    min-width: 0;
+    height: 44px;
+    display: flex;
+    align-items: center;
+    background-color: #12141c;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 12px;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+
+  .pm-url-bar:focus-within {
+    border-color: #6366f1;
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+  }
+
+  .pm-method-wrap {
+    height: 100%;
+    flex-shrink: 0;
+    display: flex;
+    align-items: stretch;
+  }
+
+  .pm-url-sep {
+    width: 1px;
+    height: 22px;
+    background-color: rgba(255, 255, 255, 0.11);
+  }
+
+  .pm-url-input {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    background-color: transparent;
+    border: none;
+    outline: none;
+    color: var(--text-main, #f8fafc);
+    font-family: "JetBrains Mono", "Fira Code", Consolas, monospace;
+    font-size: 13px;
+    padding: 0 14px;
+  }
+
+  .pm-url-input::placeholder {
+    font-family: var(--font-th, "Prompt", sans-serif);
+    color: #8494aa;
+    font-size: 12.5px;
+  }
+
+  .pm-base-pill {
+    margin-right: 10px;
+    padding: 3px 8px;
+    border-radius: 8px;
+    background-color: rgba(6, 182, 212, 0.14);
+    border: 1px solid rgba(6, 182, 212, 0.35);
+    color: #67e8f9;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 11px;
+    white-space: nowrap;
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .pm-send-btn {
+    height: 44px;
+    min-width: 112px;
+    padding: 0 22px;
+    border-radius: 12px;
+    border: none;
+    background: linear-gradient(135deg, #6366f1, #a855f7);
+    color: #ffffff;
+    font-family: var(--font-en, "Outfit", sans-serif);
+    font-size: 14px;
+    font-weight: 700;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    cursor: pointer;
+    box-shadow: 0 4px 16px rgba(99, 102, 241, 0.35);
+    transition: filter 0.15s ease, transform 0.15s ease;
+  }
+
+  .pm-send-btn.canceling {
+    background: linear-gradient(135deg, #be123c, #e11d48);
+    box-shadow: 0 4px 14px rgba(244, 63, 94, 0.35);
+  }
+
+  .pm-send-btn:hover:not(:disabled) {
+    filter: brightness(1.08);
+    transform: translateY(-1px);
+  }
+
+  .pm-send-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    transform: none;
+  }
+
+  /* Request Config Pane */
+  .pm-request-pane {
+    flex: 1;
+    min-height: 160px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .pm-subtabs {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0 16px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    flex-shrink: 0;
+  }
+
+  .pm-subtab {
+    height: 36px;
+    padding: 0 12px;
+    background-color: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-muted, #94a3b8);
+    font-size: 12.5px;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    transition: color 0.14s ease, border-color 0.14s ease;
+  }
+
+  .pm-subtab:hover {
+    color: var(--text-main, #f8fafc);
+  }
+
+  .pm-subtab.active {
+    color: #ffffff;
+    border-bottom-color: #6366f1;
+    font-weight: 600;
+  }
+
+  .pm-badge-count {
+    font-family: var(--font-en, "Outfit", sans-serif);
+    font-size: 11px;
+    font-weight: 600;
+    color: #c7d2fe;
+    background-color: rgba(99, 102, 241, 0.2);
+    padding: 1px 7px;
+    border-radius: 8px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .pm-active-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background-color: #10b981;
+  }
+
+  .pm-req-content {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 12px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  /* Key-Value Table (12px radius) */
+  .pm-kv-table {
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 12px;
+    overflow: hidden;
+    background-color: #0e1018;
+  }
+
+  .pm-kv-head,
+  .pm-kv-row {
+    display: grid;
+    grid-template-columns: 40px 1fr 1.3fr 40px;
+    align-items: center;
+  }
+
+  .pm-kv-head {
+    background-color: #141722;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    height: 32px;
+    font-family: var(--font-en, "Outfit", sans-serif);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    color: var(--text-muted, #94a3b8);
+  }
+
+  .pm-kv-head span {
+    padding: 0 10px;
+  }
+
+  .pm-kv-row {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    min-height: 36px;
+  }
+
+  .pm-kv-row:last-child {
+    border-bottom: none;
+  }
+
+  .pm-kv-row.disabled {
+    opacity: 0.5;
+  }
+
+  .col-chk,
+  .col-act {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .pm-cell-input {
+    width: 100%;
+    height: 36px;
+    background-color: transparent;
+    border: none;
+    border-left: 1px solid rgba(255, 255, 255, 0.05);
+    color: var(--text-main, #f8fafc);
+    font-size: 12.5px;
+    padding: 0 10px;
+    outline: none;
+  }
+
+  .pm-cell-input:focus {
+    background-color: rgba(99, 102, 241, 0.08);
+  }
+
+  .pm-cell-input::placeholder {
+    color: #8494aa;
+  }
+
+  .pm-row-del {
+    width: 26px;
+    height: 26px;
+    border-radius: 8px;
+    border: none;
+    background-color: transparent;
+    color: #8494aa;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+
+  .pm-row-del:hover {
+    color: #fda4af;
+    background-color: rgba(244, 63, 94, 0.18);
+  }
+
+  /* Auth Layout + Secret Eye Toggle */
+  .pm-auth-split {
+    display: grid;
+    grid-template-columns: 260px 1fr;
+    gap: 20px;
+    align-items: start;
+  }
+
+  .pm-auth-left {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-right: 16px;
+    border-right: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .pm-auth-left label,
+  .pm-field label {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-muted, #94a3b8);
+  }
+
+  .pm-auth-hint {
+    font-size: 12px;
+    color: #8494aa;
+    line-height: 1.5;
+  }
+
+  .pm-secret-wrap {
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
+
+  .pm-secret-wrap .pm-input {
+    padding-right: 38px;
+  }
+
+  .pm-eye-btn {
+    position: absolute;
+    right: 6px;
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    border: none;
+    background-color: transparent;
+    color: #94a3b8;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+
+  .pm-eye-btn:hover {
+    color: #ffffff;
+    background-color: rgba(255, 255, 255, 0.08);
+  }
+
+  .pm-auth-empty,
+  .pm-body-empty {
+    padding: 24px;
+    border: 1px dashed rgba(255, 255, 255, 0.12);
+    border-radius: 12px;
+    color: var(--text-muted, #94a3b8);
+    font-size: 13px;
+    text-align: center;
+  }
+
+  .pm-inline-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .pm-radio-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .pm-radio-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    background-color: rgba(255, 255, 255, 0.02);
+    color: var(--text-muted, #94a3b8);
+    font-size: 12px;
+    cursor: pointer;
+  }
+
+  .pm-radio-pill.active {
+    background-color: rgba(99, 102, 241, 0.18);
+    border-color: rgba(99, 102, 241, 0.45);
+    color: #e0e7ff;
+  }
+
+  .pm-radio-pill input {
+    accent-color: #6366f1;
+  }
+
+  .pm-body-tools {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .pm-json-badge {
+    font-size: 11.5px;
+    font-weight: 600;
+    color: #6ee7b7;
+    background-color: rgba(16, 185, 129, 0.15);
+    padding: 3px 9px;
+    border-radius: 8px;
+  }
+
+  .pm-json-badge.invalid {
+    color: #fda4af;
+    background-color: rgba(244, 63, 94, 0.18);
+  }
+
+  .pm-inline-error {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 12px;
+    color: #fda4af;
+    background-color: rgba(244, 63, 94, 0.12);
+    border: 1px solid rgba(244, 63, 94, 0.3);
+    border-radius: 8px;
+    padding: 7px 11px;
+  }
+
+  .pm-link-btn {
+    background-color: transparent;
+    border: none;
+    color: #a5b4fc;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .pm-link-btn.align-left {
+    align-self: flex-start;
+  }
+
+  .pm-link-btn:hover {
+    color: #c7d2fe;
+    text-decoration: underline;
+  }
+
+  .pm-code-editor {
+    flex: 1;
+    min-height: 130px;
+    width: 100%;
+    background-color: #0e1018;
+    border: 1px solid rgba(255, 255, 255, 0.11);
+    border-radius: 12px;
+    padding: 12px;
+    color: #e2e8f0;
+    font-family: "JetBrains Mono", "Fira Code", Consolas, monospace;
+    font-size: 12.5px;
+    line-height: 1.55;
+    resize: vertical;
+    outline: none;
+  }
+
+  .pm-code-editor:focus {
+    border-color: #6366f1;
+  }
+
+  .pm-segmented {
+    display: inline-flex;
+    background-color: #12141c;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    padding: 3px;
+    gap: 2px;
+  }
+
+  .pm-segmented.full {
+    display: flex;
+    width: 100%;
+  }
+
+  .pm-segmented.full button {
+    flex: 1;
+  }
+
+  .pm-segmented button {
+    height: 28px;
+    padding: 0 11px;
+    border: none;
+    border-radius: 8px;
+    background-color: transparent;
+    color: var(--text-muted, #94a3b8);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+
+  .pm-segmented button.active {
+    background-color: rgba(99, 102, 241, 0.25);
+    color: #ffffff;
+    font-weight: 600;
+  }
+
+  .pm-segmented button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .pm-segmented.compact button {
+    height: 24px;
+    padding: 0 8px;
+    font-size: 11.5px;
+  }
+
+  /* Splitter */
+  .pm-splitter {
+    height: 8px;
+    flex-shrink: 0;
+    background-color: #0f111a;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: row-resize;
+    transition: background-color 0.14s ease;
+  }
+
+  .pm-splitter:hover,
+  .pm-splitter:focus-visible {
+    background-color: rgba(99, 102, 241, 0.24);
+  }
+
+  .pm-splitter-grip {
+    width: 36px;
+    height: 3px;
+    border-radius: 999px;
+    background-color: rgba(255, 255, 255, 0.24);
+  }
+
+  /* Response Pane */
+  .pm-response-pane {
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    background-color: rgba(12, 13, 21, 0.9);
+    min-height: 170px;
+    overflow: hidden;
+  }
+
+  .pm-res-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 0 16px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    flex-shrink: 0;
+    flex-wrap: wrap;
+  }
+
+  .pm-res-tabs,
+  .pm-res-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .pm-status-badge {
+    font-family: var(--font-en, "Outfit", sans-serif);
+    font-size: 12px;
+    font-weight: 700;
+    padding: 3px 9px;
+    border-radius: 8px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .pm-status-badge.ok {
+    color: #6ee7b7;
+    background-color: rgba(16, 185, 129, 0.16);
+    border: 1px solid rgba(16, 185, 129, 0.35);
+  }
+
+  .pm-status-badge.redir {
+    color: #67e8f9;
+    background-color: rgba(6, 182, 212, 0.16);
+    border: 1px solid rgba(6, 182, 212, 0.38);
+  }
+
+  .pm-status-badge.warn {
+    color: #fcd34d;
+    background-color: rgba(245, 158, 11, 0.16);
+    border: 1px solid rgba(245, 158, 11, 0.35);
+  }
+
+  .pm-status-badge.err {
+    color: #fda4af;
+    background-color: rgba(244, 63, 94, 0.16);
+    border: 1px solid rgba(244, 63, 94, 0.35);
+  }
+
+  .pm-metric {
+    font-family: var(--font-en, "Outfit", sans-serif);
+    font-size: 12px;
+    color: var(--text-muted, #94a3b8);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .pm-mini-copy,
+  .pm-floating-copy {
+    height: 26px;
+    padding: 0 10px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.13);
+    background-color: rgba(255, 255, 255, 0.05);
+    color: #e2e8f0;
+    font-size: 11.5px;
+    cursor: pointer;
+  }
+
+  .pm-mini-copy:hover,
+  .pm-floating-copy:hover {
+    background-color: rgba(99, 102, 241, 0.24);
+    border-color: rgba(99, 102, 241, 0.5);
+  }
+
+  .pm-res-content {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    padding: 12px 16px;
+  }
+
+  .pm-code-wrap {
+    position: relative;
+  }
+
+  .pm-floating-copy {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+  }
+
+  .pm-response-pre {
+    margin: 0;
+    font-family: "JetBrains Mono", "Fira Code", Consolas, monospace;
+    font-size: 12.5px;
+    line-height: 1.6;
+    color: #e2e8f0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    background-color: #10121b;
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 12px;
+    padding: 12px 14px;
+  }
+
+  .pm-res-state {
+    height: 100%;
+    min-height: 120px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    color: var(--text-muted, #94a3b8);
+    font-size: 13px;
+    text-align: center;
+  }
+
+  .pm-res-idle-title {
+    color: #cbd5e1;
+    font-weight: 500;
+  }
+
+  .pm-shortcuts-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    justify-content: center;
+    font-size: 12px;
+    color: #8494aa;
+  }
+
+  kbd {
+    font-family: var(--font-en, "Outfit", sans-serif);
+    font-size: 11px;
+    padding: 2px 6px;
+    border-radius: 8px;
+    background-color: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    color: #e2e8f0;
+  }
+
+  .pm-res-error {
+    background-color: rgba(244, 63, 94, 0.09);
+    border: 1px solid rgba(244, 63, 94, 0.32);
+    border-radius: 12px;
+    padding: 14px 16px;
+    color: #fda4af;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-size: 13px;
+  }
+
+  .pm-res-error-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .pm-res-url {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 12px;
+    color: #cbd5e1;
+  }
+
+  .pm-res-headers-table {
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+
+  .pm-res-h-row {
+    display: grid;
+    grid-template-columns: 220px 1fr;
+    gap: 12px;
+    padding: 8px 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    font-family: "JetBrains Mono", monospace;
+    font-size: 12px;
+  }
+
+  .pm-res-h-row:last-child {
+    border-bottom: none;
+  }
+
+  .pm-res-h-row .h-key {
+    color: #a5b4fc;
+    font-weight: 600;
+    word-break: break-all;
+  }
+
+  .pm-res-h-row .h-val {
+    color: #e2e8f0;
+    word-break: break-all;
+  }
+
+  /* Shared Form Inputs */
+  .pm-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .pm-input {
+    width: 100%;
+    padding: 9px 12px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.13);
+    background-color: #12141c;
+    color: var(--text-main, #f8fafc);
+    font-size: 13px;
+    outline: none;
+    transition: border-color 0.15s ease;
+  }
+
+  .pm-input:focus {
+    border-color: #6366f1;
+  }
+
+  .pm-form-grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+
+  .pm-form-grid-3 {
+    display: grid;
+    grid-template-columns: 1fr 1.4fr 155px;
+    gap: 10px;
+  }
+
+  .pm-settings-form {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    max-width: 760px;
+  }
+
+  /* Secondary Modals (DESIGN.md 20px radius + Frosted Glass) */
+  .pm-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background-color: rgba(5, 5, 10, 0.72);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    z-index: var(--z-modal, 10000);
+  }
+
+  .pm-modal {
+    width: 100%;
+    background-color: rgba(18, 20, 28, 0.94);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.13);
+    border-radius: 20px;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.62);
+    display: flex;
+    flex-direction: column;
+    max-height: 86vh;
+    overflow: hidden;
+  }
+
+  .pm-modal.sm {
+    max-width: 460px;
+  }
+  .pm-modal.md {
+    max-width: 580px;
+  }
+  .pm-modal.lg {
+    max-width: 720px;
+  }
+
+  .pm-modal-head {
+    padding: 16px 20px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .pm-modal-head h3 {
+    font-size: 16px;
+    font-weight: 600;
+    color: #f8fafc;
+  }
+
+  .pm-modal-close {
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    border: none;
+    background-color: transparent;
+    color: var(--text-muted, #94a3b8);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+
+  .pm-modal-close:hover {
+    background-color: rgba(255, 255, 255, 0.08);
+    color: #ffffff;
+  }
+
+  .pm-modal-body {
+    padding: 18px 20px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .pm-modal-foot {
+    padding: 14px 20px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+  }
+
+  .pm-dropzone {
+    width: 100%;
+    border: 1.5px dashed rgba(255, 255, 255, 0.18);
+    border-radius: 12px;
+    padding: 28px 20px;
+    text-align: center;
+    cursor: pointer;
+    background-color: rgba(255, 255, 255, 0.02);
+    color: inherit;
+    transition: border-color 0.15s ease, background-color 0.15s ease;
+  }
+
+  .pm-dropzone:hover,
+  .pm-dropzone.drag-over {
+    border-color: #6366f1;
+    background-color: rgba(99, 102, 241, 0.08);
+  }
+
+  .pm-dropzone.has-file {
+    border-color: #10b981;
+    background-color: rgba(16, 185, 129, 0.08);
+  }
+
+  .pm-dropzone p {
+    font-size: 13.5px;
+    font-weight: 500;
+    color: #f8fafc;
+    margin-bottom: 4px;
+  }
+
+  .pm-dropzone span {
+    font-size: 12px;
+    color: var(--text-muted, #94a3b8);
+  }
+
+  .pm-file-selected {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .pm-sniffer-bar {
+    display: flex;
+    gap: 10px;
+  }
+
+  .pm-sniffer-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .pm-chk-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12.5px;
+    color: #e2e8f0;
+    cursor: pointer;
+  }
+
+  .pm-sniffer-list {
+    max-height: 260px;
+    overflow-y: auto;
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 12px;
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .pm-sniffer-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 8px;
+    border-radius: 8px;
+    font-size: 12.5px;
+    cursor: pointer;
+  }
+
+  .pm-sniffer-item:hover {
+    background-color: rgba(255, 255, 255, 0.05);
+  }
+
+  /* Spinner & Animations */
+  .pm-spinner {
+    width: 14px;
+    height: 14px;
     border: 2px solid rgba(255, 255, 255, 0.25);
     border-top-color: #ffffff;
     border-radius: 50%;
-    display: inline-block;
-    animation: spin 0.8s linear infinite;
+    animation: pmSpin 0.7s linear infinite;
   }
 
-  .spinner.large {
-    width: 28px;
-    height: 28px;
-    border-width: 3px;
+  .pm-spinner.lg {
+    width: 24px;
+    height: 24px;
   }
 
-  @keyframes spin {
+  .spin {
+    animation: pmSpin 0.8s linear infinite;
+  }
+
+  @keyframes pmSpin {
     to {
       transform: rotate(360deg);
     }
   }
 
-  @media (max-width: 1024px) {
-    .content-grid {
-      grid-template-columns: 1fr;
+  @keyframes pmPulse {
+    0%,
+    100% {
+      opacity: 0.45;
     }
-    .ws-settings-grid {
-      grid-template-columns: 1fr 1fr;
-    }
-    .ws-split-layout {
-      grid-template-columns: 1fr;
-    }
-    .studio-meta-grid {
-      grid-template-columns: 1fr;
+    50% {
+      opacity: 0.85;
     }
   }
 
-  @media (max-width: 640px) {
-    .page-header {
-      padding: 16px;
+  /* Keyboard Focus Rings */
+  .pm-shell button:focus-visible,
+  .pm-shell input:focus-visible,
+  .pm-shell textarea:focus-visible,
+  .pm-splitter:focus-visible {
+    outline: 2px solid #6366f1;
+    outline-offset: 1px;
+  }
+
+  /* Responsive Breakpoints */
+  @media (max-width: 1180px) {
+    .pm-telemetry-summary {
+      display: none;
     }
-    .ws-settings-grid,
-    .auth-grid,
-    .sniffer-form-grid {
+    .pm-project-select-wrap,
+    .pm-env-select-wrap {
+      width: 180px;
+    }
+  }
+
+  @media (max-width: 1024px) {
+    .pm-topbar {
+      flex-wrap: wrap;
+    }
+    .pm-sidebar {
+      width: 260px;
+    }
+    .pm-auth-split {
       grid-template-columns: 1fr;
     }
-    .studio-request-bar {
+    .pm-auth-left {
+      border-right: none;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      padding-right: 0;
+      padding-bottom: 12px;
+    }
+  }
+
+  @media (max-width: 768px) {
+    .pm-shell {
+      height: auto;
+      min-height: calc(100vh - 64px);
+      overflow: auto;
+    }
+    .pm-body {
       flex-direction: column;
-      align-items: stretch;
+      overflow: visible;
+    }
+    .pm-sidebar {
+      width: 100%;
+      max-height: 280px;
+      border-right: none;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .pm-url-bar-row {
+      flex-direction: column;
+    }
+    .pm-response-pane {
+      height: auto !important;
+      min-height: 260px;
+    }
+    .pm-form-grid-2,
+    .pm-form-grid-3 {
+      grid-template-columns: 1fr;
     }
   }
 </style>

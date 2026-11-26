@@ -979,7 +979,13 @@ Generate a COMPLETE, self-contained, interactive, visually breathtaking HTML5 sc
    - Return ONLY valid, complete `<!DOCTYPE html><html lang="th">...</body></html>` code. Do NOT wrap in markdown explanations.
 """
     model_name = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
-    raw_html, _ = call_gemini(prompt, model_name=model_name, max_output_tokens=32768)
+    raw_html, usage_meta = call_gemini(prompt, model_name=model_name, max_output_tokens=32768)
+    if usage_meta:
+        try:
+            from db_ingestion import log_api_usage
+            log_api_usage("Agent_7_Flow_HTML_Wireframe", model_name, usage_meta)
+        except Exception as log_err:
+            logger.warning(f"Failed to log API usage in Agent 7 HTML wireframe: {log_err}")
     cleaned = str(raw_html or "").strip()
     cleaned = re.sub(r'^```(?:html)?\s*', '', cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r'\s*```$', '', cleaned)
