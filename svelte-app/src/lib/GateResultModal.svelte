@@ -167,7 +167,10 @@
               {#each resultData.items.filter(i => i.status === 'FAIL') as fi}
                 <div class="failed-item-row">
                   <span class="item-code badge-sev-{(fi.severity || 'major').toLowerCase()}">[{fi.item_code}]</span>
-                  <span class="item-text">{fi.question_text}</span>
+                  <div class="failed-item-copy">
+                    <div class="item-fail-reason">{fi.remarks || 'ไม่ผ่านเกณฑ์มาตรฐานที่กำหนด'}</div>
+                    <div class="item-text">เกณฑ์ที่ตั้งไว้: {String(fi.question_text || '').startsWith('ไม่มี') ? `ต้อง${fi.question_text}` : fi.question_text}</div>
+                  </div>
                 </div>
               {/each}
             </div>
@@ -452,6 +455,23 @@
     font-size: 0.78rem;
     color: #cbd5e1;
     line-height: 1.45;
+  }
+
+  .failed-item-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .item-fail-reason {
+    font-weight: 600;
+    color: #fecaca;
+  }
+
+  .item-text {
+    font-size: 0.75rem;
+    color: #94a3b8;
   }
 
   .item-code {

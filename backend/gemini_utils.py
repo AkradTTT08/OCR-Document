@@ -5,6 +5,13 @@ from typing import Tuple, Any
 logger = logging.getLogger(__name__)
 
 def get_gemini_api_key():
+    try:
+        from ocr_engine import get_all_api_keys
+        keys = get_all_api_keys()
+        if keys:
+            return keys[0]
+    except Exception:
+        pass
     raw = (
         os.environ.get("GEMINI_API_KEY") 
         or os.environ.get("GOOGLE_API_KEY")

@@ -172,6 +172,7 @@ class QAConsultAgent:
             fallback_models = [m for m in raw_fallback_models if m and not (m in seen or seen.add(m))]
             
             response = None
+            last_model_err = None
             for key_idx in range(len(keys)):
                 client = _get_gemini_client(key_idx)
                 for current_model in fallback_models:
@@ -193,13 +194,19 @@ class QAConsultAgent:
                                     logger.warning(f"Failed to log API usage in QAConsult: {log_err}")
                             break
                     except Exception as model_err:
-                        logger.warning(f"QAConsultAgent error with {current_model}: {model_err}")
+                        last_model_err = model_err
+                        err_str = str(model_err)
+                        logger.warning(f"QAConsultAgent error with {current_model}: {err_str}")
+                        # Short-circuit futile model retries on the same key when billing/credits are depleted (402) or key is invalid
+                        if '402' in err_str or 'prepayment credits are depleted' in err_str.lower() or 'API_KEY_INVALID' in err_str:
+                            break
                         continue
                 if response and response.text:
                     break
                     
             if not response or not response.text:
-                raise Exception("All Gemini models failed in QAConsultAgent.")
+                detail = f" ({last_model_err})" if last_model_err else ""
+                raise Exception(f"All Gemini models failed in QAConsultAgent.{detail}")
                 
             state.report = response.text
             state.final_report = response.text

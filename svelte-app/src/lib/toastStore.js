@@ -22,3 +22,13 @@ export function toast(message, type = 'info', duration = 4000) {
 export function dismissToast(id) {
   toasts.update(ts => ts.filter(t => t.id !== id));
 }
+
+export const showToast = toast;
+
+export async function customConfirm(message) {
+  if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
+    return window.confirm(message);
+  }
+  return true;
+}
+

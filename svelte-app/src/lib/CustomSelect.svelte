@@ -2,11 +2,12 @@
   import { createEventDispatcher, onMount, onDestroy, tick } from 'svelte';
 
   export let value = '';
-  export let options = []; // Array of { value, label, icon?, class? } or simple strings
+  export let options = []; // Array of { value, label, icon?, class?, description?, badge? } or simple strings
   export let placeholder = 'เลือกรายการ...';
   export let disabled = false;
   export let width = '100%';
   export let minWidth = '140px';
+  export let dropdownMinWidth = '';
   export let size = 'md'; // 'sm' | 'md' | 'lg'
   export let id = '';
   export let ariaLabel = '';
@@ -27,11 +28,19 @@
 
   $: normalizedOptions = options.map(opt => {
     if (typeof opt === 'object' && opt !== null) {
-      return { value: opt.value, label: opt.label !== undefined ? opt.label : opt.value, icon: opt.icon || '', badgeClass: opt.class || '' };
+      return {
+        value: opt.value,
+        label: opt.label !== undefined ? opt.label : opt.value,
+        icon: opt.icon || '',
+        badgeClass: opt.class || '',
+        description: opt.description || '',
+        badge: opt.badge || ''
+      };
     }
-    return { value: opt, label: String(opt), icon: '', badgeClass: '' };
+    return { value: opt, label: String(opt), icon: '', badgeClass: '', description: '', badge: '' };
   });
 
+  $: hasRichDescriptions = normalizedOptions.some(o => Boolean(o.description));
   $: selectedOption = normalizedOptions.find(o => String(o.value) === String(value)) || null;
 
   function portal(node) {
@@ -51,9 +60,13 @@
     const rect = selectEl.getBoundingClientRect();
     const spaceBelow = window.innerHeight - rect.bottom;
     const spaceAbove = rect.top;
-    const estimatedMenuHeight = Math.min(normalizedOptions.length * 40 + 16, 260);
+    const maxCap = hasRichDescriptions ? 350 : 260;
+    const rowEst = hasRichDescriptions ? 64 : 40;
+    const estimatedMenuHeight = Math.min(normalizedOptions.length * rowEst + 16, maxCap);
+    const parsedDropMin = parseInt(dropdownMinWidth, 10);
+    const minMenuW = Number.isFinite(parsedDropMin) && parsedDropMin > 0 ? parsedDropMin : 140;
 
-    let calculatedWidth = Math.min(Math.max(rect.width, 140), window.innerWidth - 24);
+    let calculatedWidth = Math.min(Math.max(rect.width, minMenuW), window.innerWidth - 24);
     let calculatedLeft = rect.left;
 
     if (calculatedLeft + calculatedWidth > window.innerWidth - 12) {
@@ -69,11 +82,11 @@
     if (spaceBelow < estimatedMenuHeight && spaceAbove > spaceBelow) {
       dropUp = true;
       menuTop = rect.top - 6;
-      menuMaxHeight = Math.max(120, Math.min(260, spaceAbove - 12));
+      menuMaxHeight = Math.max(150, Math.min(maxCap, spaceAbove - 12));
     } else {
       dropUp = false;
       menuTop = rect.bottom + 6;
-      menuMaxHeight = Math.max(120, Math.min(260, spaceBelow - 12));
+      menuMaxHeight = Math.max(150, Math.min(maxCap, spaceBelow - 12));
     }
   }
 
@@ -211,6 +224,7 @@
           type="button"
           id="{instanceUid}-opt-{idx}"
           class="custom-option-item" 
+          class:has-desc={Boolean(opt.description)}
           class:is-selected={String(opt.value) === String(value)}
           class:is-focused={idx === focusedIndex}
           on:click|stopPropagation={() => selectOption(opt)}
@@ -219,7 +233,17 @@
           aria-selected={String(opt.value) === String(value)}
         >
           {#if opt.icon}<span class="opt-icon">{opt.icon}</span>{/if}
-          <span class="opt-text">{opt.label}</span>
+          <div class="opt-body">
+            <div class="opt-top-row">
+              <span class="opt-text">{opt.label}</span>
+              {#if opt.badge}
+                <span class="opt-badge">{opt.badge}</span>
+              {/if}
+            </div>
+            {#if opt.description}
+              <span class="opt-desc">{opt.description}</span>
+            {/if}
+          </div>
           {#if String(opt.value) === String(value)}
             <svg class="check-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
               <polyline points="20 6 9 17 4 12"></polyline>
@@ -394,12 +418,57 @@
   }
 
   .opt-icon { font-size: 14px; flex-shrink: 0; }
+  .opt-body {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .opt-top-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
   .opt-text { flex-grow: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .custom-option-item.has-desc {
+    align-items: flex-start;
+    padding: 10px 12px;
+  }
+  .custom-option-item.has-desc .opt-text {
+    font-weight: 600;
+    white-space: normal;
+    line-height: 1.35;
+  }
+  .opt-badge {
+    flex-shrink: 0;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 8px;
+    background: rgba(99, 102, 241, 0.22);
+    border: 1px solid rgba(129, 140, 248, 0.4);
+    color: #e0e7ff;
+  }
+  .opt-desc {
+    font-size: 12px;
+    line-height: 1.45;
+    color: #94a3b8;
+    white-space: normal;
+    font-weight: 400;
+  }
+  .custom-option-item:hover .opt-desc,
+  .custom-option-item.is-focused .opt-desc,
+  .custom-option-item.is-selected .opt-desc {
+    color: rgba(248, 250, 252, 0.88);
+  }
 
   .check-icon {
     width: 14px;
     height: 14px;
     color: #67e8f9;
     flex-shrink: 0;
+    margin-top: 2px;
   }
 </style>

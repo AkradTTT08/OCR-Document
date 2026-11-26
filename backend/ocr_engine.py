@@ -181,22 +181,56 @@ def _generate_fallback_words(text: str, width: int, height: int) -> list:
     return words
 
 
+_env_mtime_snapshot = {}
+
+def _refresh_api_keys_from_env_files() -> str:
+    """
+    ตรวจสอบทั้ง backend/.env และ root .env โดยเลือกใช้ค่าจากไฟล์ที่ถูกแก้ไขล่าสุด (latest mtime)
+    เพื่อให้เมื่อผู้ใช้แก้ GOOGLE_API_KEY ในไฟล์ใดไฟล์หนึ่งแล้วกด Save ระบบนำคีย์ใหม่ไปใช้ได้ทันทีโดยไม่ต้อง Restart
+    """
+    global _env_mtime_snapshot
+    from pathlib import Path
+    backend_env = Path(__file__).resolve().parent / '.env'
+    root_env = Path(__file__).resolve().parent.parent / '.env'
+    candidates = [p for p in (backend_env, root_env) if p.exists()]
+    if not candidates:
+        return os.environ.get('GOOGLE_API_KEY', '') or os.environ.get('GOOGLE_API_KEYS', '')
+
+    # Sort newest-modified .env first so whichever file the user just edited wins
+    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    changed = False
+    for p in candidates:
+        mt = p.stat().st_mtime
+        if _env_mtime_snapshot.get(str(p)) != mt:
+            _env_mtime_snapshot[str(p)] = mt
+            changed = True
+
+    for p in candidates:
+        try:
+            with open(p, 'r', encoding='utf-8') as f:
+                for raw_line in f:
+                    line = raw_line.strip()
+                    if not line or line.startswith('#'):
+                        continue
+                    if line.startswith('GOOGLE_API_KEY=') or line.startswith('GOOGLE_API_KEYS=') or line.startswith('GEMINI_API_KEY='):
+                        val = line.split('=', 1)[1].strip().strip('"').strip("'")
+                        if val:
+                            if changed:
+                                os.environ['GOOGLE_API_KEY'] = val
+                            return val
+        except Exception:
+            continue
+
+    return os.environ.get('GOOGLE_API_KEY', '') or os.environ.get('GOOGLE_API_KEYS', '')
+
+
 def get_all_api_keys() -> list[str]:
     """
-    อ่าน API Keys ทั้งหมดจาก GOOGLE_API_KEY หรือ GOOGLE_API_KEYS ใน .env
+    อ่าน API Keys ทั้งหมดจาก GOOGLE_API_KEY หรือ GOOGLE_API_KEYS (รองรับ Hot-Reload จาก .env ล่าสุด)
     สามารถใส่หลายคีย์คั่นด้วยเครื่องหมายจุลภาค (,) เช่น Key1,Key2
     """
-    raw = os.environ.get('GOOGLE_API_KEY', '') or os.environ.get('GOOGLE_API_KEYS', '')
-    if not raw:
-        from pathlib import Path
-        env_file = Path(__file__).resolve().parent.parent / '.env'
-        if env_file.exists():
-            with open(env_file, 'r', encoding='utf-8') as f:
-                for line in f:
-                    if line.startswith('GOOGLE_API_KEY=') or line.startswith('GOOGLE_API_KEYS='):
-                        raw = line.split('=', 1)[1].strip()
-                        break
-    keys = [k.strip() for k in raw.split(',') if k.strip()]
+    raw = _refresh_api_keys_from_env_files()
+    keys = [k.strip().strip('"').strip("'") for k in raw.split(',') if k.strip()]
     return keys if keys else []
 
 
@@ -205,7 +239,7 @@ _gemini_clients_cache = {}
 def _get_gemini_client(key_index: int = 0):
     """
     สร้าง Gemini client จาก google-genai SDK (ตัวใหม่) รองรับการเลือก Key Index
-    และถูกแคชไว้เพื่อป้องกันปัญหา Client ถูกปิด (Closed) ระหว่างทำ Streaming
+    และแคชตามค่า api_key จริง เพื่อให้เปลี่ยนคีย์ใน .env แล้วสลับ Client ใหม่ได้ทันที
     """
     global _gemini_clients_cache
     try:
@@ -214,11 +248,12 @@ def _get_gemini_client(key_index: int = 0):
         if not keys:
             raise ValueError("ไม่พบ GOOGLE_API_KEY ใน environment variables กรุณาตั้งค่าใน .env")
         idx = key_index % len(keys)
-        
-        if idx not in _gemini_clients_cache:
-            _gemini_clients_cache[idx] = genai.Client(api_key=keys[idx])
-            
-        return _gemini_clients_cache[idx]
+        active_key = keys[idx]
+
+        if active_key not in _gemini_clients_cache:
+            _gemini_clients_cache[active_key] = genai.Client(api_key=active_key)
+
+        return _gemini_clients_cache[active_key]
     except ImportError:
         raise ImportError(
             "ไม่พบ library 'google-genai' กรุณารัน: pip install google-genai"

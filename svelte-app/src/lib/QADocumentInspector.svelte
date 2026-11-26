@@ -176,6 +176,15 @@
     return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   }
 
+  function formatTargetRuleLabel(rawQuestion) {
+    const q = String(rawQuestion || "").trim();
+    if (!q) return "-";
+    if (q.startsWith("ไม่มี")) {
+      return `ต้อง${q}`;
+    }
+    return q;
+  }
+
   function buildHighlightedSegments(text, pageFindings) {
     const raw = String(text || "");
     if (!raw) return [];
@@ -664,20 +673,26 @@
                 {#each activePageFailedCriteria as ec}
                   <div class="exit-fail-card">
                     <div class="fc-top-row">
-                      <span class="fc-sev-pill sev-critical">FAIL · {ec.item_code}</span>
+                      <span class="fc-sev-pill sev-critical">ไม่ผ่านข้อ {ec.item_code}</span>
                       <span class="fc-type">{ec.category || "Exit Criteria"}</span>
+                      {#if ec.target_metric}
+                        <span class="fc-kpi-pill">เป้าหมาย: {ec.target_metric}</span>
+                      {/if}
                       {#if ec.location || ec.page_ref}
                         <span class="fc-loc-pill">{ec.location || ec.page_ref}</span>
                       {/if}
                     </div>
-                    <div class="fc-issue">{ec.question_text}</div>
-                    {#if ec.remarks}
-                      <div class="fc-rec"><span class="fc-rec-lbl">เหตุผล:</span> {ec.remarks}</div>
-                    {/if}
+                    <div class="fc-issue">
+                      {ec.remarks || `เอกสารยังไม่ผ่านเงื่อนไขของเกณฑ์ข้อ ${ec.item_code}`}
+                    </div>
+                    <div class="fc-box target-rule">
+                      <span class="fc-box-lbl">เกณฑ์มาตรฐานที่ตั้งไว้ (สิ่งที่ต้องทำให้ผ่าน)</span>
+                      <div class="fc-box-val">{formatTargetRuleLabel(ec.question_text)}</div>
+                    </div>
                     {#if ec.evidence_text}
                       <div class="fc-box wrong">
-                        <span class="fc-box-lbl">ร่องรอย / จุดที่ผิดพลาด</span>
-                        <div class="fc-box-val">{ec.evidence_text}</div>
+                        <span class="fc-box-lbl">ร่องรอย / รายการข้อบกพร่องที่ตรวจพบในเอกสาร</span>
+                        <div class="fc-box-val pre-lines">{ec.evidence_text}</div>
                       </div>
                     {/if}
                   </div>
@@ -1168,9 +1183,24 @@
     background: rgba(16, 185, 129, 0.14); color: #6ee7b7; border: 1px solid rgba(52, 211, 153, 0.3);
   }
   .fc-issue { font-size: 13px; font-weight: 600; color: #f8fafc; line-height: 1.45; }
+  .fc-kpi-pill {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: var(--radius-lg, 20px);
+    background: rgba(6, 182, 212, 0.14);
+    border: 1px solid rgba(6, 182, 212, 0.34);
+    color: #67e8f9;
+  }
   .fc-box { padding: 8px 10px; border-radius: 8px; font-size: 12px; line-height: 1.45; }
+  .fc-box.target-rule {
+    background: rgba(99, 102, 241, 0.1);
+    border: 1px solid rgba(129, 140, 248, 0.28);
+    color: #e0e7ff;
+  }
   .fc-box.wrong { background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(248, 113, 113, 0.28); color: #fecaca; }
   .fc-box.correct { background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(52, 211, 153, 0.28); color: #a7f3d0; }
+  .fc-box-val.pre-lines { white-space: pre-line; }
   .fc-box-lbl { display: block; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.85; margin-bottom: 3px; }
   .fc-rec { font-size: 12px; color: #cbd5e1; line-height: 1.45; }
   .fc-rec-lbl { color: #a5b4fc; font-weight: 600; }

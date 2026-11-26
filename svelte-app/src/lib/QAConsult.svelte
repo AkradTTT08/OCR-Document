@@ -1,5 +1,14 @@
+<script context="module">
+  /** @type {AbortController | null} */
+  let currentScanAbortController = null;
+  let currentScanClientId = "";
+  let currentScanPendingId = "";
+  let currentScanStartedAt = 0;
+  let userCancelledActiveScan = false;
+</script>
+
 <script>
-  import { createEventDispatcher, onMount } from "svelte";
+  import { createEventDispatcher, onMount, onDestroy } from "svelte";
   import { fade } from "svelte/transition";
   import { toast } from "./toastStore.js";
   import { authUser, authEmail } from "./authStore.js";
@@ -11,6 +20,42 @@
   import { MASTER_DOC_TYPES } from "./constants.js";
 
   const dispatch = createEventDispatcher();
+
+  const qaConsultStages = [
+    { label: "1. อ่านหน้าเอกสาร", minPct: 0 },
+    { label: "2. เทียบฐานความรู้โครงการ", minPct: 40 },
+    { label: "3. AI วิเคราะห์ข้อบกพร่อง", minPct: 70 },
+    { label: "4. ตรวจเกณฑ์ Exit Criteria", minPct: 85 }
+  ];
+
+  let isCancellingScan = false;
+  let elapsedScanSec = 0;
+  /** @type {any} */
+  let elapsedInterval = null;
+
+  function startElapsedClock(startTs) {
+    if (elapsedInterval) clearInterval(elapsedInterval);
+    const base = startTs || currentScanStartedAt || Date.now();
+    elapsedScanSec = Math.max(0, Math.floor((Date.now() - base) / 1000));
+    elapsedInterval = setInterval(() => {
+      elapsedScanSec = Math.max(0, Math.floor((Date.now() - base) / 1000));
+    }, 1000);
+  }
+
+  function stopElapsedClock() {
+    if (elapsedInterval) {
+      clearInterval(elapsedInterval);
+      elapsedInterval = null;
+    }
+    elapsedScanSec = 0;
+  }
+
+  onDestroy(() => {
+    if (elapsedInterval) {
+      clearInterval(elapsedInterval);
+      elapsedInterval = null;
+    }
+  });
 
   let inspectorRef;
   /** @type {number | 'global' | null} */
@@ -400,6 +445,9 @@
       isProcessing = true;
       processStatus = $activeScanStatus.processStatus || processStatus;
       progressPct = $activeScanStatus.progressPct || progressPct;
+      if (!elapsedInterval) {
+        startElapsedClock($activeScanStatus.startedAt);
+      }
     }
   }
 
@@ -483,16 +531,16 @@
     });
 
     const defaultItems = [
-      { item_code: '1.1', category: 'Defect & Bug', question_text: 'ไม่มี Defect ระดับ Critical / High คงค้างในเอกสาร', target_metric: '0 Critical/High Bugs (ผ่าน 100%)', severity: 'Critical', is_mandatory: true },
-      { item_code: '1.2', category: 'Defect & Bug', question_text: 'ไม่มีข้อผิดพลาดด้าน Logic การคำนวณ หรือการไหลของกระบวนการทำงาน (Process Flow)', target_metric: '100% Correct Logic', severity: 'Critical', is_mandatory: true },
-      { item_code: '1.3', category: 'Defect & Bug', question_text: 'ไม่มี Broken Links, รหัสอ้างอิงที่ไม่ตรงกัน หรือภาพประกอบที่ไม่ถูกต้อง', target_metric: '0 Broken Links/Refs', severity: 'Major', is_mandatory: true },
-      { item_code: '2.1', category: 'Content Completeness', question_text: 'มีเนื้อหาครบถ้วนตาม Scope, Objective และ Requirement ที่ตกลงไว้', target_metric: '100% Scope Coverage', severity: 'Critical', is_mandatory: true },
-      { item_code: '2.2', category: 'Content Completeness', question_text: 'มีรายละเอียด Input / Output / Data Dictionary ครบถ้วนชัดเจน', target_metric: '100% Data Specs', severity: 'Major', is_mandatory: true },
-      { item_code: '2.3', category: 'Content Completeness', question_text: 'ครอบคลุม Exception Cases, Edge Cases และ Error Handling', target_metric: '100% Edge Cases Handling', severity: 'Major', is_mandatory: true },
-      { item_code: '2.4', category: 'Content Completeness', question_text: 'มีเกณฑ์การยอมรับ (Acceptance Criteria / Definition of Done) ชัดเจนทุกหัวข้อ', target_metric: '100% Defined Criteria', severity: 'Major', is_mandatory: true },
-      { item_code: '3.1', category: 'Formatting & Quality', question_text: 'ไม่มีคำผิด (Spelling / Typos) ในคำศัพท์เฉพาะทาง, ภาษาไทย และภาษาอังกฤษ', target_metric: '0 Typos (ความถูกต้อง 100%)', severity: 'Minor', is_mandatory: false },
-      { item_code: '3.2', category: 'Formatting & Quality', question_text: 'รูปแบบฟอนต์, ขนาดตัวอักษร, ระยะย่อหน้า และหัวข้อ มีความสม่ำเสมอทั้งเอกสาร', target_metric: '100% Style Consistency', severity: 'Minor', is_mandatory: false },
-      { item_code: '3.3', category: 'Formatting & Quality', question_text: 'การจัดวางตาราง, รูปภาพ และ Diagram มีความชัดเจน อ่านง่าย ไม่ตกขอบ', target_metric: '100% Visual Clarity', severity: 'Minor', is_mandatory: false },
+      { item_code: '1.1', category: 'Defect & Comment Resolution', question_text: 'ต้องไม่มีข้อบกพร่อง (Defect) ระดับ Critical หรือ High คงค้างในเอกสาร', target_metric: '0 Critical/High Bugs (ผ่าน 100%)', severity: 'Critical', is_mandatory: true },
+      { item_code: '1.2', category: 'Defect & Comment Resolution', question_text: 'ต้องไม่มีข้อผิดพลาดด้าน Logic การคำนวณ หรือการไหลของกระบวนการทำงาน (Process Flow)', target_metric: '100% Correct Logic', severity: 'Critical', is_mandatory: true },
+      { item_code: '1.3', category: 'Defect & Comment Resolution', question_text: 'ต้องไม่มี Broken Links, รหัสอ้างอิงที่ไม่ตรงกัน หรือภาพประกอบที่ไม่ถูกต้อง', target_metric: '0 Broken Links/Refs', severity: 'Major', is_mandatory: true },
+      { item_code: '2.1', category: 'Content Accuracy & Completeness', question_text: 'มีเนื้อหาครบถ้วนตาม Scope, Objective และ Requirement ที่ตกลงไว้', target_metric: '100% Scope Coverage', severity: 'Critical', is_mandatory: true },
+      { item_code: '2.2', category: 'Content Accuracy & Completeness', question_text: 'มีรายละเอียด Input / Output / Data Dictionary ครบถ้วนชัดเจน', target_metric: '100% Data Specs', severity: 'Major', is_mandatory: true },
+      { item_code: '2.3', category: 'Content Accuracy & Completeness', question_text: 'ครอบคลุม Exception Cases, Edge Cases และ Error Handling', target_metric: '100% Edge Cases Handling', severity: 'Major', is_mandatory: true },
+      { item_code: '2.4', category: 'Content Accuracy & Completeness', question_text: 'มีเกณฑ์การยอมรับ (Acceptance Criteria / Definition of Done) ชัดเจนทุกหัวข้อ', target_metric: '100% Defined Criteria', severity: 'Major', is_mandatory: true },
+      { item_code: '3.1', category: 'Format & Consistency', question_text: 'ต้องไม่มีคำผิด (Spelling / Typos) เกินเกณฑ์มาตรฐานทั้งภาษาไทยและภาษาอังกฤษ', target_metric: '< 1% Typo Rate (คำผิด < 1%)', severity: 'Minor', is_mandatory: false },
+      { item_code: '3.2', category: 'Format & Consistency', question_text: 'รูปแบบฟอนต์, ขนาดตัวอักษร, ระยะย่อหน้า และหัวข้อ มีความสม่ำเสมอทั้งเอกสาร', target_metric: '100% Style Consistency', severity: 'Minor', is_mandatory: false },
+      { item_code: '3.3', category: 'Format & Consistency', question_text: 'การจัดวางตาราง, รูปภาพ และ Diagram มีความชัดเจน อ่านง่าย ไม่ตกขอบ', target_metric: '100% Visual Clarity', severity: 'Minor', is_mandatory: false },
       { item_code: '4.1', category: 'Governance & Control', question_text: 'มีการระบุ Document Title, Version Number, วันที่อัปเดต และชื่อผู้แต่ง/ผู้แก้ไขชัดเจน', target_metric: '100% Header & Metadata', severity: 'Major', is_mandatory: true },
       { item_code: '4.2', category: 'Governance & Control', question_text: 'มีประวัติการแก้ไข (Document History / Revision Log) สรุปการเปลี่ยนแปลงในแต่ละเวอร์ชัน', target_metric: '100% Logged History', severity: 'Minor', is_mandatory: false },
       { item_code: '4.3', category: 'Governance & Control', question_text: 'จัดทำเอกสารฉบับสะอาด (Clean Version) ที่ปิด Track Changes และ Remove Comment ร่างออกเรียบร้อย', target_metric: '0 Draft Comments (ฉบับสะอาด 100%)', severity: 'Major', is_mandatory: true }
@@ -507,15 +555,30 @@
       let st = 'PASS';
       let rem = 'ตรวจสอบแล้วตรงตามเกณฑ์มาตรฐาน';
       let evid = '';
+      /** @type {number[]} */
+      let pageNums = [];
 
       if (d.item_code === '1.1' && highCritical.length > 0) {
         st = 'FAIL';
-        rem = `พบประเด็นความรุนแรง Critical/High จำนวน ${highCritical.length} รายการ`;
-        evid = highCritical[0].issue || '';
+        rem = `ไม่ผ่านเกณฑ์ — ตรวจพบข้อบกพร่องความรุนแรงระดับ Critical/High ในเอกสารจำนวน ${highCritical.length} รายการ (เป้าหมายต้องเป็น 0 รายการ)`;
+        const previewLines = highCritical.slice(0, 4).map((f, idx) => {
+          const pTag = f.page_number ? ` (หน้า ${f.page_number})` : '';
+          return `${idx + 1}. [${f.severity || 'High'}] ${f.issue || '-'}${pTag}`;
+        });
+        if (highCritical.length > 4) {
+          previewLines.push(`...และอีก ${highCritical.length - 4} รายการ (ดูครบทั้งหมดในตาราง QA Audit Findings ด้านล่าง)`);
+        }
+        evid = previewLines.join('\n');
+        pageNums = Array.from(new Set(highCritical.map(f => Number(f.page_number)).filter(n => Number.isFinite(n) && n > 0)));
       } else if (d.item_code === '3.1' && typos.length > 0) {
         st = 'FAIL';
-        rem = `พบคำผิดหรือการสะกดคำไม่ถูกต้อง ${typos.length} รายการ`;
-        evid = typos[0].issue || '';
+        rem = `ไม่ผ่านเกณฑ์ — ตรวจพบคำผิดหรือการสะกดคำไม่ถูกต้องจำนวน ${typos.length} รายการ`;
+        const typoLines = typos.slice(0, 4).map((f, idx) => `${idx + 1}. ${f.issue || '-'}`);
+        if (typos.length > 4) {
+          typoLines.push(`...และอีก ${typos.length - 4} รายการ`);
+        }
+        evid = typoLines.join('\n');
+        pageNums = Array.from(new Set(typos.map(f => Number(f.page_number)).filter(n => Number.isFinite(n) && n > 0)));
       }
 
       if (st === 'PASS') passedCnt++;
@@ -532,6 +595,7 @@
         ...d,
         item_id: `synth-${d.item_code}`,
         status: st,
+        page_numbers: pageNums,
         remarks: rem,
         evidence_text: evid
       };
@@ -1204,13 +1268,19 @@
     }
 
     isProcessing = true;
+    isCancellingScan = false;
+    userCancelledActiveScan = false;
     scanResult = null;
     progressPct = 10;
     processStatus = "กำลังอัปโหลดเอกสารและเริ่มประมวลผล...";
+    currentScanStartedAt = Date.now();
+    startElapsedClock(currentScanStartedAt);
 
     const cleanGroupName = scanGroupName.replace(/^\[.*?\]\s*/, '').trim() || 'General';
     scanGroupName = cleanGroupName;
     const pId = selectedProjectObj?.id || selectedProjectObj?.project_id;
+    const scanId = `qascan-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    currentScanClientId = scanId;
 
     // Keep sidebar active group in sync
     activeSidebarGroup.set({
@@ -1229,10 +1299,13 @@
       date: new Date().toISOString(),
       is_processing: true
     };
+    currentScanPendingId = pendingItem.id;
     qaHistory.update(h => [pendingItem, ...h]);
 
     activeScanStatus.set({
       isProcessing: true,
+      scanId,
+      startedAt: currentScanStartedAt,
       projectId: pId,
       groupName: cleanGroupName,
       groupType: scanGroupType,
@@ -1244,6 +1317,7 @@
 
     const formData = new FormData();
     formData.append("file", file);
+    formData.append("scan_id", scanId);
     formData.append("doc_type", JSON.stringify(selectedDocTypes));
     formData.append("email", finalEmail);
     formData.append("skill_id", JSON.stringify(selectedSkills));
@@ -1263,6 +1337,9 @@
       formData.append("username", currentUsername);
     }
 
+    const abortCtrl = new AbortController();
+    currentScanAbortController = abortCtrl;
+
     try {
       const headers = {};
       if (token) {
@@ -1273,6 +1350,7 @@
         method: "POST",
         headers,
         body: formData,
+        signal: abortCtrl.signal
       });
 
       if (!response.ok) {
@@ -1345,6 +1423,13 @@
                 gateResultData = scanResult.exit_criteria_eval;
                 showGateModal = true;
               }
+            } else if (data.type === "cancelled") {
+              isProcessing = false;
+              isCancellingScan = false;
+              stopElapsedClock();
+              activeScanStatus.set(null);
+              qaHistory.update(h => h.filter(item => item.id !== pendingItem.id));
+              break;
             } else if (data.type === "error") {
               throw new Error(data.message);
             }
@@ -1352,16 +1437,79 @@
         }
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      toast(`เกิดข้อผิดพลาด: ${msg}`, "error");
+      const isAbort =
+        userCancelledActiveScan ||
+        (err && (err.name === "AbortError" || String(err).includes("AbortError")));
+      if (!isAbort) {
+        const msg = err instanceof Error ? err.message : String(err);
+        toast(`เกิดข้อผิดพลาด: ${msg}`, "error");
+      }
       isProcessing = false;
+      isCancellingScan = false;
+      stopElapsedClock();
       activeScanStatus.set(null);
       qaHistory.update(h => h.filter(item => item.id !== pendingItem.id));
     } finally {
+      if (currentScanAbortController === abortCtrl) {
+        currentScanAbortController = null;
+      }
+      stopElapsedClock();
+      isCancellingScan = false;
       activeScanStatus.set(null);
       await loadQAHistoryFromDB();
       await loadQAGroupsFromDB();
     }
+  }
+
+  async function cancelQAConsultScan() {
+    if (isCancellingScan) return;
+    isCancellingScan = true;
+    userCancelledActiveScan = true;
+
+    const scanInfo = $activeScanStatus;
+    const targetScanId = currentScanClientId || scanInfo?.scanId || "";
+    const targetPendingId = currentScanPendingId || scanInfo?.pendingId || "";
+    const token =
+      typeof window !== "undefined" && window.localStorage
+        ? localStorage.getItem("jwt_token") || ""
+        : "";
+
+    try {
+      await fetch("/api/qa_consult/cancel", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({ scan_id: targetScanId })
+      });
+    } catch (_) {
+      // Ignore network error during cancellation
+    }
+
+    try {
+      currentScanAbortController?.abort();
+    } catch (_) {}
+    currentScanAbortController = null;
+    currentScanClientId = "";
+    currentScanPendingId = "";
+
+    stopElapsedClock();
+    activeScanStatus.set(null);
+    if (targetPendingId) {
+      qaHistory.update(h => h.filter(item => item.id !== targetPendingId));
+    } else {
+      qaHistory.update(h => h.filter(item => !item.is_processing));
+    }
+    if ($selectedHistory && $selectedHistory.is_processing) {
+      selectedHistory.set(null);
+    }
+
+    isProcessing = false;
+    isCancellingScan = false;
+    progressPct = 0;
+    processStatus = "";
+    toast("หยุดการสแกนเอกสารเรียบร้อยแล้ว", "info");
   }
 
   function sendEmail() {
@@ -2423,8 +2571,15 @@
     <div class="loading-state">
       <SpectraLoading 
         title="กำลังวิเคราะห์ QA Consult..." 
+        subtitleChip={($activeScanStatus && $activeScanStatus.filename) || file?.name || ""}
         status={processStatus || "กำลังประมวลผลและตรวจสอบเกณฑ์ Exit Criteria..."} 
-        progressPct={progressPct} 
+        progressPct={progressPct}
+        elapsedSeconds={elapsedScanSec}
+        stages={qaConsultStages}
+        showCancel={true}
+        cancelLabel="หยุดการสแกนเอกสาร"
+        cancelling={isCancellingScan}
+        on:cancel={cancelQAConsultScan}
       />
     </div>
 
@@ -3674,11 +3829,14 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    padding: 60px 20px;
-    background: rgba(18, 20, 28, 0.58);
-    border-radius: 16px;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    min-height: 400px;
+    padding: 48px 24px;
+    background: var(--glass-bg, rgba(18, 20, 28, 0.58));
+    backdrop-filter: var(--glass-blur, blur(16px));
+    -webkit-backdrop-filter: var(--glass-blur, blur(16px));
+    border-radius: var(--radius-lg, 20px);
+    border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.08));
+    box-shadow: var(--glass-shadow, 0 8px 32px 0 rgba(0, 0, 0, 0.37));
+    min-height: 440px;
   }
   
   /* Result State */

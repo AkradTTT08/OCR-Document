@@ -20,7 +20,7 @@
             prefix: '2',
             shortLabel: 'หมวด 2: Content Accuracy',
             title: 'หมวดที่ 2: ความถูกต้องและครบถ้วนของเนื้อหา (Content Accuracy & Completeness)',
-            defaultMetric: '100% Verified (ถูกต้อง 100%)',
+            defaultMetric: '100% Verified Accuracy (ถูกต้อง 100%)',
             defaultSeverity: 'Major',
             defaultMandatory: true
         },
@@ -58,6 +58,249 @@
         { value: 'inactive', label: 'ปิดใช้งาน (Inactive)' }
     ];
 
+    const CUSTOM_KPI_SENTINEL = '__CUSTOM_KPI__';
+
+    const KPI_CATALOG = [
+        // หมวด 1: Defect & Comment Resolution
+        {
+            value: '100% Closed (แก้ไขครบ 100%)',
+            category: 'Defect & Comment Resolution',
+            catBadge: 'หมวด 1',
+            typeTag: 'ครบสมบูรณ์ 100%',
+            description: 'ประเด็นข้อบกพร่อง (Defect) หรือ Comment สำคัญจากรอบก่อนต้องแก้ไขเสร็จครบทุกข้อ ห้ามมีงานค้าง',
+            example: 'ใช้กับข้อตรวจการปิดรายการแก้ไขระดับ Critical / High จากรอบรีวิวก่อนหน้า'
+        },
+        {
+            value: '100% Responded (ตอบครบทุกข้อ)',
+            category: 'Defect & Comment Resolution',
+            catBadge: 'หมวด 1',
+            typeTag: 'ครบสมบูรณ์ 100%',
+            description: 'ทุก Comment ของผู้ตรวจต้องได้รับการตอบกลับหรือชี้แจงครบถ้วน หากข้อใดไม่แก้ต้องระบุเหตุผลรองรับที่ชัดเจน',
+            example: 'ใช้กับข้อตรวจการติดตามสถานะการตอบกลับข้อเสนอแนะของผู้ตรวจ'
+        },
+        {
+            value: '0 Defect Impact (0 ข้อผิดพลาดใหม่)',
+            category: 'Defect & Comment Resolution',
+            catBadge: 'หมวด 1',
+            typeTag: 'ปลอดข้อผิดพลาด (0)',
+            description: 'การแก้ไขเนื้อหาต้องไม่ส่งผลกระทบให้ส่วนอื่นผิดเพี้ยน หรือเกิดข้อขัดแย้งใหม่ในเอกสาร (No Side-effects)',
+            example: 'ใช้ตรวจผลกระทบข้างเคียงหลังจากอัปเดตเนื้อหาหรือเงื่อนไขในเอกสาร'
+        },
+        {
+            value: '100% REQ Traced',
+            category: 'Defect & Comment Resolution',
+            catBadge: 'หมวด 1',
+            typeTag: 'ตรวจสอบย้อนกลับ 100%',
+            description: 'ทุกหัวข้อหรือกรณีทดสอบต้องเชื่อมโยงกลับไปยังรหัสความต้องการ (REQ-ID / User Story) ต้นทางได้ครบทุกข้อ',
+            example: 'ใช้กับเอกสาร SRS, Test Case, UAT หรือ Traceability Matrix (RTM)'
+        },
+
+        // หมวด 2: Content Accuracy & Completeness
+        {
+            value: '100% Verified Accuracy (ถูกต้อง 100%)',
+            category: 'Content Accuracy & Completeness',
+            catBadge: 'หมวด 2',
+            typeTag: 'ครบสมบูรณ์ 100%',
+            description: 'ข้อมูล ตัวเลข สูตรคำนวณ เงื่อนไขทางธุรกิจ (Business Logic) และแหล่งอ้างอิงถูกต้องแม่นยำ 100% ไม่คลาดเคลื่อน',
+            example: 'ใช้กับข้อตรวจความถูกต้องของตัวเลข กฎธุรกิจ หรือสเปก API / Database'
+        },
+        {
+            value: '100% Scope Coverage (ครบตาม Scope)',
+            category: 'Content Accuracy & Completeness',
+            catBadge: 'หมวด 2',
+            typeTag: 'ครบสมบูรณ์ 100%',
+            description: 'เนื้อหาครอบคลุมครบทุกฟีเจอร์ หัวข้อ และขอบเขตงาน (Scope / TOC) ที่กำหนดไว้ ไม่มีส่วนสำคัญขาดหาย',
+            example: 'ใช้กับข้อตรวจความครบถ้วนของฟังก์ชันหลักและขอบเขตโครงการ'
+        },
+        {
+            value: '100% Actionable Steps & Expected Results',
+            category: 'Content Accuracy & Completeness',
+            catBadge: 'หมวด 2',
+            typeTag: 'ปฏิบัติได้จริง 100%',
+            description: 'ขั้นตอนการทดสอบ ข้อมูลนำเข้า (Test Data) และผลลัพธ์ที่คาดหวัง (Expected Result) ระบุชัดเจน ปฏิบัติตามและตัดสินผลได้จริง',
+            example: 'ใช้กับเอกสาร Test Case, Test Script และ UAT Scenario'
+        },
+        {
+            value: '>= 90% Negative & Boundary Coverage',
+            category: 'Content Accuracy & Completeness',
+            catBadge: 'หมวด 2',
+            typeTag: 'เกณฑ์ขั้นต่ำ >= 90%',
+            description: 'ครอบคลุมกรณีทดสอบทางลบ (Negative Case), ขอบเขตข้อมูล (Boundary Value) และการจัดการข้อผิดพลาดอย่างน้อย 90%',
+            example: 'ใช้กับเอกสาร Test Case, Validation Rules ใน SRS และ API Error Handling'
+        },
+        {
+            value: '0 Ambiguity (ไม่มีจุดคลุมเครือ)',
+            category: 'Content Accuracy & Completeness',
+            catBadge: 'หมวด 2',
+            typeTag: 'ปลอดความกำกวม (0)',
+            description: 'ภาษาที่ใช้ตรงประเด็น ชัดเจน ไม่ใช้คำกำกวมที่ตีความได้หลายแง่ (เช่น "เร็วที่สุด", "เหมาะสม" โดยไม่ระบุตัวเลข)',
+            example: 'ใช้ตรวจความชัดเจนของ Acceptance Criteria และ Non-Functional Requirements'
+        },
+        {
+            value: '100% Complete Attachments',
+            category: 'Content Accuracy & Completeness',
+            catBadge: 'หมวด 2',
+            typeTag: 'ครบสมบูรณ์ 100%',
+            description: 'มีแผนภาพ (Diagram), รูปหน้าจอ, ตารางประกอบ, ตัวอย่าง Payload และคำศัพท์เฉพาะ (Glossary) ครบถ้วนสมบูรณ์',
+            example: 'ใช้ตรวจเอกสารแนบ ผังงาน (Flowchart/Sequence) และตารางอ้างอิง'
+        },
+
+        // หมวด 3: Format & Consistency
+        {
+            value: '100% CI Compliance (ตรงตาม CI)',
+            category: 'Format & Consistency',
+            catBadge: 'หมวด 3',
+            typeTag: 'มาตรฐานรูปแบบ 100%',
+            description: 'โครงสร้างหัวข้อ ฟอนต์ ขนาดตัวอักษร การใช้สี และการจัดวางหน้าเป็นไปตามแม่แบบองค์กร (Corporate Template / CI)',
+            example: 'ใช้ตรวจความเรียบร้อยของรูปแบบเอกสารตาม Template มาตรฐาน'
+        },
+        {
+            value: '100% Page & TOC Match',
+            category: 'Format & Consistency',
+            catBadge: 'หมวด 3',
+            typeTag: 'ตรงกัน 100%',
+            description: 'ลำดับเลขหัวข้อ เลขหน้า สารบัญหลัก และสารบัญภาพ/ตาราง อัปเดตตรงกับเนื้อหาจริงทั้งฉบับ',
+            example: 'ใช้ตรวจความสอดคล้องของสารบัญและเลขหัวข้ออ้างอิงข้ามบท'
+        },
+        {
+            value: '< 1% Typo Rate (คำผิด < 1%)',
+            category: 'Format & Consistency',
+            catBadge: 'หมวด 3',
+            typeTag: 'ผ่อนปรน < 1%',
+            description: 'แทบไม่มีคำสะกดผิด ไวยากรณ์ถูกต้อง และใช้คำศัพท์เทคนิคหรือชื่อปุ่ม/เมนูตรงกันเป็นมาตรฐานเดียวทั้งฉบับ',
+            example: 'ใช้กับข้อตรวจการสะกดคำและ Terminology ในหมวดผ่อนปรน (Conditional Pass)'
+        },
+        {
+            value: '0 Duplicate/Conflicting Cases',
+            category: 'Format & Consistency',
+            catBadge: 'หมวด 3',
+            typeTag: 'ไม่ซ้ำซ้อน (0)',
+            description: 'ไม่มีหัวข้อหรือกรณีทดสอบที่ซ้ำซ้อนกันเอง หรือระบุเงื่อนไขขัดแย้งกันระหว่างบทต่างๆ ในเอกสารฉบับเดียวกัน',
+            example: 'ใช้ตรวจความซ้ำซ้อนของ Test Case หรือกฎธุรกิจที่ขัดแย้งกันเอง'
+        },
+
+        // หมวด 4: Governance & Control
+        {
+            value: '100% Header & Metadata',
+            category: 'Governance & Control',
+            catBadge: 'หมวด 4',
+            typeTag: 'ครบสมบูรณ์ 100%',
+            description: 'ระบุชื่อเอกสาร รหัสเอกสาร เลขเวอร์ชัน วันที่อัปเดต สถานะ และชื่อผู้จัดทำ/ผู้ตรวจอนุมัติครบทุกช่องบังคับ',
+            example: 'ใช้ตรวจข้อมูลหน้าปกและตาราง Document Control'
+        },
+        {
+            value: '100% Logged History',
+            category: 'Governance & Control',
+            catBadge: 'หมวด 4',
+            typeTag: 'ครบสมบูรณ์ 100%',
+            description: 'มีตารางประวัติการแก้ไข (Document History / Revision Log) สรุปสิ่งที่เปลี่ยนแปลง วันที่ และผู้แก้ไขครบทุกเวอร์ชัน',
+            example: 'ใช้ตรวจการบันทึกประวัติการปรับปรุงเอกสารก่อนส่งมอบ'
+        },
+        {
+            value: '0 Draft Comments (ฉบับสะอาด 100%)',
+            category: 'Governance & Control',
+            catBadge: 'หมวด 4',
+            typeTag: 'ฉบับสะอาด (0 ค้าง)',
+            description: 'เป็นเอกสารฉบับสะอาดที่ปิด Track Changes ลบ Comment ร่าง และไม่มีข้อความค้าง (เช่น TODO, TBD, xxx) หลงเหลือ',
+            example: 'ใช้ตรวจความพร้อมขั้นสุดท้ายก่อนอนุมัติ (Sign-off) หรือส่งมอบลูกค้า'
+        }
+    ];
+
+    const LEGACY_KPI_DESCRIPTIONS = {
+        '100% Verified (ถูกต้อง 100%)': 'ข้อมูล ตัวเลข และเนื้อหาสำคัญผ่านการตรวจสอบความถูกต้องครบ 100%',
+        '100% Actionable Expected Results': 'ผลลัพธ์ที่คาดหวัง (Expected Result) ระบุชัดเจน สามารถตัดสินผ่าน/ไม่ผ่านได้จริงครบทุกข้อ',
+        '100% Actionable Steps': 'ขั้นตอนการทดสอบ (Test Steps) เรียงลำดับชัดเจน ปฏิบัติตามได้จริงครบ 100%',
+        '100% Boundary Verified': 'ระบุเงื่อนไขขอบเขตข้อมูล (Min/Max/Boundary Value) ครบถ้วนทุกจุดรับข้อมูลสำคัญ',
+        '100% Explicit Data Provided': 'ระบุตัวอย่างข้อมูลทดสอบ (Test Data / Input Value) อย่างชัดเจน ไม่เว้นลอย',
+        '100% Happy Path Coverage': 'ครอบคลุมกรณีใช้งานหลักตามขั้นตอนปกติ (Happy Path) ครบ 100% ของฟีเจอร์',
+        '100% Numbered Steps Format': 'เขียนขั้นตอนเรียงเป็นลำดับตัวเลขชัดเจนทุกข้อ อ่านและอ้างอิงตามลำดับได้ง่าย',
+        '>= 90% Negative Path Coverage': 'ครอบคลุมกรณีข้อมูลผิดพลาดหรือทางเลือกเชิงลบ (Negative Path) ไม่น้อยกว่า 90%',
+        '100% Blank Execution Fields': 'ช่องผลการรันจริง (Actual Result / Status) ในแม่แบบก่อนรันทดสอบต้องว่างพร้อมใช้งาน 100%',
+        '100% Requirement Coverage': 'ครอบคลุมหัวข้อความต้องการทางธุรกิจ (Requirements) ครบถ้วน 100%',
+        '100% Template Compliance': 'จัดโครงสร้างเอกสารตรงตามแม่แบบมาตรฐานที่กำหนดครบ 100%',
+        '100% Template Adherence': 'ปฏิบัติตามโครงสร้างและหัวข้อบังคับของแม่แบบเอกสารครบ 100%',
+        '< 3 Missing/Invalid Header Fields': 'อนุโลมให้ข้อมูลส่วนหัวขาดหายหรือผิดรูปแบบได้ไม่เกิน 2 ช่อง (ต่ำกว่า 3 จุด)',
+        '100% Menu Coverage': 'ครอบคลุมทุกหน้าจอและเมนูย่อยที่เกี่ยวข้องในขอบเขตระบบครบ 100%',
+        '100% Test Data Specified': 'ระบุชุดข้อมูลที่ใช้ทดสอบครบถ้วนทุกกรณีทดสอบ 100%',
+        '100% Traceability Mapped': 'ผูกความเชื่อมโยงระหว่าง Requirement กับหัวข้อทดสอบครบถ้วน 100%',
+        '< 3 Naming Violations': 'ชื่อหัวข้อหรือรหัสอ้างอิงผิดมาตรฐานการตั้งชื่อ (Naming Convention) ได้ไม่เกิน 2 จุด',
+        '100% Complete (สมบูรณ์ 100%)': 'เนื้อหาและองค์ประกอบในหัวข้อนี้ครบสมบูรณ์ 100% ตามเกณฑ์ที่กำหนด',
+        '100% (ผ่านบริบูรณ์)': 'ต้องผ่านเงื่อนไขของข้อตรวจนี้ครบถ้วนสมบูรณ์ 100%',
+        '100%': 'ต้องผ่านเงื่อนไขของข้อตรวจนี้ครบถ้วนสมบูรณ์ 100%'
+    };
+
+    function getKpiInfo(metricVal) {
+        const clean = String(metricVal || '').trim();
+        const found = KPI_CATALOG.find((k) => k.value === clean);
+        if (found) return found;
+        if (LEGACY_KPI_DESCRIPTIONS[clean]) {
+            return {
+                value: clean,
+                typeTag: 'เกณฑ์เฉพาะของชุดตรวจ',
+                description: LEGACY_KPI_DESCRIPTIONS[clean],
+                example: 'ตัวชี้วัดที่ตั้งไว้ใน Template ชุดนี้ สามารถคงค่าเดิมไว้หรือเปลี่ยนเป็นตัวชี้วัดมาตรฐานได้'
+            };
+        }
+        if (!clean) {
+            return {
+                value: '',
+                typeTag: 'ยังไม่ระบุ',
+                description: 'กรุณาเลือกตัวชี้วัดเป้าหมายเพื่อให้ AI ทราบระดับความเข้มงวดในการตัดสินผ่าน/ตก',
+                example: ''
+            };
+        }
+        return {
+            value: clean,
+            typeTag: 'กำหนดเอง (Custom)',
+            description: `เป้าหมายที่กำหนดเอง ("${clean}") — AI จะนำเกณฑ์นี้ไปเทียบกับหลักฐานในเอกสารเพื่อตัดสิน PASS หรือ FAIL`,
+            example: ''
+        };
+    }
+
+    function getKpiOptionsForItem(item) {
+        const currentVal = String(item?.target_metric || '').trim();
+        const itemCat = item?.category || 'Content Accuracy & Completeness';
+        const inCatalog = KPI_CATALOG.some((k) => k.value === currentVal);
+
+        const sameCatOpts = KPI_CATALOG.filter((k) => k.category === itemCat).map((k) => ({
+            value: k.value,
+            label: k.value,
+            badge: 'แนะนำ',
+            description: k.description
+        }));
+
+        const otherCatOpts = KPI_CATALOG.filter((k) => k.category !== itemCat).map((k) => ({
+            value: k.value,
+            label: k.value,
+            badge: k.catBadge,
+            description: k.description
+        }));
+
+        const customExistingOpt =
+            currentVal && !inCatalog
+                ? [
+                      {
+                          value: currentVal,
+                          label: currentVal,
+                          badge: 'ค่าปัจจุบัน',
+                          description: getKpiInfo(currentVal).description
+                      }
+                  ]
+                : [];
+
+        return [
+            ...customExistingOpt,
+            ...sameCatOpts,
+            ...otherCatOpts,
+            {
+                value: CUSTOM_KPI_SENTINEL,
+                label: 'กำหนดตัวชี้วัดเอง (พิมพ์ระบุ KPI เอง)...',
+                badge: 'กำหนดเอง',
+                description: 'ใช้กรณีต้องการตั้งเกณฑ์ตัวเลขหรือเงื่อนไขเฉพาะทางที่ไม่มีในรายการมาตรฐาน'
+            }
+        ];
+    }
+
     let templates = [];
     let projects = [];
     let loading = false;
@@ -93,11 +336,16 @@
 
     // Modals & Refs
     let showHelpModal = false;
+    let showKpiGuideModal = false;
+    let kpiGuideFilterCat = 'ALL';
+    let activeKpiPickerItemIdx = -1;
+    let customKpiEditMap = {};
     let showConfirmModal = false;
     let showAiSuggestModal = false;
     let showSandboxModal = false;
     let lastTriggerEl = null;
     let helpDialogEl = null;
+    let kpiGuideDialogEl = null;
     let confirmDialogEl = null;
     let aiDialogEl = null;
     let sandboxDialogEl = null;
@@ -316,7 +564,7 @@
     function handleWindowKeydown(e) {
         // Ctrl/Cmd + S accelerator to save Exit Criteria
         if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
-            if (!showConfirmModal && !showSandboxModal && !showAiSuggestModal && !showHelpModal) {
+            if (!showConfirmModal && !showSandboxModal && !showAiSuggestModal && !showHelpModal && !showKpiGuideModal) {
                 e.preventDefault();
                 if (!saving) saveTemplate();
                 return;
@@ -325,6 +573,8 @@
         if (e.key !== 'Escape') return;
         if (showConfirmModal && !confirmModalData.loading) {
             closeConfirmModal();
+        } else if (showKpiGuideModal) {
+            closeKpiGuideModal();
         } else if (showSandboxModal && !isRunningSandbox) {
             closeSandboxModal();
         } else if (showAiSuggestModal && !isGeneratingAi) {
@@ -333,6 +583,68 @@
             closeHelpModal();
         }
     }
+
+    async function openKpiGuideModal(itemIdx = -1, categoryId = 'ALL') {
+        lastTriggerEl = document.activeElement;
+        activeKpiPickerItemIdx = itemIdx;
+        kpiGuideFilterCat = categoryId || 'ALL';
+        showKpiGuideModal = true;
+        await tick();
+        kpiGuideDialogEl?.focus();
+    }
+
+    function closeKpiGuideModal() {
+        showKpiGuideModal = false;
+        activeKpiPickerItemIdx = -1;
+        lastTriggerEl?.focus?.();
+    }
+
+    function applyKpiFromGuide(kpiVal) {
+        if (activeKpiPickerItemIdx >= 0 && form.items[activeKpiPickerItemIdx]) {
+            form.items[activeKpiPickerItemIdx].target_metric = kpiVal;
+            const nextMap = { ...customKpiEditMap };
+            delete nextMap[activeKpiPickerItemIdx];
+            customKpiEditMap = nextMap;
+            form.items = [...form.items];
+            toast(`เลือกตัวชี้วัด "${kpiVal}" เรียบร้อย`, 'success');
+        }
+        closeKpiGuideModal();
+    }
+
+    async function handleKpiDropdownChange(itemIdx, selectedVal) {
+        if (!form.items[itemIdx]) return;
+        if (selectedVal === CUSTOM_KPI_SENTINEL) {
+            customKpiEditMap = { ...customKpiEditMap, [itemIdx]: true };
+            await tick();
+            const el = document.getElementById(`ec-custom-kpi-${itemIdx}`);
+            el?.focus?.();
+            el?.select?.();
+            return;
+        }
+        form.items[itemIdx].target_metric = selectedVal;
+        if (customKpiEditMap[itemIdx]) {
+            const nextMap = { ...customKpiEditMap };
+            delete nextMap[itemIdx];
+            customKpiEditMap = nextMap;
+        }
+        form.items = [...form.items];
+    }
+
+    function exitCustomKpiMode(itemIdx) {
+        if (form.items[itemIdx] && !String(form.items[itemIdx].target_metric || '').trim()) {
+            const catMeta = CATEGORIES.find((c) => c.id === form.items[itemIdx].category) || CATEGORIES[1];
+            form.items[itemIdx].target_metric = catMeta.defaultMetric;
+            form.items = [...form.items];
+        }
+        const nextMap = { ...customKpiEditMap };
+        delete nextMap[itemIdx];
+        customKpiEditMap = nextMap;
+    }
+
+    $: filteredKpiGuideList =
+        kpiGuideFilterCat === 'ALL'
+            ? KPI_CATALOG
+            : KPI_CATALOG.filter((k) => k.category === kpiGuideFilterCat);
 
     onMount(async () => {
         await Promise.all([fetchProjects(), fetchTemplates(true)]);
@@ -413,6 +725,7 @@
     async function loadTemplateDetail(templateId) {
         loadingDetail = true;
         clearUndoBanner();
+        customKpiEditMap = {};
         invalidItemIndex = -1;
         invalidTitleField = false;
         try {
@@ -482,6 +795,7 @@
     function applyNewTemplateDraft() {
         activeTemplate = null;
         clearUndoBanner();
+        customKpiEditMap = {};
         invalidItemIndex = -1;
         invalidTitleField = false;
         const inheritedProjectId = getActiveTopbarProjectId();
@@ -495,8 +809,8 @@
             max_loops: 3,
             items: [
                 { item_code: '1.1', category: 'Defect & Comment Resolution', question_text: 'ข้อสั่งการ/Comment ระดับ Critical / High ในรอบก่อน ได้รับการแก้ไขเรียบร้อยแล้ว 100%', target_metric: '100% Closed (แก้ไขครบ 100%)', severity: 'Critical', is_mandatory: true, order_index: 1 },
-                { item_code: '2.1', category: 'Content Accuracy & Completeness', question_text: 'ข้อมูล ตัวเลข ข้อเท็จจริง และขอบเขตเนื้อหาครบถ้วนถูกต้องตามโจทย์', target_metric: '100% Verified Accuracy', severity: 'Critical', is_mandatory: true, order_index: 2 },
-                { item_code: '3.1', category: 'Format & Consistency', question_text: 'รูปแบบฟอนต์ การจัดตาราง และไม่มีคำผิดเกินเกณฑ์มาตรฐาน', target_metric: '< 1% Typo Rate', severity: 'Minor', is_mandatory: false, order_index: 3 },
+                { item_code: '2.1', category: 'Content Accuracy & Completeness', question_text: 'ข้อมูล ตัวเลข ข้อเท็จจริง และขอบเขตเนื้อหาครบถ้วนถูกต้องตามโจทย์', target_metric: '100% Verified Accuracy (ถูกต้อง 100%)', severity: 'Critical', is_mandatory: true, order_index: 2 },
+                { item_code: '3.1', category: 'Format & Consistency', question_text: 'รูปแบบฟอนต์ การจัดตาราง และไม่มีคำผิดเกินเกณฑ์มาตรฐาน', target_metric: '< 1% Typo Rate (คำผิด < 1%)', severity: 'Minor', is_mandatory: false, order_index: 3 },
                 { item_code: '4.1', category: 'Governance & Control', question_text: 'ระบุ Document Title, Version Number, วันที่อัปเดต และชื่อผู้จัดทำชัดเจน', target_metric: '100% Header & Metadata', severity: 'Major', is_mandatory: true, order_index: 4 }
             ]
         };
@@ -974,6 +1288,10 @@
             <p class="ec-subtitle">กำหนดเกณฑ์มาตรฐานกลางและเกณฑ์รายโครงการ สำหรับประเมินเอกสารใน QA Consult และ AI Document Creation</p>
         </div>
         <div class="ec-header-actions">
+            <button type="button" class="ec-btn ec-btn-secondary" on:click={() => openKpiGuideModal(-1, 'ALL')}>
+                <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><path d="M3 3v18h18"></path><path d="M18 17V9"></path><path d="M13 17V5"></path><path d="M8 17v-3"></path></svg>
+                คำอธิบายตัวชี้วัด KPI
+            </button>
             <button type="button" class="ec-btn ec-btn-secondary" on:click={openHelpModal}>
                 <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
                 คู่มือการใช้งาน
@@ -1282,6 +1600,7 @@
                                     {#each catEntries as entry, posInCat (entry.idx)}
                                         {@const item = entry.item}
                                         {@const itemIdx = entry.idx}
+                                        {@const kpiInfo = getKpiInfo(item.target_metric)}
                                         <div class="ec-rule-item-card" class:is-invalid={invalidItemIndex === itemIdx}>
                                             <!-- Row 1: Code + Full-Width Question Textarea + Reorder / Delete -->
                                             <div class="rule-row-top">
@@ -1333,17 +1652,53 @@
                                                 </div>
                                             </div>
 
-                                            <!-- Row 2: KPI Indicator + Severity + Mandatory Switch + Move Category -->
+                                            <!-- Row 2: KPI Dropdown + Info + Severity + Move Category + Mandatory Switch -->
                                             <div class="rule-row-bottom">
                                                 <div class="rule-meta-field kpi">
-                                                    <span class="meta-mini-lbl">KPI / เป้าหมาย:</span>
-                                                    <input
-                                                        type="text"
-                                                        bind:value={item.target_metric}
-                                                        class="ec-control rule-metric-in"
-                                                        aria-label={`ตัวชี้วัด KPI ข้อ ${item.item_code}`}
-                                                        placeholder="เช่น 100% Verified"
-                                                    />
+                                                    <span class="meta-mini-lbl">ตัวชี้วัด KPI:</span>
+                                                    <button
+                                                        type="button"
+                                                        class="ec-kpi-info-btn"
+                                                        title={`คลิกเพื่อดูคู่มือเลือกตัวชี้วัด KPI (${kpiInfo.description})`}
+                                                        aria-label={`ดูคำอธิบายตัวชี้วัด KPI สำหรับข้อ ${item.item_code}`}
+                                                        on:click={() => openKpiGuideModal(itemIdx, item.category)}
+                                                    >
+                                                        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="14" height="14"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+                                                    </button>
+
+                                                    {#if customKpiEditMap[itemIdx]}
+                                                        <div class="custom-kpi-inline">
+                                                            <input
+                                                                id="ec-custom-kpi-{itemIdx}"
+                                                                type="text"
+                                                                bind:value={item.target_metric}
+                                                                class="ec-control rule-metric-in"
+                                                                aria-label={`พิมพ์ตัวชี้วัด KPI กำหนดเองสำหรับข้อ ${item.item_code}`}
+                                                                placeholder="ระบุเป้าหมาย เช่น >= 95% API Pass..."
+                                                            />
+                                                            <button
+                                                                type="button"
+                                                                class="ec-btn ec-btn-secondary ec-btn-sm"
+                                                                on:click={() => exitCustomKpiMode(itemIdx)}
+                                                            >
+                                                                รายการมาตรฐาน
+                                                            </button>
+                                                        </div>
+                                                    {:else}
+                                                        <div class="kpi-select-wrap">
+                                                            <CustomSelect
+                                                                value={item.target_metric}
+                                                                ariaLabel={`เลือกตัวชี้วัด KPI ข้อ ${item.item_code}`}
+                                                                options={getKpiOptionsForItem(item)}
+                                                                size="sm"
+                                                                width="100%"
+                                                                minWidth="220px"
+                                                                dropdownMinWidth="440px"
+                                                                placeholder="เลือกตัวชี้วัด KPI..."
+                                                                on:change={(e) => handleKpiDropdownChange(itemIdx, e.detail)}
+                                                            />
+                                                        </div>
+                                                    {/if}
                                                 </div>
 
                                                 <div class="rule-meta-field">
@@ -1379,6 +1734,19 @@
                                                     />
                                                     <span>{item.is_mandatory ? 'บังคับผ่าน (Mandatory)' : 'ผ่อนปรนได้ (Optional)'}</span>
                                                 </label>
+                                            </div>
+
+                                            <!-- Live KPI Meaning Strip: Explains immediately what the chosen KPI evaluates -->
+                                            <div class="rule-kpi-meaning">
+                                                <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+                                                <span><strong>ความหมาย KPI:</strong> {kpiInfo.description}</span>
+                                                <button
+                                                    type="button"
+                                                    class="kpi-guide-inline-link"
+                                                    on:click={() => openKpiGuideModal(itemIdx, item.category)}
+                                                >
+                                                    เทียบตัวชี้วัดทั้งหมด
+                                                </button>
                                             </div>
                                         </div>
                                     {/each}
@@ -1526,6 +1894,105 @@
             <button type="button" class="ec-btn ec-btn-primary" disabled={isRunningSandbox} on:click={handleRunSandbox}>
                 {isRunningSandbox ? 'กำลังประเมินด้วย AI...' : 'รันทดสอบเกณฑ์'}
             </button>
+        </div>
+    </div>
+</div>
+{/if}
+
+<!-- KPI Reference & Interactive Picker Modal -->
+{#if showKpiGuideModal}
+<div class="ec-modal-backdrop" role="presentation" on:click={closeKpiGuideModal}>
+    <div bind:this={kpiGuideDialogEl} class="ec-modal-box xlarge" role="dialog" aria-modal="true" aria-labelledby="kpi-guide-title" tabindex="-1" on:keydown={trapFocus} on:click|stopPropagation>
+        <div class="ec-modal-head">
+            <div>
+                <h2 id="kpi-guide-title">
+                    {activeKpiPickerItemIdx >= 0 && form.items[activeKpiPickerItemIdx]
+                        ? `เลือกตัวชี้วัด KPI สำหรับข้อ ${form.items[activeKpiPickerItemIdx].item_code}`
+                        : 'คู่มือตัวชี้วัด KPI มาตรฐาน (KPI Indicator Reference)'}
+                </h2>
+                <p>อธิบายความหมายของแต่ละ KPI และหลักที่ AI ใช้ตัดสินผล เพื่อให้เลือกตัวชี้วัดได้ตรงกับลักษณะข้อตรวจ</p>
+            </div>
+            <button type="button" class="ec-icon-btn" aria-label="ปิดหน้าต่าง" on:click={closeKpiGuideModal}>
+                <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+            </button>
+        </div>
+        <div class="ec-modal-body">
+            <div class="kpi-guide-how-box">
+                <strong>AI นำค่า KPI ไปใช้อย่างไร?</strong>
+                <span>
+                    เกณฑ์ <strong>100% / 0 ข้อผิดพลาด</strong> จะถูกตรวจแบบเข้มงวด (พบจุดตกหล่นแม้จุดเดียวจะถือว่า FAIL) ส่วนเกณฑ์แบบ
+                    <strong>&lt; 1% หรือ &gt;= 90%</strong> จะเปิดช่องให้ AI ผ่อนปรนจุดเล็กน้อยได้ตามสัดส่วนที่กำหนด
+                </span>
+            </div>
+
+            <div class="kpi-cat-tabs" role="tablist" aria-label="กรองตัวชี้วัดตามหมวดหมู่">
+                <button
+                    type="button"
+                    role="tab"
+                    aria-selected={kpiGuideFilterCat === 'ALL'}
+                    class="kpi-cat-tab"
+                    class:active={kpiGuideFilterCat === 'ALL'}
+                    on:click={() => (kpiGuideFilterCat = 'ALL')}
+                >
+                    ทั้งหมด ({KPI_CATALOG.length})
+                </button>
+                {#each CATEGORIES as cat}
+                    <button
+                        type="button"
+                        role="tab"
+                        aria-selected={kpiGuideFilterCat === cat.id}
+                        class="kpi-cat-tab"
+                        class:active={kpiGuideFilterCat === cat.id}
+                        on:click={() => (kpiGuideFilterCat = cat.id)}
+                    >
+                        {cat.shortLabel}
+                    </button>
+                {/each}
+            </div>
+
+            <div class="kpi-guide-list">
+                {#each filteredKpiGuideList as kpi (kpi.value)}
+                    {@const isCurrent = activeKpiPickerItemIdx >= 0 && form.items[activeKpiPickerItemIdx]?.target_metric === kpi.value}
+                    <div class="kpi-guide-card" class:selected={isCurrent}>
+                        <div class="kpi-guide-main">
+                            <div class="kpi-guide-top">
+                                <span class="kpi-guide-name">{kpi.value}</span>
+                                <span class="ec-meta-chip global">{kpi.catBadge}</span>
+                                <span class="ec-meta-chip project">{kpi.typeTag}</span>
+                            </div>
+                            <p class="kpi-guide-desc">{kpi.description}</p>
+                            {#if kpi.example}
+                                <div class="kpi-guide-example">เหมาะสำหรับ: {kpi.example}</div>
+                            {/if}
+                        </div>
+                        {#if activeKpiPickerItemIdx >= 0}
+                            <button
+                                type="button"
+                                class={isCurrent ? 'ec-btn ec-btn-secondary ec-btn-sm' : 'ec-btn ec-btn-tonal ec-btn-sm'}
+                                on:click={() => applyKpiFromGuide(kpi.value)}
+                            >
+                                {isCurrent ? 'ใช้อยู่ปัจจุบัน' : 'เลือกใช้ KPI นี้'}
+                            </button>
+                        {/if}
+                    </div>
+                {/each}
+            </div>
+        </div>
+        <div class="ec-modal-foot">
+            {#if activeKpiPickerItemIdx >= 0}
+                <button
+                    type="button"
+                    class="ec-btn ec-btn-secondary"
+                    on:click={() => {
+                        const targetIdx = activeKpiPickerItemIdx;
+                        closeKpiGuideModal();
+                        handleKpiDropdownChange(targetIdx, CUSTOM_KPI_SENTINEL);
+                    }}
+                >
+                    พิมพ์กำหนด KPI เอง...
+                </button>
+            {/if}
+            <button type="button" class="ec-btn ec-btn-primary" on:click={closeKpiGuideModal}>ปิดหน้าต่าง</button>
         </div>
     </div>
 </div>
@@ -1956,9 +2423,34 @@
         padding-left: 82px;
     }
     .rule-meta-field { display: inline-flex; align-items: center; gap: 8px; }
-    .rule-meta-field.kpi { flex: 1; min-width: 220px; }
+    .rule-meta-field.kpi { flex: 1; min-width: 280px; }
+    .kpi-select-wrap { flex: 1; min-width: 220px; }
+    .custom-kpi-inline { flex: 1; min-width: 220px; display: flex; align-items: center; gap: 8px; }
     .meta-mini-lbl { font-size: 12px; font-weight: 600; color: var(--text-dim); white-space: nowrap; }
-    .rule-metric-in { min-height: 34px; padding: 5px 10px; font-size: 12px; border-radius: var(--radius-sm); color: var(--primary-soft-text-hover); }
+    .rule-metric-in { flex: 1; min-height: 34px; padding: 5px 10px; font-size: 12px; border-radius: var(--radius-sm); color: var(--primary-soft-text-hover); }
+
+    .ec-kpi-info-btn {
+        width: 28px; height: 28px; border-radius: var(--radius-sm);
+        background: rgba(6, 182, 212, 0.14); border: 1px solid rgba(6, 182, 212, 0.36);
+        color: var(--accent-soft-text); display: inline-flex; align-items: center; justify-content: center;
+        cursor: pointer; flex-shrink: 0; transition: background-color 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+    }
+    .ec-kpi-info-btn:hover {
+        background: rgba(6, 182, 212, 0.26); border-color: var(--accent); color: #ffffff;
+    }
+
+    .rule-kpi-meaning {
+        display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+        padding-left: 82px; font-size: 12px; color: var(--text-muted); line-height: 1.45;
+    }
+    .rule-kpi-meaning svg { color: var(--accent-soft-text); flex-shrink: 0; }
+    .rule-kpi-meaning strong { color: var(--accent-soft-text); font-weight: 600; }
+    .kpi-guide-inline-link {
+        background: none; border: none; padding: 0 4px;
+        color: var(--primary-soft-text); font-size: 12px; font-weight: 600; font-family: var(--font-th);
+        text-decoration: underline; cursor: pointer;
+    }
+    .kpi-guide-inline-link:hover { color: var(--primary-soft-text-hover); }
 
     .rule-mand-pill {
         min-height: 34px; padding: 0 12px; border-radius: var(--radius-sm);
@@ -2006,7 +2498,52 @@
         font-family: var(--font-th); color: var(--text-main);
     }
     .ec-modal-box.large { max-width: 720px; }
+    .ec-modal-box.xlarge { max-width: 820px; }
     .ec-modal-box.confirm { max-width: 440px; padding: 26px 28px; text-align: center; }
+
+    /* KPI Reference Modal */
+    .kpi-guide-how-box {
+        background: rgba(99, 102, 241, 0.12);
+        border: 1px solid rgba(129, 140, 248, 0.34);
+        border-radius: var(--radius-md);
+        padding: 12px 16px;
+        font-size: 14px;
+        color: var(--text-main);
+        line-height: 1.55;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+    .kpi-guide-how-box strong { color: var(--primary-soft-text-hover); }
+    .kpi-cat-tabs {
+        display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+    }
+    .kpi-cat-tab {
+        min-height: 34px; padding: 0 12px; border-radius: var(--radius-sm);
+        background: var(--surface-card); border: 1px solid var(--glass-border-light);
+        color: var(--text-muted); font-size: 12px; font-weight: 600; font-family: var(--font-th);
+        cursor: pointer; transition: background-color 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+    }
+    .kpi-cat-tab:hover { background: var(--surface-card-hover); color: var(--text-main); }
+    .kpi-cat-tab.active {
+        background: rgba(99, 102, 241, 0.22); border-color: var(--primary); color: #ffffff;
+    }
+    .kpi-guide-list {
+        display: flex; flex-direction: column; gap: 10px;
+    }
+    .kpi-guide-card {
+        background: var(--surface-card); border: 1px solid var(--glass-border);
+        border-radius: var(--radius-md); padding: 14px 16px;
+        display: flex; align-items: center; justify-content: space-between; gap: 14px;
+    }
+    .kpi-guide-card.selected {
+        background: rgba(99, 102, 241, 0.14); border-color: var(--primary);
+    }
+    .kpi-guide-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+    .kpi-guide-top { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+    .kpi-guide-name { font-size: 14px; font-weight: 700; font-family: var(--font-en); color: var(--text-main); }
+    .kpi-guide-desc { margin: 0; font-size: 14px; color: var(--text-muted); line-height: 1.5; }
+    .kpi-guide-example { font-size: 12px; color: var(--text-dim); }
 
     .ec-modal-head {
         display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;
@@ -2088,6 +2625,8 @@
         .ec-form-grid { grid-template-columns: 1fr; }
         .rule-row-top { flex-wrap: wrap; }
         .rule-row-bottom { padding-left: 0; }
+        .rule-kpi-meaning { padding-left: 0; }
+        .kpi-guide-card { flex-direction: column; align-items: stretch; }
     }
     @media (prefers-reduced-motion: reduce) {
         .mini-slider, .mini-slider::before, .ec-switch-track, .ec-switch-track::before, .ec-chevron { transition: none; }

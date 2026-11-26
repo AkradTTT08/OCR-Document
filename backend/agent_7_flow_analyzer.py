@@ -386,21 +386,22 @@ def analyze_project_flow_and_diagrams(project_id: str, custom_instructions: str 
         # 5. Fetch Project API Collections (real endpoints for accurate Sequence & Flowchart diagrams)
         api_context = []
         try:
-            cursor.execute("""
-                SELECT name, method, url, description
-                FROM api_collections
-                WHERE project_id = %s::uuid
-                ORDER BY created_at DESC LIMIT 30
-            """, (project_id,))
-            for a in cursor.fetchall():
-                api_context.append({
-                    "name": a[0],
-                    "method": a[1],
-                    "url": a[2],
-                    "description": (a[3] or "")[:300]
-                })
-        except Exception:
-            conn.rollback()
+            from api_collections_manager import get_project_all_endpoints
+            ok_eps, proj_eps = get_project_all_endpoints(project_id)
+            if ok_eps and isinstance(proj_eps, list):
+                for ep in proj_eps[:40]:
+                    api_context.append({
+                        "name": ep.get("name") or ep.get("path") or "API Endpoint",
+                        "method": ep.get("method") or "GET",
+                        "url": ep.get("path") or ep.get("url") or "/",
+                        "description": f"{ep.get('source', 'Project API')} — {ep.get('name', '')}"[:300]
+                    })
+        except Exception as api_err:
+            logger.warning(f"Agent 7: project_api_collections fetch warning: {api_err}")
+            try:
+                conn.rollback()
+            except Exception:
+                pass
 
         # Fetch existing mockups to preserve any user-uploaded Figma URLs or images
         existing_mockups = []

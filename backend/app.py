@@ -4311,6 +4311,37 @@ def qa_consult_transaction_pages(transaction_id):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+_ACTIVE_QA_CONSULT_CANCELS = {}
+
+
+class _QAConsultCancelledError(Exception):
+    pass
+
+
+@app.route('/api/qa_consult/cancel', methods=['POST', 'OPTIONS'])
+def cancel_qa_consult_scan():
+    """Explicitly cancel an in-flight QA Consult document scan so background work and DB saves stop immediately."""
+    if request.method == 'OPTIONS':
+        return '', 200
+    try:
+        data = request.get_json(silent=True) or {}
+        scan_id = str(data.get('scan_id') or '').strip()
+        cancelled = False
+        if scan_id and scan_id in _ACTIVE_QA_CONSULT_CANCELS:
+            _ACTIVE_QA_CONSULT_CANCELS[scan_id].set()
+            cancelled = True
+            logger.info(f"QA Consult scan '{scan_id}' marked as cancelled by user.")
+        elif not scan_id:
+            for sid, ev in list(_ACTIVE_QA_CONSULT_CANCELS.items()):
+                ev.set()
+                cancelled = True
+            logger.info("All active QA Consult scans marked as cancelled by user.")
+        return jsonify({'success': True, 'cancelled': cancelled}), 200
+    except Exception as e:
+        logger.error(f"Error cancelling QA Consult scan: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route('/api/qa_consult', methods=['POST', 'OPTIONS'])
 def qa_consult_api():
     if request.method == 'OPTIONS':
@@ -4393,6 +4424,7 @@ def qa_consult_api():
         file_bytes = file.read()
         req_user = get_request_user() or request.form.get('username')
         source_generated_doc_id = (request.form.get('source_generated_doc_id') or '').strip() or None
+        client_scan_id = (request.form.get('scan_id') or '').strip() or f"qascan-{int(time.time() * 1000)}"
 
         from excel_extractor import is_excel_file, extract_text_from_excel_bytes
         file_is_excel = is_excel_file(raw_original_filename) or is_excel_file(doc_filename)
@@ -4401,6 +4433,12 @@ def qa_consult_api():
         import queue
         import threading
         msg_queue = queue.Queue()
+        cancel_event = threading.Event()
+        _ACTIVE_QA_CONSULT_CANCELS[client_scan_id] = cancel_event
+
+        def _ensure_not_cancelled():
+            if cancel_event.is_set():
+                raise _QAConsultCancelledError("ผู้ใช้สั่งหยุดการสแกนเอกสาร")
 
         def run_qa_worker():
             nonlocal doc_type
@@ -4410,6 +4448,7 @@ def qa_consult_api():
             temp_img_dir = os.path.join(_QA_CONSULT_PAGES_DIR, temp_scan_key)
             pages_list = []
             try:
+                _ensure_not_cancelled()
                 if file_is_excel:
                     msg_queue.put({'type': 'progress', 'pct': 10, 'message': 'กำลังวิเคราะห์และแปลงข้อมูลจากเอกสาร Excel (Sheets & Test Cases)...' })
                     try:
@@ -4445,6 +4484,8 @@ def qa_consult_api():
                     msg_queue.put({'type': 'progress', 'pct': 10, 'message': 'กำลังวิเคราะห์ข้อความและสร้างภาพตัวอย่างหน้าเอกสาร PDF...' })
                     from ocr_engine import ocr_pdf_bytes
                     def _pdf_progress_cb(p_curr, p_tot, stage, elapsed):
+                        if cancel_event.is_set():
+                            raise _QAConsultCancelledError("ผู้ใช้สั่งหยุดการสแกนเอกสาร")
                         pct_val = 10 + int((p_curr / max(p_tot, 1)) * 28)
                         msg_queue.put({'type': 'progress', 'pct': min(pct_val, 38), 'message': f'กำลังอ่านและสร้างภาพหน้าเอกสาร PDF ({p_curr}/{p_tot})...'})
                     ocr_results = ocr_pdf_bytes(
@@ -4470,6 +4511,7 @@ def qa_consult_api():
                             extracted_chunks.append(f"--- [หน้า {p_num}] ---\n{p_text}")
                     extracted_text = "\n\n".join(extracted_chunks)
                 
+                _ensure_not_cancelled()
                 if not extracted_text.strip():
                     msg_queue.put({'type': 'error', 'message': 'ไม่พบเนื้อหาข้อความในเอกสารที่อัปโหลด'})
                     msg_queue.put(None)
@@ -4590,6 +4632,7 @@ def qa_consult_api():
                     except Exception as e:
                         logger.error(f"Failed to fetch previous transaction: {e}")
 
+                _ensure_not_cancelled()
                 msg_queue.put({'type': 'progress', 'pct': 70, 'message': 'กำลังใช้ AI วิเคราะห์และเปรียบเทียบข้อมูล...' })
                 
                 # 3. Analyze with Multi-Agent Pipeline
@@ -4674,10 +4717,16 @@ def qa_consult_api():
                 )
                 
                 qa_state = run_qa_consult(qa_state)
+                _ensure_not_cancelled()
                 
                 if qa_state.status == "failed":
-                    user_err = f"ไม่สามารถสร้างรายงาน QA ได้: {qa_state.error}"
-                    if '429' in str(qa_state.error) or 'RESOURCE_EXHAUSTED' in str(qa_state.error):
+                    err_raw = str(qa_state.error or "")
+                    user_err = f"ไม่สามารถสร้างรายงาน QA ได้: {err_raw}"
+                    if '402' in err_raw or 'prepayment credits are depleted' in err_raw.lower():
+                        user_err = "เครดิต Google AI Studio (402 Prepayment Credits Depleted) ของ GOOGLE_API_KEY ปัจจุบันหมดแล้ว กรุณาเติมเครดิตที่ https://ai.studio/projects หรือเปลี่ยน GOOGLE_API_KEY ใหม่ในไฟล์ .env"
+                    elif 'API_KEY_INVALID' in err_raw or '403' in err_raw:
+                        user_err = f"GOOGLE_API_KEY ไม่ถูกต้องหรือไม่มีสิทธิ์ใช้งาน (403/Invalid Key): {err_raw}"
+                    elif '429' in err_raw or 'RESOURCE_EXHAUSTED' in err_raw:
                         user_err = "โควต้า Gemini API (429 Rate Limit) เต็มชั่วคราว กรุณารอสักครู่ (ประมาณ 30-60 วินาที) แล้วกดสแกนใหม่อีกครั้ง"
                     logger.error(f"QA Consult Agent failed: {qa_state.error}")
                     msg_queue.put({'type': 'error', 'message': user_err})
@@ -4699,6 +4748,7 @@ def qa_consult_api():
                 page_issue_summary = _build_page_issue_summary(qa_findings, pages_list)
 
                 # 4. Evaluate Exit Criteria Checklist Gate (with QA findings context)
+                _ensure_not_cancelled()
                 exit_criteria_eval = None
                 try:
                     msg_queue.put({'type': 'progress', 'pct': 85, 'message': 'กำลังตรวจสอบเกณฑ์ Exit Criteria Review Gate...' })
@@ -4708,6 +4758,7 @@ def qa_consult_api():
                 except Exception as eval_err:
                     logger.error(f"Failed to evaluate document exit criteria: {eval_err}")
 
+                _ensure_not_cancelled()
                 # Save transaction to DB with parsed findings and exit criteria
                 transaction_id = None
                 try:
@@ -4893,12 +4944,22 @@ def qa_consult_api():
                 msg_queue.put({'type': 'complete', 'result': result_payload })
                 msg_queue.put(None)
 
+            except _QAConsultCancelledError:
+                logger.info(f"QA Consult scan '{client_scan_id}' for '{raw_original_filename}' stopped cleanly upon user request.")
+                if os.path.isdir(temp_img_dir):
+                    try:
+                        _shutil.rmtree(temp_img_dir, ignore_errors=True)
+                    except Exception:
+                        pass
+                msg_queue.put({'type': 'cancelled', 'message': 'ยกเลิกการสแกนเอกสารเรียบร้อยแล้ว'})
+                msg_queue.put(None)
+
             except Exception as e:
                 import traceback
                 traceback.print_exc()
                 logger.error(f"Error in QA Consult background worker: {e}", exc_info=True)
                 msg_queue.put({'type': 'error', 'message': str(e) })
-                if req_user:
+                if req_user and not cancel_event.is_set():
                     try:
                         from notification_service import send_user_notification
                         send_user_notification(
@@ -4913,6 +4974,8 @@ def qa_consult_api():
                     except Exception:
                         pass
                 msg_queue.put(None)
+            finally:
+                _ACTIVE_QA_CONSULT_CANCELS.pop(client_scan_id, None)
 
         # Launch background worker thread: continues running even if client navigates away
         worker_thread = threading.Thread(target=run_qa_worker, daemon=True)
@@ -4926,7 +4989,7 @@ def qa_consult_api():
                         if item is None:
                             break
                         yield f"data: {json.dumps(item)}\n\n"
-                        if item.get('type') in ['complete', 'error']:
+                        if item.get('type') in ['complete', 'error', 'cancelled']:
                             break
                     except queue.Empty:
                         if not worker_thread.is_alive():
@@ -5469,14 +5532,14 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
     from ocr_engine import _get_gemini_client
 
     DEFAULT_UNIVERSAL_ITEMS = [
-        ('1.1', 'Defect & Comment Resolution', 'ไม่มี Defect ระดับ Critical / High คงค้างในเอกสาร', '0 Critical/High Bugs (ผ่าน 100%)', 'Critical', True, 1),
-        ('1.2', 'Defect & Comment Resolution', 'ไม่มีข้อผิดพลาดด้าน Logic การคำนวณ หรือการไหลของกระบวนการทำงาน (Process Flow)', '100% Correct Logic', 'Critical', True, 2),
-        ('1.3', 'Defect & Comment Resolution', 'ไม่มี Broken Links, รหัสอ้างอิงที่ไม่ตรงกัน หรือภาพประกอบที่ไม่ถูกต้อง', '0 Broken Links/Refs', 'Major', True, 3),
+        ('1.1', 'Defect & Comment Resolution', 'ต้องไม่มีข้อบกพร่อง (Defect) ระดับ Critical หรือ High คงค้างในเอกสาร', '0 Critical/High Bugs (ผ่าน 100%)', 'Critical', True, 1),
+        ('1.2', 'Defect & Comment Resolution', 'ต้องไม่มีข้อผิดพลาดด้าน Logic การคำนวณ หรือการไหลของกระบวนการทำงาน (Process Flow)', '100% Correct Logic', 'Critical', True, 2),
+        ('1.3', 'Defect & Comment Resolution', 'ต้องไม่มี Broken Links, รหัสอ้างอิงที่ไม่ตรงกัน หรือภาพประกอบที่ไม่ถูกต้อง', '0 Broken Links/Refs', 'Major', True, 3),
         ('2.1', 'Content Accuracy & Completeness', 'มีเนื้อหาครบถ้วนตาม Scope, Objective และ Requirement ที่ตกลงไว้', '100% Scope Coverage', 'Critical', True, 4),
         ('2.2', 'Content Accuracy & Completeness', 'มีรายละเอียด Input / Output / Data Dictionary ครบถ้วนชัดเจน', '100% Data Specs', 'Major', True, 5),
         ('2.3', 'Content Accuracy & Completeness', 'ครอบคลุม Exception Cases, Edge Cases และ Error Handling', '100% Edge Cases Handling', 'Major', True, 6),
         ('2.4', 'Content Accuracy & Completeness', 'มีเกณฑ์การยอมรับ (Acceptance Criteria / Definition of Done) ชัดเจนทุกหัวข้อ', '100% Defined Criteria', 'Major', True, 7),
-        ('3.1', 'Format & Consistency', 'ไม่มีคำผิด (Spelling / Typos) ในคำศัพท์เฉพาะทาง, ภาษาไทย และภาษาอังกฤษ', '< 1% Typo Rate (คำผิด < 1%)', 'Minor', False, 8),
+        ('3.1', 'Format & Consistency', 'ต้องไม่มีคำผิด (Spelling / Typos) เกินเกณฑ์มาตรฐานทั้งภาษาไทยและภาษาอังกฤษ', '< 1% Typo Rate (คำผิด < 1%)', 'Minor', False, 8),
         ('3.2', 'Format & Consistency', 'รูปแบบฟอนต์, ขนาดตัวอักษร, ระยะย่อหน้า และหัวข้อ มีความสม่ำเสมอทั้งเอกสาร', '100% Style Consistency', 'Minor', False, 9),
         ('3.3', 'Format & Consistency', 'การจัดวางตาราง, รูปภาพ และ Diagram มีความชัดเจน อ่านง่าย ไม่ตกขอบ', '100% Visual Clarity', 'Minor', False, 10),
         ('4.1', 'Governance & Control', 'มีการระบุ Document Title, Version Number, วันที่อัปเดต และชื่อผู้แต่ง/ผู้แก้ไขชัดเจน', '100% Header & Metadata', 'Major', True, 11),
@@ -5878,9 +5941,15 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
         if is_crit_defect_gate_item:
             if len(high_critical) > 0:
                 status = 'FAIL'
-                top_issues = "; ".join([f"[{f.get('severity','High')}] {f.get('issue','')}" for f in high_critical[:3]])
-                remarks = f"พบประเด็นความรุนแรงระดับ Critical/High คงค้างในเอกสารจำนวน {len(high_critical)} รายการ (ต้องแก้ไขให้เป็น 0 รายการก่อนผ่าน Gate)"
-                evidence = top_issues
+                top_lines = [
+                    f"{idx_h}. [{f.get('severity','High')}] {f.get('issue','')}"
+                    + (f" (หน้า {f.get('page_number')})" if f.get('page_number') else "")
+                    for idx_h, f in enumerate(high_critical[:4], 1)
+                ]
+                if len(high_critical) > 4:
+                    top_lines.append(f"...และอีก {len(high_critical) - 4} รายการ (ดูครบทั้งหมดในตาราง QA Audit Findings)")
+                remarks = f"ไม่ผ่านเกณฑ์ — ตรวจพบข้อบกพร่องความรุนแรงระดับ Critical/High ในเอกสารจำนวน {len(high_critical)} รายการ (เป้าหมายต้องเป็น 0 รายการ)"
+                evidence = "\n".join(top_lines)
             elif status == 'FAIL' and len(high_critical) == 0:
                 status = 'PASS'
                 remarks = 'ผลการตรวจ QA Analysis ไม่พบ Defect ระดับ Critical หรือ High คงค้างในเอกสาร (0 Critical/High Findings)'
@@ -5934,8 +6003,15 @@ def evaluate_document_exit_criteria(doc_text: str, doc_type: str = 'ALL', projec
         if not status or status not in ['PASS', 'FAIL', 'NA']:
             if base_code_clean == '1.1' and high_critical:
                 status = 'FAIL'
-                remarks = f"พบประเด็นความรุนแรง Critical/High จำนวน {len(high_critical)} รายการ"
-                evidence = high_critical[0].get('issue', '')
+                top_lines = [
+                    f"{idx_h}. [{f.get('severity','High')}] {f.get('issue','')}"
+                    + (f" (หน้า {f.get('page_number')})" if f.get('page_number') else "")
+                    for idx_h, f in enumerate(high_critical[:4], 1)
+                ]
+                if len(high_critical) > 4:
+                    top_lines.append(f"...และอีก {len(high_critical) - 4} รายการ (ดูครบทั้งหมดในตาราง QA Audit Findings)")
+                remarks = f"ไม่ผ่านเกณฑ์ — ตรวจพบข้อบกพร่องความรุนแรงระดับ Critical/High ในเอกสารจำนวน {len(high_critical)} รายการ (เป้าหมายต้องเป็น 0 รายการ)"
+                evidence = "\n".join(top_lines)
             elif is_typo_question and typos and len(typos) > 3:
                 status = 'FAIL'
                 remarks = f"พบคำผิดหรือการสะกดคำไม่ถูกต้อง {len(typos)} รายการ"
@@ -6646,13 +6722,19 @@ def ai_suggest_exit_criteria():
 3. "Format & Consistency" (รหัส 3.1, 3.2 ... — เน้นรูปแบบ/คำผิด/ความสม่ำเสมอ, severity: "Minor", is_mandatory: false เพื่อให้เข้าเกณฑ์ CONDITIONAL PASSED ได้)
 4. "Governance & Control" (รหัส 4.1, 4.2 ... — เน้น Metadata, Version, Revision History, Clean Copy)
 
+เลือกค่า "target_metric" ให้ตรงกับชุดตัวชี้วัดมาตรฐานต่อไปนี้เป็นหลัก (ยกเว้นจำเป็นต้องระบุเฉพาะทางจริงๆ):
+- หมวด 1: "100% Closed (แก้ไขครบ 100%)", "100% Responded (ตอบครบทุกข้อ)", "0 Defect Impact (0 ข้อผิดพลาดใหม่)", "100% REQ Traced"
+- หมวด 2: "100% Verified Accuracy (ถูกต้อง 100%)", "100% Scope Coverage (ครบตาม Scope)", "100% Actionable Steps & Expected Results", ">= 90% Negative & Boundary Coverage", "0 Ambiguity (ไม่มีจุดคลุมเครือ)", "100% Complete Attachments"
+- หมวด 3: "100% CI Compliance (ตรงตาม CI)", "100% Page & TOC Match", "< 1% Typo Rate (คำผิด < 1%)", "0 Duplicate/Conflicting Cases"
+- หมวด 4: "100% Header & Metadata", "100% Logged History", "0 Draft Comments (ฉบับสะอาด 100%)"
+
 ส่งกลับเป็น JSON Array เท่านั้น (ห้ามมีข้อความอื่นนอก JSON):
 [
   {{
     "item_code": "1.1",
     "category": "Defect & Comment Resolution",
     "question_text": "รายละเอียดข้อตรวจภาษาไทยที่ชัดเจน ตรวจสอบจากเนื้อหาเอกสารได้จริง",
-    "target_metric": "ตัวชี้วัดสั้นกระชับ เช่น 0 Critical Defects / 100% Traceable",
+    "target_metric": "100% Closed (แก้ไขครบ 100%)",
     "severity": "Critical" | "Major" | "Minor",
     "is_mandatory": true | false
   }}
@@ -8271,6 +8353,15 @@ def get_project_api_collections_route(project_id):
         logger.error(f"Error getting api collections: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/api-collections', methods=['GET', 'POST'])
+def api_collections_root_route():
+    if request.method == 'GET':
+        project_id = (request.args.get('project_id') or '').strip()
+        if not project_id:
+            return jsonify({'success': True, 'collections': []})
+        return get_project_api_collections_route(project_id)
+    return upload_api_collection_route()
+
 @app.route('/api/projects/<project_id>/endpoints', methods=['GET'])
 def get_project_endpoints_route(project_id):
     try:
@@ -8292,6 +8383,7 @@ def upload_api_collection_route():
         
         file = request.files['file']
         project_id = request.form.get('project_id')
+        custom_name = (request.form.get('name') or '').strip()
         if not project_id:
             return jsonify({'error': 'project_id is required'}), 400
             
@@ -8301,10 +8393,11 @@ def upload_api_collection_route():
         content_str = raw_bytes.decode('utf-8', errors='ignore')
 
         parsed = parse_spec_content(content_str, filename)
+        final_name = custom_name or parsed['name'] or filename
         
         success, res = save_api_collection(
             project_id=project_id,
-            name=parsed['name'] or filename,
+            name=final_name,
             format_type=parsed['format'],
             version=parsed['version'],
             file_size=file_size_str,
@@ -8313,7 +8406,12 @@ def upload_api_collection_route():
             endpoints_count=parsed['endpoints_count']
         )
         if success:
-            return jsonify({'success': True, 'collection': res})
+            return jsonify({
+                'success': True,
+                'collection': res,
+                'name': res.get('name', final_name),
+                'endpoint_count': res.get('endpoints_count', parsed['endpoints_count'])
+            })
         return jsonify({'error': res}), 500
     except Exception as e:
         logger.error(f"Error uploading api collection: {e}", exc_info=True)
@@ -8322,39 +8420,66 @@ def upload_api_collection_route():
 @app.route('/api/api-collections/manual', methods=['POST'])
 def create_manual_api_collection_route():
     try:
-        from api_collections_manager import save_api_collection
+        from api_collections_manager import save_api_collection, append_endpoints_to_collection
         data = request.json or {}
         project_id = data.get('project_id')
-        name = data.get('name')
-        url = data.get('url')
+        target_collection_id = (data.get('target_collection_id') or '').strip()
+        collection_name = (data.get('collection_name') or '').strip()
+        base_url = (data.get('base_url') or '').strip().rstrip('/')
+        name = (data.get('name') or '').strip()
+        url = (data.get('url') or '').strip()
         method = (data.get('method') or 'GET').upper()
-        headers_val = data.get('headers') or "{}"
-        body_val = data.get('body') or ""
+        category = (data.get('category') or 'General').strip()
+        description = (data.get('description') or '').strip()
+        headers_val = data.get('headers') if data.get('headers') is not None else "{}"
+        body_val = data.get('body') if data.get('body') is not None else ""
+        query_params = data.get('query_params') if isinstance(data.get('query_params'), list) else []
+        auth_config = data.get('auth_config') if isinstance(data.get('auth_config'), dict) else {"type": "none"}
+        curl_cmd = (data.get('curl') or '').strip()
+        response_body = (data.get('responseBody') or '').strip()
 
         if not project_id or not name or not url:
-            return jsonify({'error': 'project_id, name, and url are required'}), 400
+            return jsonify({'error': 'กรุณาระบุโครงการ, ชื่อ API และ Endpoint URL ให้ครบถ้วน'}), 400
 
-        content_json = {
+        endpoint_entry = {
+            "id": f"ep-{uuid.uuid4().hex[:8]}",
+            "method": method,
+            "path": url,
+            "url": url,
+            "summary": name,
             "name": name,
+            "description": description,
+            "category": category,
+            "folder": category,
+            "headers": headers_val,
+            "query_params": query_params,
+            "auth_config": auth_config,
+            "body": body_val,
+            "curl": curl_cmd,
+            "responseBody": response_body
+        }
+
+        if target_collection_id and target_collection_id != '__NEW__':
+            success, res = append_endpoints_to_collection(target_collection_id, [endpoint_entry])
+            if success:
+                return jsonify({'success': True, 'collection': res, 'appended': True})
+            return jsonify({'error': res}), 500
+
+        final_col_name = collection_name or name
+        content_json = {
+            "name": final_col_name,
+            "base_url": base_url,
             "url": url,
             "method": method,
             "headers": headers_val,
             "body": body_val,
-            "endpoints": [
-                {
-                    "method": method,
-                    "path": url,
-                    "summary": name,
-                    "headers": headers_val,
-                    "body": body_val
-                }
-            ]
+            "endpoints": [endpoint_entry]
         }
 
         success, res = save_api_collection(
             project_id=project_id,
-            name=name,
-            format_type=f"Manual ({method})",
+            name=final_col_name,
+            format_type=f"Manual ({method})" if not collection_name else "Manual Collection",
             version="1.0",
             file_size="-",
             raw_content=json.dumps(content_json, ensure_ascii=False, indent=2),
@@ -8362,11 +8487,12 @@ def create_manual_api_collection_route():
             endpoints_count=1
         )
         if success:
-            return jsonify({'success': True, 'collection': res})
+            return jsonify({'success': True, 'collection': res, 'appended': False})
         return jsonify({'error': res}), 500
     except Exception as e:
         logger.error(f"Error creating manual api: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
+
 
 @app.route('/api/api-collections/sniff', methods=['POST'])
 def sniff_api_collections_route():
@@ -8382,46 +8508,107 @@ def sniff_api_collections_route():
         logger.error(f"Error sniffing APIs: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
+
 @app.route('/api/api-collections/save-sniffed', methods=['POST'])
 def save_sniffed_api_collections_route():
     try:
-        from api_collections_manager import save_api_collection
+        from api_collections_manager import save_api_collection, append_endpoints_to_collection
         data = request.json or {}
         project_id = data.get('project_id')
         endpoints = data.get('endpoints') or []
+        target_collection_id = (data.get('target_collection_id') or '').strip()
+        custom_collection_name = (data.get('collection_name') or '').strip()
+        source_label = (data.get('source_label') or 'Web Sniffer').strip()
+        base_url = (data.get('base_url') or '').strip().rstrip('/')
         
         if not project_id or not endpoints:
             return jsonify({'error': 'project_id and endpoints are required'}), 400
 
-        created_collections = []
-        for ep in endpoints:
-            content_json = {
-                "name": ep.get('name', 'Sniffed API'),
-                "url": ep.get('url', ''),
-                "method": ep.get('method', 'GET').upper(),
-                "category": ep.get('category', 'General'),
-                "endpoints": [ep]
-            }
-            success, res = save_api_collection(
-                project_id=project_id,
-                name=f"[Sniffed] {ep.get('name', 'API')} ({ep.get('method', 'GET')})",
-                format_type=f"Web Sniffed ({ep.get('method', 'GET')})",
-                version="Auto-Detected",
-                file_size="-",
-                raw_content=json.dumps(content_json, ensure_ascii=False, indent=2),
-                content_json=content_json,
-                endpoints_count=1
-            )
+        normalized_eps = []
+        for idx, ep in enumerate(endpoints, 1):
+            if not isinstance(ep, dict):
+                continue
+            m = (ep.get('method') or 'GET').upper()
+            u = ep.get('url') or ep.get('path') or ''
+            nm = ep.get('name') or ep.get('summary') or f"{m} {u}"
+            normalized_eps.append({
+                "id": ep.get('id') or f"ep-{idx}-{uuid.uuid4().hex[:6]}",
+                "method": m,
+                "path": ep.get('path') or u,
+                "url": u,
+                "summary": nm,
+                "name": nm,
+                "category": ep.get('category') or source_label,
+                "headers": ep.get('headers') or {},
+                "body": ep.get('body') or "",
+                "curl": ep.get('curl') or "",
+                "responseBody": ep.get('responseBody') or ""
+            })
+
+        if target_collection_id and target_collection_id != '__NEW__':
+            success, res = append_endpoints_to_collection(target_collection_id, normalized_eps)
             if success:
-                created_collections.append(res)
-                
-        return jsonify({'success': True, 'collections': created_collections, 'count': len(created_collections)})
+                return jsonify({'success': True, 'collections': [res], 'collection': res, 'count': len(normalized_eps), 'appended': True})
+            return jsonify({'error': res}), 500
+
+        now_str = datetime.now().strftime('%d/%m/%Y %H:%M')
+        col_title = custom_collection_name or f"[{source_label}] {now_str} ({len(normalized_eps)} Endpoints)"
+        content_json = {
+            "name": col_title,
+            "base_url": base_url,
+            "source": source_label,
+            "endpoints": normalized_eps
+        }
+        success, res = save_api_collection(
+            project_id=project_id,
+            name=col_title,
+            format_type=source_label,
+            version="1.0",
+            file_size="-",
+            raw_content=json.dumps(content_json, ensure_ascii=False, indent=2),
+            content_json=content_json,
+            endpoints_count=len(normalized_eps)
+        )
+        if not success:
+            return jsonify({'error': res}), 500
+
+        return jsonify({'success': True, 'collections': [res], 'collection': res, 'count': len(normalized_eps), 'appended': False})
     except Exception as e:
         logger.error(f"Error saving sniffed APIs: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/api-collections/<collection_id>', methods=['DELETE'])
-def delete_api_collection_route(collection_id):
+
+@app.route('/api/api-collections/<collection_id>', methods=['GET', 'PUT', 'DELETE'])
+def handle_single_api_collection_route(collection_id):
+    if request.method == 'GET':
+        try:
+            from api_collections_manager import get_api_collection_by_id
+            success, res = get_api_collection_by_id(collection_id)
+            if success:
+                return jsonify({'success': True, 'collection': res})
+            return jsonify({'error': res}), 404
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+
+    if request.method == 'PUT':
+        try:
+            from api_collections_manager import update_api_collection
+            data = request.json or {}
+            success, res = update_api_collection(
+                collection_id=collection_id,
+                name=data.get('name'),
+                version=data.get('version'),
+                base_url=data.get('base_url'),
+                endpoints=data.get('endpoints'),
+                format_type=data.get('format')
+            )
+            if success:
+                return jsonify({'success': True, 'collection': res})
+            return jsonify({'error': res}), 400
+        except Exception as e:
+            logger.error(f"Error updating api collection {collection_id}: {e}", exc_info=True)
+            return jsonify({'error': str(e)}), 500
+
     try:
         from api_collections_manager import delete_api_collection
         success, res = delete_api_collection(collection_id)
@@ -8431,6 +8618,52 @@ def delete_api_collection_route(collection_id):
     except Exception as e:
         logger.error(f"Error deleting api collection: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/api-collections/<collection_id>/export', methods=['GET'])
+def export_api_collection_route(collection_id):
+    try:
+        from api_collections_manager import get_api_collection_by_id
+        success, col = get_api_collection_by_id(collection_id)
+        if not success:
+            return jsonify({'error': col}), 404
+        export_payload = {
+            "name": col.get("name"),
+            "format": col.get("format"),
+            "version": col.get("version"),
+            "base_url": col.get("base_url") or "",
+            "exported_at": datetime.now().isoformat(),
+            "endpoints_count": len(col.get("endpoints") or []),
+            "endpoints": col.get("endpoints") or []
+        }
+        return jsonify({'success': True, 'collection': col, 'export_data': export_payload})
+    except Exception as e:
+        logger.error(f"Error exporting API collection: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/api-collections/test-direct', methods=['POST'])
+def test_direct_api_endpoint_route():
+    """Live Request Runner for testing any endpoint directly from the Manual API Studio or Endpoint Inspector before/after saving."""
+    try:
+        from api_collections_manager import test_api_connection
+        data = request.json or {}
+        res = test_api_connection(
+            collection_id=data.get('collection_id'),
+            url=data.get('url'),
+            method=data.get('method'),
+            headers=data.get('headers'),
+            body=data.get('body'),
+            query_params=data.get('query_params'),
+            auth_config=data.get('auth_config'),
+            endpoint_index=data.get('endpoint_index', 0),
+            base_url_override=data.get('base_url')
+        )
+        return jsonify(res)
+    except Exception as e:
+        logger.error(f"Error in direct API test: {e}", exc_info=True)
+        return jsonify({'success': False, 'reachable': False, 'error': str(e)}), 500
+
 
 @app.route('/api/api-collections/<collection_id>/test', methods=['POST'])
 def test_api_collection_route(collection_id):
@@ -8442,7 +8675,11 @@ def test_api_collection_route(collection_id):
             url=data.get('url'),
             method=data.get('method'),
             headers=data.get('headers'),
-            body=data.get('body')
+            body=data.get('body'),
+            query_params=data.get('query_params'),
+            auth_config=data.get('auth_config'),
+            endpoint_index=data.get('endpoint_index', 0),
+            base_url_override=data.get('base_url')
         )
         return jsonify(res)
     except Exception as e:
@@ -9024,6 +9261,7 @@ PROJECT_EXTENSION_SYNCS = {}
 # --- Chrome Extension Network API Sync Endpoint ---
 @app.route('/api/extension/sync-apis', methods=['GET', 'POST', 'OPTIONS'], strict_slashes=False)
 @app.route('/api/extension/latest', methods=['GET', 'OPTIONS'], strict_slashes=False)
+@app.route('/api/extension/traffic', methods=['GET', 'OPTIONS'], strict_slashes=False)
 @cross_origin()
 def sync_extension_apis():
     global LATEST_EXTENSION_SYNC, PROJECT_EXTENSION_SYNCS
@@ -9124,13 +9362,15 @@ def sync_extension_apis():
                     logger.error(f"Error querying project_api_collections: {e}")
 
             if record and record.get('apis'):
+                apis_list = record.get('apis', [])
                 res = jsonify({
                     'success': True,
                     'connected': True,
                     'project_id': record.get('project_id'),
                     'timestamp': record.get('timestamp'),
-                    'total_count': len(record.get('apis', [])),
-                    'apis': record.get('apis', [])
+                    'total_count': len(apis_list),
+                    'apis': apis_list,
+                    'traffic': apis_list
                 })
             else:
                 res = jsonify({
@@ -9139,6 +9379,7 @@ def sync_extension_apis():
                     'project_id': req_pid,
                     'total_count': 0,
                     'apis': [],
+                    'traffic': [],
                     'message': 'ยังไม่มีรายการ API ที่ Sync จาก Chrome Extension'
                 })
             res.headers.add('Access-Control-Allow-Origin', '*')
@@ -10060,937 +10301,4 @@ def fetch_live_board_data(cursor, p_id):
                 if 'bug' in lname: card_type = 'Bug'
                 elif 'debt' in lname or 'refactor' in lname: card_type = 'Tech Debt'
                 elif 'enhance' in lname: card_type = 'Enhancement'
-                if 'high' in lname or 'critical' in lname or 'urgent' in lname: priority = 'High'
-                elif 'low' in lname: priority = 'Low'
-
-            is_saved = (ext_id in saved_map) or (raw_id in saved_map)
-            saved_info = saved_map.get(ext_id) or saved_map.get(raw_id) or {}
-            saved_id = saved_info.get('id')
-            test_result = saved_info.get('test_result')
-
-            live_cards.append({
-                "id": saved_id or raw_id,
-                "ext_card_id": ext_id,
-                "title": title,
-                "description": desc,
-                "status": status,
-                "type": card_type,
-                "priority": priority,
-                "raw_ext_id": raw_id,
-                "labels": labels,
-                "members": members,
-                "story_points": story_points,
-                "actions": actions,
-                "is_saved": is_saved,
-                "saved_id": saved_id,
-                "test_result": test_result,
-                "isTesting": False
-            })
-
-    elif provider == 'github':
-        if not gh_token or not gh_owner or not gh_repo:
-            return False, [], [], "ข้อมูลการเชื่อมต่อ GitHub ไม่ครบถ้วน กรุณาตรวจสอบในการตั้งค่า", provider
-        
-        board_columns = [
-            {"id": "todo", "title": "Open Issues (To Do)", "color": "#64748b"},
-            {"id": "in_progress", "title": "In Progress", "color": "#3b82f6"},
-            {"id": "testing", "title": "Testing (Agent)", "color": "#a855f7"},
-            {"id": "done", "title": "Closed / Done", "color": "#22c55e"}
-        ]
-        cursor.execute("""
-            UPDATE board_integrations
-            SET columns_json = %s
-            WHERE project_id = %s
-        """, (json.dumps(board_columns, ensure_ascii=False), p_id))
-
-        headers = {
-            "Authorization": f"Bearer {gh_token}",
-            "Accept": "application/vnd.github.v3+json",
-            "User-Agent": "SpectraQA-Integration"
-        }
-        gh_res = requests.get(
-            f"https://api.github.com/repos/{gh_owner}/{gh_repo}/issues",
-            headers=headers,
-            params={"state": "all", "per_page": 50},
-            timeout=15
-        )
-        if not gh_res.ok:
-            return False, [], [], f"GitHub API Error: {gh_res.text}", provider
-        
-        for issue in gh_res.json():
-            if 'pull_request' in issue:
-                continue
-            
-            ext_id = f"#{issue.get('number')}"
-            raw_id = str(issue.get('number'))
-            title = issue.get('title', 'Untitled Issue')
-            desc = issue.get('body') or ''
-            
-            labels = [{"name": l['name'], "color": f"#{l.get('color', '38bdf8')}"} for l in issue.get('labels', [])]
-            label_names = [l['name'].lower() for l in labels]
-
-            members = []
-            if issue.get('assignee'):
-                m = issue['assignee']
-                members.append({
-                    "id": str(m.get('id')),
-                    "name": m.get('login'),
-                    "username": m.get('login'),
-                    "avatar": m.get('avatar_url'),
-                    "initials": m.get('login', 'M')[:2].upper()
-                })
-            
-            if issue.get('state') == 'closed':
-                status = 'done'
-            elif any('in progress' in l or 'doing' in l for l in label_names):
-                status = 'in_progress'
-            elif any('testing' in l or 'qa' in l for l in label_names):
-                status = 'testing'
-            else:
-                status = 'todo'
-
-            card_type = 'Feature'
-            if any('bug' in l for l in label_names): card_type = 'Bug'
-            elif any('enhancement' in l for l in label_names): card_type = 'Enhancement'
-            elif any('documentation' in l for l in label_names): card_type = 'Documentation'
-            elif any('tech debt' in l for l in label_names): card_type = 'Tech Debt'
-
-            priority = 'Medium'
-            if any('critical' in l or 'urgent' in l or 'high' in l for l in label_names):
-                priority = 'High'
-            elif any('low' in l for l in label_names):
-                priority = 'Low'
-
-            sp_match = re.search(r"(?:story\s*points?|points?|point|pt|p)\s*[:=]?\s*(\d+(?:\.\d+)?)", desc + " " + title, re.IGNORECASE)
-            story_points = sp_match.group(1) if sp_match else "1"
-            actions = []
-
-            is_saved = (ext_id in saved_map) or (raw_id in saved_map)
-            saved_info = saved_map.get(ext_id) or saved_map.get(raw_id) or {}
-            saved_id = saved_info.get('id')
-            test_result = saved_info.get('test_result')
-
-            live_cards.append({
-                "id": saved_id or raw_id,
-                "ext_card_id": ext_id,
-                "title": title,
-                "description": desc,
-                "status": status,
-                "type": card_type,
-                "priority": priority,
-                "raw_ext_id": raw_id,
-                "labels": labels,
-                "members": members,
-                "story_points": story_points,
-                "actions": actions,
-                "is_saved": is_saved,
-                "saved_id": saved_id,
-                "test_result": test_result,
-                "isTesting": False
-            })
-    
-    return True, live_cards, board_columns, "", provider
-
-@app.route('/api/projects/<string:project_id>/cards/live', methods=['GET', 'OPTIONS'])
-@cross_origin()
-def get_live_project_cards(project_id):
-    if request.method == 'OPTIONS':
-        res = jsonify({'status': 'ok'})
-        res.headers.add('Access-Control-Allow-Origin', '*')
-        res.headers.add('Access-Control-Allow-Headers', '*')
-        res.headers.add('Access-Control-Allow-Methods', '*')
-        return res, 200
-    p_id = safe_project_uuid(project_id)
-    from db_ingestion import get_db_connection
-    conn = get_db_connection()
-    if not conn:
-        return jsonify({"error": "Database connection error"}), 500
-    try:
-        cursor = conn.cursor()
-        cursor.execute("""
-            ALTER TABLE board_cards ADD COLUMN IF NOT EXISTS labels_json TEXT;
-            ALTER TABLE board_cards ADD COLUMN IF NOT EXISTS members_json TEXT;
-            ALTER TABLE board_cards ADD COLUMN IF NOT EXISTS story_points VARCHAR(20);
-            ALTER TABLE board_cards ADD COLUMN IF NOT EXISTS actions_json TEXT;
-        """)
-        conn.commit()
-
-        success, live_cards, board_columns, err_msg, provider = fetch_live_board_data(cursor, p_id)
-        if not success:
-            return jsonify({"error": err_msg}), 400
-        
-        conn.commit()
-        return jsonify({
-            "success": True,
-            "cards": live_cards,
-            "columns": board_columns,
-            "provider": provider
-        })
-    except Exception as e:
-        conn.rollback()
-        logger.error(f"Error fetching live cards: {e}")
-        return jsonify({"error": str(e)}), 500
-    finally:
-        if 'cursor' in locals():
-            cursor.close()
-        if 'conn' in locals():
-            conn.close()
-
-@app.route('/api/projects/<string:project_id>/cards/save-selected', methods=['POST', 'OPTIONS'])
-@cross_origin()
-def save_selected_project_cards(project_id):
-    if request.method == 'OPTIONS':
-        res = jsonify({'status': 'ok'})
-        res.headers.add('Access-Control-Allow-Origin', '*')
-        res.headers.add('Access-Control-Allow-Headers', '*')
-        res.headers.add('Access-Control-Allow-Methods', '*')
-        return res, 200
-    p_id = safe_project_uuid(project_id)
-    data = request.json or {}
-    cards_to_save = data.get('cards', [])
-    if not cards_to_save:
-        return jsonify({"error": "ไม่มี Card ที่เลือกสำหรับการบันทึก"}), 400
-
-    import json
-    from db_ingestion import get_db_connection, ingest_markdown_document
-    conn = get_db_connection()
-    if not conn:
-        return jsonify({"error": "Database connection error"}), 500
-    try:
-        cursor = conn.cursor()
-        cursor.execute("""
-            ALTER TABLE board_cards ADD COLUMN IF NOT EXISTS labels_json TEXT;
-            ALTER TABLE board_cards ADD COLUMN IF NOT EXISTS members_json TEXT;
-            ALTER TABLE board_cards ADD COLUMN IF NOT EXISTS story_points VARCHAR(20);
-            ALTER TABLE board_cards ADD COLUMN IF NOT EXISTS actions_json TEXT;
-        """)
-        conn.commit()
-
-        cards_to_ingest = []
-        saved_count = 0
-        for c in cards_to_save:
-            ext_id = c.get('ext_card_id') or f"TRL-{str(c.get('id', ''))[:6]}"
-            title = (c.get('title') or '').strip()
-            desc = c.get('description') or ''
-            status = c.get('status') or 'todo'
-            card_type = c.get('type') or 'Feature'
-            priority = c.get('priority') or 'Medium'
-            raw_ext_id = str(c.get('raw_ext_id') or c.get('id') or '')
-            labels = c.get('labels') or []
-            members = c.get('members') or []
-            story_points = str(c.get('story_points') or '1')
-            actions = c.get('actions') or []
-
-            labels_json = json.dumps(labels, ensure_ascii=False) if not isinstance(labels, str) else labels
-            members_json = json.dumps(members, ensure_ascii=False) if not isinstance(members, str) else members
-            actions_json = json.dumps(actions, ensure_ascii=False) if not isinstance(actions, str) else actions
-
-            # 1. Upsert into board_cards
-            cursor.execute("""
-                INSERT INTO board_cards (
-                    project_id, ext_card_id, title, description, status,
-                    card_type, priority, raw_ext_id, labels_json, members_json,
-                    story_points, actions_json
-                )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (project_id, ext_card_id) DO UPDATE SET
-                    title = EXCLUDED.title,
-                    description = EXCLUDED.description,
-                    status = EXCLUDED.status,
-                    card_type = EXCLUDED.card_type,
-                    priority = EXCLUDED.priority,
-                    raw_ext_id = EXCLUDED.raw_ext_id,
-                    labels_json = EXCLUDED.labels_json,
-                    members_json = EXCLUDED.members_json,
-                    story_points = EXCLUDED.story_points,
-                    actions_json = EXCLUDED.actions_json
-                RETURNING card_id;
-            """, (p_id, ext_id, title, desc, status, card_type, priority, raw_ext_id, labels_json, members_json, story_points, actions_json))
-            
-            card_filename = f"Card-{ext_id}.md"
-            card_md = format_card_as_markdown(c, status)
-            
-            # Clean up previous document for this card to prevent duplicate/stale embeddings
-            cursor.execute("""
-                DELETE FROM documents
-                WHERE project_id = %s AND original_filename = %s
-            """, (p_id, card_filename))
-
-            cards_to_ingest.append((card_filename, card_md, ext_id))
-            saved_count += 1
-
-        conn.commit()
-        cursor.close()
-        conn.close()
-
-        # Ingest each card into RAG Knowledge Base
-        for card_filename, card_md, ext_id in cards_to_ingest:
-            try:
-                ingest_markdown_document(
-                    filename=card_filename,
-                    markdown_text=card_md,
-                    project_id=p_id,
-                    doc_category='Trello Card',
-                    doc_type='Card'
-                )
-            except Exception as rag_err:
-                logger.error(f"Error ingesting card {ext_id} to RAG: {rag_err}")
-
-        return jsonify({
-            "success": True,
-            "saved_count": saved_count,
-            "message": f"บันทึก Card สำเร็จ {saved_count} ใบ และเพิ่มเข้า RAG Knowledge Base เรียบร้อยแล้ว"
-        })
-    except Exception as e:
-        if 'conn' in locals() and conn:
-            try: conn.rollback()
-            except Exception: pass
-        logger.error(f"Error saving selected cards: {e}")
-        return jsonify({"error": str(e)}), 500
-    finally:
-        if 'cursor' in locals():
-            cursor.close()
-        if 'conn' in locals():
-            conn.close()
-
-@app.route('/api/projects/<string:project_id>/cards/<string:card_id>', methods=['DELETE', 'OPTIONS'])
-@cross_origin()
-def delete_project_card(project_id, card_id):
-    if request.method == 'OPTIONS':
-        res = jsonify({'status': 'ok'})
-        res.headers.add('Access-Control-Allow-Origin', '*')
-        res.headers.add('Access-Control-Allow-Headers', '*')
-        res.headers.add('Access-Control-Allow-Methods', '*')
-        return res, 200
-    p_id = safe_project_uuid(project_id)
-    from db_ingestion import get_db_connection
-    conn = get_db_connection()
-    if not conn:
-        return jsonify({"error": "Database connection error"}), 500
-    try:
-        cursor = conn.cursor()
-        # Find ext_card_id to remove from documents
-        cursor.execute("SELECT ext_card_id FROM board_cards WHERE card_id = %s AND project_id = %s", (card_id, p_id))
-        row = cursor.fetchone()
-        if row and row[0]:
-            ext_id = row[0]
-            card_filename = f"Card-{ext_id}.md"
-            cursor.execute("DELETE FROM documents WHERE project_id = %s AND original_filename = %s", (p_id, card_filename))
-        
-        cursor.execute("DELETE FROM board_cards WHERE card_id = %s AND project_id = %s", (card_id, p_id))
-        conn.commit()
-        return jsonify({"success": True, "message": "ยกเลิกการบันทึก Card และถอนออกจาก RAG เรียบร้อยแล้ว"})
-    except Exception as e:
-        conn.rollback()
-        logger.error(f"Error deleting card: {e}")
-        return jsonify({"error": str(e)}), 500
-    finally:
-        if 'cursor' in locals():
-            cursor.close()
-        if 'conn' in locals():
-            conn.close()
-
-@app.route('/api/projects/<string:project_id>/cards/clear-all', methods=['POST', 'OPTIONS'])
-@cross_origin()
-def clear_all_project_cards(project_id):
-    if request.method == 'OPTIONS':
-        res = jsonify({'status': 'ok'})
-        res.headers.add('Access-Control-Allow-Origin', '*')
-        res.headers.add('Access-Control-Allow-Headers', '*')
-        res.headers.add('Access-Control-Allow-Methods', '*')
-        return res, 200
-    p_id = safe_project_uuid(project_id)
-    from db_ingestion import get_db_connection
-    conn = get_db_connection()
-    if not conn:
-        return jsonify({"error": "Database connection error"}), 500
-    try:
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM board_cards WHERE project_id = %s", (p_id,))
-        cursor.execute("DELETE FROM documents WHERE project_id = %s AND doc_category = 'Trello Card'", (p_id,))
-        conn.commit()
-        return jsonify({"success": True, "message": "ล้างการ์ดที่บันทึกทั้งหมดและนำออกจาก RAG เรียบร้อยแล้ว"})
-    except Exception as e:
-        conn.rollback()
-        logger.error(f"Error clearing all cards: {e}")
-        return jsonify({"error": str(e)}), 500
-    finally:
-        if 'cursor' in locals():
-            cursor.close()
-        if 'conn' in locals():
-            conn.close()
-
-@app.route('/api/projects/<string:project_id>/cards/sync', methods=['POST', 'OPTIONS'])
-@cross_origin()
-def sync_project_cards(project_id):
-    if request.method == 'OPTIONS':
-        res = jsonify({'status': 'ok'})
-        res.headers.add('Access-Control-Allow-Origin', '*')
-        res.headers.add('Access-Control-Allow-Headers', '*')
-        res.headers.add('Access-Control-Allow-Methods', '*')
-        return res, 200
-    p_id = safe_project_uuid(project_id)
-    from db_ingestion import get_db_connection
-    conn = get_db_connection()
-    if not conn:
-        return jsonify({"error": "Database connection error"}), 500
-    try:
-        cursor = conn.cursor()
-        success, live_cards, board_columns, err_msg, provider = fetch_live_board_data(cursor, p_id)
-        if not success:
-            return jsonify({"error": err_msg}), 400
-        
-        conn.commit()
-        return jsonify({
-            "success": True, 
-            "message": f"ตรวจสอบข้อมูลจาก {provider.capitalize()} สำเร็จ! พบ {len(live_cards)} การ์ดสด"
-        })
-    except Exception as e:
-        conn.rollback()
-        logger.error(f"Error checking live cards: {e}")
-        return jsonify({"error": str(e)}), 500
-    finally:
-        if 'cursor' in locals():
-            cursor.close()
-@app.route('/api/projects/<string:project_id>/cards/<string:card_id>/move', methods=['POST', 'OPTIONS'])
-@cross_origin()
-def move_project_card(project_id, card_id):
-    if request.method == 'OPTIONS':
-        res = jsonify({'status': 'ok'})
-        res.headers.add('Access-Control-Allow-Origin', '*')
-        res.headers.add('Access-Control-Allow-Headers', '*')
-        res.headers.add('Access-Control-Allow-Methods', '*')
-        return res, 200
-    p_id = safe_project_uuid(project_id)
-    data = request.json or {}
-    new_status = data.get('status')
-    raw_ext_id = data.get('raw_ext_id') or card_id
-    clean_raw_id = raw_ext_id.lstrip('#') if isinstance(raw_ext_id, str) else str(raw_ext_id)
-
-    if not new_status:
-        return jsonify({"error": "Missing status parameter"}), 400
-
-    from db_ingestion import get_db_connection
-    conn = get_db_connection()
-    if not conn:
-        return jsonify({"error": "Database connection error"}), 500
-
-    try:
-        cursor = conn.cursor()
-        
-        # 1. Update status in local board_cards database if exists
-        cursor.execute("""
-            UPDATE board_cards
-            SET status = %s
-            WHERE (card_id::text = %s OR raw_ext_id = %s OR ext_card_id = %s) AND project_id = %s
-        """, (new_status, card_id, card_id, card_id, p_id))
-        conn.commit()
-
-        # Find raw_ext_id if card was saved in DB
-        cursor.execute("""
-            SELECT raw_ext_id FROM board_cards 
-            WHERE (card_id::text = %s OR raw_ext_id = %s OR ext_card_id = %s) AND project_id = %s
-        """, (card_id, card_id, card_id, p_id))
-        card_row = cursor.fetchone()
-        actual_raw_id = (card_row[0] if card_row and card_row[0] else None) or data.get('raw_ext_id') or card_id
-        clean_raw_id = actual_raw_id.lstrip('#') if isinstance(actual_raw_id, str) else str(actual_raw_id)
-
-        # 2. Check external board integration
-        cursor.execute("""
-            SELECT provider, trello_api_key, trello_token, trello_board_id,
-                   github_token, github_owner, github_repo, columns_json
-            FROM board_integrations
-            WHERE project_id = %s
-        """, (p_id,))
-        integ = cursor.fetchone()
-
-        if integ:
-            provider, t_key, t_token, t_board, gh_token, gh_owner, gh_repo, cols_json = integ
-            if provider == 'trello' and t_key and t_token and clean_raw_id:
-                # Resolve target list ID
-                target_list_id = new_status
-                if cols_json:
-                    try:
-                        cols = json.loads(cols_json) if isinstance(cols_json, str) else cols_json
-                        m = next((c for c in cols if c.get('id') == new_status), None)
-                        if not m:
-                            m = next((c for c in cols if c.get('title', '').strip().lower() == new_status.strip().lower()), None)
-                        if not m:
-                            m = next((c for c in cols if new_status.lower() in c.get('title', '').lower() or c.get('title', '').lower() in new_status.lower()), None)
-                        if m:
-                            target_list_id = m.get('id')
-                    except Exception as c_err:
-                        logger.warning(f"Error parsing cols_json: {c_err}")
-
-                try:
-                    t_res = requests.put(
-                        f"https://api.trello.com/1/cards/{clean_raw_id}",
-                        params={"idList": target_list_id, "key": t_key, "token": t_token},
-                        json={"idList": target_list_id},
-                        timeout=10
-                    )
-                    logger.info(f"Trello card {clean_raw_id} moved to list {target_list_id}: status={t_res.status_code}, response={t_res.text[:150]}")
-                except Exception as t_err:
-                    logger.warning(f"Could not move card on Trello API: {t_err}")
-
-            elif provider == 'github' and gh_token and gh_owner and gh_repo and clean_raw_id:
-                try:
-                    gh_state = "closed" if new_status == 'done' else "open"
-                    headers = {
-                        "Authorization": f"Bearer {gh_token}",
-                        "Accept": "application/vnd.github.v3+json",
-                        "User-Agent": "SpectraQA-Integration"
-                    }
-                    requests.patch(
-                        f"https://api.github.com/repos/{gh_owner}/{gh_repo}/issues/{clean_raw_id}",
-                        headers=headers,
-                        json={"state": gh_state},
-                        timeout=10
-                    )
-                except Exception as gh_err:
-                    logger.warning(f"Could not update issue state on GitHub API: {gh_err}")
-
-        return jsonify({"success": True, "message": "ย้ายการ์ดสำเร็จ", "status": new_status})
-    except Exception as e:
-        conn.rollback()
-        logger.error(f"Error moving card: {e}")
-        return jsonify({"error": str(e)}), 500
-    finally:
-        if 'cursor' in locals():
-            cursor.close()
-        if 'conn' in locals():
-            conn.close()
-
-@app.route('/api/projects/<string:project_id>/cards/<string:card_id>/test', methods=['POST', 'OPTIONS'])
-@cross_origin()
-def test_project_card(project_id, card_id):
-    if request.method == 'OPTIONS':
-        res = jsonify({'status': 'ok'})
-        res.headers.add('Access-Control-Allow-Origin', '*')
-        res.headers.add('Access-Control-Allow-Headers', '*')
-        res.headers.add('Access-Control-Allow-Methods', '*')
-        return res, 200
-    p_id = safe_project_uuid(project_id)
-    data = request.json or {}
-    card_data = data.get('card') or {}
-    if not card_data.get('id'):
-        card_data['id'] = card_id
-
-    from agent_card_tester import run_card_agent_test
-    try:
-        outcome = run_card_agent_test(p_id, card_id, card_data)
-        return jsonify(outcome)
-    except Exception as e:
-        logger.error(f"Error in run_card_agent_test: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/api/attachments/<path:filename>', methods=['GET'])
-@cross_origin()
-def get_uploaded_attachment(filename):
-    attachments_dir = BASE_DIR / 'uploads' / 'attachments'
-    return send_from_directory(str(attachments_dir), filename)
-
-@app.route('/api/projects/<string:project_id>/attachment-proxy', methods=['GET', 'OPTIONS'])
-@cross_origin()
-def project_attachment_proxy(project_id):
-    if request.method == 'OPTIONS':
-        res = jsonify({'status': 'ok'})
-        res.headers.add('Access-Control-Allow-Origin', '*')
-        res.headers.add('Access-Control-Allow-Headers', '*')
-        res.headers.add('Access-Control-Allow-Methods', '*')
-        return res, 200
-    
-    target_url = request.args.get('url')
-    if not target_url:
-        return jsonify({"error": "Missing url param"}), 400
-    
-    p_id = safe_project_uuid(project_id)
-    from db_ingestion import get_db_connection
-    conn = get_db_connection()
-    headers = {"User-Agent": "SpectraQA"}
-    if conn:
-        try:
-            cursor = conn.cursor()
-            cursor.execute("SELECT trello_api_key, trello_token FROM board_integrations WHERE project_id = %s", (p_id,))
-            row = cursor.fetchone()
-            if row and row[0] and row[1]:
-                headers["Authorization"] = f'OAuth oauth_consumer_key="{row[0]}", oauth_token="{row[1]}"'
-            cursor.close()
-            conn.close()
-        except Exception:
-            pass
-    
-    try:
-        resp = requests.get(target_url, headers=headers, stream=True, timeout=15)
-        excluded_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']
-        res_headers = [(name, value) for (name, value) in resp.raw.headers.items() if name.lower() not in excluded_headers]
-        return Response(resp.iter_content(chunk_size=1024), status=resp.status_code, headers=res_headers, content_type=resp.headers.get('content-type', 'application/octet-stream'))
-    except Exception as e:
-        logger.error(f"Attachment proxy error: {e}")
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/api/projects/<string:project_id>/cards/upload-attachment', methods=['POST', 'OPTIONS'])
-@cross_origin()
-def upload_card_attachment(project_id):
-    if request.method == 'OPTIONS':
-        res = jsonify({'status': 'ok'})
-        res.headers.add('Access-Control-Allow-Origin', '*')
-        res.headers.add('Access-Control-Allow-Headers', '*')
-        res.headers.add('Access-Control-Allow-Methods', '*')
-        return res, 200
-    
-    p_id = safe_project_uuid(project_id)
-    attachments_dir = BASE_DIR / 'uploads' / 'attachments'
-    attachments_dir.mkdir(exist_ok=True, parents=True)
-
-    import uuid
-    import base64
-
-    # Case 1: multipart/form-data file (image or video)
-    if 'file' in request.files:
-        file = request.files['file']
-        if file and file.filename:
-            orig_name = secure_filename(file.filename) or "upload.png"
-            ext = Path(orig_name).suffix.lower()
-            if not ext:
-                ext = '.png'
-            unique_name = f"{uuid.uuid4().hex[:12]}_{orig_name}"
-            target_path = attachments_dir / unique_name
-            file.save(str(target_path))
-
-            is_video = ext in ['.mp4', '.webm', '.mov', '.avi', '.mkv']
-            file_url = f"http://localhost:5000/api/attachments/{unique_name}"
-            return jsonify({
-                "success": True,
-                "url": file_url,
-                "filename": unique_name,
-                "is_video": is_video,
-                "type": "video" if is_video else "image"
-            })
-
-    # Case 2: JSON payload with base64 image (from clipboard Ctrl+V)
-    data = request.json or {}
-    if 'base64_data' in data:
-        b64_str = data['base64_data']
-        ext = '.png'
-        if ',' in b64_str:
-            header, b64_str = b64_str.split(',', 1)
-            if 'image/jpeg' in header or 'image/jpg' in header:
-                ext = '.jpg'
-            elif 'image/gif' in header:
-                ext = '.gif'
-            elif 'image/webp' in header:
-                ext = '.webp'
-            elif 'video/mp4' in header:
-                ext = '.mp4'
-            elif 'video/webm' in header:
-                ext = '.webm'
-
-        file_bytes = base64.b64decode(b64_str)
-        unique_name = f"clip_{uuid.uuid4().hex[:10]}{ext}"
-        target_path = attachments_dir / unique_name
-        with open(target_path, 'wb') as f:
-            f.write(file_bytes)
-
-        is_video = ext in ['.mp4', '.webm']
-        file_url = f"http://localhost:5000/api/attachments/{unique_name}"
-        return jsonify({
-            "success": True,
-            "url": file_url,
-            "filename": unique_name,
-            "is_video": is_video,
-            "type": "video" if is_video else "image"
-        })
-
-    return jsonify({"error": "No file or base64 data provided"}), 400
-
-@app.route('/api/projects/<string:project_id>/cards/<string:card_id>/comments', methods=['POST', 'OPTIONS'])
-@cross_origin()
-def post_card_comment(project_id, card_id):
-    if request.method == 'OPTIONS':
-        res = jsonify({'status': 'ok'})
-        res.headers.add('Access-Control-Allow-Origin', '*')
-        res.headers.add('Access-Control-Allow-Headers', '*')
-        res.headers.add('Access-Control-Allow-Methods', '*')
-        return res, 200
-    
-    p_id = safe_project_uuid(project_id)
-    data = request.json or {}
-    comment_text = (data.get('comment') or '').strip()
-    if not comment_text:
-        return jsonify({"error": "Comment text cannot be empty"}), 400
-
-    from datetime import datetime, timezone
-    import json
-    import requests
-    from db_ingestion import get_db_connection
-    conn = get_db_connection()
-    if not conn:
-        return jsonify({"error": "Database connection error"}), 500
-
-    try:
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT provider, trello_api_key, trello_token, trello_board_id,
-                   github_token, github_owner, github_repo
-            FROM board_integrations WHERE project_id = %s
-        """, (p_id,))
-        integ = cursor.fetchone()
-
-        cursor.execute("""
-            SELECT raw_ext_id, actions_json
-            FROM board_cards WHERE (card_id::text = %s OR raw_ext_id = %s OR ext_card_id = %s) AND project_id = %s
-        """, (card_id, card_id, card_id, p_id))
-        card_row = cursor.fetchone()
-
-        raw_id = data.get('raw_ext_id') or (card_row[0] if card_row else None) or card_id
-        # Clean raw_id if starts with # (like #12 for github)
-        clean_raw_id = raw_id.lstrip('#') if isinstance(raw_id, str) else str(raw_id)
-        if clean_raw_id.startswith('TRL-'):
-            cursor.execute("SELECT raw_ext_id FROM board_cards WHERE ext_card_id = %s AND project_id = %s", (clean_raw_id, p_id))
-            bc_row = cursor.fetchone()
-            if bc_row and bc_row[0] and not bc_row[0].startswith('TRL-'):
-                clean_raw_id = bc_row[0]
-            elif integ and integ[0] == 'trello' and integ[1] and integ[2] and integ[3]:
-                try:
-                    s_num = int(clean_raw_id.replace('TRL-', '').strip())
-                    t_cards_res = requests.get(f"https://api.trello.com/1/boards/{integ[3]}/cards", params={"key": integ[1], "token": integ[2], "fields": "id,idShort"}, timeout=8)
-                    if t_cards_res.ok:
-                        for tc in t_cards_res.json():
-                            if tc.get('idShort') == s_num:
-                                clean_raw_id = tc.get('id')
-                                break
-                except Exception as ex:
-                    logger.warning(f"Could not resolve TRL- id to Trello hex id: {ex}")
-
-        client_actions = data.get('current_actions') or []
-        existing_actions = (json.loads(card_row[1]) if card_row and card_row[1] else None) or client_actions or []
-
-        logger.info(f"Posting comment: project={p_id}, card_id={card_id}, raw_id={raw_id}, clean_raw_id={clean_raw_id}, provider={integ[0] if integ else None}")
-
-        trello_action_created = None
-        if integ and integ[0] == 'trello' and integ[1] and integ[2] and clean_raw_id:
-            t_key, t_token = integ[1], integ[2]
-            
-            # 1. Sync attachments to Trello card
-            attachments_dir = BASE_DIR / 'uploads' / 'attachments'
-            for att in data.get('attachments', []):
-                filename = att.get('filename')
-                if filename:
-                    file_path = attachments_dir / filename
-                    if file_path.exists():
-                        try:
-                            with open(file_path, 'rb') as f_up:
-                                att_res = requests.post(
-                                    f"https://api.trello.com/1/cards/{clean_raw_id}/attachments",
-                                    params={"key": t_key, "token": t_token, "name": att.get('type', 'attachment')},
-                                    files={"file": (filename, f_up, 'application/octet-stream')},
-                                    timeout=15
-                                )
-                                logger.info(f"Trello attachment upload result: status={att_res.status_code}")
-                        except Exception as att_err:
-                            logger.warning(f"Could not upload attachment to Trello: {att_err}")
-
-            # 2. Post comment to Trello card
-            try:
-                tc_res = requests.post(
-                    f"https://api.trello.com/1/cards/{clean_raw_id}/actions/comments",
-                    params={"key": t_key, "token": t_token, "text": comment_text},
-                    timeout=12
-                )
-                logger.info(f"Trello comment response: status={tc_res.status_code}, text={tc_res.text[:200]}")
-                if tc_res.ok:
-                    act_data = tc_res.json()
-                    a_user = act_data.get('memberCreator', {}).get('fullName', 'User')
-                    a_avatar = act_data.get('memberCreator', {}).get('avatarUrl')
-                    if a_avatar and not a_avatar.endswith('.png'):
-                        a_avatar = a_avatar.rstrip('/') + '/170.png'
-                    trello_action_created = {
-                        "user_name": a_user,
-                        "user_avatar": a_avatar,
-                        "type": "commentCard",
-                        "text": comment_text,
-                        "date": act_data.get('date', datetime.now(timezone.utc).isoformat())
-                    }
-                else:
-                    logger.error(f"Failed to post comment to Trello: {tc_res.status_code} {tc_res.text}")
-            except Exception as t_err:
-                logger.exception(f"Could not post comment to Trello API: {t_err}")
-
-            # 3. Refresh complete action list from Trello so history transaction updates seamlessly
-            try:
-                act_res = requests.get(
-                    f"https://api.trello.com/1/cards/{clean_raw_id}/actions",
-                    params={
-                        "key": t_key,
-                        "token": t_token,
-                        "filter": "commentCard,updateCard:idList,createCard,addMemberToCard,addAttachmentToCard",
-                        "limit": 50
-                    },
-                    timeout=10
-                )
-                if act_res.ok:
-                    fresh_actions = []
-                    for act in act_res.json():
-                        a_type = act.get('type')
-                        a_user = act.get('memberCreator', {}).get('fullName', 'User')
-                        a_avatar = act.get('memberCreator', {}).get('avatarUrl')
-                        if a_avatar and not a_avatar.endswith('.png'):
-                            a_avatar = a_avatar.rstrip('/') + '/170.png'
-                        a_date = act.get('date')
-                        t_text = ""
-                        act_d = act.get('data', {})
-                        if a_type == 'commentCard':
-                            t_text = act_d.get('text', '')
-                        elif a_type == 'updateCard' and 'listBefore' in act_d:
-                            t_text = f"moved this card from {act_d.get('listBefore', {}).get('name')} to {act_d.get('listAfter', {}).get('name')}"
-                        elif a_type == 'createCard':
-                            t_text = f"added this card to {act_d.get('list', {}).get('name')}"
-                        elif a_type == 'addMemberToCard':
-                            t_text = "joined this card"
-                        elif a_type == 'addAttachmentToCard':
-                            att = act_d.get('attachment', {})
-                            att_name = att.get('name', 'image')
-                            att_url = att.get('url') or att.get('previewUrl2x') or att.get('previewUrl') or ''
-                            if att_url:
-                                t_text = f"attached {att_name} to this card\n\n![{att_name}]({att_url})"
-                            else:
-                                t_text = f"attached {att_name} to this card"
-                        
-                        if t_text:
-                            fresh_actions.append({
-                                "user_name": a_user,
-                                "user_avatar": a_avatar,
-                                "type": a_type,
-                                "text": t_text,
-                                "date": a_date
-                            })
-                    if fresh_actions:
-                        existing_actions = fresh_actions
-            except Exception as act_err:
-                logger.warning(f"Could not fetch updated actions from Trello: {act_err}")
-
-        elif integ and integ[0] == 'github' and integ[4] and integ[5] and integ[6] and clean_raw_id:
-            # GitHub Issues Comment Sync
-            gh_token, gh_owner, gh_repo = integ[4], integ[5], integ[6]
-            try:
-                gh_res = requests.post(
-                    f"https://api.github.com/repos/{gh_owner}/{gh_repo}/issues/{clean_raw_id}/comments",
-                    headers={"Authorization": f"Bearer {gh_token}", "Accept": "application/vnd.github.v3+json", "User-Agent": "SpectraQA"},
-                    json={"body": comment_text},
-                    timeout=12
-                )
-                if gh_res.ok:
-                    gh_data = gh_res.json()
-                    g_user = gh_data.get('user', {}).get('login', 'GitHub User')
-                    g_avatar = gh_data.get('user', {}).get('avatar_url')
-                    trello_action_created = {
-                        "user_name": g_user,
-                        "user_avatar": g_avatar,
-                        "type": "commentCard",
-                        "text": comment_text,
-                        "date": gh_data.get('created_at', datetime.now(timezone.utc).isoformat())
-                    }
-            except Exception as gh_err:
-                logger.warning(f"Could not post comment to GitHub API: {gh_err}")
-
-        new_action = trello_action_created or {
-            "user_name": "SpectraQA User",
-            "user_avatar": None,
-            "type": "commentCard",
-            "text": comment_text,
-            "date": datetime.now(timezone.utc).isoformat()
-        }
-        is_already_in = False
-        for a in existing_actions:
-            if isinstance(a, dict) and a.get('type') == 'commentCard' and a.get('text') == comment_text:
-                is_already_in = True
-                break
-        if not is_already_in:
-            existing_actions.insert(0, new_action)
-
-        if card_row:
-            cursor.execute("""
-                UPDATE board_cards
-                SET actions_json = %s
-                WHERE (card_id::text = %s OR raw_ext_id = %s OR ext_card_id = %s) AND project_id = %s
-            """, (json.dumps(existing_actions, ensure_ascii=False), card_id, card_id, card_id, p_id))
-        conn.commit()
-
-        return jsonify({
-            "success": True,
-            "actions": existing_actions,
-            "message": "เพิ่มความคิดเห็นและอัปเดตไปยัง Trello เรียบร้อยแล้ว"
-        })
-    except Exception as e:
-        conn.rollback()
-        logger.error(f"Error posting comment: {e}")
-        return jsonify({"error": str(e)}), 500
-    finally:
-        if 'cursor' in locals():
-            cursor.close()
-        if 'conn' in locals():
-            conn.close()
-
-if __name__ == '__main__':
-    logger.info("=" * 50)
-    logger.info(f"Thai OCR Spell Check System (v{VERSION})")
-    logger.info("=" * 50)
-    
-    # โหลด dictionary ตอนเริ่ม
-    logger.info("กำลังโหลด dictionary...")
-    stats = get_dictionary_stats()
-    logger.info(f"Dictionary พร้อมใช้งาน: {stats['total_words']:,} คำ")
-    
-    # Initialize QA transactions table
-    logger.info("กำลังเริ่มต้นตาราง DB ที่จำเป็น...")
-    try:
-        from db_ingestion import init_qa_transactions, init_api_usage_logs, init_billing_credit, init_ocr_history
-        init_qa_transactions()
-        init_api_usage_logs()
-        init_billing_credit()
-        init_ocr_history()
-        
-        try:
-            from agent_1_ingestion import init_requirements_table
-            init_requirements_table()
-        except Exception as err:
-            logger.error(f"Failed to initialize requirements table: {err}")
-            
-        try:
-            try:
-                from scripts.add_agent_sessions_table import create_agent_sessions_table
-            except ImportError:
-                from add_agent_sessions_table import create_agent_sessions_table
-            create_agent_sessions_table()
-        except Exception as err:
-            logger.error(f"Failed to initialize agent sessions table: {err}")
-    except Exception as e:
-        logger.error(f"Failed to initialize DB tables: {e}")
-
-    # Initialize Exit Criteria tables & seed Universal template
-    logger.info("กำลังตรวจสอบและสร้างตาราง Exit Criteria...")
-    try:
-        try:
-            from scripts.add_exit_criteria_tables import add_exit_criteria_tables
-        except ImportError:
-            from add_exit_criteria_tables import add_exit_criteria_tables
-        add_exit_criteria_tables()
-        logger.info("Exit Criteria tables ready.")
-    except Exception as e:
-        logger.error(f"Failed to initialize Exit Criteria tables: {e}")
-
-    # Initialize QA Analysis Diagrams table
-    try:
-        from agent_7_flow_analyzer import init_flow_diagrams_table
-        init_flow_diagrams_table()
-    except Exception as e:
-        logger.error(f"Failed to initialize QA Analysis Diagrams table: {e}")
-    
-    app.run(
-        host='0.0.0.0',
-        port=5000,
-        debug=False,
-        threaded=True
-    )
-
+... [truncated for diff preview]
