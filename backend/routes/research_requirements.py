@@ -288,42 +288,166 @@ def _fetch_github_code(repo_url: str) -> str:
 @bp.route('/api/qa/security/scan', methods=['POST'])
 def api_qa_security_scan():
     try:
-        data = request.get_json()
+        from security_scanner_engine import (
+            save_security_scan_record,
+            scan_project_api_collection,
+            scan_source_code_sast,
+            scan_web_application,
+        )
+
+        data = request.get_json(silent=True) or {}
         if not data:
             return jsonify({'error': 'No JSON payload provided'}), 400
-            
+
+        scan_mode = (data.get('scan_mode') or '').strip().lower()
+        project_id = (data.get('project_id') or '').strip()
+        standard = data.get('standard', 'OWASP Top 10 (2021)')
         language = data.get('language', 'auto')
-        
-        if 'github_url' in data and data['github_url']:
+        use_ai = bool(data.get('use_ai', False))
+
+        # Infer scan_mode for backward compatibility
+        if not scan_mode:
+            if data.get('target_url'):
+                scan_mode = 'web_url'
+            elif data.get('collection_id'):
+                scan_mode = 'api_collection'
+            elif data.get('github_url'):
+                scan_mode = 'github'
+            else:
+                scan_mode = 'paste'
+
+        if scan_mode == 'web_url':
+            target_url = (data.get('target_url') or '').strip()
+            if not target_url:
+                return jsonify({'error': 'กรุณาระบุ URL ของเว็บไซต์ที่ต้องการสแกน'}), 400
+            scan_profile = (data.get('scan_profile') or 'full_web').strip()
+            max_pages = max(1, min(15, int(data.get('max_pages') or 5)))
+            auth_config = data.get('auth_config') if isinstance(data.get('auth_config'), dict) else None
+
+            result = scan_web_application(
+                target_url=target_url,
+                standard=standard,
+                scan_profile=scan_profile,
+                max_pages=max_pages,
+                auth_config=auth_config,
+                use_ai=use_ai,
+            )
+            scan_id = save_security_scan_record(project_id, 'web_url', result.get('target', target_url), standard, result)
+            result['scan_id'] = scan_id
+            return jsonify(result)
+
+        if scan_mode == 'api_collection':
+            if not project_id:
+                return jsonify({'error': 'กรุณาเลือกโครงการก่อนสแกน API Collection'}), 400
+            collection_id = (data.get('collection_id') or 'ALL').strip()
+            base_url_override = (data.get('base_url') or '').strip()
+            auth_config = data.get('auth_config') if isinstance(data.get('auth_config'), dict) else None
+
+            result = scan_project_api_collection(
+                project_id=project_id,
+                collection_id=collection_id,
+                base_url_override=base_url_override,
+                auth_config=auth_config,
+                standard=standard,
+                use_ai=use_ai,
+            )
+            scan_id = save_security_scan_record(project_id, 'api_collection', result.get('target', 'Project APIs'), standard, result)
+            result['scan_id'] = scan_id
+            return jsonify(result)
+
+        if scan_mode == 'github' or data.get('github_url'):
+            github_url = (data.get('github_url') or '').strip()
+            if not github_url:
+                return jsonify({'error': 'กรุณาระบุลิงก์ GitHub Repository'}), 400
             try:
-                source_code = _fetch_github_code(data['github_url'])
+                source_code = _fetch_github_code(github_url)
                 language = 'auto (GitHub Repo)'
             except Exception as github_err:
                 return jsonify({'error': str(github_err)}), 400
-        elif 'source_code' in data and data['source_code']:
-            source_code = data['source_code']
-        else:
-            return jsonify({'error': 'Missing source_code or github_url'}), 400
-        
-        standard = data.get('standard', 'OWASP Top 10 (2021)')
-        
-        from orchestrator.state import QASecurityState
-        from orchestrator.pipeline import run_qa_security
-        
-        state = QASecurityState(source_code=source_code, language=language, standard=standard)
-        state = run_qa_security(state)
-        
-        if state.status == "failed":
-            return jsonify({'error': state.error}), 500
-            
-        return jsonify({
-            'success': True,
-            'report': state.report,
-            'vulnerabilities_found': state.vulnerability_count
-        })
-        
+
+            result = scan_source_code_sast(
+                source_code=source_code,
+                language=language,
+                standard=standard,
+                target_label=github_url,
+                use_ai=use_ai,
+            )
+            result['scan_mode'] = 'github'
+            scan_id = save_security_scan_record(project_id, 'github', github_url, standard, result)
+            result['scan_id'] = scan_id
+            return jsonify(result)
+
+        # Default: source code / uploaded files SAST
+        source_code = data.get('source_code') or ''
+        target_label = (data.get('target_label') or 'Source Code Snippet').strip()
+        if not source_code.strip():
+            return jsonify({'error': 'กรุณาระบุ Source Code หรืออัปโหลดไฟล์ที่ต้องการตรวจสอบ'}), 400
+
+        result = scan_source_code_sast(
+            source_code=source_code,
+            language=language,
+            standard=standard,
+            target_label=target_label,
+            use_ai=use_ai,
+        )
+        scan_id = save_security_scan_record(project_id, scan_mode or 'paste', target_label, standard, result)
+        result['scan_id'] = scan_id
+        return jsonify(result)
+
+    except ValueError as ve:
+        return jsonify({'error': str(ve)}), 400
     except Exception as e:
-        logger.error(f"QA Security Scan error: {e}")
+        logger.error(f"QA Security Scan error: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
+@bp.route('/api/qa/security/history', methods=['GET'])
+def api_qa_security_history():
+    try:
+        from security_scanner_engine import get_security_scan_history
+        project_id = (request.args.get('project_id') or '').strip() or None
+        limit = max(1, min(50, int(request.args.get('limit') or 20)))
+        items = get_security_scan_history(project_id=project_id, limit=limit)
+        return jsonify({'success': True, 'history': items})
+    except Exception as e:
+        logger.error(f"Error loading security scan history: {e}")
+        return jsonify({'error': str(e), 'history': []}), 500
+
+
+@bp.route('/api/qa/security/history/<scan_id>', methods=['DELETE'])
+def api_qa_security_delete_history(scan_id):
+    try:
+        from security_scanner_engine import delete_security_scan_record
+        ok = delete_security_scan_record(scan_id)
+        if ok:
+            return jsonify({'success': True})
+        return jsonify({'error': 'ไม่พบประวัติการสแกนที่ต้องการลบ'}), 404
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@bp.route('/api/qa/security/export-excel', methods=['POST'])
+def api_qa_security_export_excel():
+    try:
+        import io
+        from flask import send_file
+        from security_scanner_engine import generate_security_excel_bytes
+
+        data = request.get_json(silent=True) or {}
+        if not data:
+            return jsonify({'error': 'ไม่พบข้อมูลรายงานสำหรับสร้างไฟล์ Excel'}), 400
+
+        xlsx_bytes = generate_security_excel_bytes(data)
+        stamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f"Spectra_QA_Security_Report_{stamp}.xlsx"
+        return send_file(
+            io.BytesIO(xlsx_bytes),
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            as_attachment=True,
+            download_name=filename,
+        )
+    except Exception as e:
+        logger.error(f"Error exporting security Excel report: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 
